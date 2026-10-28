@@ -22,10 +22,17 @@ export type StaffRoute =
   | 'fastLogPreview'
   | 'fastLogSuccess'
   | 'waste'
+  | 'wasteSuccess'
   | 'stockInSuccess'
   | 'stockHistory'
+  | 'historyFilters'
+  | 'transactionDetails'
   | 'ingredientDetails'
   | 'inventoryHistory'
+  | 'notificationAlertDetails'
+  | 'dailyInventoryCheck'
+  | 'dailyCheckSuccess'
+  | 'profileSettings'
   | 'notifications'
   | 'more';
 
@@ -104,10 +111,16 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
     route === 'fastLogPreview' ||
     route === 'fastLogSuccess' ||
     route === 'waste' ||
+    route === 'wasteSuccess' ||
     route === 'stockInSuccess' ||
-    route === 'stockHistory'
+    route === 'stockHistory' ||
+    route === 'historyFilters' ||
+    route === 'transactionDetails'
   ) return 'stocks';
   if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
+  if (route === 'dailyInventoryCheck' || route === 'dailyCheckSuccess') return 'more';
+  if (route === 'profileSettings') return 'more';
+  if (route === 'notificationAlertDetails') return 'notifications';
   return route;
 }
 

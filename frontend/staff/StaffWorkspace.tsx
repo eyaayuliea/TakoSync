@@ -13,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import BottomNavigation, { type StaffRoute, type StaffTab } from './BottomNavigation';
+import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 
 const colors = {
   pink: '#F20D55',
@@ -38,6 +38,12 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
+type IngredientBatch = {
+  reference: string;
+  receivedDate: string;
+  expirationDate: string | null;
+};
+
 type Ingredient = {
   id: string;
   name: string;
@@ -52,6 +58,8 @@ type Ingredient = {
   type: string;
   unitName: string;
   receivedBatch: string;
+  batchReference?: string;
+  batches: IngredientBatch[];
   lastUpdated: string;
   emoji: string;
   tint: string;
@@ -72,6 +80,7 @@ const initialIngredients: Ingredient[] = [
     type: 'Frozen seafood',
     unitName: 'Kilograms (kg)',
     receivedBatch: 'OCT-2510 · 25 Oct 2026',
+    batches: [{ reference: 'OCT-2510', receivedDate: '25 Oct 2026', expirationDate: '30 Oct 2026' }],
     lastUpdated: '25 Oct 2026 · 10:15 AM',
     emoji: '🐙',
     tint: '#FCE9DE',
@@ -90,6 +99,7 @@ const initialIngredients: Ingredient[] = [
     type: 'Dry goods',
     unitName: 'Kilograms (kg)',
     receivedBatch: 'FLR-2510 · 24 Oct 2026',
+    batches: [{ reference: 'FLR-2510', receivedDate: '24 Oct 2026', expirationDate: null }],
     lastUpdated: '25 Oct 2026 · 9:30 AM',
     emoji: '🌾',
     tint: '#FFF1D8',
@@ -108,6 +118,7 @@ const initialIngredients: Ingredient[] = [
     type: 'Fresh eggs',
     unitName: 'Pieces (pcs)',
     receivedBatch: 'EGG-2510 · 25 Oct 2026',
+    batches: [{ reference: 'EGG-2510', receivedDate: '25 Oct 2026', expirationDate: '2 Nov 2026' }],
     lastUpdated: '25 Oct 2026 · 10:20 AM',
     emoji: '🥚',
     tint: '#FFF4D8',
@@ -120,12 +131,14 @@ const initialIngredients: Ingredient[] = [
     unit: 'L',
     threshold: 2,
     lowStock: false,
-    expiration: '29 Oct 2026',
+    expiration: '27 Oct 2026',
     nearExpiry: true,
     minimumStock: 1,
     type: 'Takoyaki sauce',
     unitName: 'Liters (L)',
-    receivedBatch: 'SAU-2510 · 23 Oct 2026',
+    receivedBatch: 'SC-B1-2710 · 23 Oct 2026',
+    batchReference: 'SC-B1-2710',
+    batches: [{ reference: 'SC-B1-2710', receivedDate: '23 Oct 2026', expirationDate: '27 Oct 2026' }],
     lastUpdated: '25 Oct 2026 · 10:05 AM',
     emoji: '🫙',
     tint: '#FBE7E9',
@@ -145,6 +158,15 @@ function formatReceiptDate(date: Date) {
 
 function formatUsageDate(date: Date) {
   return `${formatDate(date)} · 10:30 AM`;
+}
+
+function formatWasteDate(date: Date) {
+  return `${formatDate(date)} · 08:30 AM`;
+}
+
+function formatStockInReference(date: Date, receiptNumber: number) {
+  const datePart = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }).replace('/', '');
+  return `SI-${datePart}-${String(receiptNumber).padStart(3, '0')}`;
 }
 
 type StockReceipt = {
@@ -195,6 +217,199 @@ type FastLogReceipt = {
   notes: string;
   pieces: number | null;
 };
+
+type DailyCheckLine = {
+  ingredientId: string;
+  name: string;
+  recordedQuantity: number;
+  physicalQuantity: string;
+  unit: string;
+};
+
+type DailyCheckLineRecord = {
+  ingredientId: string;
+  name: string;
+  recordedQuantity: number;
+  physicalQuantity: number;
+  difference: number;
+  unit: string;
+};
+
+type DailyInventoryCheck = {
+  reference: string;
+  checkDate: Date;
+  submittedAt: Date;
+  branch: string;
+  staff: string;
+  lines: DailyCheckLineRecord[];
+  remarks: string;
+  status: 'pendingOwnerReview' | 'submitted';
+};
+
+type StaffAccount = {
+  displayName: string;
+  role: string;
+  email: string;
+  branch: string;
+};
+
+type WasteReason = 'Waste / Other' | 'Damaged' | 'Spoiled' | 'Expired';
+
+type WasteReceipt = {
+  reference: string;
+  ingredientId: string;
+  quantity: number;
+  previousQuantity: number;
+  newQuantity: number;
+  transactionDate: Date;
+  reason: WasteReason;
+  description: string;
+  notes: string;
+};
+
+type HistoryTransactionType = 'Stock-In' | 'Stock-Out / Usage' | 'Usage' | 'Waste' | 'Spoilage';
+type HistoryTypeFilter = 'All types' | 'Stock-In' | 'Stock-Out' | 'Usage' | 'Waste' | 'Spoilage';
+
+type HistoryTransaction = {
+  id: string;
+  reference: string;
+  type: HistoryTransactionType;
+  ingredientId: string;
+  ingredientName: string;
+  category: string;
+  quantity: number;
+  unit: string;
+  movement: number;
+  branchId: string;
+  branch: string;
+  staffId: string;
+  staff: string;
+  transactionDate: Date;
+  reason: string;
+  notes: string;
+  beforeQuantity: number | null;
+  afterQuantity: number | null;
+  batchReference: string | null;
+  historical: boolean;
+};
+
+const historyTypeFilters: HistoryTypeFilter[] = [
+  'All types',
+  'Stock-In',
+  'Stock-Out',
+  'Usage',
+  'Waste',
+  'Spoilage',
+];
+
+function transactionDateAt(hour: number, minute: number) {
+  const date = new Date(2026, 9, 25);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function dateAtTime(date: Date, hour: number, minute: number) {
+  const result = new Date(date.getTime());
+  result.setHours(hour, minute, 0, 0);
+  return result;
+}
+
+function formatHistoryDateTime(date: Date) {
+  return `${formatDate(date)} · ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+const initialHistoryTransactions: HistoryTransaction[] = [
+  {
+    id: 'seed-si-octopus',
+    reference: 'SI-1025-001',
+    type: 'Stock-In',
+    ingredientId: 'octopus',
+    ingredientName: 'Octopus',
+    category: 'Seafood',
+    quantity: 5,
+    unit: 'kg',
+    movement: 5,
+    branchId: 'manila-branch-1',
+    branch: 'Manila · Branch 1',
+    staffId: 'staff-isabel-san-esteban',
+    staff: 'Isabel San Esteban',
+    transactionDate: transactionDateAt(8, 0),
+    reason: 'Stock-In',
+    notes: 'Opening delivery',
+    beforeQuantity: 0,
+    afterQuantity: 5,
+    batchReference: null,
+    historical: true,
+  },
+  {
+    id: 'seed-us-octopus-001',
+    reference: 'US-1025-001',
+    type: 'Usage',
+    ingredientId: 'octopus',
+    ingredientName: 'Octopus',
+    category: 'Seafood',
+    quantity: 1,
+    unit: 'kg',
+    movement: -1,
+    branchId: 'manila-branch-1',
+    branch: 'Manila · Branch 1',
+    staffId: 'staff-isabel-san-esteban',
+    staff: 'Isabel San Esteban',
+    transactionDate: transactionDateAt(9, 30),
+    reason: 'Cooking usage',
+    notes: 'First cooking preparation',
+    beforeQuantity: 5,
+    afterQuantity: 4,
+    batchReference: null,
+    historical: true,
+  },
+  {
+    id: 'seed-us-octopus-002',
+    reference: 'US-1025-002',
+    type: 'Usage',
+    ingredientId: 'octopus',
+    ingredientName: 'Octopus',
+    category: 'Seafood',
+    quantity: 1,
+    unit: 'kg',
+    movement: -1,
+    branchId: 'manila-branch-1',
+    branch: 'Manila · Branch 1',
+    staffId: 'staff-isabel-san-esteban',
+    staff: 'Isabel San Esteban',
+    transactionDate: transactionDateAt(10, 15),
+    reason: 'Cooking usage',
+    notes: 'Second cooking preparation',
+    beforeQuantity: 4,
+    afterQuantity: 3,
+    batchReference: null,
+    historical: true,
+  },
+  {
+    id: 'seed-ws-eggs',
+    reference: 'WS-1025-001',
+    type: 'Waste',
+    ingredientId: 'eggs',
+    ingredientName: 'Eggs',
+    category: 'Dairy & eggs',
+    quantity: 6,
+    unit: 'pcs',
+    movement: -6,
+    branchId: 'manila-branch-1',
+    branch: 'Manila · Branch 1',
+    staffId: 'staff-isabel-san-esteban',
+    staff: 'Isabel San Esteban',
+    transactionDate: transactionDateAt(8, 30),
+    reason: 'Waste / Other',
+    notes: 'Tray slipped during handling · Cracked eggs discarded',
+    beforeQuantity: 54,
+    afterQuantity: 48,
+    batchReference: null,
+    historical: true,
+  },
+];
+
+const wasteReasons: WasteReason[] = ['Waste / Other', 'Damaged', 'Spoiled', 'Expired'];
 
 const fastLogPresets: FastLogPreset[] = [
   {
@@ -262,6 +477,44 @@ const stockOutBatchPresets = [
 
 const openingDate = new Date(2026, 9, 25);
 const openingExpirationDate = new Date(2026, 9, 30);
+const nearExpiryWindowDays = 3;
+
+type InventoryAlertKind = 'lowStock' | 'expiration';
+type InventoryAlertFilter = 'all' | InventoryAlertKind;
+
+type InventoryAlert = {
+  id: string;
+  kind: InventoryAlertKind;
+  ingredientId: string;
+  batch: IngredientBatch | null;
+  title: string;
+  detail: string;
+};
+
+function parseInventoryDate(value: string | null) {
+  if (!value) return null;
+  const match = value.trim().match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (!match) return null;
+  const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+    .indexOf(match[2].toLowerCase());
+  if (month < 0) return null;
+  const date = new Date(Number(match[3]), month, Number(match[1]));
+  return date.getFullYear() === Number(match[3]) &&
+    date.getMonth() === month &&
+    date.getDate() === Number(match[1])
+    ? date
+    : null;
+}
+
+function daysBetweenDates(from: Date, to: Date) {
+  const fromDay = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+  const toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
+  return Math.round((toDay - fromDay) / 86_400_000);
+}
+
+function getReceivedDate(item: Ingredient) {
+  return item.receivedBatch.split('·').pop()?.trim() ?? 'Not recorded';
+}
 
 function formatQuantity(quantity: number) {
   return Number.isInteger(quantity) ? `${quantity}` : `${Number(quantity.toFixed(2))}`;
@@ -270,6 +523,27 @@ function formatQuantity(quantity: number) {
 function formatUnitQuantity(quantity: number, unit: string) {
   const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
   return `${formatQuantity(quantity)} ${displayUnit}`;
+}
+
+function roundDailyQuantity(quantity: number, unit: string) {
+  const precision = unit === 'pcs' ? 1 : 100;
+  return Math.round(quantity * precision) / precision;
+}
+
+function isValidDailyQuantity(value: string, unit: string) {
+  const pattern = unit === 'pcs' ? /^\d+$/ : /^\d+(?:\.\d{1,2})?$/;
+  if (!pattern.test(value.trim())) return false;
+  const quantity = Number(value);
+  return Number.isFinite(quantity) && quantity >= 0;
+}
+
+function formatDailyDifference(difference: number, unit: string) {
+  const value = formatQuantity(difference);
+  return `${difference > 0 ? '+' : ''}${value} ${unit}`;
+}
+
+function formatDailyUnitQuantity(quantity: number, unit: string) {
+  return `${formatQuantity(quantity)} ${unit}`;
 }
 
 function SearchBar({
@@ -423,6 +697,19 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
+function WasteTrashIcon() {
+  return (
+    <View style={styles.wasteTrashIcon} accessibilityLabel="Waste confirmation">
+      <View style={styles.wasteTrashHandle} />
+      <View style={styles.wasteTrashLid} />
+      <View style={styles.wasteTrashBody}>
+        <View style={styles.wasteTrashLine} />
+        <View style={styles.wasteTrashLine} />
+      </View>
     </View>
   );
 }
@@ -603,10 +890,25 @@ function DatePickerField({
   );
 }
 
-export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
+export default function StaffWorkspace({
+  onLogout,
+  user,
+  appVersion,
+}: {
+  onLogout: () => void;
+  user: StaffAccount | null;
+  appVersion: string;
+}) {
   const [route, setRoute] = useState<StaffRoute>('dashboard');
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
   const [ingredients, setIngredients] = useState(initialIngredients);
+  const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
+  const [dailyCheckRemarks, setDailyCheckRemarks] = useState('Recounted; bag short by 2 kg');
+  const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);
+  const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
+  const [dailyCheckRecords, setDailyCheckRecords] = useState<DailyInventoryCheck[]>([]);
+  const [currentDailyCheck, setCurrentDailyCheck] = useState<DailyInventoryCheck | null>(null);
+  const dailyCheckSubmissionLock = useRef(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [selectedIngredientId, setSelectedIngredientId] = useState('');
@@ -621,14 +923,20 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [reason, setReason] = useState('Cooking usage');
   const [reasonListOpen, setReasonListOpen] = useState(false);
   const [notes, setNotes] = useState('');
+  const [wasteDescription, setWasteDescription] = useState('');
+  const [wasteFieldErrors, setWasteFieldErrors] = useState<Record<string, string>>({});
+  const [wasteValidationAttempted, setWasteValidationAttempted] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [formError, setFormError] = useState('');
   const [quantityError, setQuantityError] = useState('');
   const [confirmationVisible, setConfirmationVisible] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const fastLogSubmissionLock = useRef(false);
+  const wasteSubmissionLock = useRef(false);
   const [stockReceipts, setStockReceipts] = useState<StockReceipt[]>([]);
   const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
+  const [wasteReceipts, setWasteReceipts] = useState<WasteReceipt[]>([]);
+  const [currentWasteReceipt, setCurrentWasteReceipt] = useState<WasteReceipt | null>(null);
   const [usageReceipts, setUsageReceipts] = useState<UsageReceipt[]>([]);
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [selectedFastLogPresetId, setSelectedFastLogPresetId] = useState('');
@@ -644,7 +952,27 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [dashboardCarouselWidth, setDashboardCarouselWidth] = useState(0);
-  const [readNotifications, setReadNotifications] = useState<string[]>(['activity-stock-in']);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('All types');
+  const [historyFromDate, setHistoryFromDate] = useState<Date | null>(null);
+  const [historyToDate, setHistoryToDate] = useState<Date | null>(null);
+  const [historyStaffFilter, setHistoryStaffFilter] = useState('All staff');
+  const [draftHistoryTypeFilter, setDraftHistoryTypeFilter] = useState<HistoryTypeFilter>('All types');
+  const [draftHistoryFromDate, setDraftHistoryFromDate] = useState<Date | null>(null);
+  const [draftHistoryToDate, setDraftHistoryToDate] = useState<Date | null>(null);
+  const [draftHistoryStaffFilter, setDraftHistoryStaffFilter] = useState('All staff');
+  const [historyStaffPickerOpen, setHistoryStaffPickerOpen] = useState(false);
+  const [historyDateError, setHistoryDateError] = useState('');
+  const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] = useState('');
+  const [notificationFilter, setNotificationFilter] = useState<InventoryAlertFilter>('all');
+  const [selectedAlertIngredientId, setSelectedAlertIngredientId] = useState('');
+  const [selectedAlertBatchReference, setSelectedAlertBatchReference] = useState('');
+  const [selectedAlertKind, setSelectedAlertKind] = useState<InventoryAlertKind>('lowStock');
+  const [ingredientDetailReturnRoute, setIngredientDetailReturnRoute] = useState<'inventory' | 'notifications'>('inventory');
+  const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [logoutPending, setLogoutPending] = useState(false);
+  const logoutSubmissionLock = useRef(false);
   const [notificationPreferences, setNotificationPreferences] = useState({
     lowStock: true,
     expiration: true,
@@ -652,6 +980,235 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   });
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
+  const staffName = user?.displayName || 'Isabel San Esteban';
+  const staffRole = user?.role || 'Staff';
+  const staffEmail = user?.email || 'isabel@gelos.ph';
+  const assignedBranch = user?.branch || 'Manila · Branch 1';
+  const historyTransactions: HistoryTransaction[] = [
+    ...initialHistoryTransactions,
+    ...stockReceipts.flatMap((receipt) => {
+      const ingredient = ingredients.find((item) => item.id === receipt.ingredientId);
+      if (!ingredient) return [];
+      return [{
+        id: `stock-in-${receipt.reference}-${receipt.ingredientId}`,
+        reference: receipt.reference,
+        type: 'Stock-In' as const,
+        ingredientId: ingredient.id,
+        ingredientName: ingredient.name,
+        category: ingredient.category,
+        quantity: receipt.quantity,
+        unit: ingredient.unit,
+        movement: receipt.quantity,
+        branchId: 'manila-branch-1',
+        branch: 'Manila · Branch 1',
+        staffId: 'staff-isabel-san-esteban',
+        staff: 'Isabel San Esteban',
+        transactionDate: dateAtTime(receipt.transactionDate, 8, 0),
+        reason: 'Stock-In',
+        notes: receipt.notes,
+        beforeQuantity: receipt.previousQuantity,
+        afterQuantity: receipt.newQuantity,
+        batchReference: null,
+        historical: false,
+      }];
+    }),
+    ...usageReceipts.flatMap((receipt) => receipt.deductions.flatMap((deduction) => {
+      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+      if (!ingredient) return [];
+      return [{
+        id: `usage-${receipt.reference}-${ingredient.id}`,
+        reference: receipt.reference,
+        type: 'Usage' as const,
+        ingredientId: ingredient.id,
+        ingredientName: ingredient.name,
+        category: ingredient.category,
+        quantity: deduction.quantity,
+        unit: ingredient.unit,
+        movement: -deduction.quantity,
+        branchId: 'manila-branch-1',
+        branch: 'Manila · Branch 1',
+        staffId: 'staff-isabel-san-esteban',
+        staff: 'Isabel San Esteban',
+        transactionDate: dateAtTime(receipt.transactionDate, 10, 30),
+        reason: receipt.reason,
+        notes: receipt.notes,
+        beforeQuantity: deduction.previousQuantity,
+        afterQuantity: deduction.newQuantity,
+        batchReference: receipt.batchPreset,
+        historical: false,
+      }];
+    })),
+    ...fastLogReceipts.flatMap((receipt) => receipt.deductions.flatMap((deduction) => {
+      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+      if (!ingredient) return [];
+      const type: HistoryTransactionType = receipt.preset.section === 'waste' ? 'Waste' : 'Usage';
+      return [{
+        id: `fastlog-${receipt.reference}-${ingredient.id}`,
+        reference: receipt.reference,
+        type,
+        ingredientId: ingredient.id,
+        ingredientName: ingredient.name,
+        category: ingredient.category,
+        quantity: deduction.quantity,
+        unit: ingredient.unit,
+        movement: -deduction.quantity,
+        branchId: 'manila-branch-1',
+        branch: 'Manila · Branch 1',
+        staffId: 'staff-isabel-san-esteban',
+        staff: 'Isabel San Esteban',
+        transactionDate: dateAtTime(receipt.transactionDate, 10, 30),
+        reason: receipt.reason,
+        notes: receipt.notes,
+        beforeQuantity: deduction.previousQuantity,
+        afterQuantity: deduction.newQuantity,
+        batchReference: receipt.preset.name,
+        historical: false,
+      }];
+    })),
+    ...wasteReceipts.flatMap((receipt) => {
+      const ingredient = ingredients.find((item) => item.id === receipt.ingredientId);
+      if (!ingredient) return [];
+      return [{
+        id: `waste-${receipt.reference}-${ingredient.id}`,
+        reference: receipt.reference,
+        type: receipt.reason === 'Spoiled' || receipt.reason === 'Expired' ? 'Spoilage' as const : 'Waste' as const,
+        ingredientId: ingredient.id,
+        ingredientName: ingredient.name,
+        category: ingredient.category,
+        quantity: receipt.quantity,
+        unit: ingredient.unit,
+        movement: -receipt.quantity,
+        branchId: 'manila-branch-1',
+        branch: 'Manila · Branch 1',
+        staffId: 'staff-isabel-san-esteban',
+        staff: 'Isabel San Esteban',
+        transactionDate: dateAtTime(receipt.transactionDate, 8, 30),
+        reason: receipt.reason,
+        notes: [receipt.description, receipt.notes].filter(Boolean).join(' · '),
+        beforeQuantity: receipt.previousQuantity,
+        afterQuantity: receipt.newQuantity,
+        batchReference: null,
+        historical: false,
+      }];
+    }),
+  ].sort((first, second) => second.transactionDate.getTime() - first.transactionDate.getTime());
+  const selectedHistoryTransaction = historyTransactions.find(
+    (transaction) => transaction.id === selectedHistoryTransactionId,
+  );
+  const historyStaffOptions = ['All staff', ...new Set(historyTransactions.map((transaction) => transaction.staff))];
+  const normalizedHistorySearch = historySearch.trim().toLowerCase();
+  const filteredHistoryTransactions = historyTransactions.filter((transaction) => {
+    const matchesSearch = [
+      transaction.ingredientName,
+      transaction.reference,
+      transaction.type,
+      transaction.reason,
+      transaction.notes,
+      transaction.batchReference ?? '',
+    ].join(' ').toLowerCase().includes(normalizedHistorySearch);
+    const matchesType = historyTypeFilter === 'All types' ||
+      (historyTypeFilter === 'Stock-Out'
+        ? transaction.type === 'Stock-Out / Usage' || transaction.type === 'Usage'
+        : transaction.type === historyTypeFilter);
+    const dateValue = new Date(
+      transaction.transactionDate.getFullYear(),
+      transaction.transactionDate.getMonth(),
+      transaction.transactionDate.getDate(),
+    ).getTime();
+    const from = historyFromDate
+      ? new Date(historyFromDate.getFullYear(), historyFromDate.getMonth(), historyFromDate.getDate()).getTime()
+      : Number.NEGATIVE_INFINITY;
+    const to = historyToDate
+      ? new Date(historyToDate.getFullYear(), historyToDate.getMonth(), historyToDate.getDate()).getTime()
+      : Number.POSITIVE_INFINITY;
+    return matchesSearch &&
+      matchesType &&
+      dateValue >= from &&
+      dateValue <= to &&
+      (historyStaffFilter === 'All staff' || transaction.staff === historyStaffFilter);
+  });
+  const historyLedgerExplanation = (ingredientId: string) => {
+    const records = historyTransactions
+      .filter((transaction) => transaction.ingredientId === ingredientId)
+      .sort((first, second) => first.transactionDate.getTime() - second.transactionDate.getTime());
+    if (records.length === 0 || records.some((transaction) =>
+      transaction.beforeQuantity === null || transaction.afterQuantity === null,
+    )) return null;
+    let expected = records[0].beforeQuantity;
+    if (expected === null) return null;
+    const opening = expected;
+    const movements: string[] = [];
+    for (const transaction of records) {
+      if (transaction.beforeQuantity !== expected) return null;
+      if (transaction.afterQuantity === null) return null;
+      movements.push(`${transaction.movement > 0 ? '+' : ''}${formatQuantity(transaction.movement)}`);
+      expected = transaction.afterQuantity;
+    }
+    return `${records[0].ingredientName} recorded ledger: ${formatQuantity(opening)} ${movements.join(' ')} = ${formatQuantity(expected)} ${records[0].unit}.`;
+  };
+  const beginHistoryFilters = () => {
+    setDraftHistoryTypeFilter(historyTypeFilter);
+    setDraftHistoryFromDate(historyFromDate);
+    setDraftHistoryToDate(historyToDate);
+    setDraftHistoryStaffFilter(historyStaffFilter);
+    setHistoryDateError('');
+    setHistoryStaffPickerOpen(false);
+    setRoute('historyFilters');
+  };
+  const applyHistoryFilters = () => {
+    if (draftHistoryFromDate && draftHistoryToDate &&
+      new Date(draftHistoryFromDate.getFullYear(), draftHistoryFromDate.getMonth(), draftHistoryFromDate.getDate()).getTime() >
+      new Date(draftHistoryToDate.getFullYear(), draftHistoryToDate.getMonth(), draftHistoryToDate.getDate()).getTime()) {
+      setHistoryDateError('From date must be on or before the To date.');
+      return;
+    }
+    setHistoryTypeFilter(draftHistoryTypeFilter);
+    setHistoryFromDate(draftHistoryFromDate);
+    setHistoryToDate(draftHistoryToDate);
+    setHistoryStaffFilter(draftHistoryStaffFilter);
+    setHistoryDateError('');
+    setRoute('stockHistory');
+  };
+  const resetHistoryFilters = () => {
+    setHistorySearch('');
+    setHistoryTypeFilter('All types');
+    setHistoryFromDate(null);
+    setHistoryToDate(null);
+    setHistoryStaffFilter('All staff');
+    setDraftHistoryTypeFilter('All types');
+    setDraftHistoryFromDate(null);
+    setDraftHistoryToDate(null);
+    setDraftHistoryStaffFilter('All staff');
+    setHistoryDateError('');
+    setHistoryStaffPickerOpen(false);
+    setRoute('stockHistory');
+  };
+  const resetTransactionFilters = () => {
+    setHistoryTypeFilter('All types');
+    setHistoryFromDate(null);
+    setHistoryToDate(null);
+    setHistoryStaffFilter('All staff');
+    setDraftHistoryTypeFilter('All types');
+    setDraftHistoryFromDate(null);
+    setDraftHistoryToDate(null);
+    setDraftHistoryStaffFilter('All staff');
+    setHistoryDateError('');
+    setRoute('stockHistory');
+  };
+  const dailyCheckResults = dailyCheckLines.map((line) => {
+    const parsedQuantity = Number(line.physicalQuantity);
+    const valid = isValidDailyQuantity(line.physicalQuantity, line.unit);
+    const difference = valid
+      ? roundDailyQuantity(parsedQuantity - line.recordedQuantity, line.unit)
+      : null;
+    return { ...line, parsedQuantity, valid, difference };
+  });
+  const dailyDiscrepancies = dailyCheckResults.filter(
+    (line) => line.valid && line.difference !== 0,
+  );
+  const dailyCheckValid =
+    dailyCheckResults.length > 0 &&
+    dailyCheckResults.every((line) => line.valid);
   const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
   const selectedFastLogPreset = fastLogPresets.find((preset) => preset.id === selectedFastLogPresetId);
   const fastLogDeductions: UsageDeduction[] = fastLogDraftDeductions
@@ -696,38 +1253,121 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       }),
     [category, ingredients, normalizedSearch],
   );
-  const lowStockItems = ingredients.filter((item) => item.lowStock);
-  const expiringItems = ingredients.filter((item) => item.nearExpiry);
-  const notifications = [
+  const lowStockItems = ingredients.filter((item) => item.quantity < item.minimumStock);
+  const expiringBatches = ingredients.flatMap((item) =>
+    item.batches.flatMap((batch) => {
+      const expirationDateValue = parseInventoryDate(batch.expirationDate);
+      if (!expirationDateValue) return [];
+      const daysRemaining = daysBetweenDates(openingDate, expirationDateValue);
+      return daysRemaining >= 0 && daysRemaining <= nearExpiryWindowDays
+        ? [{ item, batch, daysRemaining }]
+        : [];
+    }),
+  );
+  const expiringItems = [...new Map(expiringBatches.map(({ item }) => [item.id, item])).values()];
+  const inventoryAlerts: InventoryAlert[] = [
     ...lowStockItems.map((item) => ({
       id: `low-${item.id}`,
       kind: 'lowStock' as const,
-      title: `${item.name} is running low`,
-      detail: `Only ${item.quantity} ${item.unit} remaining · ${item.category}`,
+      ingredientId: item.id,
+      batch: item.batches[0] ?? null,
+      title: item.name,
+      detail: `Manila · Branch 1 · Current ${formatUnitQuantity(item.quantity, item.unit)} / Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
     })),
-    ...expiringItems.map((item) => ({
-      id: `expiry-${item.id}`,
-      kind: 'expiration' as const,
-      title: `${item.name} is nearing expiration`,
-      detail: `${item.quantity} ${item.unit} · Expires ${item.expiration}`,
-    })),
-    {
-      id: 'activity-stock-in',
-      kind: 'activity' as const,
-      title: 'Stock-In recorded',
-      detail: 'Flour · 4 kg added to Manila Branch · Today, 9:42 AM',
-    },
+    ...expiringBatches.map(({ item, batch, daysRemaining }) => {
+      const expiryText = daysRemaining === 0 ? 'today' : `in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;
+      return {
+        id: `expiry-${item.id}-${batch.reference}`,
+        kind: 'expiration' as const,
+        ingredientId: item.id,
+        batch,
+        title: item.name,
+        detail: `Manila · Branch 1 · ${formatUnitQuantity(item.quantity, item.unit)} · Expires ${batch.expirationDate} (${expiryText})`,
+      };
+    }),
   ];
-  const visibleNotifications = notifications.filter((item) => notificationPreferences[item.kind]);
-  const unreadCount = visibleNotifications.filter((item) => !readNotifications.includes(item.id)).length;
+  const visibleNotifications = inventoryAlerts.filter((item) =>
+    notificationPreferences[item.kind] &&
+    (notificationFilter === 'all' || notificationFilter === item.kind),
+  );
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
   const dashboardCardWidth = Math.max(0, dashboardCarouselWidth - 12);
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
 
   const navigate = (nextRoute: StaffTab) => {
+    setDailyCheckModal(null);
+    setLogoutConfirmationVisible(false);
     setRoute(nextRoute);
     setDashboardMessage('');
+  };
+
+  const startDailyInventoryCheck = () => {
+    const checkIngredients = ['flour', 'octopus', 'eggs', 'sauces'];
+    const lines = checkIngredients.flatMap((id) => {
+      const item = ingredients.find((ingredient) => ingredient.id === id);
+      return item
+        ? [{
+            ingredientId: item.id,
+            name: item.name,
+            recordedQuantity: item.quantity,
+            physicalQuantity: id === 'flour' ? '10' : String(item.quantity),
+            unit: item.unit,
+          }]
+        : [];
+    });
+    setDailyCheckLines(lines);
+    setDailyCheckRemarks('Recounted; bag short by 2 kg');
+    setDailyCheckAttempted(false);
+    setDailyCheckModal(null);
+    setCurrentDailyCheck(null);
+    dailyCheckSubmissionLock.current = false;
+    setRoute('dailyInventoryCheck');
+  };
+
+  const validateDailyInventoryCheck = () => {
+    setDailyCheckAttempted(true);
+    return dailyCheckValid;
+  };
+
+  const openDailyCheckReview = () => {
+    if (!validateDailyInventoryCheck()) return;
+    setDailyCheckModal('review');
+  };
+
+  const submitDailyInventoryCheck = () => {
+    if (dailyCheckSubmissionLock.current || !validateDailyInventoryCheck()) return;
+    dailyCheckSubmissionLock.current = true;
+    const referenceNumber = dailyCheckRecords.length + 1;
+    const checkDate = new Date(2026, 9, 25);
+    const submittedAt = new Date(checkDate);
+    submittedAt.setHours(10, 30, 0, 0);
+    const lines = dailyCheckLines.map((line) => {
+      const physicalQuantity = Number(line.physicalQuantity);
+      return {
+        ingredientId: line.ingredientId,
+        name: line.name,
+        recordedQuantity: line.recordedQuantity,
+        physicalQuantity,
+        difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit),
+        unit: line.unit,
+      };
+    });
+    const hasDiscrepancies = lines.some((line) => line.difference !== 0);
+    const check: DailyInventoryCheck = {
+      reference: `IC-1025-${String(referenceNumber).padStart(3, '0')}`,
+      checkDate,
+      submittedAt,
+      branch: 'Manila · Branch 1',
+      staff: 'Isabel San Esteban',
+      lines,
+      remarks: dailyCheckRemarks.trim(),
+      status: hasDiscrepancies ? 'pendingOwnerReview' : 'submitted',
+    };
+    setCurrentDailyCheck(check);
+    setDailyCheckRecords((current) => [...current, check]);
+    setDailyCheckModal(null);
+    setRoute('dailyCheckSuccess');
   };
 
   const openForm = (
@@ -735,21 +1375,39 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     source: StaffTab,
   ) => {
     setReturnRoute(source);
-    setSelectedIngredientId(formRoute === 'stockIn' || formRoute === 'stockOut' ? 'octopus' : '');
+    setSelectedIngredientId(
+      formRoute === 'stockIn' || formRoute === 'stockOut'
+        ? 'octopus'
+        : formRoute === 'waste'
+          ? 'eggs'
+          : '',
+    );
     setIngredientListOpen(false);
-    setQuantity(formRoute === 'stockIn' ? '5' : formRoute === 'stockOut' ? '1' : '');
+    setQuantity(formRoute === 'stockIn' ? '5' : formRoute === 'stockOut' ? '1' : formRoute === 'waste' ? '6' : '');
     setUsageMode('manual');
     setBatchPresetOpen(false);
     setBatchCount('1');
-    setTransactionDate(formRoute === 'stockIn' || formRoute === 'stockOut' ? openingDate : new Date());
+    setTransactionDate(formRoute === 'stockIn' || formRoute === 'stockOut' || formRoute === 'waste' ? openingDate : new Date());
     setExpirationDate(formRoute === 'stockIn' ? openingExpirationDate : null);
-    setReason(formRoute === 'waste' ? 'Spoilage' : 'Cooking usage');
+    setReason(formRoute === 'waste' ? 'Waste / Other' : 'Cooking usage');
     setReasonListOpen(false);
-    setNotes(formRoute === 'stockIn' ? 'Opening delivery' : formRoute === 'stockOut' ? 'Extra cooking preparation' : '');
+    setNotes(
+      formRoute === 'stockIn'
+        ? 'Opening delivery'
+        : formRoute === 'stockOut'
+          ? 'Extra cooking preparation'
+          : formRoute === 'waste'
+            ? 'Cracked eggs discarded'
+            : '',
+    );
+    setWasteDescription(formRoute === 'waste' ? 'Tray slipped during handling' : '');
+    setWasteFieldErrors({});
+    setWasteValidationAttempted(false);
     setSuccessMessage('');
     setFormError('');
     setQuantityError('');
     setCurrentReceipt(null);
+    setCurrentWasteReceipt(null);
     setCurrentUsageReceipt(null);
     setConfirmationVisible(false);
     setRoute(formRoute);
@@ -847,7 +1505,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const returnToFastLogList = () => {
     setConfirmationVisible(false);
     setConfirming(false);
-    setRoute(selectedFastLogPreset?.section === 'waste' ? 'waste' : 'fastLog');
+    setRoute('fastLog');
   };
 
   const returnFromForm = () => {
@@ -870,6 +1528,41 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       (!selectedIngredient || parsedValue <= selectedIngredient.quantity)
     ) {
       setQuantityError('');
+    }
+  };
+
+  const validateWasteForm = () => {
+    const errors: Record<string, string> = {};
+    const parsedQuantity = Number(quantity);
+
+    if (!selectedIngredient) {
+      errors.item = 'Choose an item to continue.';
+    }
+    if (!quantity.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+      errors.quantity = 'Enter a quantity greater than 0.';
+    } else if (selectedIngredient && !isValidDailyQuantity(quantity, selectedIngredient.unit)) {
+      errors.quantity = selectedIngredient.unit === 'pcs'
+        ? 'Enter a whole number of pieces.'
+        : 'Enter a quantity with up to 2 decimal places.';
+    } else if (selectedIngredient && parsedQuantity > selectedIngredient.quantity) {
+      errors.quantity = `Only ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available.`;
+    }
+    if (!transactionDate) {
+      errors.date = 'Choose a transaction date.';
+    }
+    if (reason === 'Waste / Other' && !wasteDescription.trim()) {
+      errors.description = 'Describe the cause when Other is selected.';
+    }
+
+    setWasteValidationAttempted(true);
+    setWasteFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const updateWasteDescription = (value: string) => {
+    setWasteDescription(value);
+    if (wasteValidationAttempted && value.trim()) {
+      setWasteFieldErrors((current) => ({ ...current, description: '' }));
     }
   };
 
@@ -923,6 +1616,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   };
 
   const reviewTransaction = () => {
+    if (route === 'waste') {
+      if (!validateWasteForm()) return;
+      setConfirmationVisible(true);
+      return;
+    }
     if (route === 'fastLogReview') {
       if (!validateFastLogDraft()) return;
       setRoute('fastLogPreview');
@@ -1003,6 +1701,65 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       return;
     }
 
+    if (route === 'waste') {
+      if (wasteSubmissionLock.current) return;
+      if (!validateWasteForm() || !selectedIngredient || !transactionDate) return;
+      const wasteReason = wasteReasons.find((option) => option === reason);
+      if (!wasteReason) {
+        setWasteFieldErrors((current) => ({ ...current, reason: 'Choose a waste reason.' }));
+        return;
+      }
+
+      wasteSubmissionLock.current = true;
+      setConfirming(true);
+      setTimeout(() => {
+        const wasteQuantity = Number(quantity);
+        const receiptDate = transactionDate;
+        const previousQuantity = selectedIngredient.quantity;
+        const newQuantity = Number((previousQuantity - wasteQuantity).toFixed(2));
+        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
+        const sameDateCount = wasteReceipts.filter((entry) =>
+          entry.transactionDate.getFullYear() === receiptDate.getFullYear() &&
+          entry.transactionDate.getMonth() === receiptDate.getMonth() &&
+          entry.transactionDate.getDate() === receiptDate.getDate(),
+        ).length;
+        const historicalSampleOffset =
+          receiptDate.getFullYear() === 2026 &&
+          receiptDate.getMonth() === 9 &&
+          receiptDate.getDate() === 25
+            ? 2
+            : 1;
+        const receipt: WasteReceipt = {
+          reference: `WS-${datePart}-${String(sameDateCount + historicalSampleOffset).padStart(3, '0')}`,
+          ingredientId: selectedIngredient.id,
+          quantity: wasteQuantity,
+          previousQuantity,
+          newQuantity,
+          transactionDate: receiptDate,
+          reason: wasteReason,
+          description: wasteDescription.trim(),
+          notes: notes.trim(),
+        };
+        setIngredients((current) =>
+          current.map((item) => item.id === selectedIngredient.id
+            ? {
+                ...item,
+                quantity: newQuantity,
+                lowStock: newQuantity < item.threshold,
+                lastUpdated: formatWasteDate(receiptDate),
+              }
+            : item),
+        );
+        setWasteReceipts((current) => [...current, receipt]);
+        setCurrentWasteReceipt(receipt);
+        setConfirmationVisible(false);
+        setConfirming(false);
+        wasteSubmissionLock.current = false;
+        setRoute('wasteSuccess');
+      }, 250);
+      return;
+    }
+
     if (route === 'usagePreview') {
       if (
         usageDeductions.length === 0 ||
@@ -1066,6 +1823,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     setConfirming(true);
     setTimeout(() => {
       const currentRoute = route;
+      const stockInReference = transactionDate
+        ? formatStockInReference(transactionDate, stockReceipts.length + 1)
+        : '';
       const newQuantity = currentRoute === 'stockIn'
         ? selectedIngredient.quantity + parsedQuantity
         : selectedIngredient.quantity - parsedQuantity;
@@ -1080,6 +1840,22 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
               ? formatDate(expirationDate)
               : item.expiration,
           nearExpiry: currentRoute === 'stockIn' && expirationDate ? true : item.nearExpiry,
+          receivedBatch: currentRoute === 'stockIn' && transactionDate
+            ? `${stockInReference} · ${formatDate(transactionDate)}`
+            : item.receivedBatch,
+          batchReference: currentRoute === 'stockIn'
+            ? stockInReference
+            : item.batchReference,
+          batches: currentRoute === 'stockIn' && transactionDate
+            ? [
+                ...item.batches,
+                {
+                  reference: stockInReference,
+                  receivedDate: formatDate(transactionDate),
+                  expirationDate: expirationDate ? formatDate(expirationDate) : null,
+                },
+              ]
+            : item.batches,
         };
       });
       setIngredients(nextIngredients);
@@ -1088,10 +1864,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       setQuantityError('');
 
       if (currentRoute === 'stockIn') {
-        const receiptNumber = stockReceipts.length + 1;
-        const referenceDate = transactionDate.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }).replace('/', '');
+        const receiptNumber = stockReceipts.length + 2;
         const receipt: StockReceipt = {
-          reference: `SI-${referenceDate}-${String(receiptNumber).padStart(3, '0')}`,
+          reference: stockInReference || `SI-0000-${String(receiptNumber).padStart(3, '0')}`,
           ingredientId: selectedIngredient.id,
           quantity: parsedQuantity,
           previousQuantity: selectedIngredient.quantity,
@@ -1175,7 +1950,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         </View>
         <View style={styles.summaryPhoto}>
           <Image
-            source={require('./assets/takoyaki-plate.png')}
+            source={require('../../assets/takoyaki-plate.png')}
             style={styles.summaryImage}
             resizeMode="cover"
             accessibilityLabel="Takoyaki"
@@ -1332,6 +2107,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           item={item}
           onPress={() => {
             setSelectedIngredientId(item.id);
+            setIngredientDetailReturnRoute('inventory');
             setRoute('ingredientDetails');
           }}
         />
@@ -1370,8 +2146,8 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       return (
         <View style={styles.inventoryFallback}>
           <Text style={styles.inventoryEmptyTitle}>Ingredient not found</Text>
-          <Pressable onPress={() => setRoute('inventory')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to inventory</Text>
+          <Pressable onPress={() => setRoute(ingredientDetailReturnRoute)} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back</Text>
           </Pressable>
         </View>
       );
@@ -1403,8 +2179,8 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <View style={styles.detailHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to inventory"
-            onPress={() => setRoute('inventory')}
+            accessibilityLabel={ingredientDetailReturnRoute === 'notifications' ? 'Back to Notifications' : 'Back to inventory'}
+            onPress={() => setRoute(ingredientDetailReturnRoute)}
             style={styles.detailBackButton}
           >
             <Text style={styles.detailBackArrow}>‹</Text>
@@ -1542,123 +2318,675 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     </ScrollView>
   );
 
-  const renderNotifications = () => (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.notificationPageHeading}>
-        <View>
-          {renderTopHeader('Notifications', 'Inventory updates for Manila Branch')}
+  const renderNotificationAlertDetails = () => {
+    const item = ingredients.find((ingredient) => ingredient.id === selectedAlertIngredientId);
+    if (!item) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>Alert item not found</Text>
+          <Pressable onPress={() => setRoute('notifications')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Notifications</Text>
+          </Pressable>
         </View>
-        {unreadCount > 0 ? (
+      );
+    }
+
+    const isLowStock = selectedAlertKind === 'lowStock';
+    const batch = item.batches.find((candidate) => candidate.reference === selectedAlertBatchReference) ?? item.batches[0] ?? null;
+    const expirationDateValue = parseInventoryDate(batch?.expirationDate ?? null);
+    const daysRemaining = expirationDateValue ? daysBetweenDates(openingDate, expirationDateValue) : null;
+    const expirationStatus = daysRemaining === null
+      ? 'No valid expiration date'
+      : daysRemaining < 0
+        ? `Expired ${batch?.expirationDate}`
+        : daysRemaining === 0
+          ? 'Expires today'
+          : `Expires in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;
+    const receivedDate = batch?.receivedDate ?? getReceivedDate(item);
+    const stockGap = Math.max(0, item.minimumStock - item.quantity);
+
+    return (
+      <>
+        <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => setReadNotifications(visibleNotifications.map((item) => item.id))}
-            style={styles.markReadButton}
+            accessibilityLabel="Back to Notifications"
+            onPress={() => setRoute('notifications')}
+            style={styles.backButton}
           >
-            <Text style={styles.markReadText}>Mark all read</Text>
+            <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
-        ) : null}
-      </View>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Alert item details</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.alertDetailContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.alertDetailBadge, !isLowStock && styles.alertDetailExpiryBadge]}>
+            <Text style={styles.alertDetailBadgeIcon}>{isLowStock ? '!' : '▦'}</Text>
+            <Text style={styles.alertDetailBadgeText}>{isLowStock ? 'Low Stock' : 'Near Expiry'}</Text>
+          </View>
+
+          <View style={styles.alertDetailSummaryCard}>
+            <Text style={styles.alertDetailName}>{item.name}</Text>
+            <Text style={styles.alertDetailQuantity}>{formatUnitQuantity(item.quantity, item.unit)}</Text>
+            <Text style={styles.alertDetailSubtext}>Manila · Branch 1 · {item.category}</Text>
+          </View>
+
+          <View style={styles.alertDetailRows}>
+            {isLowStock ? (
+              <>
+                <DetailRow label="Current stock" value={formatUnitQuantity(item.quantity, item.unit)} />
+                <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />
+                <DetailRow label="Below minimum" value={formatUnitQuantity(stockGap, item.unit)} />
+                <DetailRow label="Status" value={item.quantity < item.minimumStock ? 'Low stock' : 'At minimum'} />
+                <DetailRow label="Received" value={receivedDate} />
+                <DetailRow label="Batch expires" value={batch?.expirationDate ?? 'Not recorded'} />
+                <DetailRow label="Last updated" value={item.lastUpdated} />
+              </>
+            ) : (
+              <>
+                <DetailRow label="Batch reference" value={batch?.reference ?? item.batchReference ?? item.receivedBatch.split('·')[0].trim()} />
+                <DetailRow label="Received date" value={receivedDate} />
+                <DetailRow label="Expiration date" value={batch?.expirationDate ?? 'Not recorded'} />
+                <DetailRow label="As of" value={formatDate(openingDate)} />
+                <DetailRow label="Status" value={expirationStatus} />
+                <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />
+                <DetailRow label="Available stock" value={formatUnitQuantity(item.quantity, item.unit)} />
+              </>
+            )}
+          </View>
+
+          <View style={styles.alertDetailInfoBanner}>
+            <Text style={styles.alertDetailInfoIcon}>i</Text>
+            <Text style={styles.alertDetailInfoText}>
+              {isLowStock
+                ? 'Replenish before the next cooking batch. Alert clears when available stock reaches the minimum.'
+                : 'Use the earliest valid batch first. This batch remains usable until its recorded expiration date.'}
+            </Text>
+          </View>
+
+          <View style={styles.alertDetailActions}>
+            {isLowStock ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setSelectedIngredientId(item.id);
+                  openForm('stockIn', 'notifications');
+                }}
+                style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}
+              >
+                <Text style={styles.alertDetailPrimaryText}>Record Stock-In</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setSelectedIngredientId(item.id);
+                  setIngredientDetailReturnRoute('notifications');
+                  setRoute('ingredientDetails');
+                }}
+                style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}
+              >
+                <Text style={styles.alertDetailPrimaryText}>View ingredient inventory</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setRoute('notifications')}
+              style={({ pressed }) => [styles.alertDetailSecondary, pressed && styles.pressed]}
+            >
+              <Text style={styles.alertDetailSecondaryText}>Back to Notifications</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderNotifications = () => (
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.notificationPageContent} showsVerticalScrollIndicator={false}>
+      {renderTopHeader('Notifications', 'Manila · Branch 1 / Staff')}
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator={false}
+        style={styles.alertFilterScroll}
+        contentContainerStyle={styles.alertFilterRow}
+      >
+        {([
+          { key: 'all', label: 'All alerts' },
+          { key: 'lowStock', label: 'Low stock' },
+          { key: 'expiration', label: 'Near expiry' },
+        ] as const).map((filter) => {
+          const selected = notificationFilter === filter.key;
+          return (
+            <Pressable
+              key={filter.key}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setNotificationFilter(filter.key)}
+              style={[styles.alertFilterChip, selected && styles.alertFilterChipSelected]}
+            >
+              <Text style={[styles.alertFilterChipText, selected && styles.alertFilterChipTextSelected]}>
+                {filter.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      <Text style={styles.alertMetadata}>
+        {visibleNotifications.length} {visibleNotifications.length === 1 ? 'alert' : 'alerts'} · Your assigned branch only · {formatDate(openingDate)}
+      </Text>
       {visibleNotifications.length > 0 ? (
         <View style={styles.notificationList}>
-          {visibleNotifications.map((item) => {
-            const isRead = readNotifications.includes(item.id);
-            const iconStyle = item.kind === 'lowStock'
-              ? styles.alertLowIcon
-              : item.kind === 'expiration'
-                ? styles.alertExpiryIcon
-                : styles.alertActivityIcon;
+          {visibleNotifications.map((alert) => {
+            const isLowStock = alert.kind === 'lowStock';
             return (
               <Pressable
-                key={item.id}
+                key={alert.id}
                 accessibilityRole="button"
-                accessibilityLabel={`${isRead ? 'Read' : 'Unread'} notification: ${item.title}`}
-                accessibilityState={{ selected: isRead }}
+                accessibilityLabel={`${alert.title}, ${isLowStock ? 'Low Stock' : 'Near Expiry'}. ${alert.detail}`}
                 onPress={() => {
-                  if (!isRead) setReadNotifications((current) => [...current, item.id]);
+                  setSelectedAlertIngredientId(alert.ingredientId);
+                  setSelectedAlertBatchReference(alert.batch?.reference ?? '');
+                  setSelectedAlertKind(alert.kind);
+                  setRoute('notificationAlertDetails');
                 }}
-                style={[styles.notificationCard, !isRead && styles.notificationUnread]}
+                style={({ pressed }) => [
+                  styles.inventoryAlertCard,
+                  pressed && styles.pressed,
+                ]}
               >
-                <View style={[styles.notificationAlertIcon, iconStyle]}>
-                  <Text style={styles.alertGlyph}>{item.kind === 'activity' ? '↗' : '!'}</Text>
+                <View style={styles.inventoryAlertTopline}>
+                  <Text style={styles.inventoryAlertName}>{alert.title}</Text>
+                  <View style={[styles.inventoryAlertBadge, !isLowStock && styles.inventoryExpiryBadge]}>
+                    <Text style={styles.inventoryAlertBadgeIcon}>{isLowStock ? '!' : '▦'}</Text>
+                    <Text style={styles.inventoryAlertBadgeText}>{isLowStock ? 'Low Stock' : 'Near Expiry'}</Text>
+                  </View>
                 </View>
-                <View style={styles.notificationCopy}>
-                  <Text style={[styles.notificationTitle, !isRead && styles.notificationUnreadTitle]}>{item.title}</Text>
-                  <Text style={styles.notificationDetail}>{item.detail}</Text>
-                </View>
-                {!isRead ? <View style={styles.unreadDot} /> : null}
+                <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>
               </Pressable>
             );
           })}
         </View>
       ) : (
-        <Text style={styles.emptyState}>You're all caught up. No inventory alerts right now.</Text>
+        <View style={styles.alertEmptyCard}>
+          <Text style={styles.alertEmptyTitle}>No alerts to show</Text>
+          <Text style={styles.alertEmptyText}>
+            {inventoryAlerts.length === 0
+              ? 'There are no current stock or near-expiry alerts for Manila · Branch 1.'
+              : 'No alerts match this filter. Choose another alert type to see current items.'}
+          </Text>
+        </View>
       )}
-      <Text style={styles.demoNote}>DEMO PREVIEW · Example alerts generated from sample data.</Text>
+      <View style={styles.alertListInfoBanner}>
+        <Text style={styles.alertDetailInfoIcon}>i</Text>
+        <Text style={styles.alertDetailInfoText}>
+          Stock and expiry alerts show Manila · Branch 1 records only. Tap an item to review its threshold or batch dates.
+        </Text>
+      </View>
     </ScrollView>
   );
 
-  const renderMore = () => (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
-      {renderTopHeader('Settings', 'Staff account and preferences')}
-      <View style={styles.accountCard}>
-        <View style={styles.profileAvatar}>
-          <View style={styles.profileHead} />
-          <View style={styles.profileBody} />
-        </View>
-        <View>
-          <Text style={styles.accountName}>TakoSync Staff</Text>
-          <Text style={styles.accountBranch}>Manila Branch</Text>
-        </View>
-      </View>
-      <View style={styles.settingsList}>
-        <View style={styles.settingRow}>
-          <View style={styles.settingIcon}><Text style={styles.settingGlyph}>●</Text></View>
-          <View style={styles.settingCopy}>
-            <Text style={styles.moreItemTitle}>Profile</Text>
-            <Text style={styles.moreItemDetail}>TakoSync Staff</Text>
+  const renderDailyInventoryCheck = () => {
+    const discrepancyMessage = dailyDiscrepancies.length === 1
+      ? `1 discrepancy found. Review ${dailyDiscrepancies[0].name}'s ${formatDailyDifference(
+          dailyDiscrepancies[0].difference ?? 0,
+          dailyDiscrepancies[0].unit,
+        )} difference before submitting.`
+      : `${dailyDiscrepancies.length} discrepancies found. Review ${dailyDiscrepancies
+          .map((line) => `${line.name}'s ${formatDailyDifference(line.difference ?? 0, line.unit)}`)
+          .join(' and ')} differences before submitting.`;
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to More"
+            onPress={() => navigate('more')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
           </View>
-          <Text style={styles.settingChevron}>›</Text>
         </View>
-        <View style={styles.settingRow}>
-          <View style={styles.settingIcon}><Text style={styles.settingGlyph}>⌖</Text></View>
-          <View style={styles.settingCopy}>
-            <Text style={styles.moreItemTitle}>Assigned Branch</Text>
-            <Text style={styles.moreItemDetail}>Manila Branch</Text>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.dailyCheckContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.dailyCheckIntro}>25 Oct 2026 · Enter today's physical quantities.</Text>
+          <View style={styles.dailyTableHeader}>
+            <Text style={[styles.dailyColumnTitle, styles.dailyIngredientColumn]}>Ingredient</Text>
+            <Text style={[styles.dailyColumnTitle, styles.dailyRecordedColumn]}>Recorded</Text>
+            <Text style={[styles.dailyColumnTitle, styles.dailyPhysicalColumn]}>Physical</Text>
+            <Text style={[styles.dailyColumnTitle, styles.dailyDifferenceColumn]}>Diff.</Text>
           </View>
-          <Text style={styles.settingChevron}>›</Text>
-        </View>
-        <View style={styles.preferencesHeading}>
-          <Text style={styles.moreItemTitle}>Notification Preferences</Text>
-          <Text style={styles.moreItemDetail}>Choose which updates to see</Text>
-        </View>
-        {([
-          { key: 'lowStock', label: 'Low-stock alerts' },
-          { key: 'expiration', label: 'Expiration reminders' },
-          { key: 'activity', label: 'Inventory activity' },
-        ] as const).map((preference) => (
-          <View key={preference.key} style={styles.preferenceRow}>
-            <Text style={styles.preferenceLabel}>{preference.label}</Text>
-            <Switch
-              accessibilityLabel={preference.label}
-              value={notificationPreferences[preference.key]}
-              onValueChange={(value) =>
-                setNotificationPreferences((current) => ({ ...current, [preference.key]: value }))
-              }
-              trackColor={{ false: '#D8D8DE', true: '#F6A2BC' }}
-              thumbColor={notificationPreferences[preference.key] ? colors.pink : '#FFFFFF'}
+          <View style={styles.dailyRows}>
+            {dailyCheckResults.map((line) => {
+              const discrepant = line.valid && line.difference !== 0;
+              const showError = !line.valid && (dailyCheckAttempted || line.physicalQuantity.trim() !== '');
+              const errorText = line.physicalQuantity.trim() === ''
+                ? 'Enter a quantity.'
+                : line.physicalQuantity.includes('-')
+                  ? 'Quantity cannot be negative.'
+                  : line.unit === 'pcs'
+                    ? 'Enter a whole number.'
+                    : 'Enter a valid quantity (up to 2 decimals).';
+              const physicalError = showError ? errorText : '';
+
+              return (
+                <View
+                  key={line.ingredientId}
+                  style={[styles.dailyIngredientRow, discrepant && styles.dailyIngredientRowDiscrepant]}
+                >
+                  <Text style={[styles.dailyIngredientName, styles.dailyIngredientColumn]} numberOfLines={1}>
+                    {line.name}
+                  </Text>
+                  <Text style={[styles.dailyRecordedValue, styles.dailyRecordedColumn]} numberOfLines={1}>
+                    {formatDailyUnitQuantity(line.recordedQuantity, line.unit)}
+                  </Text>
+                  <View style={[styles.dailyPhysicalColumn, styles.dailyPhysicalCell]}>
+                    <TextInput
+                      accessibilityLabel={`${line.name} physical quantity in ${line.unit}`}
+                      value={line.physicalQuantity}
+                      onChangeText={(value) =>
+                        setDailyCheckLines((current) =>
+                          current.map((entry) =>
+                            entry.ingredientId === line.ingredientId
+                              ? { ...entry, physicalQuantity: value }
+                              : entry,
+                          ),
+                        )
+                      }
+                      keyboardType={line.unit === 'pcs' ? 'number-pad' : 'decimal-pad'}
+                      style={[
+                        styles.dailyPhysicalInput,
+                        discrepant && styles.dailyPhysicalInputDiscrepant,
+                        physicalError !== '' && styles.dailyPhysicalInputError,
+                      ]}
+                    />
+                    {physicalError !== '' ? (
+                      <Text style={styles.dailyFieldError}>{physicalError}</Text>
+                    ) : null}
+                  </View>
+                  <Text
+                    style={[
+                      styles.dailyDifferenceValue,
+                      styles.dailyDifferenceColumn,
+                      line.valid && line.difference === 0 && styles.dailyDifferenceZero,
+                      discrepant && styles.dailyDifferenceNegative,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {line.valid && line.difference !== null
+                      ? formatDailyDifference(line.difference, line.unit)
+                      : '—'}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          <View style={styles.dailyRemarksGroup}>
+            <Text style={styles.dailyLabel}>Remarks</Text>
+            <TextInput
+              accessibilityLabel="Remarks"
+              value={dailyCheckRemarks}
+              onChangeText={setDailyCheckRemarks}
+              placeholder="Add remarks"
+              placeholderTextColor={colors.muted}
+              style={styles.dailyRemarksInput}
+              multiline
             />
           </View>
+
+          {dailyDiscrepancies.length > 0 ? (
+            <View style={styles.dailyDiscrepancyBanner} accessibilityRole="alert">
+              <Text style={styles.dailyDiscrepancyIcon}>!</Text>
+              <Text style={styles.dailyDiscrepancyText}>{discrepancyMessage}</Text>
+            </View>
+          ) : null}
+          {dailyCheckAttempted && !dailyCheckValid ? (
+            <Text style={styles.dailyFormError} accessibilityRole="alert">
+              Correct the highlighted quantities before continuing.
+            </Text>
+          ) : null}
+
+          <View style={styles.dailyFormActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={openDailyCheckReview}
+              style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.dailyPrimaryButtonText}>Review differences</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigate('more')}
+              style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.dailySecondaryButtonText}>Back to More</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.dailyDemoNote}>
+            Local mock check · Physical counts are audit observations and never adjust stock.
+          </Text>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderDailyCheckSuccess = () => {
+    if (!currentDailyCheck) {
+      return (
+        <View style={styles.dailySuccessFallback}>
+          <Text style={styles.dailyCheckIntro}>No submitted daily check is available.</Text>
+          <Pressable onPress={() => navigate('more')} style={styles.dailyPrimaryButton}>
+            <Text style={styles.dailyPrimaryButtonText}>Back to More</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const check = currentDailyCheck;
+    const flour = check.lines.find((line) => line.ingredientId === 'flour');
+    const discrepancyCount = check.lines.filter((line) => line.difference !== 0).length;
+    const time = check.submittedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const auditText = flour
+      ? `Flour's recorded balance remains ${formatUnitQuantity(flour.recordedQuantity, flour.unit)}. The ${formatUnitQuantity(flour.physicalQuantity, flour.unit)} physical count is an audit observation, not a stock adjustment.`
+      : 'Physical counts are audit observations and do not adjust recorded stock balances.';
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to More"
+            onPress={() => navigate('more')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.dailyCheckContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.dailySuccessBanner} accessibilityRole="alert">
+            <Text style={styles.dailySuccessIcon}>✓</Text>
+            <Text style={styles.dailySuccessText}>Daily inventory check saved successfully.</Text>
+          </View>
+          <View style={styles.dailySummaryCard}>
+            <Text style={styles.dailySummaryTitle}>Check submitted</Text>
+            <Text style={styles.dailySummaryCount}>{check.lines.length} counted</Text>
+            <Text style={styles.dailySummarySubtitle}>
+              {discrepancyCount} {discrepancyCount === 1 ? 'discrepancy' : 'discrepancies'} ·{' '}
+              {discrepancyCount > 0 ? 'Pending owner review' : 'Submitted'}
+            </Text>
+          </View>
+
+          <View style={styles.dailyReceiptDetails}>
+            {[
+              ['Check reference', check.reference],
+              ['Date', `${formatDate(check.checkDate)} · ${time}`],
+              ['Branch', check.branch],
+              ['Submitted by', check.staff],
+              [
+                'Flour difference',
+                flour
+                  ? `${formatDailyDifference(flour.difference, flour.unit)} · ${
+                      flour.difference === 0 ? 'No discrepancy' : 'Pending review'
+                    }`
+                  : 'Not counted',
+              ],
+            ].map(([label, value]) => (
+              <View key={label} style={styles.dailyReceiptRow}>
+                <Text style={styles.dailyReceiptLabel}>{label}</Text>
+                <Text style={styles.dailyReceiptValue}>{value}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.dailyAuditBanner}>
+            <Text style={styles.dailyAuditIcon}>i</Text>
+            <Text style={styles.dailyAuditText}>{auditText}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => navigate('dashboard')}
+            style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.dailyPrimaryButtonText}>Back to Dashboard</Text>
+          </Pressable>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderStaffIdentityCard = () => (
+    <View style={styles.staffIdentityCard}>
+      <View style={styles.staffIdentityAvatar}>
+        <View style={styles.staffIdentityHead} />
+        <View style={styles.staffIdentityBody} />
+      </View>
+      <View style={styles.staffIdentityCopy}>
+        <Text style={styles.staffIdentityName}>{staffName}</Text>
+        <Text style={styles.staffIdentitySubtitle}>{staffRole} · {assignedBranch}</Text>
+      </View>
+    </View>
+  );
+
+  const openLogoutConfirmation = () => {
+    setLogoutError('');
+    setLogoutConfirmationVisible(true);
+  };
+
+  const confirmLogout = () => {
+    if (logoutSubmissionLock.current) return;
+    logoutSubmissionLock.current = true;
+    setLogoutPending(true);
+    setLogoutError('');
+    try {
+      onLogout();
+    } catch (error) {
+      logoutSubmissionLock.current = false;
+      setLogoutPending(false);
+      setLogoutError(error instanceof Error ? error.message : 'Unable to log out. Please try again.');
+    }
+  };
+
+  const renderMore = () => (
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.morePageContent} showsVerticalScrollIndicator={false}>
+      {renderTopHeader('More', 'Manila · Branch 1 / Staff')}
+      {renderStaffIdentityCard()}
+      <View style={styles.moreNavigationList}>
+        {([
+          {
+            icon: '☷',
+            title: 'Daily inventory check',
+            description: 'Count, compare and submit for review',
+            onPress: startDailyInventoryCheck,
+          },
+          {
+            icon: '⇩',
+            title: 'Transaction history',
+            description: "Your branch's complete stock ledger",
+            onPress: () => setRoute('stockHistory'),
+          },
+          {
+            icon: '↗',
+            title: 'Rush-Hour Fast-Log',
+            description: 'Common cooking and waste presets',
+            onPress: () => setRoute('fastLog'),
+          },
+          {
+            icon: '♙',
+            title: 'Profile & settings',
+            description: 'Account, access and secure logout',
+            onPress: () => setRoute('profileSettings'),
+          },
+        ]).map((option) => (
+          <Pressable
+            key={option.title}
+            accessibilityRole="button"
+            onPress={option.onPress}
+            style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
+          >
+            <View style={styles.moreNavigationIcon}>
+              <Text style={styles.moreNavigationIconText}>{option.icon}</Text>
+            </View>
+            <View style={styles.moreNavigationCopy}>
+              <Text style={styles.moreNavigationTitle}>{option.title}</Text>
+              <Text style={styles.moreNavigationDescription}>{option.description}</Text>
+            </View>
+            <Text style={styles.moreNavigationChevron}>›</Text>
+          </Pressable>
         ))}
       </View>
       <Pressable
         accessibilityRole="button"
-        onPress={onLogout}
-        style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+        onPress={openLogoutConfirmation}
+        style={({ pressed }) => [styles.logoutButton, styles.moreLogoutButton, pressed && styles.pressed]}
       >
         <Text style={styles.logoutButtonText}>Log out</Text>
       </Pressable>
     </ScrollView>
   );
+
+  const renderProfileSettings = () => {
+    const appNotificationsEnabled = notificationPreferences.lowStock && notificationPreferences.expiration;
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to More"
+            onPress={() => setRoute('more')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Profile &amp; settings</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.profileSettingsContent} showsVerticalScrollIndicator={false}>
+          {renderStaffIdentityCard()}
+
+          <View style={styles.profileInformationCard}>
+            <View style={styles.profileInformationRow}>
+              <View style={styles.profileInformationCell}>
+                <Text style={styles.profileInformationLabel}>Email</Text>
+                <Text style={styles.profileInformationValue} numberOfLines={1}>{staffEmail}</Text>
+              </View>
+              <View style={styles.profileInformationCell}>
+                <Text style={styles.profileInformationLabel}>Role</Text>
+                <Text style={styles.profileInformationValue}>{staffRole}</Text>
+              </View>
+            </View>
+            <View style={styles.profileInformationRow}>
+              <View style={styles.profileInformationCell}>
+                <Text style={styles.profileInformationLabel}>Account status</Text>
+                <Text style={styles.profileInformationValue}>Active</Text>
+              </View>
+            </View>
+          </View>
+
+          <Text style={styles.profileSectionTitle}>Assigned branch · Staff</Text>
+          <View style={styles.assignedBranchField}>
+            <Text style={styles.assignedBranchText}>{assignedBranch}</Text>
+            <Text style={styles.assignedBranchLock}>▣</Text>
+          </View>
+          <Text style={styles.assignedBranchHint}>Read-only. Staff record for their assigned branch only.</Text>
+          <View style={styles.profileInfoBanner}>
+            <Text style={styles.profileInfoIcon}>i</Text>
+            <Text style={styles.profileInfoText}>
+              Assigned branch cannot be changed. Master ingredients are read-only; contact the owner for account or ingredient updates.
+            </Text>
+          </View>
+
+          <View style={styles.profileSettingsCard}>
+            <View style={styles.profileSettingsHeading}>
+              <Text style={styles.profileSectionTitle}>App notifications</Text>
+              <Text style={styles.profileSettingsValue}>
+                {appNotificationsEnabled ? 'Enabled for stock and expiry (in-app)' : 'Some in-app alerts are off'}
+              </Text>
+            </View>
+            <View style={styles.profilePreferenceRow}>
+              <Text style={styles.profilePreferenceLabel}>Low-stock alerts</Text>
+              <Switch
+                accessibilityLabel="Low-stock alerts"
+                value={notificationPreferences.lowStock}
+                onValueChange={(value) =>
+                  setNotificationPreferences((current) => ({ ...current, lowStock: value }))
+                }
+                trackColor={{ false: '#D8D8DE', true: '#F6A2BC' }}
+                thumbColor={notificationPreferences.lowStock ? colors.pink : '#FFFFFF'}
+              />
+            </View>
+            <View style={styles.profilePreferenceRow}>
+              <Text style={styles.profilePreferenceLabel}>Expiry alerts</Text>
+              <Switch
+                accessibilityLabel="Expiry alerts"
+                value={notificationPreferences.expiration}
+                onValueChange={(value) =>
+                  setNotificationPreferences((current) => ({ ...current, expiration: value }))
+                }
+                trackColor={{ false: '#D8D8DE', true: '#F6A2BC' }}
+                thumbColor={notificationPreferences.expiration ? colors.pink : '#FFFFFF'}
+              />
+            </View>
+            <Text style={styles.profileNotificationNote}>These preferences control in-app alert visibility only; push notifications are not configured.</Text>
+          </View>
+
+          <View style={styles.profileVersionRow}>
+            <Text style={styles.profileSectionTitle}>App version</Text>
+            <Text style={styles.profileSettingsValue}>TakoSync · {appVersion}</Text>
+          </View>
+
+          <View style={styles.themeSection}>
+            <Text style={styles.profileSectionTitle}>Theme toggle</Text>
+            <View style={styles.themeSegmentedControl}>
+              <View style={[styles.themeOption, styles.themeOptionSelected]}>
+                <Text style={[styles.themeOptionIcon, styles.themeOptionIconSelected]}>☼</Text>
+                <Text style={[styles.themeOptionText, styles.themeOptionTextSelected]}>Light</Text>
+              </View>
+              <View style={[styles.themeOption, styles.themeOptionDisabled]}>
+                <Text style={styles.themeOptionIcon}>☾</Text>
+                <Text style={styles.themeOptionText}>Dark</Text>
+              </View>
+            </View>
+            <Text style={styles.themeLimitation}>Dark theme is not supported in this light-only app.</Text>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={openLogoutConfirmation}
+            style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.logoutButtonText}>Log out</Text>
+          </Pressable>
+        </ScrollView>
+      </>
+    );
+  };
 
   const renderIngredientSelector = () => (
     <View style={styles.fieldGroup}>
@@ -1766,6 +3094,175 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           </Pressable>
         </View>
         <Text style={styles.formDemoNote}>Local demo only · This example does not create a live stock record.</Text>
+      </ScrollView>
+    </>
+  );
+
+  const renderWasteForm = () => (
+    <>
+      <View style={styles.formHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to Stocks"
+          onPress={returnFromForm}
+          style={styles.backButton}
+        >
+          <Text style={styles.backGlyph}>‹</Text>
+        </Pressable>
+        <View style={styles.formHeaderCopy}>
+          <Text style={styles.formTitle}>Waste / Spoilage</Text>
+          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+        </View>
+      </View>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.compactFormContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.fieldGroup}>
+          <Text style={styles.fieldLabel}>Item *</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Item, ${selectedIngredient ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} before this event` : 'choose an item'}`}
+            onPress={() => setIngredientListOpen((open) => !open)}
+            style={[styles.selectInput, wasteFieldErrors.item ? styles.textInputError : undefined]}
+          >
+            <Text style={styles.selectText} numberOfLines={1}>
+              {selectedIngredient
+                ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} before this event`
+                : 'Select an item'}
+            </Text>
+            <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
+          </Pressable>
+          {wasteFieldErrors.item ? <Text style={styles.fieldError}>{wasteFieldErrors.item}</Text> : null}
+          {ingredientListOpen ? (
+            <View style={styles.reasonDropdown}>
+              {ingredients.map((item) => (
+                <Pressable
+                  key={item.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: item.id === selectedIngredientId }}
+                  onPress={() => {
+                    setSelectedIngredientId(item.id);
+                    setIngredientListOpen(false);
+                    setWasteFieldErrors((current) => ({ ...current, item: '' }));
+                  }}
+                  style={styles.reasonOption}
+                >
+                  <Text style={[styles.reasonOptionText, item.id === selectedIngredientId && styles.reasonOptionSelected]}>
+                    {item.name} · {formatUnitQuantity(item.quantity, item.unit)} before this event
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <TextField
+          label="Quantity wasted *"
+          value={quantity}
+          onChangeText={(value) => {
+            changeQuantity(value);
+            if (wasteValidationAttempted) {
+              const parsed = Number(value);
+              const error = !value.trim() || !Number.isFinite(parsed) || parsed <= 0
+                ? 'Enter a quantity greater than 0.'
+                : selectedIngredient && !isValidDailyQuantity(value, selectedIngredient.unit)
+                  ? selectedIngredient.unit === 'pcs'
+                    ? 'Enter a whole number of pieces.'
+                    : 'Enter a quantity with up to 2 decimal places.'
+                : selectedIngredient && parsed > selectedIngredient.quantity
+                  ? `Only ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available.`
+                  : '';
+              setWasteFieldErrors((current) => ({ ...current, quantity: error }));
+            }
+          }}
+          placeholder="Enter quantity"
+          keyboardType="decimal-pad"
+          error={wasteFieldErrors.quantity}
+          suffix={selectedIngredient?.unit}
+        />
+
+        <View>
+          <DatePickerField
+            label="Transaction date *"
+            value={transactionDate}
+            onChange={(date) => {
+              setTransactionDate(date);
+              setWasteFieldErrors((current) => ({ ...current, date: '' }));
+            }}
+          />
+          {wasteFieldErrors.date ? <Text style={styles.fieldError}>{wasteFieldErrors.date}</Text> : null}
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.fieldLabel}>Type / Reason *</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setReasonListOpen((open) => !open)}
+            style={[styles.selectInput, wasteFieldErrors.reason ? styles.textInputError : undefined]}
+          >
+            <Text style={styles.selectText}>{reason}</Text>
+            <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>
+          </Pressable>
+          {reasonListOpen ? (
+            <View style={styles.reasonDropdown}>
+              {wasteReasons.map((option) => (
+                <Pressable
+                  key={option}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: reason === option }}
+                  onPress={() => {
+                    setReason(option);
+                    setReasonListOpen(false);
+                    setWasteFieldErrors((current) => ({ ...current, reason: '', description: '' }));
+                  }}
+                  style={styles.reasonOption}
+                >
+                  <Text style={[styles.reasonOptionText, reason === option && styles.reasonOptionSelected]}>
+                    {option}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {wasteFieldErrors.reason ? <Text style={styles.fieldError}>{wasteFieldErrors.reason}</Text> : null}
+        </View>
+
+        <TextField
+          label="Other description *"
+          value={wasteDescription}
+          onChangeText={updateWasteDescription}
+          placeholder="Describe the cause"
+          error={wasteFieldErrors.description}
+        />
+        <TextField
+          label="Notes (optional)"
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Add notes"
+          multiline
+        />
+
+        <View style={styles.formButtons}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={confirming}
+            onPress={reviewTransaction}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.saveButtonText}>Review waste</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={confirming}
+            onPress={returnFromForm}
+            style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+        </View>
       </ScrollView>
     </>
   );
@@ -2685,69 +4182,436 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     );
   };
 
-  const renderStockHistory = () => (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
+  const renderWasteSuccess = () => {
+    const receipt = currentWasteReceipt;
+    const receiptIngredient = receipt
+      ? ingredients.find((item) => item.id === receipt.ingredientId)
+      : undefined;
+    if (!receipt || !receiptIngredient) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No waste receipt to display</Text>
+          <Pressable onPress={() => setRoute('stocks')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Stocks</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.compactFormContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Stocks"
+            onPress={() => setRoute('stocks')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Waste / Spoilage</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <View style={styles.receiptSuccessBanner}>
+          <Text style={styles.receiptSuccessIcon}>✓</Text>
+          <Text style={styles.receiptSuccessText}>Waste record saved successfully.</Text>
+        </View>
+        <View style={styles.receiptSummaryCard}>
+          <Text style={styles.receiptSummaryTitle}>{receiptIngredient.name} · Waste</Text>
+          <Text style={styles.receiptSummaryQuantity}>-{formatUnitQuantity(receipt.quantity, receiptIngredient.unit)}</Text>
+          <Text style={styles.receiptSummarySubtitle}>
+            {formatUnitQuantity(receipt.previousQuantity, receiptIngredient.unit)} → {formatUnitQuantity(receipt.newQuantity, receiptIngredient.unit)} after waste
+          </Text>
+        </View>
+        <View style={styles.receiptDetails}>
+          <DetailRow label="Reference" value={receipt.reference} />
+          <DetailRow label="Date" value={formatWasteDate(receipt.transactionDate)} />
+          <DetailRow label="Reason" value={receipt.reason === 'Waste / Other' ? 'Other' : receipt.reason} />
+          <DetailRow label="Description" value={receipt.description || '—'} />
+          <DetailRow label="Notes" value={receipt.notes || '—'} />
+          <DetailRow label="Staff" value="Isabel San Esteban" />
+        </View>
+        <View style={styles.permissionNotice}>
+          <Text style={styles.permissionIcon}>i</Text>
+          <Text style={styles.permissionText}>
+            This new waste event was deducted once after confirmation. Historical example WS-1025-001 (54 pcs → 48 pcs) is already reflected in the opening balance and is never deducted again.
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRoute('stockHistory')}
+          style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.historyButtonText}>View transaction history</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRoute('stocks')}
+          style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.cancelButtonText}>Back to Stocks</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  };
+
+  const renderStockHistory = () => {
+    const octopusLedger = historyLedgerExplanation('octopus');
+    const historicalEggWaste = historyTransactions.find(
+      (transaction) => transaction.id === 'seed-ws-eggs',
+    );
+
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.historyPageContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Stocks"
+            onPress={() => setRoute('stocks')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Transaction history</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <View style={styles.historySearchWrap}>
+          <SearchBar
+            value={historySearch}
+            onChangeText={setHistorySearch}
+            placeholder="Search item or transaction reference"
+          />
+        </View>
+        <View style={styles.historyMetadataRow}>
+          <View style={styles.historyMetadataCopy}>
+            <Text style={styles.historyMetadataTitle}>Manila · Branch 1 · 25 Oct 2026</Text>
+            <Text style={styles.historyMetadataSubtitle}>
+              {historyTypeFilter === 'All types' ? 'All transaction types' : historyTypeFilter}
+              {' · '}{filteredHistoryTransactions.length} {filteredHistoryTransactions.length === 1 ? 'transaction' : 'transactions'}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={beginHistoryFilters}
+            style={({ pressed }) => [styles.historyFilterAction, pressed && styles.pressed]}
+          >
+            <Text style={styles.historyFilterActionText}>Filters</Text>
+          </Pressable>
+        </View>
+
+        {filteredHistoryTransactions.length > 0 ? (
+          <>
+            <View style={styles.historyTransactionList}>
+              {filteredHistoryTransactions.map((transaction) => (
+                <Pressable
+                  key={transaction.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${transaction.type} ${transaction.ingredientName}, ${transaction.movement > 0 ? 'plus' : 'minus'} ${formatUnitQuantity(transaction.quantity, transaction.unit)}, ${transaction.reference}`}
+                  onPress={() => {
+                    setSelectedHistoryTransactionId(transaction.id);
+                    setRoute('transactionDetails');
+                  }}
+                  style={({ pressed }) => [styles.historyTransactionCard, pressed && styles.pressed]}
+                >
+                  <View style={styles.historyTransactionTop}>
+                    <View style={styles.historyTransactionTitleWrap}>
+                      <Text style={styles.historyTransactionTitle}>
+                        {transaction.type === 'Stock-Out / Usage' ? 'Usage' : transaction.type} · {transaction.ingredientName}
+                      </Text>
+                      <Text style={styles.historyTransactionReference}>{transaction.reference}</Text>
+                    </View>
+                    <Text style={[
+                      styles.historyTransactionQuantity,
+                      transaction.movement > 0
+                        ? styles.historyTransactionPositive
+                        : styles.historyTransactionNegative,
+                    ]}>
+                      {transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
+                    </Text>
+                  </View>
+                  <Text style={styles.historyTransactionMeta}>
+                    {formatHistoryDateTime(transaction.transactionDate)} · {transaction.staff.split(' ')[0]} · Branch 1
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {octopusLedger || historicalEggWaste ? (
+              <View style={styles.historyLedgerBanner}>
+                <Text style={styles.permissionIcon}>i</Text>
+                <Text style={styles.permissionText}>
+                  {octopusLedger ? `${octopusLedger} ` : ''}
+                  {historicalEggWaste
+                    ? 'Eggs waste is already reflected in the recorded 48 pcs balance.'
+                    : ''}
+                </Text>
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <View style={styles.historyEmptyState}>
+            <CubeOutlineIcon />
+            <Text style={styles.historyEmptyTitle}>No transactions found.</Text>
+            <Text style={styles.historyEmptyText}>
+              There are no transactions matching these filters. Change the date, type or search to see records.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={resetHistoryFilters}
+              style={({ pressed }) => [styles.historyEmptyButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.historyEmptyButtonText}>Clear filters</Text>
+            </Pressable>
+          </View>
+        )}
+        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local transaction records for this session and sample history.</Text>
+      </ScrollView>
+    );
+  };
+
+  const renderHistoryFilters = () => (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.historyFilterPageContent}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.formHeader}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={() => setRoute('stocks')} style={styles.backButton}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to transaction history"
+          onPress={() => setRoute('stockHistory')}
+          style={styles.backButton}
+        >
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>Transaction history</Text>
+          <Text style={styles.formTitle}>History filters</Text>
           <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
         </View>
       </View>
-      <Text style={styles.historyPlaceholderText}>Local demo transactions</Text>
-      {stockReceipts.length === 0 && usageReceipts.length === 0 && fastLogReceipts.length === 0 ? (
-        <Text style={styles.emptyState}>No sample receipts have been confirmed in this session.</Text>
-      ) : (
-        <View style={styles.stockHistoryList}>
-          {fastLogReceipts.slice().reverse().map((receipt) => (
-            <View key={receipt.reference} style={styles.historyActivityCard}>
-              <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
-              <View style={styles.historyActivityCopy}>
-                <Text style={styles.historyActivityTitle}>{receipt.preset.name} · Fast-Log</Text>
-                <Text style={styles.historyActivityDetail}>
-                  {receipt.reference} · {receipt.deductions.map((deduction) => {
-                    const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
-                    return item ? `${item.name} -${formatUnitQuantity(deduction.quantity, item.unit)}` : '';
-                  }).filter(Boolean).join(' · ')} · {formatUsageDate(receipt.transactionDate)}
-                </Text>
-              </View>
-              <Text style={styles.historyActivityAmount}>{receipt.deductions.length} items</Text>
-            </View>
-          ))}
-          {usageReceipts.slice().reverse().map((receipt) => {
-            const first = receipt.deductions[0];
-            const item = ingredients.find((ingredient) => ingredient.id === first?.ingredientId);
-            return (
-              <View key={receipt.reference} style={styles.historyActivityCard}>
-                <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
-                <View style={styles.historyActivityCopy}>
-                  <Text style={styles.historyActivityTitle}>{item?.name ?? 'Ingredient'} usage · {receipt.reason}</Text>
-                  <Text style={styles.historyActivityDetail}>{receipt.reference} · {formatUsageDate(receipt.transactionDate)}</Text>
-                </View>
-                <Text style={styles.historyUsageAmount}>-{formatQuantity(first?.quantity ?? 0)} {item?.unit ?? ''}</Text>
-              </View>
-            );
-          })}
-          {stockReceipts.slice().reverse().map((receipt) => {
-            const item = ingredients.find((ingredient) => ingredient.id === receipt.ingredientId);
-            return (
-              <View key={receipt.reference} style={styles.historyActivityCard}>
-                <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
-                <View style={styles.historyActivityCopy}>
-                  <Text style={styles.historyActivityTitle}>{item?.name ?? 'Ingredient'} received</Text>
-                  <Text style={styles.historyActivityDetail}>{receipt.reference} · {formatReceiptDate(receipt.transactionDate)}</Text>
-                </View>
-                <Text style={styles.historyActivityAmount}>+{formatQuantity(receipt.quantity)} {item?.unit ?? ''}</Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-      <Text style={styles.detailDemoNote}>DEMO PREVIEW · These local entries are discarded when the app restarts.</Text>
+      <Text style={styles.historyFilterLabel}>Transaction type</Text>
+      <View style={styles.historyTypeChips}>
+        {historyTypeFilters.map((filter) => {
+          const selected = draftHistoryTypeFilter === filter;
+          return (
+            <Pressable
+              key={filter}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setDraftHistoryTypeFilter(filter)}
+              style={[styles.historyTypeChip, selected && styles.historyTypeChipSelected]}
+            >
+              <Text style={[styles.historyTypeChipText, selected && styles.historyTypeChipTextSelected]}>
+                {filter}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <DatePickerField
+        label="From date"
+        value={draftHistoryFromDate}
+        onChange={(date) => {
+          setDraftHistoryFromDate(date);
+          setHistoryDateError('');
+        }}
+      />
+      <DatePickerField
+        label="To date"
+        value={draftHistoryToDate}
+        onChange={(date) => {
+          setDraftHistoryToDate(date);
+          setHistoryDateError('');
+        }}
+      />
+      {historyDateError ? <Text style={styles.fieldError}>{historyDateError}</Text> : null}
+      <View style={styles.fieldGroup}>
+        <Text style={styles.fieldLabel}>Staff</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: historyStaffPickerOpen }}
+          onPress={() => setHistoryStaffPickerOpen((open) => !open)}
+          style={styles.selectInput}
+        >
+          <Text style={styles.selectText}>{draftHistoryStaffFilter}</Text>
+          <Text style={styles.selectChevron}>{historyStaffPickerOpen ? '⌃' : '⌄'}</Text>
+        </Pressable>
+        {historyStaffPickerOpen ? (
+          <View style={styles.reasonDropdown}>
+            {historyStaffOptions.map((staff) => (
+              <Pressable
+                key={staff}
+                accessibilityRole="button"
+                accessibilityState={{ selected: draftHistoryStaffFilter === staff }}
+                onPress={() => {
+                  setDraftHistoryStaffFilter(staff);
+                  setHistoryStaffPickerOpen(false);
+                }}
+                style={styles.reasonOption}
+              >
+                <Text style={[
+                  styles.reasonOptionText,
+                  draftHistoryStaffFilter === staff && styles.reasonOptionSelected,
+                ]}>{staff}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.formButtons}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={applyHistoryFilters}
+          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.saveButtonText}>Apply filters</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={resetTransactionFilters}
+          style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.cancelButtonText}>Reset filters</Text>
+        </Pressable>
+      </View>
     </ScrollView>
   );
+
+  const renderTransactionDetails = () => {
+    const transaction = selectedHistoryTransaction;
+    if (!transaction) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>Transaction not found</Text>
+          <Pressable onPress={() => setRoute('stockHistory')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to history</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const ledgerExplanation = historyLedgerExplanation(transaction.ingredientId);
+    const typeLabel = transaction.type === 'Usage' || transaction.type === 'Stock-Out / Usage'
+      ? 'Stock-Out / Usage'
+      : transaction.type;
+    const purpose = transaction.reason === 'Cooking usage'
+      ? 'Cooking usage'
+      : transaction.type === 'Stock-In'
+        ? 'Stock receipt'
+        : transaction.type;
+
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.historyDetailPageContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to transaction history"
+            onPress={() => setRoute('stockHistory')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Transaction details</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <View style={styles.historyDetailSummary}>
+          <Text style={styles.historyDetailSummaryTitle}>
+            {transaction.ingredientName} · {purpose}
+          </Text>
+          <Text style={[
+            styles.historyDetailSummaryQuantity,
+            transaction.movement > 0 && styles.historyTransactionPositive,
+          ]}>
+            {transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
+          </Text>
+          <Text style={styles.historyDetailSummaryReference}>
+            {transaction.reference} · {transaction.historical ? 'Recorded · historical sample' : 'Recorded'}
+          </Text>
+        </View>
+        <View style={styles.historyDetailRows}>
+          <DetailRow label="Transaction type" value={typeLabel} />
+          <DetailRow label="Branch" value={transaction.branch} />
+          <DetailRow label="Ingredient" value={`${transaction.ingredientName} · ${transaction.category}`} />
+          <DetailRow label="Date and time" value={formatHistoryDateTime(transaction.transactionDate)} />
+          <DetailRow label="Staff" value={transaction.staff} />
+          {transaction.type === 'Stock-In' ? (
+            <>
+              {transaction.beforeQuantity !== null ? (
+                <DetailRow label="Before receipt" value={formatUnitQuantity(transaction.beforeQuantity, transaction.unit)} />
+              ) : null}
+              <DetailRow label="Quantity received" value={formatUnitQuantity(transaction.quantity, transaction.unit)} />
+              {transaction.afterQuantity !== null ? (
+                <DetailRow label="After receipt" value={formatUnitQuantity(transaction.afterQuantity, transaction.unit)} />
+              ) : null}
+            </>
+          ) : transaction.type === 'Waste' || transaction.type === 'Spoilage' ? (
+            <>
+              {transaction.beforeQuantity !== null ? (
+                <DetailRow label="Before waste" value={formatUnitQuantity(transaction.beforeQuantity, transaction.unit)} />
+              ) : null}
+              <DetailRow label="Quantity wasted" value={formatUnitQuantity(transaction.quantity, transaction.unit)} />
+              {transaction.afterQuantity !== null ? (
+                <DetailRow label="After waste" value={formatUnitQuantity(transaction.afterQuantity, transaction.unit)} />
+              ) : null}
+              <DetailRow label="Reason" value={transaction.reason} />
+            </>
+          ) : (
+            <>
+              {transaction.beforeQuantity !== null ? (
+                <DetailRow label="Before usage" value={formatUnitQuantity(transaction.beforeQuantity, transaction.unit)} />
+              ) : null}
+              <DetailRow label="Quantity used" value={formatUnitQuantity(transaction.quantity, transaction.unit)} />
+              {transaction.afterQuantity !== null ? (
+                <DetailRow label="After usage" value={formatUnitQuantity(transaction.afterQuantity, transaction.unit)} />
+              ) : null}
+              <DetailRow label="Purpose" value={transaction.reason} />
+            </>
+          )}
+          {transaction.batchReference ? <DetailRow label="Batch reference" value={transaction.batchReference} /> : null}
+          <DetailRow label="Notes" value={transaction.notes || '—'} />
+        </View>
+        {transaction.historical && transaction.ingredientId === 'eggs' ? (
+          <View style={styles.historyLedgerBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              Historical Eggs waste is already reflected in the recorded 48 pcs balance. This display-only record does not deduct stock again.
+            </Text>
+          </View>
+        ) : ledgerExplanation ? (
+          <View style={styles.historyLedgerBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>{ledgerExplanation}</Text>
+          </View>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRoute('stockHistory')}
+          style={({ pressed }) => [styles.historyDetailButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.historyDetailButtonText}>Back to history</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  };
 
   let screenContent: React.ReactNode;
   switch (route) {
@@ -2763,6 +4627,18 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     case 'inventoryHistory':
       screenContent = renderInventoryHistory();
       break;
+    case 'notificationAlertDetails':
+      screenContent = renderNotificationAlertDetails();
+      break;
+    case 'dailyInventoryCheck':
+      screenContent = renderDailyInventoryCheck();
+      break;
+    case 'dailyCheckSuccess':
+      screenContent = renderDailyCheckSuccess();
+      break;
+    case 'profileSettings':
+      screenContent = renderProfileSettings();
+      break;
     case 'stocks':
       screenContent = renderStocks();
       break;
@@ -2773,8 +4649,10 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       screenContent = renderMovementForm();
       break;
     case 'fastLog':
-    case 'waste':
       screenContent = renderFastLogList();
+      break;
+    case 'waste':
+      screenContent = renderWasteForm();
       break;
     case 'fastLogReview':
       screenContent = renderFastLogReview();
@@ -2794,8 +4672,17 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     case 'stockInSuccess':
       screenContent = renderStockInSuccess();
       break;
+    case 'wasteSuccess':
+      screenContent = renderWasteSuccess();
+      break;
     case 'stockHistory':
       screenContent = renderStockHistory();
+      break;
+    case 'historyFilters':
+      screenContent = renderHistoryFilters();
+      break;
+    case 'transactionDetails':
+      screenContent = renderTransactionDetails();
       break;
     case 'notifications':
       screenContent = renderNotifications();
@@ -2809,6 +4696,194 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.screenArea}>{screenContent}</View>
       <BottomNavigation active={route} onSelect={navigate} />
+      <Modal
+        visible={logoutConfirmationVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!logoutPending) setLogoutConfirmationVisible(false);
+        }}
+      >
+        <View style={styles.logoutModalBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel logout"
+            disabled={logoutPending}
+            onPress={() => setLogoutConfirmationVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.logoutModalCard}>
+            <View style={styles.logoutModalIcon}>
+              <Text style={styles.logoutModalIconText}>↪</Text>
+            </View>
+            <Text style={styles.logoutModalTitle}>Are you sure you want to log out?</Text>
+            <Text style={styles.logoutModalDescription}>
+              End your demo session on this device? Sign-in uses local sample credentials in this preview.
+            </Text>
+            <View style={styles.logoutSessionPanel}>
+              <Text style={styles.logoutSessionText}>{staffName} · {staffRole}</Text>
+              <Text style={styles.logoutSessionText}>{assignedBranch}</Text>
+              <Text style={styles.logoutSessionNote}>Inventory and transaction data are local mock data and are not synced.</Text>
+              <Text style={styles.logoutSessionNote}>Settings changes are held for this session only.</Text>
+            </View>
+            {logoutError !== '' ? (
+              <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text>
+            ) : null}
+            <View style={styles.logoutModalActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={logoutPending}
+                onPress={() => setLogoutConfirmationVisible(false)}
+                style={({ pressed }) => [styles.logoutCancelAction, pressed && styles.pressed]}
+              >
+                <Text style={styles.logoutCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={logoutPending}
+                onPress={confirmLogout}
+                style={({ pressed }) => [
+                  styles.logoutConfirmAction,
+                  pressed && styles.pressed,
+                  logoutPending && styles.confirmButtonDisabled,
+                ]}
+              >
+                <Text style={styles.logoutConfirmText}>{logoutPending ? 'Logging out…' : 'Log out'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={dailyCheckModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDailyCheckModal(null)}
+      >
+        <View style={styles.dailyModalBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close daily inventory check dialog"
+            onPress={() => setDailyCheckModal(null)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.dailyModalCard}>
+            {dailyCheckModal === 'review' ? (
+              <>
+                <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
+                <Text style={styles.dailyModalTitle}>
+                  {dailyDiscrepancies.length > 0 ? 'Review discrepancy' : 'No discrepancies found'}
+                </Text>
+                <Text style={styles.dailyModalSubtitle}>
+                  {dailyDiscrepancies.length > 0
+                    ? 'Review the physical count. Recorded balances will not be overwritten.'
+                    : 'All physical counts match their recorded balances. No stock will be changed.'}
+                </Text>
+                <View style={styles.dailyModalSummary}>
+                  {dailyDiscrepancies.length > 0 ? (
+                    <>
+                      {dailyDiscrepancies.map((line) => (
+                        <React.Fragment key={line.ingredientId}>
+                          <Text style={styles.dailyModalSummaryText}>
+                            {line.name} · Manila · Branch 1
+                          </Text>
+                          <Text style={styles.dailyModalSummaryText}>
+                            Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Physical{' '}
+                            {formatDailyUnitQuantity(line.parsedQuantity, line.unit)}
+                          </Text>
+                          <Text style={styles.dailyModalSummaryEmphasis}>
+                            Computed difference {formatDailyDifference(line.difference ?? 0, line.unit)}
+                          </Text>
+                        </React.Fragment>
+                      ))}
+                      <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
+                      <Text style={styles.dailyModalSummaryText}>Pending owner review after submission</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.dailyModalSummaryText}>Manila · Branch 1</Text>
+                      <Text style={styles.dailyModalSummaryText}>
+                        {dailyCheckLines.length} ingredients counted · 0 discrepancies
+                      </Text>
+                      <Text style={styles.dailyModalSummaryText}>Recorded balances remain unchanged</Text>
+                    </>
+                  )}
+                </View>
+                <View style={styles.dailyModalActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setDailyCheckModal(null)}
+                    style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.dailyModalReviewText}>Review</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      if (validateDailyInventoryCheck()) setDailyCheckModal('confirm');
+                    }}
+                    style={({ pressed }) => [styles.dailyModalPrimaryButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.dailyModalPrimaryText}>Continue</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
+                  <Text style={styles.dailyModalIconText}>✓</Text>
+                </View>
+                <Text style={styles.dailyModalTitle}>Submit daily check?</Text>
+                <Text style={styles.dailyModalSubtitle}>
+                  Send this physical count for owner review. Recorded balances will not change.
+                </Text>
+                <View style={styles.dailyModalSummary}>
+                  <Text style={styles.dailyModalSummaryText}>Manila · Branch 1 · 25 Oct 2026</Text>
+                  <Text style={styles.dailyModalSummaryEmphasis}>
+                    {dailyCheckLines.length} ingredients counted · {dailyDiscrepancies.length}{' '}
+                    {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}
+                  </Text>
+                  {(dailyDiscrepancies.length > 0 ? dailyDiscrepancies : dailyCheckResults).map((line) => (
+                    <React.Fragment key={line.ingredientId}>
+                      <Text style={styles.dailyModalSummaryText}>
+                        {line.name}: Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Physical{' '}
+                        {line.valid ? formatDailyUnitQuantity(line.parsedQuantity, line.unit) : '—'}
+                      </Text>
+                      <Text style={styles.dailyModalSummaryText}>
+                        Difference {line.valid ? formatDailyDifference(line.difference ?? 0, line.unit) : '—'}
+                      </Text>
+                    </React.Fragment>
+                  ))}
+                  <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
+                </View>
+                <View style={styles.dailyModalActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() =>
+                      setDailyCheckModal(dailyDiscrepancies.length > 0 ? 'review' : null)
+                    }
+                    style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.dailyModalReviewText}>Review</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={dailyCheckSubmissionLock.current}
+                    onPress={submitDailyInventoryCheck}
+                    style={({ pressed }) => [
+                      styles.dailyModalPrimaryButton,
+                      pressed && styles.pressed,
+                      dailyCheckSubmissionLock.current && styles.confirmButtonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.dailyModalPrimaryText}>Submit check</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
       <Modal
         visible={fastLogPopupVisible}
         transparent
@@ -3034,11 +5109,14 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
             <View style={[
               styles.confirmIcon,
               (route === 'usagePreview' || route === 'fastLogPreview') && styles.usageConfirmIcon,
+              route === 'waste' && styles.wasteConfirmIcon,
             ]}>
-              <Text style={styles.confirmIconText}>↓</Text>
+              {route === 'waste' ? <WasteTrashIcon /> : <Text style={styles.confirmIconText}>↓</Text>}
             </View>
             <Text style={styles.confirmTitle}>
-              {route === 'fastLogPreview'
+              {route === 'waste'
+                ? 'Confirm waste record'
+                : route === 'fastLogPreview'
                 ? selectedFastLogPreset?.section === 'cooking'
                   ? 'Log one cooking batch?'
                   : 'Log waste preset?'
@@ -3048,18 +5126,38 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 ? 'Confirm Stock-In'
                 : route === 'fastLog'
                   ? 'Confirm Fast-Log'
-                  : route === 'waste'
-                    ? 'Confirm Waste / Spoilage'
-                    : 'Confirm Stock-Out'}
+                  : 'Confirm Stock-Out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
-              {route === 'fastLogPreview'
+              {route === 'waste'
+                ? 'Record this waste event for Manila · Branch 1?'
+                : route === 'fastLogPreview'
                 ? 'Confirm the edited quantities. Nothing is deducted until you confirm.'
                 : route === 'usagePreview'
                 ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from Manila · Branch 1?`
                 : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?`}
             </Text>
-            {route === 'fastLogPreview' && selectedFastLogPreset ? (
+            {route === 'waste' && selectedIngredient && transactionDate ? (
+              <View style={styles.confirmSummary}>
+                <Text style={styles.confirmSummaryText}>
+                  {selectedIngredient.name} · -{formatUnitQuantity(Number(quantity), selectedIngredient.unit)} · Waste
+                </Text>
+                <Text style={styles.confirmSummaryText}>{formatWasteDate(transactionDate)}</Text>
+                <Text style={styles.confirmSummaryText}>
+                  Reason: {reason === 'Waste / Other' ? 'Other' : reason}
+                </Text>
+                <Text style={styles.confirmSummaryText}>
+                  Description: {wasteDescription.trim() || '—'}
+                </Text>
+                <Text style={styles.confirmSummaryText}>
+                  {formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} → {formatUnitQuantity(
+                    selectedIngredient.quantity - Number(quantity),
+                    selectedIngredient.unit,
+                  )} after waste
+                </Text>
+                <Text style={styles.confirmSummaryText}>Notes: {notes.trim() || '—'}</Text>
+              </View>
+            ) : route === 'fastLogPreview' && selectedFastLogPreset ? (
               <View style={styles.confirmSummary}>
                 <Text style={styles.confirmSummaryText}>
                   {selectedFastLogPreset.name} · {selectedFastLogPreset.pieces ? `${fastLogPieces || selectedFastLogPreset.pieces} pieces` : fastLogReason}
@@ -3155,7 +5253,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 <Text style={styles.confirmButtonText}>
                   {confirming
                     ? 'Recording…'
-                    : route === 'fastLogPreview'
+                    : route === 'waste'
+                      ? 'Record waste'
+                      : route === 'fastLogPreview'
                       ? selectedFastLogPreset?.section === 'waste' ? 'Log waste' : 'Log batch'
                       : route === 'usagePreview'
                         ? 'Record usage'
@@ -3242,12 +5342,77 @@ const styles = StyleSheet.create({
   historyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
   historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
+  historyPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  historyFilterPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
+  historyDetailPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
+  historySearchWrap: { marginTop: 13, marginBottom: -3 },
+  historyMetadataRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, marginTop: 1, marginBottom: 11,
+  },
+  historyMetadataCopy: { flex: 1, minWidth: 0 },
+  historyMetadataTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  historyMetadataSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  historyFilterAction: { paddingHorizontal: 5, paddingVertical: 6 },
+  historyFilterActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  historyTransactionList: { gap: 8 },
+  historyTransactionCard: {
+    minHeight: 65, justifyContent: 'center', paddingHorizontal: 11, paddingVertical: 9,
+    borderRadius: 13, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line,
+  },
+  historyTransactionTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  historyTransactionTitleWrap: { flex: 1, minWidth: 0 },
+  historyTransactionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  historyTransactionReference: { color: colors.muted, fontFamily: font.regular, fontSize: 7, marginTop: 2 },
+  historyTransactionQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, textAlign: 'right' },
+  historyTransactionPositive: { color: colors.green },
+  historyTransactionNegative: { color: colors.navy },
+  historyTransactionMeta: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 5 },
+  historyLedgerBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 12,
+    backgroundColor: '#FFF5CB', marginTop: 13,
+  },
+  historyEmptyState: { flex: 1, minHeight: 370, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
+  historyEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, textAlign: 'center', marginTop: 13 },
+  historyEmptyText: { maxWidth: 275, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 6 },
+  historyEmptyButton: {
+    width: '100%', maxWidth: 270, minHeight: 45, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, backgroundColor: colors.pink, marginTop: 19,
+  },
+  historyEmptyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
+  historyFilterLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 10, marginTop: 17, marginBottom: 8 },
+  historyTypeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 17 },
+  historyTypeChip: {
+    minHeight: 31, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11,
+    borderRadius: 16, backgroundColor: '#EEEEEF',
+  },
+  historyTypeChipSelected: { backgroundColor: colors.navy },
+  historyTypeChipText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  historyTypeChipTextSelected: { color: colors.white },
+  historyDetailSummary: {
+    paddingHorizontal: 15, paddingVertical: 14, borderRadius: 16, backgroundColor: colors.navy,
+    marginTop: 14, marginBottom: 12, elevation: 3, shadowColor: colors.navy,
+    shadowOpacity: 0.1, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+  },
+  historyDetailSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
+  historyDetailSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 25, lineHeight: 31, marginTop: 3 },
+  historyDetailSummaryReference: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  historyDetailRows: {
+    paddingHorizontal: 11, borderRadius: 14, backgroundColor: '#EEEEEF',
+    borderWidth: 1, borderColor: colors.line, marginBottom: 12,
+  },
+  historyDetailButton: {
+    minHeight: 46, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, backgroundColor: colors.pink, marginTop: 4,
+  },
+  historyDetailButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
   historyActivityCard: { flexDirection: 'row', alignItems: 'center', padding: 13, borderRadius: 15, backgroundColor: '#EEEEEF' },
   historyActivityMarker: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginRight: 10 },
   historyActivityGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 18 },
   historyActivityCopy: { flex: 1 },
   historyActivityTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   historyActivityDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 3 },
+  historicalWasteCard: { backgroundColor: '#FFF8DC', borderWidth: 1, borderColor: '#F1E5B8' },
   historyActivityAmount: { color: colors.green, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
   historyUsageAmount: { color: colors.red, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
   stockHistoryList: { gap: 9, marginTop: 10 },
@@ -3519,6 +5684,216 @@ const styles = StyleSheet.create({
   notificationPageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   markReadButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: '#FCE3EB', marginBottom: 17 },
   markReadText: { color: colors.pink, fontFamily: font.medium, fontSize: 8 },
+  notificationPageContent: { paddingHorizontal: 18, paddingTop: 19, paddingBottom: 20 },
+  alertFilterScroll: { flexGrow: 0, marginTop: -4, marginBottom: 13 },
+  alertFilterRow: { flexDirection: 'row', gap: 7, paddingRight: 8 },
+  alertFilterChip: {
+    minHeight: 31, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
+    borderRadius: 17, backgroundColor: '#EEEEEF',
+  },
+  alertFilterChipSelected: { backgroundColor: colors.navy },
+  alertFilterChipText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  alertFilterChipTextSelected: { color: colors.white },
+  alertMetadata: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginBottom: 11 },
+  inventoryAlertCard: {
+    minHeight: 78, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 13, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: '#E8E8EB',
+    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.045, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  inventoryAlertTopline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  inventoryAlertName: { flex: 1, color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  inventoryAlertBadge: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingVertical: 4,
+    borderRadius: 10, backgroundColor: '#FFF2C4',
+  },
+  inventoryExpiryBadge: { backgroundColor: '#FFF2C4' },
+  inventoryAlertBadgeIcon: { color: colors.orange, fontFamily: font.bold, fontSize: 9, marginRight: 4 },
+  inventoryAlertBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 7 },
+  inventoryAlertDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginTop: 6 },
+  alertEmptyCard: {
+    alignItems: 'center', paddingHorizontal: 17, paddingVertical: 23, borderRadius: 14,
+    backgroundColor: '#F5F5F7', marginTop: 1,
+  },
+  alertEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  alertEmptyText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 4 },
+  alertListInfoBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11,
+    backgroundColor: colors.yellow, marginTop: 14,
+  },
+  alertDetailContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 20 },
+  alertDetailBadge: {
+    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9,
+    paddingVertical: 5, borderRadius: 11, backgroundColor: '#FFF2C4', marginBottom: 10,
+  },
+  alertDetailExpiryBadge: { backgroundColor: '#FFF2C4' },
+  alertDetailBadgeIcon: { color: colors.orange, fontFamily: font.bold, fontSize: 10, marginRight: 5 },
+  alertDetailBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  alertDetailSummaryCard: {
+    minHeight: 112, justifyContent: 'center', paddingHorizontal: 15, paddingVertical: 13,
+    borderRadius: 16, backgroundColor: colors.navy, marginBottom: 12,
+    elevation: 4, shadowColor: colors.navy, shadowOpacity: 0.12, shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  alertDetailName: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
+  alertDetailQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 27, lineHeight: 32, marginTop: 3 },
+  alertDetailSubtext: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  alertDetailRows: {
+    paddingHorizontal: 11, borderRadius: 13, backgroundColor: colors.white,
+    borderWidth: 1, borderColor: colors.line, marginBottom: 11,
+  },
+  alertDetailInfoBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11,
+    backgroundColor: colors.yellow, marginBottom: 12,
+  },
+  alertDetailInfoIcon: {
+    width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white,
+    backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10,
+    textAlign: 'center', lineHeight: 17, marginRight: 7,
+  },
+  alertDetailInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
+  alertDetailActions: { gap: 8 },
+  alertDetailPrimary: {
+    minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
+    borderRadius: 12, backgroundColor: colors.pink,
+  },
+  alertDetailPrimaryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  alertDetailSecondary: {
+    minHeight: 42, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
+    borderRadius: 12, backgroundColor: '#EEEEEF',
+  },
+  alertDetailSecondaryText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  morePageContent: { paddingHorizontal: 17, paddingTop: 16, paddingBottom: 18 },
+  staffIdentityCard: {
+    minHeight: 81, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15,
+    paddingVertical: 13, borderRadius: 16, backgroundColor: colors.navy, marginBottom: 13,
+    elevation: 4, shadowColor: colors.navy, shadowOpacity: 0.13, shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  staffIdentityAvatar: {
+    width: 43, height: 43, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 22, backgroundColor: colors.pink, marginRight: 11,
+  },
+  staffIdentityHead: {
+    width: 11, height: 11, borderRadius: 6, backgroundColor: colors.white, marginBottom: 2,
+  },
+  staffIdentityBody: {
+    width: 22, height: 12, borderTopLeftRadius: 12, borderTopRightRadius: 12,
+    backgroundColor: colors.white,
+  },
+  staffIdentityCopy: { flex: 1, minWidth: 0 },
+  staffIdentityName: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  staffIdentitySubtitle: { color: '#FFA126', fontFamily: font.medium, fontSize: 8, marginTop: 3 },
+  moreNavigationList: { gap: 8 },
+  moreNavigationCard: {
+    minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    paddingVertical: 9, borderRadius: 13, backgroundColor: '#EEEEEF',
+    borderWidth: 1, borderColor: '#E8E8EB',
+  },
+  moreNavigationIcon: {
+    width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 11, backgroundColor: '#FFF8EA', borderWidth: 1, borderColor: '#F6D6A4',
+    marginRight: 10,
+  },
+  moreNavigationIconText: { color: '#E59420', fontFamily: font.medium, fontSize: 18, lineHeight: 22 },
+  moreNavigationCopy: { flex: 1, minWidth: 0 },
+  moreNavigationTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  moreNavigationDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 2 },
+  moreNavigationChevron: { color: '#A8A8B1', fontFamily: font.regular, fontSize: 22, marginLeft: 5 },
+  moreLogoutButton: { marginTop: 12, marginBottom: 3 },
+  profileSettingsContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 18 },
+  profileInformationCard: {
+    paddingHorizontal: 12, paddingVertical: 9, borderRadius: 13, backgroundColor: '#EEEEEF',
+    marginBottom: 13,
+  },
+  profileInformationRow: { flexDirection: 'row', gap: 9, paddingVertical: 4 },
+  profileInformationCell: { flex: 1, minWidth: 0 },
+  profileInformationLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
+  profileInformationValue: { color: colors.navy, fontFamily: font.medium, fontSize: 8, marginTop: 2 },
+  profileSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  assignedBranchField: {
+    minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 11, borderRadius: 10, backgroundColor: '#EEEEEF', marginTop: 6,
+  },
+  assignedBranchText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  assignedBranchLock: { color: colors.muted, fontSize: 14 },
+  assignedBranchHint: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 4, marginBottom: 9 },
+  profileInfoBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 9, borderRadius: 10,
+    backgroundColor: colors.yellow, marginBottom: 10,
+  },
+  profileInfoIcon: {
+    width: 16, height: 16, overflow: 'hidden', borderRadius: 8, color: colors.white,
+    backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 9,
+    textAlign: 'center', lineHeight: 16, marginRight: 7,
+  },
+  profileInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
+  profileSettingsCard: {
+    paddingHorizontal: 11, paddingVertical: 8, borderRadius: 12, backgroundColor: '#EEEEEF',
+    marginBottom: 10,
+  },
+  profileSettingsHeading: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    minHeight: 30,
+  },
+  profileSettingsValue: { color: colors.muted, fontFamily: font.regular, fontSize: 7, textAlign: 'right' },
+  profilePreferenceRow: {
+    minHeight: 35, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderTopWidth: 1, borderTopColor: '#DDDDDF',
+  },
+  profilePreferenceLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  profileNotificationNote: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 2 },
+  profileVersionRow: {
+    minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 1, marginBottom: 7,
+  },
+  themeSection: { marginBottom: 12 },
+  themeSegmentedControl: {
+    minHeight: 42, flexDirection: 'row', padding: 3, borderRadius: 11,
+    backgroundColor: '#EEEEEF', marginTop: 6,
+  },
+  themeOption: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 8, gap: 5,
+  },
+  themeOptionSelected: { backgroundColor: colors.navy },
+  themeOptionDisabled: { opacity: 0.58 },
+  themeOptionIcon: { color: colors.muted, fontSize: 14 },
+  themeOptionIconSelected: { color: '#FFA126' },
+  themeOptionText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  themeOptionTextSelected: { color: colors.white },
+  themeLimitation: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 4 },
+  logoutModalBackdrop: {
+    flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 21,
+    paddingVertical: 25, backgroundColor: 'rgba(16, 16, 39, 0.62)',
+  },
+  logoutModalCard: {
+    width: '100%', maxWidth: 355, padding: 17, borderRadius: 18, backgroundColor: colors.white,
+    elevation: 16, shadowColor: '#000000', shadowOpacity: 0.22, shadowRadius: 15,
+    shadowOffset: { width: 0, height: 7 },
+  },
+  logoutModalIcon: {
+    width: 35, height: 35, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 11, backgroundColor: '#FCE3EB', marginBottom: 10,
+  },
+  logoutModalIconText: { color: colors.pink, fontFamily: font.semibold, fontSize: 20, lineHeight: 23 },
+  logoutModalTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, lineHeight: 18 },
+  logoutModalDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 5 },
+  logoutSessionPanel: { padding: 10, borderRadius: 11, backgroundColor: '#EEEEEF', gap: 4, marginTop: 12 },
+  logoutSessionText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
+  logoutSessionNote: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
+  logoutError: { color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 12, marginTop: 8 },
+  logoutModalActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 9, marginTop: 14 },
+  logoutCancelAction: {
+    minWidth: 82, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 10, backgroundColor: '#EEEEF0',
+  },
+  logoutCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  logoutConfirmAction: {
+    minWidth: 95, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 10, backgroundColor: colors.pink,
+  },
+  logoutConfirmText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   notificationCard: { minHeight: 76, flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
   notificationUnread: { backgroundColor: '#FFFAFC', borderColor: '#F7C3D2' },
   notificationAlertIcon: { width: 39, height: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 13, marginRight: 11 },
@@ -3532,6 +5907,17 @@ const styles = StyleSheet.create({
   notificationDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 3 },
   unreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink, marginLeft: 8 },
   accountCard: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 16, backgroundColor: colors.pale, marginBottom: 13 },
+  dailyEntryCard: {
+    minHeight: 65, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
+    borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
+    marginBottom: 14, elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05,
+    shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+  },
+  dailyEntryIcon: {
+    width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, backgroundColor: '#FCE3EB', marginRight: 10,
+  },
+  dailyEntryIconText: { color: colors.pink, fontFamily: font.semibold, fontSize: 17 },
   accountName: { color: colors.ink, fontFamily: font.semibold, fontSize: 12 },
   accountBranch: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2 },
   settingsList: { overflow: 'hidden', borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
@@ -3556,6 +5942,97 @@ const styles = StyleSheet.create({
   backGlyph: { color: colors.navy, fontSize: 30, lineHeight: 32, marginTop: -3 },
   formTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, lineHeight: 19 },
   formSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
+  dailyCheckContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 18 },
+  dailyCheckIntro: { color: colors.navy, fontFamily: font.medium, fontSize: 9, lineHeight: 14, marginBottom: 12 },
+  dailyTableHeader: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingBottom: 6,
+  },
+  dailyColumnTitle: { color: colors.muted, fontFamily: font.medium, fontSize: 7, minWidth: 0 },
+  dailyIngredientColumn: { flex: 1.05 },
+  dailyRecordedColumn: { flex: 0.88, textAlign: 'center' },
+  dailyPhysicalColumn: { flex: 1.02, textAlign: 'center' },
+  dailyDifferenceColumn: { flex: 0.82, textAlign: 'right' },
+  dailyRows: { gap: 5 },
+  dailyIngredientRow: {
+    minHeight: 50, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7,
+    paddingVertical: 6, borderRadius: 10, backgroundColor: '#EEEEEF',
+  },
+  dailyIngredientRowDiscrepant: { backgroundColor: colors.paleRed },
+  dailyIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, minWidth: 0 },
+  dailyRecordedValue: { color: colors.ink, fontFamily: font.medium, fontSize: 7, textAlign: 'center', minWidth: 0 },
+  dailyPhysicalCell: { alignItems: 'stretch', justifyContent: 'center' },
+  dailyPhysicalInput: {
+    minHeight: 34, width: '100%', paddingHorizontal: 3, borderRadius: 7,
+    borderWidth: 1, borderColor: '#E1E1E4', backgroundColor: '#EEEEEF',
+    color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'center',
+  },
+  dailyPhysicalInputDiscrepant: { borderWidth: 1.5, borderColor: colors.red, backgroundColor: colors.white },
+  dailyPhysicalInputError: { borderWidth: 1.5, borderColor: colors.red },
+  dailyFieldError: { color: colors.red, fontFamily: font.regular, fontSize: 6, lineHeight: 9, textAlign: 'center', marginTop: 2 },
+  dailyDifferenceValue: { color: colors.red, fontFamily: font.semibold, fontSize: 7, minWidth: 0, textAlign: 'right' },
+  dailyDifferenceZero: { color: colors.green },
+  dailyDifferenceNegative: { color: colors.red },
+  dailyRemarksGroup: { marginTop: 15, marginBottom: 12 },
+  dailyLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 9, marginBottom: 5 },
+  dailyRemarksInput: {
+    minHeight: 48, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 10,
+    backgroundColor: '#EEEEEF', color: colors.ink, fontFamily: font.regular, fontSize: 9,
+    textAlignVertical: 'top',
+  },
+  dailyDiscrepancyBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 10,
+    backgroundColor: colors.paleRed, marginBottom: 10,
+  },
+  dailyDiscrepancyIcon: {
+    width: 17, height: 17, overflow: 'hidden', borderRadius: 9, borderWidth: 1,
+    borderColor: colors.red, color: colors.red, fontFamily: font.bold, fontSize: 10,
+    textAlign: 'center', lineHeight: 15, marginRight: 7,
+  },
+  dailyDiscrepancyText: { flex: 1, color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
+  dailyFormError: { color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 13, marginBottom: 9 },
+  dailyFormActions: { gap: 8, marginTop: 3 },
+  dailyPrimaryButton: {
+    minHeight: 45, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
+    backgroundColor: colors.pink,
+  },
+  dailyPrimaryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
+  dailySecondaryButton: {
+    minHeight: 43, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
+    backgroundColor: '#EEEEF0',
+  },
+  dailySecondaryButtonText: { color: '#555560', fontFamily: font.semibold, fontSize: 10 },
+  dailyDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, textAlign: 'center', marginTop: 9 },
+  dailySuccessFallback: { flex: 1, justifyContent: 'center', padding: 18 },
+  dailySuccessBanner: {
+    minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    borderRadius: 10, backgroundColor: colors.paleGreen, marginBottom: 13,
+  },
+  dailySuccessIcon: { color: colors.green, fontFamily: font.bold, fontSize: 15, marginRight: 8 },
+  dailySuccessText: { flex: 1, color: '#286D45', fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
+  dailySummaryCard: {
+    paddingHorizontal: 14, paddingVertical: 13, borderRadius: 15, backgroundColor: colors.navy,
+    marginBottom: 12,
+  },
+  dailySummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
+  dailySummaryCount: { color: colors.orange, fontFamily: font.bold, fontSize: 29, lineHeight: 34, marginTop: 2 },
+  dailySummarySubtitle: { color: '#E2E2E9', fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  dailyReceiptDetails: { paddingHorizontal: 11, borderRadius: 13, backgroundColor: '#EEEEEF', marginBottom: 11 },
+  dailyReceiptRow: {
+    minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, borderBottomWidth: 1, borderBottomColor: '#DDDDDF',
+  },
+  dailyReceiptLabel: { flex: 0.8, color: colors.muted, fontFamily: font.regular, fontSize: 7 },
+  dailyReceiptValue: { flex: 1.2, color: colors.navy, fontFamily: font.medium, fontSize: 7, textAlign: 'right' },
+  dailyAuditBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 10,
+    backgroundColor: colors.yellow, marginBottom: 12,
+  },
+  dailyAuditIcon: {
+    width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white,
+    backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10, textAlign: 'center',
+    lineHeight: 17, marginRight: 7,
+  },
+  dailyAuditText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   compactFormContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 22 },
   receiptInfoBanner: { flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11, backgroundColor: '#FFF5CB', marginBottom: 12 },
   receiptInfoIcon: { width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white, backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10, textAlign: 'center', marginRight: 8 },
@@ -3629,6 +6106,16 @@ const styles = StyleSheet.create({
   usageWarningBanner: { padding: 11, borderRadius: 11, backgroundColor: colors.paleRed, marginBottom: 11 },
   usageWarningText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14 },
   usageConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
+  wasteConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
+  wasteTrashIcon: { width: 20, height: 22, alignItems: 'center', justifyContent: 'flex-end' },
+  wasteTrashHandle: { width: 7, height: 2, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: colors.pink, marginBottom: 2 },
+  wasteTrashLid: { width: 16, height: 2, borderRadius: 1, backgroundColor: colors.pink, marginBottom: 2 },
+  wasteTrashBody: {
+    width: 13, height: 14, flexDirection: 'row', justifyContent: 'space-evenly',
+    paddingTop: 3, borderWidth: 1.5, borderTopWidth: 0, borderColor: colors.pink,
+    borderBottomLeftRadius: 3, borderBottomRightRadius: 3,
+  },
+  wasteTrashLine: { width: 1, height: 6, backgroundColor: colors.pink },
   receiptSummaryCard: { paddingHorizontal: 16, paddingVertical: 15, borderRadius: 17, backgroundColor: colors.navy, marginBottom: 14 },
   receiptSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
   receiptSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 31, lineHeight: 37, marginTop: 3 },
@@ -3651,6 +6138,38 @@ const styles = StyleSheet.create({
   confirmButton: { minWidth: 104, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   confirmButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   confirmButtonDisabled: { opacity: 0.6 },
+  dailyModalBackdrop: {
+    flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 19,
+    paddingVertical: 26, backgroundColor: 'rgba(16, 16, 39, 0.58)',
+  },
+  dailyModalCard: {
+    width: '100%', maxWidth: 365, maxHeight: '90%', padding: 17, borderRadius: 19,
+    backgroundColor: colors.white, elevation: 16, shadowColor: '#000000',
+    shadowOpacity: 0.22, shadowRadius: 15, shadowOffset: { width: 0, height: 7 },
+  },
+  dailyModalIcon: {
+    width: 37, height: 37, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, borderWidth: 1.5, borderColor: colors.pink, backgroundColor: '#FFF8FA',
+    marginBottom: 10,
+  },
+  dailyConfirmIcon: { backgroundColor: '#FCE3EB' },
+  dailyModalIconText: { color: colors.pink, fontFamily: font.semibold, fontSize: 20, lineHeight: 23 },
+  dailyModalTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 14, lineHeight: 19 },
+  dailyModalSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 4 },
+  dailyModalSummary: {
+    maxHeight: 230, padding: 10, borderRadius: 11, backgroundColor: '#EEEEEF',
+    gap: 4, marginTop: 11,
+  },
+  dailyModalSummaryText: { color: colors.navy, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
+  dailyModalSummaryEmphasis: { color: colors.navy, fontFamily: font.semibold, fontSize: 7, lineHeight: 11 },
+  dailyModalActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 13 },
+  dailyModalReviewButton: { minWidth: 56, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
+  dailyModalReviewText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  dailyModalPrimaryButton: {
+    minWidth: 100, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.pink,
+  },
+  dailyModalPrimaryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
   modalBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 22, backgroundColor: 'rgba(16, 16, 39, 0.42)' },
   calendarModal: { width: '100%', maxWidth: 350, padding: 18, borderRadius: 20, backgroundColor: colors.white },

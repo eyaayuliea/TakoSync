@@ -16,6 +16,21 @@ An Expo + React Native + TypeScript starter implementing the Loading, Welcome, t
 
 Type-check with `npm run typecheck` after dependencies are installed.
 
+## Project structure
+
+- `App.tsx` is the Expo entrypoint and re-exports the application root from `frontend/App.tsx`.
+- `frontend/App.tsx` contains the existing Loading, Welcome, demo Login, Owner dashboard, and Staff routing.
+- `frontend/staff/StaffWorkspace.tsx` contains the Staff screens, navigation state, and in-memory mock inventory and transaction workflows.
+- `frontend/navigation/BottomNavigation.tsx` contains the shared Staff bottom navigation and route-to-tab mapping.
+- `assets/` contains the existing image assets used by the frontend.
+- `app.json`, `package.json`, and `tsconfig.json` remain at the repository root as Expo and package-manager configuration.
+
+## Backend and data boundary
+
+This repository currently has no backend server, Supabase SDK or configuration, API client, database queries, or server-side authentication. Staff inventory, receipts, sample history, and demo sign-in are frontend-only, local/mock behavior. Transaction updates exist only in application state and are lost on restart. A separate `backend/` directory is therefore not created; adding one without backend code would be misleading.
+
+For a future Supabase integration, keep credentials that must remain secret (including service-role keys) on a trusted server or Supabase-managed function. A mobile client must not contain privileged secrets. Any client-side Supabase configuration should use only public project credentials and be isolated behind a data/service layer before replacing the current mock state.
+
 ## Assets
 - `assets/takosync-logo.png` and `assets/takoyaki-plate.png` are crops from the reference screenshot supplied with the request. They are temporary reference-derived assets, not separate original/high-resolution brand files. Replace them with the original transparent logo and a clean food photo when available.
 
