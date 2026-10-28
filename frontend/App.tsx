@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
 import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
@@ -19,6 +19,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
+import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
+import { isSupabaseConfigured } from './services/supabase';
+import {
+  getCurrentUser,
+  loadOwnerInventory,
+  signIn,
+  signOut,
+  type AppUser,
+} from '../backend/services/takosync';
 
 const PINK = '#F20D55';
 const NAVY = '#101026';
@@ -37,52 +46,43 @@ const DASHBOARD_COLORS = {
   neutral: '#B7B7BE',
   butterCream: '#FFF4D6',
 } as const;
-const DEMO_ACCOUNTS = [
-  { username: 'lorraine', password: 'jade123', role: 'Owner', displayName: 'Lorraine Gelo', email: 'lorraine@gelos.ph', branch: 'Manila · Branch 1' },
-  { username: 'staff', password: "stafftakoyaki'26", role: 'Staff', displayName: 'Isabel San Esteban', email: 'isabel@gelos.ph', branch: 'Manila · Branch 1' },
-] as const;
 type PreviewInventoryItem = {
   name: string;
   category: string;
   quantity: string;
   lowStock: boolean;
   expiration: string | null;
+  branch?: string;
 };
-const DEMO_INVENTORY: PreviewInventoryItem[] = [
-  { name: 'Octopus', category: 'Seafood', quantity: '3kg', lowStock: true, expiration: null },
-  { name: 'Takoyaki batter', category: 'Dry goods', quantity: '2 bags', lowStock: true, expiration: null },
-  { name: 'Spring onion', category: 'Produce', quantity: '450 g', lowStock: true, expiration: null },
-  { name: 'Flour', category: 'Dry Goods', quantity: '907g', lowStock: false, expiration: '27 Oct 2026' },
-  { name: 'Tako sauce', category: 'Condiments', quantity: '4 bottles', lowStock: false, expiration: '30 Oct 2026' },
-  { name: 'Bonito flakes', category: 'Dry goods', quantity: '6 packs', lowStock: false, expiration: '31 Oct 2026' },
-  { name: 'Tenkasu', category: 'Dry goods', quantity: '8 packs', lowStock: false, expiration: null },
-  { name: 'Eggs', category: 'Produce', quantity: '5 trays', lowStock: false, expiration: null },
-];
-const DEMO_ACTIVITY = [
-  { action: 'Stock-In', item: 'Takoyaki flour', detail: 'Added 4 bags · Today, 9:42 AM' },
-  { action: 'Daily Check', item: 'Branch inventory', detail: 'Completed · Today, 8:15 AM' },
-  { action: 'Stock-Out', item: 'Octopus', detail: 'Used 0.8 kg · Yesterday, 6:20 PM' },
-];
 type Screen = 'loading' | 'welcome' | 'login' | 'dashboard' | 'staffWorkspace';
-type Role = (typeof DEMO_ACCOUNTS)[number]['role'];
-type AuthenticatedUser = {
-  username: string;
-  role: Role;
-  displayName: string;
-  email: string;
-  branch: string;
-};
+type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'History' | 'Alerts';
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  );
+}
+
+function AppContent() {
+  const { colors, isDark, setMode } = useTheme();
+  const styles = useAppStyles();
   const [screen, setScreen] = useState<Screen>('loading');
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [authenticating, setAuthenticating] = useState(false);
+  const authLock = useRef(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const logoutLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
+  const [ownerData, setOwnerData] = useState<Awaited<ReturnType<typeof loadOwnerInventory>> | null>(null);
+  const [ownerLoading, setOwnerLoading] = useState(false);
   const [fontsLoaded] = useFonts({
     Poppins_400Regular,
     Poppins_500Medium,
@@ -105,11 +105,84 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [screen, fontsLoaded]);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let active = true;
+    getCurrentUser()
+      .then((user) => {
+        if (!active || !user) return;
+        setAuthenticatedUser(user);
+        setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoginError(error instanceof Error ? error.message : 'Unable to restore the saved session.');
+          setScreen('login');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authenticatedUser?.role !== 'Owner') {
+      setOwnerData(null);
+      return;
+    }
+    let active = true;
+    setOwnerLoading(true);
+    loadOwnerInventory()
+      .then((data) => {
+        if (active) {
+          setOwnerData(data);
+          setDashboardMessage('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setDashboardMessage(error instanceof Error ? error.message : 'Unable to load branch inventory.');
+      })
+      .finally(() => {
+        if (active) setOwnerLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authenticatedUser]);
+
   const logoWidth = Math.min(frameWidth * 0.48, 230);
   const foodSize = Math.min(frameWidth * 0.57, 250, frameHeight * 0.3);
-  const lowStockItems = DEMO_INVENTORY.filter((item) => item.lowStock);
-  const expiringItems = DEMO_INVENTORY.filter((item) => item.expiration !== null);
-  const trackedItemCount = DEMO_INVENTORY.length;
+  const branchNames = new Map((ownerData?.branches ?? []).map((branch) => [
+    branch.id,
+    `${branch.city ? `${branch.city} · ` : ''}Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`,
+  ]));
+  const ownerIngredients = new Map((ownerData?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient]));
+  const ownerCategories = new Map((ownerData?.categories ?? []).map((category) => [category.id, category.name]));
+  const ownerBatches = new Map<string, NonNullable<typeof ownerData>['batches'][number][]>();
+  for (const batch of ownerData?.batches ?? []) {
+    const key = `${batch.branch_id}:${batch.ingredient_id}`;
+    ownerBatches.set(key, [...(ownerBatches.get(key) ?? []), batch]);
+  }
+  const branchInventory: PreviewInventoryItem[] = (ownerData?.inventory ?? []).flatMap((record) => {
+    const ingredient = ownerIngredients.get(record.ingredient_id);
+    if (!ingredient) return [];
+    const expiration = ownerBatches.get(`${record.branch_id}:${record.ingredient_id}`)?.[0]?.expiration_date ?? null;
+    const expirationTime = expiration ? new Date(`${expiration}T00:00:00`).getTime() : null;
+    const isNearExpiry = expirationTime !== null &&
+      expirationTime <= new Date().setHours(0, 0, 0, 0) + 7 * 86_400_000;
+    return [{
+      name: ingredient.name,
+      category: ownerCategories.get(ingredient.category_id) ?? 'Other',
+      quantity: `${Number(record.quantity)} ${ingredient.unit}`,
+      lowStock: Number(record.quantity) <= Number(record.minimum_stock),
+      expiration: isNearExpiry ? new Date(`${expiration}T00:00:00`).toLocaleDateString('en-GB') : null,
+      branch: branchNames.get(record.branch_id) ?? 'Branch',
+    }];
+  });
+  const lowStockItems = branchInventory.filter((item) => item.lowStock);
+  const expiringItems = branchInventory.filter((item) => item.expiration !== null);
+  const pendingDailyChecks = (ownerData?.dailyChecks ?? []).filter((check) => check.status === 'pending_owner_review');
+  const trackedItemCount = branchInventory.length;
   const stockAlertCount = lowStockItems.length + expiringItems.length;
   const searchTerm = dashboardSearch.trim().toLowerCase();
   const filterItems = (items: PreviewInventoryItem[]) =>
@@ -118,56 +191,62 @@ export default function App() {
     );
   const visibleLowStockItems = filterItems(lowStockItems);
   const visibleExpiringItems = filterItems(expiringItems);
-  const handleDemoAction = (action: string) => {
-    setDashboardMessage(`${action} is a visual preview. Transactions are not connected.`);
-  };
-
-  const handleLogin = () => {
-    const normalizedUsername = username.trim().toLowerCase();
-    if (!normalizedUsername || !password) {
-      setLoginError('Enter your username and password to continue.');
+  const handleLogin = async () => {
+    if (authLock.current) return;
+    if (!username.trim() || !password) {
+      setLoginError('Enter your email and password to continue.');
       return;
     }
-
-    const account = DEMO_ACCOUNTS.find(
-      (candidate) => candidate.username === normalizedUsername && candidate.password === password,
-    );
-    if (!account) {
-      setAuthenticatedUser(null);
-      setLoginError('Incorrect username or password. Please try again.');
-      return;
-    }
-
-    setAuthenticatedUser({
-      username: account.username,
-      role: account.role,
-      displayName: account.displayName,
-      email: account.email,
-      branch: account.branch,
-    });
+    authLock.current = true;
+    setAuthenticating(true);
     setLoginError('');
-    setScreen(account.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+    try {
+      const user = await signIn(username, password);
+      setAuthenticatedUser(user);
+      setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
+    } finally {
+      authLock.current = false;
+      setAuthenticating(false);
+    }
   };
 
-  const handleLogout = () => {
+  const clearSignedInState = () => {
     setAuthenticatedUser(null);
+    setOwnerData(null);
     setUsername('');
     setPassword('');
+    setDashboardTab('Dashboard');
+  };
+
+  const handleLogout = async () => {
+    if (logoutLock.current) return;
+    logoutLock.current = true;
+    setLoggingOut(true);
+    try {
+      await signOut();
+      clearSignedInState();
+      setLoginError('');
+      setScreen('welcome');
+    } catch (error) {
+      setDashboardMessage(error instanceof Error ? error.message : 'Unable to end the session. Please try again.');
+    } finally {
+      logoutLock.current = false;
+      setLoggingOut(false);
+    }
+  };
+
+  const handleStaffLogout = async () => {
+    await signOut();
+    clearSignedInState();
     setLoginError('');
     setScreen('welcome');
   };
 
-  const handleStaffLogout = () => {
-    setAuthenticatedUser(null);
-    setUsername('');
-    setPassword('');
-    setLoginError('');
-    setScreen('login');
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
           <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
@@ -254,7 +333,7 @@ export default function App() {
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
-                        <Text style={styles.loginLabel}>Username *</Text>
+                        <Text style={styles.loginLabel}>Email *</Text>
                         <TextInput
                           value={username}
                           onChangeText={(value) => {
@@ -262,11 +341,11 @@ export default function App() {
                             setLoginError('');
                           }}
                           style={styles.loginInput}
-                          placeholder="Enter your username"
-                          placeholderTextColor="#777783"
+                          placeholder="Enter your email"
+                          placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
                           autoCapitalize="none"
                           autoCorrect={false}
-                          accessibilityLabel="Username, required"
+                          accessibilityLabel="Email, required"
                           returnKeyType="next"
                         />
                         <Text style={[styles.loginLabel, styles.passwordLabel]}>Password *</Text>
@@ -278,22 +357,28 @@ export default function App() {
                           }}
                           style={styles.loginInput}
                           placeholder="Enter your password"
-                          placeholderTextColor="#777783"
+                          placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
                           secureTextEntry
                           accessibilityLabel="Password, required"
                           returnKeyType="done"
                           onSubmitEditing={handleLogin}
                         />
                         <Text style={styles.loginHelper}>
-                          Accounts are created by the owner. If your account is inactive, contact the owner.
+                          Sign in with the email and password assigned to your account. Contact the owner if you need access.
                         </Text>
+                        {!isSupabaseConfigured && (
+                          <Text style={styles.errorText}>
+                            Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env, then restart Expo.
+                          </Text>
+                        )}
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel="Log In"
                           onPress={handleLogin}
-                          style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed]}
+                          disabled={authenticating || !isSupabaseConfigured}
+                          style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed, (authenticating || !isSupabaseConfigured) && { opacity: 0.6 }]}
                         >
-                          <Text style={styles.loginButtonText}>Log In</Text>
+                          <Text style={styles.loginButtonText}>{authenticating ? 'Signing in…' : 'Log In'}</Text>
                         </Pressable>
                       </View>
                     </ScrollView>
@@ -317,7 +402,7 @@ export default function App() {
                         <View style={styles.profileBody} />
                       </View>
                       <View style={styles.greetingGroup}>
-                        <Text style={styles.dashboardGreeting}>Hello, Manila Branch!</Text>
+                        <Text style={styles.dashboardGreeting}>Hello, {authenticatedUser.branch}!</Text>
                         <Text style={styles.dashboardSubheading}>{authenticatedUser.role} dashboard</Text>
                       </View>
                     </View>
@@ -325,7 +410,7 @@ export default function App() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Notifications"
-                        onPress={() => setDashboardMessage('You’re all caught up. This is a demo preview.')}
+                        onPress={() => setDashboardMessage('Owner notifications are not configured in this screen.')}
                         style={({ pressed }) => [styles.notificationButton, pressed && styles.buttonPressed]}
                       >
                         <Text style={styles.notificationIcon}>🔔</Text>
@@ -333,11 +418,21 @@ export default function App() {
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
+                        accessibilityLabel={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+                        accessibilityState={{ selected: isDark }}
+                        onPress={() => setMode(isDark ? 'light' : 'dark')}
+                        style={({ pressed }) => [styles.themeToggleButton, pressed && styles.buttonPressed]}
+                      >
+                        <Text style={styles.themeToggleText}>{isDark ? '☼' : '☾'}</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
                         accessibilityLabel="Log out"
+                        disabled={loggingOut}
                         onPress={handleLogout}
                         style={({ pressed }) => [styles.logoutButton, pressed && styles.buttonPressed]}
                       >
-                        <Text style={styles.logoutButtonText}>Log out</Text>
+                        <Text style={styles.logoutButtonText}>{loggingOut ? 'Logging out…' : 'Log out'}</Text>
                       </Pressable>
                     </View>
                   </View>
@@ -350,9 +445,9 @@ export default function App() {
                       value={dashboardSearch}
                       onChangeText={setDashboardSearch}
                       placeholder="Search inventory"
-                      placeholderTextColor={DASHBOARD_COLORS.secondaryText}
+                      placeholderTextColor={isDark ? colors.secondaryText : DASHBOARD_COLORS.secondaryText}
                       style={styles.searchInput}
-                      accessibilityLabel="Search demo inventory"
+                      accessibilityLabel="Search branch inventory"
                       returnKeyType="search"
                     />
                     {dashboardSearch !== '' && (
@@ -410,8 +505,24 @@ export default function App() {
                             accessibilityLabel="Takoyaki"
                           />
                         </View>
-                        <Text style={styles.summaryDemoLabel}>DEMO</Text>
+                        <Text style={styles.summaryDemoLabel}>{ownerLoading ? 'LOADING' : 'LIVE DATA'}</Text>
                       </View>
+
+                      {pendingDailyChecks.length > 0 && (
+                        <View style={styles.alertsNote}>
+                          <Text style={styles.alertsNoteTitle}>
+                            {pendingDailyChecks.length} daily {pendingDailyChecks.length === 1 ? 'check' : 'checks'} awaiting review
+                          </Text>
+                          {pendingDailyChecks.map((check) => (
+                            <Text key={check.id} style={styles.alertsNoteText}>
+                              {branchNames.get(check.branch_id) ?? 'Branch'} · {check.reference} · {check.check_date}
+                            </Text>
+                          ))}
+                          <Text style={styles.alertsNoteText}>
+                            Daily check approval is not available in this Owner screen yet.
+                          </Text>
+                        </View>
+                      )}
 
                       <View style={styles.sectionHeadingRow}>
                         <Text style={styles.sectionHeading}>Quick Actions</Text>
@@ -420,15 +531,15 @@ export default function App() {
                       <View style={styles.quickActions}>
                         {[
                           { label: 'Stock-In', icon: '＋', color: DASHBOARD_COLORS.information },
-                          { label: 'Stock-Out', icon: '↗', color: DASHBOARD_COLORS.pink },
-                          { label: 'Waste', icon: '⌫', color: DASHBOARD_COLORS.discrepancy },
+                          { label: 'Stock-Out', icon: '↗', color: isDark ? colors.accent : DASHBOARD_COLORS.pink },
+                          { label: 'Waste', icon: '⌫', color: isDark ? colors.error : DASHBOARD_COLORS.discrepancy },
                           { label: 'Daily Check', icon: '✓', color: DASHBOARD_COLORS.success },
                         ].map((action) => (
                           <Pressable
                             key={action.label}
                             accessibilityRole="button"
-                            accessibilityLabel={`${action.label} demo action`}
-                            onPress={() => handleDemoAction(action.label)}
+                            accessibilityLabel={`${action.label} action`}
+                            onPress={() => setDashboardMessage(`${action.label} is not available from this read-only dashboard.`)}
                             style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}
                           >
                             <View style={[styles.quickActionIcon, { backgroundColor: `${action.color}14` }]}>
@@ -444,18 +555,25 @@ export default function App() {
                   {dashboardTab === 'History' && (
                     <View style={styles.historyView}>
                       <Text style={styles.sectionHeading}>Recent Activity</Text>
-                      <Text style={styles.historyCaption}>Sample activity · demo preview only</Text>
-                      {DEMO_ACTIVITY.map((activity) => (
-                        <View key={`${activity.action}-${activity.item}`} style={styles.activityCard}>
-                          <View style={styles.activityIcon}>
-                            <Text style={styles.activityIconText}>↗</Text>
-                          </View>
-                          <View style={styles.activityCopy}>
-                            <Text style={styles.activityTitle}>{activity.action} · {activity.item}</Text>
-                            <Text style={styles.activityDetail}>{activity.detail}</Text>
-                          </View>
+                      <Text style={styles.historyCaption}>Latest inventory activity across accessible branches</Text>
+                      {(ownerData?.transactions ?? []).map((activity) => {
+                      const ingredient = ownerIngredients.get(activity.ingredient_id);
+                      return (
+                      <View key={activity.id} style={styles.activityCard}>
+                        <View style={styles.activityIcon}>
+                          <Text style={styles.activityIconText}>↗</Text>
                         </View>
-                      ))}
+                        <View style={styles.activityCopy}>
+                          <Text style={styles.activityTitle}>{activity.type.replace('_', ' ')} · {ingredient?.name ?? activity.ingredient_id}</Text>
+                          <Text style={styles.activityDetail}>
+                            {branchNames.get(activity.branch_id) ?? 'Branch'} · {Number(activity.quantity)} {activity.unit} · {new Date(activity.transaction_date).toLocaleString()}
+                          </Text>
+                        </View>
+                      </View>
+                      )})}
+                      {(ownerData?.transactions.length ?? 0) === 0 && (
+                      <Text style={styles.emptySearchText}>{ownerLoading ? 'Loading activity…' : 'No inventory transactions recorded yet.'}</Text>
+                      )}
                     </View>
                   )}
                   {(dashboardTab === 'Dashboard' || dashboardTab === 'Alerts') && (
@@ -479,13 +597,13 @@ export default function App() {
                           contentContainerStyle={styles.itemCarousel}
                         >
                           {visibleLowStockItems.map((item) => (
-                            <View key={item.name} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
+                            <View key={`${item.branch ?? ''}-${item.name}`} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
                               <View style={styles.itemImageContainer}>
                                 <Image
                                   source={require('../assets/takoyaki-plate.png')}
                                   style={styles.itemImage}
                                   resizeMode="cover"
-                                  accessibilityLabel={`${item.name} demo image`}
+                                  accessibilityLabel={`${item.name} image`}
                                 />
                               </View>
                               <View style={styles.itemDetails}>
@@ -503,7 +621,9 @@ export default function App() {
                           ))}
                         </ScrollView>
                       ) : (
-                        <Text style={styles.emptySearchText}>No low-stock demo items match your search.</Text>
+                        <Text style={styles.emptySearchText}>
+                          {ownerLoading ? 'Loading branch inventory…' : 'No low-stock items match your search.'}
+                        </Text>
                       )}
 
                       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
@@ -519,13 +639,13 @@ export default function App() {
                           contentContainerStyle={styles.itemCarousel}
                         >
                           {visibleExpiringItems.map((item) => (
-                            <View key={item.name} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
+                            <View key={`${item.branch ?? ''}-${item.name}`} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
                               <View style={styles.itemImageContainer}>
                                 <Image
                                   source={require('../assets/takoyaki-plate.png')}
                                   style={styles.itemImage}
                                   resizeMode="cover"
-                                  accessibilityLabel={`${item.name} demo image`}
+                                  accessibilityLabel={`${item.name} image`}
                                 />
                               </View>
                               <View style={styles.itemDetails}>
@@ -545,21 +665,18 @@ export default function App() {
                           ))}
                         </ScrollView>
                       ) : (
-                        <Text style={styles.emptySearchText}>No expiration demo items match your search.</Text>
+                        <Text style={styles.emptySearchText}>No near-expiry items match your search.</Text>
                       )}
                     </>
                   )}
 
                   {dashboardTab === 'Alerts' && (
                     <View style={styles.alertsNote}>
-                      <Text style={styles.alertsNoteTitle}>Demo alerts</Text>
+                      <Text style={styles.alertsNoteTitle}>Branch inventory alerts</Text>
                       <Text style={styles.alertsNoteText}>
-                        These sample alerts are for visual preview only and are not connected to a live inventory.
+                        Alerts are based on saved branch quantities and active batches. Contact the owner for inventory changes.
                       </Text>
                     </View>
-                  )}
-                  {dashboardTab === 'Dashboard' && (
-                    <Text style={styles.demoNotice}>DEMO PREVIEW · Sample inventory only, not connected to a live store.</Text>
                   )}
                 </ScrollView>
 
@@ -606,7 +723,9 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+function useAppStyles() {
+  const theme = useTheme();
+  return useMemo(() => StyleSheet.create(createThemedStyles({
   safeArea: { flex: 1, backgroundColor: '#F1F1F4' },
   canvas: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   frameShadow: { backgroundColor: '#FFFFFF' },
@@ -707,6 +826,11 @@ const styles = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#F5F5F7',
   },
+  themeToggleButton: {
+    width: 34, height: 34, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 17, backgroundColor: '#F5F5F7',
+  },
+  themeToggleText: { color: NAVY, fontSize: 17, lineHeight: 21 },
   notificationIcon: { fontSize: 18, lineHeight: 24 },
   notificationDot: {
     position: 'absolute', top: 8, right: 8, width: 7, height: 7, borderRadius: 4,
@@ -834,4 +958,5 @@ const styles = StyleSheet.create({
   navigationIconSelected: { color: DASHBOARD_COLORS.white },
   navigationLabel: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_500Medium', fontSize: 9, marginTop: 1 },
   navigationLabelActive: { color: DASHBOARD_COLORS.white },
-});
+  }, theme)), [theme]);
+}

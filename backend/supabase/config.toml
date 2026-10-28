@@ -1,0 +1,24 @@
+project_id = "takosync"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:8081"
+additional_redirect_urls = ["http://localhost:8081"]
+
+[auth.email]
+enable_signup = false
+double_confirm_changes = true
+enable_confirmations = true

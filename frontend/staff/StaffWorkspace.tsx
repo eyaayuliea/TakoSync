@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   FlatList,
@@ -14,6 +14,14 @@ import {
   View,
 } from 'react-native';
 import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
+import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
+import {
+  loadInventory,
+  loadTransactionHistory,
+  recordInventoryTransactions,
+  submitDailyStockCheck,
+  type AppUser,
+} from '../../backend/services/takosync';
 
 const colors = {
   pink: '#F20D55',
@@ -65,86 +73,6 @@ type Ingredient = {
   tint: string;
 };
 
-const initialIngredients: Ingredient[] = [
-  {
-    id: 'octopus',
-    name: 'Octopus',
-    category: 'Seafood',
-    quantity: 3,
-    unit: 'kg',
-    threshold: 5,
-    lowStock: true,
-    expiration: '30 Oct 2026',
-    nearExpiry: false,
-    minimumStock: 5,
-    type: 'Frozen seafood',
-    unitName: 'Kilograms (kg)',
-    receivedBatch: 'OCT-2510 · 25 Oct 2026',
-    batches: [{ reference: 'OCT-2510', receivedDate: '25 Oct 2026', expirationDate: '30 Oct 2026' }],
-    lastUpdated: '25 Oct 2026 · 10:15 AM',
-    emoji: '🐙',
-    tint: '#FCE9DE',
-  },
-  {
-    id: 'flour',
-    name: 'Flour',
-    category: 'Dry Goods',
-    quantity: 12,
-    unit: 'kg',
-    threshold: 5,
-    lowStock: false,
-    expiration: null,
-    nearExpiry: false,
-    minimumStock: 5,
-    type: 'Dry goods',
-    unitName: 'Kilograms (kg)',
-    receivedBatch: 'FLR-2510 · 24 Oct 2026',
-    batches: [{ reference: 'FLR-2510', receivedDate: '24 Oct 2026', expirationDate: null }],
-    lastUpdated: '25 Oct 2026 · 9:30 AM',
-    emoji: '🌾',
-    tint: '#FFF1D8',
-  },
-  {
-    id: 'eggs',
-    name: 'Eggs',
-    category: 'Dairy & eggs',
-    quantity: 48,
-    unit: 'pcs',
-    threshold: 24,
-    lowStock: false,
-    expiration: '2 Nov 2026',
-    nearExpiry: false,
-    minimumStock: 24,
-    type: 'Fresh eggs',
-    unitName: 'Pieces (pcs)',
-    receivedBatch: 'EGG-2510 · 25 Oct 2026',
-    batches: [{ reference: 'EGG-2510', receivedDate: '25 Oct 2026', expirationDate: '2 Nov 2026' }],
-    lastUpdated: '25 Oct 2026 · 10:20 AM',
-    emoji: '🥚',
-    tint: '#FFF4D8',
-  },
-  {
-    id: 'sauces',
-    name: 'Sauces',
-    category: 'Condiments',
-    quantity: 2,
-    unit: 'L',
-    threshold: 2,
-    lowStock: false,
-    expiration: '27 Oct 2026',
-    nearExpiry: true,
-    minimumStock: 1,
-    type: 'Takoyaki sauce',
-    unitName: 'Liters (L)',
-    receivedBatch: 'SC-B1-2710 · 23 Oct 2026',
-    batchReference: 'SC-B1-2710',
-    batches: [{ reference: 'SC-B1-2710', receivedDate: '23 Oct 2026', expirationDate: '27 Oct 2026' }],
-    lastUpdated: '25 Oct 2026 · 10:05 AM',
-    emoji: '🫙',
-    tint: '#FBE7E9',
-  },
-];
-
 const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments'];
 const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -162,11 +90,6 @@ function formatUsageDate(date: Date) {
 
 function formatWasteDate(date: Date) {
   return `${formatDate(date)} · 08:30 AM`;
-}
-
-function formatStockInReference(date: Date, receiptNumber: number) {
-  const datePart = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }).replace('/', '');
-  return `SI-${datePart}-${String(receiptNumber).padStart(3, '0')}`;
 }
 
 type StockReceipt = {
@@ -246,13 +169,6 @@ type DailyInventoryCheck = {
   status: 'pendingOwnerReview' | 'submitted';
 };
 
-type StaffAccount = {
-  displayName: string;
-  role: string;
-  email: string;
-  branch: string;
-};
-
 type WasteReason = 'Waste / Other' | 'Damaged' | 'Spoiled' | 'Expired';
 
 type WasteReceipt = {
@@ -290,7 +206,6 @@ type HistoryTransaction = {
   beforeQuantity: number | null;
   afterQuantity: number | null;
   batchReference: string | null;
-  historical: boolean;
 };
 
 const historyTypeFilters: HistoryTypeFilter[] = [
@@ -302,112 +217,9 @@ const historyTypeFilters: HistoryTypeFilter[] = [
   'Spoilage',
 ];
 
-function transactionDateAt(hour: number, minute: number) {
-  const date = new Date(2026, 9, 25);
-  date.setHours(hour, minute, 0, 0);
-  return date;
-}
-
-function dateAtTime(date: Date, hour: number, minute: number) {
-  const result = new Date(date.getTime());
-  result.setHours(hour, minute, 0, 0);
-  return result;
-}
-
 function formatHistoryDateTime(date: Date) {
   return `${formatDate(date)} · ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
 }
-
-const initialHistoryTransactions: HistoryTransaction[] = [
-  {
-    id: 'seed-si-octopus',
-    reference: 'SI-1025-001',
-    type: 'Stock-In',
-    ingredientId: 'octopus',
-    ingredientName: 'Octopus',
-    category: 'Seafood',
-    quantity: 5,
-    unit: 'kg',
-    movement: 5,
-    branchId: 'manila-branch-1',
-    branch: 'Manila · Branch 1',
-    staffId: 'staff-isabel-san-esteban',
-    staff: 'Isabel San Esteban',
-    transactionDate: transactionDateAt(8, 0),
-    reason: 'Stock-In',
-    notes: 'Opening delivery',
-    beforeQuantity: 0,
-    afterQuantity: 5,
-    batchReference: null,
-    historical: true,
-  },
-  {
-    id: 'seed-us-octopus-001',
-    reference: 'US-1025-001',
-    type: 'Usage',
-    ingredientId: 'octopus',
-    ingredientName: 'Octopus',
-    category: 'Seafood',
-    quantity: 1,
-    unit: 'kg',
-    movement: -1,
-    branchId: 'manila-branch-1',
-    branch: 'Manila · Branch 1',
-    staffId: 'staff-isabel-san-esteban',
-    staff: 'Isabel San Esteban',
-    transactionDate: transactionDateAt(9, 30),
-    reason: 'Cooking usage',
-    notes: 'First cooking preparation',
-    beforeQuantity: 5,
-    afterQuantity: 4,
-    batchReference: null,
-    historical: true,
-  },
-  {
-    id: 'seed-us-octopus-002',
-    reference: 'US-1025-002',
-    type: 'Usage',
-    ingredientId: 'octopus',
-    ingredientName: 'Octopus',
-    category: 'Seafood',
-    quantity: 1,
-    unit: 'kg',
-    movement: -1,
-    branchId: 'manila-branch-1',
-    branch: 'Manila · Branch 1',
-    staffId: 'staff-isabel-san-esteban',
-    staff: 'Isabel San Esteban',
-    transactionDate: transactionDateAt(10, 15),
-    reason: 'Cooking usage',
-    notes: 'Second cooking preparation',
-    beforeQuantity: 4,
-    afterQuantity: 3,
-    batchReference: null,
-    historical: true,
-  },
-  {
-    id: 'seed-ws-eggs',
-    reference: 'WS-1025-001',
-    type: 'Waste',
-    ingredientId: 'eggs',
-    ingredientName: 'Eggs',
-    category: 'Dairy & eggs',
-    quantity: 6,
-    unit: 'pcs',
-    movement: -6,
-    branchId: 'manila-branch-1',
-    branch: 'Manila · Branch 1',
-    staffId: 'staff-isabel-san-esteban',
-    staff: 'Isabel San Esteban',
-    transactionDate: transactionDateAt(8, 30),
-    reason: 'Waste / Other',
-    notes: 'Tray slipped during handling · Cracked eggs discarded',
-    beforeQuantity: 54,
-    afterQuantity: 48,
-    batchReference: null,
-    historical: true,
-  },
-];
 
 const wasteReasons: WasteReason[] = ['Waste / Other', 'Damaged', 'Spoiled', 'Expired'];
 
@@ -475,8 +287,7 @@ const stockOutBatchPresets = [
   },
 ] as const;
 
-const openingDate = new Date(2026, 9, 25);
-const openingExpirationDate = new Date(2026, 9, 30);
+const openingDate = new Date();
 const nearExpiryWindowDays = 3;
 
 type InventoryAlertKind = 'lowStock' | 'expiration';
@@ -555,6 +366,8 @@ function SearchBar({
   onChangeText: (value: string) => void;
   placeholder?: string;
 }) {
+  const styles = useStaffStyles();
+  const { colors: themeColors } = useTheme();
   return (
     <View style={styles.searchBar}>
       <Text style={styles.searchGlyph}>⌕</Text>
@@ -563,7 +376,7 @@ function SearchBar({
         onChangeText={onChangeText}
         style={styles.searchInput}
         placeholder={placeholder}
-        placeholderTextColor={colors.muted}
+        placeholderTextColor={themeColors.secondaryText}
         returnKeyType="search"
         accessibilityLabel={placeholder}
       />
@@ -577,9 +390,15 @@ function SearchBar({
 }
 
 function IngredientThumbnail({ item, large = false }: { item: Ingredient; large?: boolean }) {
+  const styles = useStaffStyles();
+  const { colors: themeColors, isDark } = useTheme();
   return (
     <View
-      style={[styles.ingredientThumbnail, large && styles.largeThumbnail, { backgroundColor: item.tint }]}
+      style={[
+        styles.ingredientThumbnail,
+        large && styles.largeThumbnail,
+        { backgroundColor: isDark ? themeColors.surfaceSecondary : item.tint },
+      ]}
       accessibilityLabel={`${item.name} image placeholder`}
     >
       <Text style={large ? styles.largeThumbnailEmoji : styles.thumbnailEmoji}>{item.emoji}</Text>
@@ -596,6 +415,7 @@ function StatusBadge({
   tone: 'low' | 'good' | 'warning';
   alignRight?: boolean;
 }) {
+  const styles = useStaffStyles();
   const toneStyle = tone === 'low' ? styles.lowBadge : tone === 'warning' ? styles.warningBadge : styles.goodBadge;
   const textStyle = tone === 'low' ? styles.lowBadgeText : tone === 'warning' ? styles.warningBadgeText : styles.goodBadgeText;
   return (
@@ -618,6 +438,7 @@ function IngredientCard({
   cardWidth?: number;
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
 }) {
+  const styles = useStaffStyles();
   const Wrapper = onPress ? Pressable : View;
   const statusLabel = statusOverride?.label ?? (item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
@@ -645,6 +466,7 @@ function IngredientCard({
 }
 
 function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress: () => void }) {
+  const styles = useStaffStyles();
   const statusLabel = item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock';
   const statusTone = item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good';
 
@@ -669,6 +491,7 @@ function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress:
 }
 
 function FilterChip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  const styles = useStaffStyles();
   return (
     <Pressable
       accessibilityRole="button"
@@ -682,6 +505,7 @@ function FilterChip({ label, selected, onPress }: { label: string; selected: boo
 }
 
 function CubeOutlineIcon() {
+  const styles = useStaffStyles();
   return (
     <View style={styles.emptyCube}>
       <View style={styles.emptyCubeTopLeft} />
@@ -693,6 +517,7 @@ function CubeOutlineIcon() {
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
+  const styles = useStaffStyles();
   return (
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
@@ -702,6 +527,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 function WasteTrashIcon() {
+  const styles = useStaffStyles();
   return (
     <View style={styles.wasteTrashIcon} accessibilityLabel="Waste confirmation">
       <View style={styles.wasteTrashHandle} />
@@ -725,6 +551,7 @@ function ActionCard({
   icon: string;
   onPress: () => void;
 }) {
+  const styles = useStaffStyles();
   return (
     <Pressable
       accessibilityRole="button"
@@ -763,6 +590,8 @@ function TextField({
   error?: string;
   suffix?: string;
 }) {
+  const styles = useStaffStyles();
+  const { colors: themeColors, isDark } = useTheme();
   return (
     <View style={styles.fieldGroup}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -772,7 +601,7 @@ function TextField({
             value={value}
             onChangeText={onChangeText}
             placeholder={placeholder}
-            placeholderTextColor="#A0A0AA"
+            placeholderTextColor={isDark ? themeColors.secondaryText : '#A0A0AA'}
             keyboardType={keyboardType}
             multiline={multiline}
             textAlignVertical={multiline ? 'top' : 'center'}
@@ -785,7 +614,7 @@ function TextField({
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor="#A0A0AA"
+          placeholderTextColor={themeColors.secondaryText}
           keyboardType={keyboardType}
           multiline={multiline}
           textAlignVertical={multiline ? 'top' : 'center'}
@@ -806,6 +635,7 @@ function DatePickerField({
   value: Date | null;
   onChange: (date: Date) => void;
 }) {
+  const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
   const [month, setMonth] = useState(() => value ?? new Date());
   const firstDay = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
@@ -895,19 +725,40 @@ export default function StaffWorkspace({
   user,
   appVersion,
 }: {
-  onLogout: () => void;
-  user: StaffAccount | null;
+  onLogout: () => void | Promise<void>;
+  user: AppUser;
   appVersion: string;
 }) {
+  const theme = useTheme();
+  const styles = useStaffStyles();
+  const colors = {
+    ...theme.colors,
+    pink: theme.colors.accent,
+    navy: theme.isDark ? theme.colors.surface : '#101027',
+    orange: theme.colors.action,
+    ink: theme.isDark ? theme.colors.text : '#171724',
+    muted: theme.colors.secondaryText,
+    pale: theme.colors.surfaceSecondary,
+    line: theme.colors.border,
+    white: theme.isDark ? theme.colors.text : '#FFFFFF',
+    green: theme.colors.success,
+    paleGreen: theme.isDark ? theme.colors.surfaceSecondary : '#E8F6EC',
+    red: theme.colors.error,
+    paleRed: theme.isDark ? theme.colors.surfaceSecondary : '#FCE9EB',
+    yellow: theme.isDark ? theme.colors.warning : '#FFF2C4',
+  };
   const [route, setRoute] = useState<StaffRoute>('dashboard');
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
-  const [ingredients, setIngredients] = useState(initialIngredients);
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
+  const [backendLoading, setBackendLoading] = useState(true);
+  const [backendError, setBackendError] = useState('');
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
   const [dailyCheckRemarks, setDailyCheckRemarks] = useState('Recounted; bag short by 2 kg');
   const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);
   const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
-  const [dailyCheckRecords, setDailyCheckRecords] = useState<DailyInventoryCheck[]>([]);
   const [currentDailyCheck, setCurrentDailyCheck] = useState<DailyInventoryCheck | null>(null);
+  const [dailyCheckSubmitting, setDailyCheckSubmitting] = useState(false);
   const dailyCheckSubmissionLock = useRef(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -931,13 +782,11 @@ export default function StaffWorkspace({
   const [quantityError, setQuantityError] = useState('');
   const [confirmationVisible, setConfirmationVisible] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const movementSubmissionLock = useRef(false);
   const fastLogSubmissionLock = useRef(false);
   const wasteSubmissionLock = useRef(false);
-  const [stockReceipts, setStockReceipts] = useState<StockReceipt[]>([]);
   const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
-  const [wasteReceipts, setWasteReceipts] = useState<WasteReceipt[]>([]);
   const [currentWasteReceipt, setCurrentWasteReceipt] = useState<WasteReceipt | null>(null);
-  const [usageReceipts, setUsageReceipts] = useState<UsageReceipt[]>([]);
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [selectedFastLogPresetId, setSelectedFastLogPresetId] = useState('');
   const [fastLogDraftDeductions, setFastLogDraftDeductions] = useState<{ ingredientId: string; quantity: string }[]>([]);
@@ -946,7 +795,6 @@ export default function StaffWorkspace({
   const [fastLogPieces, setFastLogPieces] = useState('');
   const [fastLogFieldErrors, setFastLogFieldErrors] = useState<Record<string, string>>({});
   const [fastLogIngredientPickerIndex, setFastLogIngredientPickerIndex] = useState<number | null>(null);
-  const [fastLogReceipts, setFastLogReceipts] = useState<FastLogReceipt[]>([]);
   const [currentFastLogReceipt, setCurrentFastLogReceipt] = useState<FastLogReceipt | null>(null);
   const [fastLogPopupVisible, setFastLogPopupVisible] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -979,119 +827,55 @@ export default function StaffWorkspace({
     activity: true,
   });
 
+  useEffect(() => {
+    let active = true;
+    if (!user?.branchId) {
+      setBackendLoading(false);
+      setBackendError('Your account does not have an assigned branch. Contact the owner.');
+      return () => {
+        active = false;
+      };
+    }
+    setBackendLoading(true);
+    setBackendError('');
+    Promise.all([loadInventory(user.branchId), loadTransactionHistory(user.branchId)])
+      .then(([inventory, history]) => {
+        if (!active) return;
+        setIngredients(inventory);
+        setBackendHistory(history);
+      })
+      .catch((error: unknown) => {
+        if (active) setBackendError(error instanceof Error ? error.message : 'Unable to load branch records.');
+      })
+      .finally(() => {
+        if (active) setBackendLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.branchId]);
+
+  const refreshBackendData = async () => {
+    if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+    try {
+      const [inventory, history] = await Promise.all([
+        loadInventory(user.branchId),
+        loadTransactionHistory(user.branchId),
+      ]);
+      setIngredients(inventory);
+      setBackendHistory(history);
+      setBackendError('');
+    } catch (error) {
+      setBackendError(error instanceof Error ? error.message : 'The saved record could not be refreshed.');
+    }
+  };
+
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
-  const staffName = user?.displayName || 'Isabel San Esteban';
-  const staffRole = user?.role || 'Staff';
-  const staffEmail = user?.email || 'isabel@gelos.ph';
-  const assignedBranch = user?.branch || 'Manila · Branch 1';
-  const historyTransactions: HistoryTransaction[] = [
-    ...initialHistoryTransactions,
-    ...stockReceipts.flatMap((receipt) => {
-      const ingredient = ingredients.find((item) => item.id === receipt.ingredientId);
-      if (!ingredient) return [];
-      return [{
-        id: `stock-in-${receipt.reference}-${receipt.ingredientId}`,
-        reference: receipt.reference,
-        type: 'Stock-In' as const,
-        ingredientId: ingredient.id,
-        ingredientName: ingredient.name,
-        category: ingredient.category,
-        quantity: receipt.quantity,
-        unit: ingredient.unit,
-        movement: receipt.quantity,
-        branchId: 'manila-branch-1',
-        branch: 'Manila · Branch 1',
-        staffId: 'staff-isabel-san-esteban',
-        staff: 'Isabel San Esteban',
-        transactionDate: dateAtTime(receipt.transactionDate, 8, 0),
-        reason: 'Stock-In',
-        notes: receipt.notes,
-        beforeQuantity: receipt.previousQuantity,
-        afterQuantity: receipt.newQuantity,
-        batchReference: null,
-        historical: false,
-      }];
-    }),
-    ...usageReceipts.flatMap((receipt) => receipt.deductions.flatMap((deduction) => {
-      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-      if (!ingredient) return [];
-      return [{
-        id: `usage-${receipt.reference}-${ingredient.id}`,
-        reference: receipt.reference,
-        type: 'Usage' as const,
-        ingredientId: ingredient.id,
-        ingredientName: ingredient.name,
-        category: ingredient.category,
-        quantity: deduction.quantity,
-        unit: ingredient.unit,
-        movement: -deduction.quantity,
-        branchId: 'manila-branch-1',
-        branch: 'Manila · Branch 1',
-        staffId: 'staff-isabel-san-esteban',
-        staff: 'Isabel San Esteban',
-        transactionDate: dateAtTime(receipt.transactionDate, 10, 30),
-        reason: receipt.reason,
-        notes: receipt.notes,
-        beforeQuantity: deduction.previousQuantity,
-        afterQuantity: deduction.newQuantity,
-        batchReference: receipt.batchPreset,
-        historical: false,
-      }];
-    })),
-    ...fastLogReceipts.flatMap((receipt) => receipt.deductions.flatMap((deduction) => {
-      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-      if (!ingredient) return [];
-      const type: HistoryTransactionType = receipt.preset.section === 'waste' ? 'Waste' : 'Usage';
-      return [{
-        id: `fastlog-${receipt.reference}-${ingredient.id}`,
-        reference: receipt.reference,
-        type,
-        ingredientId: ingredient.id,
-        ingredientName: ingredient.name,
-        category: ingredient.category,
-        quantity: deduction.quantity,
-        unit: ingredient.unit,
-        movement: -deduction.quantity,
-        branchId: 'manila-branch-1',
-        branch: 'Manila · Branch 1',
-        staffId: 'staff-isabel-san-esteban',
-        staff: 'Isabel San Esteban',
-        transactionDate: dateAtTime(receipt.transactionDate, 10, 30),
-        reason: receipt.reason,
-        notes: receipt.notes,
-        beforeQuantity: deduction.previousQuantity,
-        afterQuantity: deduction.newQuantity,
-        batchReference: receipt.preset.name,
-        historical: false,
-      }];
-    })),
-    ...wasteReceipts.flatMap((receipt) => {
-      const ingredient = ingredients.find((item) => item.id === receipt.ingredientId);
-      if (!ingredient) return [];
-      return [{
-        id: `waste-${receipt.reference}-${ingredient.id}`,
-        reference: receipt.reference,
-        type: receipt.reason === 'Spoiled' || receipt.reason === 'Expired' ? 'Spoilage' as const : 'Waste' as const,
-        ingredientId: ingredient.id,
-        ingredientName: ingredient.name,
-        category: ingredient.category,
-        quantity: receipt.quantity,
-        unit: ingredient.unit,
-        movement: -receipt.quantity,
-        branchId: 'manila-branch-1',
-        branch: 'Manila · Branch 1',
-        staffId: 'staff-isabel-san-esteban',
-        staff: 'Isabel San Esteban',
-        transactionDate: dateAtTime(receipt.transactionDate, 8, 30),
-        reason: receipt.reason,
-        notes: [receipt.description, receipt.notes].filter(Boolean).join(' · '),
-        beforeQuantity: receipt.previousQuantity,
-        afterQuantity: receipt.newQuantity,
-        batchReference: null,
-        historical: false,
-      }];
-    }),
-  ].sort((first, second) => second.transactionDate.getTime() - first.transactionDate.getTime());
+  const staffName = user.displayName;
+  const staffRole = user.role;
+  const staffEmail = user.email;
+  const assignedBranch = user.branch;
+  const historyTransactions = backendHistory;
   const selectedHistoryTransaction = historyTransactions.find(
     (transaction) => transaction.id === selectedHistoryTransactionId,
   );
@@ -1259,7 +1043,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(openingDate, expirationDateValue);
-      return daysRemaining >= 0 && daysRemaining <= nearExpiryWindowDays
+      return daysRemaining <= nearExpiryWindowDays
         ? [{ item, batch, daysRemaining }]
         : [];
     }),
@@ -1272,7 +1056,7 @@ export default function StaffWorkspace({
       ingredientId: item.id,
       batch: item.batches[0] ?? null,
       title: item.name,
-      detail: `Manila · Branch 1 · Current ${formatUnitQuantity(item.quantity, item.unit)} / Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
+      detail: `${assignedBranch} · Current ${formatUnitQuantity(item.quantity, item.unit)} / Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
     })),
     ...expiringBatches.map(({ item, batch, daysRemaining }) => {
       const expiryText = daysRemaining === 0 ? 'today' : `in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;
@@ -1282,7 +1066,7 @@ export default function StaffWorkspace({
         ingredientId: item.id,
         batch,
         title: item.name,
-        detail: `Manila · Branch 1 · ${formatUnitQuantity(item.quantity, item.unit)} · Expires ${batch.expirationDate} (${expiryText})`,
+        detail: `${assignedBranch} · ${formatUnitQuantity(item.quantity, item.unit)} · Expires ${batch.expirationDate} (${expiryText})`,
       };
     }),
   ];
@@ -1303,21 +1087,16 @@ export default function StaffWorkspace({
   };
 
   const startDailyInventoryCheck = () => {
-    const checkIngredients = ['flour', 'octopus', 'eggs', 'sauces'];
-    const lines = checkIngredients.flatMap((id) => {
-      const item = ingredients.find((ingredient) => ingredient.id === id);
-      return item
-        ? [{
-            ingredientId: item.id,
-            name: item.name,
-            recordedQuantity: item.quantity,
-            physicalQuantity: id === 'flour' ? '10' : String(item.quantity),
-            unit: item.unit,
-          }]
-        : [];
-    });
+    setFormError('');
+    const lines = ingredients.map((item) => ({
+      ingredientId: item.id,
+      name: item.name,
+      recordedQuantity: item.quantity,
+      physicalQuantity: '',
+      unit: item.unit,
+    }));
     setDailyCheckLines(lines);
-    setDailyCheckRemarks('Recounted; bag short by 2 kg');
+    setDailyCheckRemarks('');
     setDailyCheckAttempted(false);
     setDailyCheckModal(null);
     setCurrentDailyCheck(null);
@@ -1335,13 +1114,16 @@ export default function StaffWorkspace({
     setDailyCheckModal('review');
   };
 
-  const submitDailyInventoryCheck = () => {
+  const submitDailyInventoryCheck = async () => {
     if (dailyCheckSubmissionLock.current || !validateDailyInventoryCheck()) return;
+    if (!user?.branchId) {
+      setFormError('Your account does not have an assigned branch. Contact the owner.');
+      return;
+    }
     dailyCheckSubmissionLock.current = true;
-    const referenceNumber = dailyCheckRecords.length + 1;
-    const checkDate = new Date(2026, 9, 25);
-    const submittedAt = new Date(checkDate);
-    submittedAt.setHours(10, 30, 0, 0);
+    setDailyCheckSubmitting(true);
+    setFormError('');
+    const checkDate = new Date();
     const lines = dailyCheckLines.map((line) => {
       const physicalQuantity = Number(line.physicalQuantity);
       return {
@@ -1353,21 +1135,42 @@ export default function StaffWorkspace({
         unit: line.unit,
       };
     });
-    const hasDiscrepancies = lines.some((line) => line.difference !== 0);
-    const check: DailyInventoryCheck = {
-      reference: `IC-1025-${String(referenceNumber).padStart(3, '0')}`,
-      checkDate,
-      submittedAt,
-      branch: 'Manila · Branch 1',
-      staff: 'Isabel San Esteban',
-      lines,
-      remarks: dailyCheckRemarks.trim(),
-      status: hasDiscrepancies ? 'pendingOwnerReview' : 'submitted',
-    };
-    setCurrentDailyCheck(check);
-    setDailyCheckRecords((current) => [...current, check]);
-    setDailyCheckModal(null);
-    setRoute('dailyCheckSuccess');
+    try {
+      const saved = await submitDailyStockCheck({
+        branchId: user.branchId,
+        checkDate: checkDate.toISOString().slice(0, 10),
+        remarks: dailyCheckRemarks.trim(),
+        lines: lines.map((line) => ({
+          ingredientId: line.ingredientId,
+          recordedQuantity: line.recordedQuantity,
+          physicalQuantity: line.physicalQuantity,
+          unit: line.unit,
+        })),
+      });
+      const savedLines = saved.lines.map((line) => ({
+        ...line,
+        name: dailyCheckLines.find((entry) => entry.ingredientId === line.ingredientId)?.name ?? line.ingredientId,
+      }));
+      const check: DailyInventoryCheck = {
+        reference: saved.reference,
+        checkDate: new Date(`${saved.checkDate}T00:00:00`),
+        submittedAt: new Date(),
+        branch: assignedBranch,
+        staff: staffName,
+        lines: savedLines,
+        remarks: dailyCheckRemarks.trim(),
+        status: saved.status === 'pending_owner_review' ? 'pendingOwnerReview' : 'submitted',
+      };
+      setCurrentDailyCheck(check);
+      setDailyCheckModal(null);
+      setRoute('dailyCheckSuccess');
+      void refreshBackendData();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to submit the daily check.');
+    } finally {
+      setDailyCheckSubmitting(false);
+      dailyCheckSubmissionLock.current = false;
+    }
   };
 
   const openForm = (
@@ -1375,32 +1178,18 @@ export default function StaffWorkspace({
     source: StaffTab,
   ) => {
     setReturnRoute(source);
-    setSelectedIngredientId(
-      formRoute === 'stockIn' || formRoute === 'stockOut'
-        ? 'octopus'
-        : formRoute === 'waste'
-          ? 'eggs'
-          : '',
-    );
+    setSelectedIngredientId('');
     setIngredientListOpen(false);
-    setQuantity(formRoute === 'stockIn' ? '5' : formRoute === 'stockOut' ? '1' : formRoute === 'waste' ? '6' : '');
+    setQuantity('');
     setUsageMode('manual');
     setBatchPresetOpen(false);
     setBatchCount('1');
-    setTransactionDate(formRoute === 'stockIn' || formRoute === 'stockOut' || formRoute === 'waste' ? openingDate : new Date());
-    setExpirationDate(formRoute === 'stockIn' ? openingExpirationDate : null);
+    setTransactionDate(new Date());
+    setExpirationDate(null);
     setReason(formRoute === 'waste' ? 'Waste / Other' : 'Cooking usage');
     setReasonListOpen(false);
-    setNotes(
-      formRoute === 'stockIn'
-        ? 'Opening delivery'
-        : formRoute === 'stockOut'
-          ? 'Extra cooking preparation'
-          : formRoute === 'waste'
-            ? 'Cracked eggs discarded'
-            : '',
-    );
-    setWasteDescription(formRoute === 'waste' ? 'Tray slipped during handling' : '');
+    setNotes('');
+    setWasteDescription('');
     setWasteFieldErrors({});
     setWasteValidationAttempted(false);
     setSuccessMessage('');
@@ -1426,7 +1215,7 @@ export default function StaffWorkspace({
     setFastLogPieces(preset.pieces ? String(preset.pieces) : '');
     setFastLogFieldErrors({});
     setFastLogIngredientPickerIndex(null);
-    setTransactionDate(openingDate);
+    setTransactionDate(new Date());
     setConfirmationVisible(false);
     setConfirming(false);
     setFormError('');
@@ -1635,8 +1424,8 @@ export default function StaffWorkspace({
     setConfirmationVisible(true);
   };
 
-  const confirmTransaction = () => {
-    if (confirming || !transactionDate) return;
+  const confirmTransaction = async () => {
+    if (confirming || movementSubmissionLock.current || !transactionDate) return;
     if (route === 'fastLogPreview' || fastLogPopupVisible) {
       if (fastLogSubmissionLock.current) return;
       if (
@@ -1655,13 +1444,31 @@ export default function StaffWorkspace({
 
       fastLogSubmissionLock.current = true;
       setConfirming(true);
-      setTimeout(() => {
+      try {
         const receiptDate = transactionDate;
-        const deductions = fastLogDeductions.map((deduction) => ({ ...deduction }));
-        const referenceNumber = fastLogReceipts.length + 1;
-        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
+        const draftDeductions = fastLogDeductions.map((deduction) => ({ ...deduction }));
+        if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+        const saved = await recordInventoryTransactions(user.branchId, draftDeductions.map((deduction) => ({
+          ingredientId: deduction.ingredientId,
+          type: selectedFastLogPreset.section === 'waste' ? 'waste' : 'usage',
+          quantity: deduction.quantity,
+          transactionDate: receiptDate.toISOString(),
+          reason: fastLogReason.trim(),
+          notes: fastLogNotes.trim(),
+        })));
+        const reference = saved[0]?.reference;
+        if (!reference) throw new Error('The saved Fast-Log did not return a transaction reference.');
+        const deductions = draftDeductions.map((deduction, index) => {
+          const transaction = saved[index];
+          if (!transaction) throw new Error('The saved Fast-Log returned incomplete ingredient details.');
+          return {
+            ...deduction,
+            previousQuantity: Number(transaction.before_quantity),
+            newQuantity: Number(transaction.after_quantity),
+          };
+        });
         const receipt: FastLogReceipt = {
-          reference: `FL-${datePart}-${String(referenceNumber).padStart(3, '0')}`,
+          reference,
           preset: selectedFastLogPreset,
           deductions,
           transactionDate: receiptDate,
@@ -1669,19 +1476,7 @@ export default function StaffWorkspace({
           notes: fastLogNotes,
           pieces: selectedFastLogPreset.pieces ? Number(fastLogPieces) : null,
         };
-        setIngredients((current) =>
-          current.map((item) => {
-            const deduction = deductions.find((entry) => entry.ingredientId === item.id);
-            if (!deduction) return item;
-            return {
-              ...item,
-              quantity: Number(deduction.newQuantity.toFixed(2)),
-              lowStock: deduction.newQuantity < item.threshold,
-              lastUpdated: formatUsageDate(receiptDate),
-            };
-          }),
-        );
-        setFastLogReceipts((current) => [...current, receipt]);
+        await refreshBackendData();
         setCurrentFastLogReceipt(receipt);
         setConfirmationVisible(false);
         setConfirming(false);
@@ -1693,11 +1488,17 @@ export default function StaffWorkspace({
           setFastLogReason('');
           setFastLogNotes('');
           setFastLogFieldErrors({});
-          setDashboardMessage(`${selectedFastLogPreset.name} recorded successfully. Inventory updated locally.`);
+          setDashboardMessage(`${selectedFastLogPreset.name} saved to the branch inventory.`);
         } else {
           setRoute('fastLogSuccess');
         }
-      }, 250);
+      } catch (error) {
+        setConfirmationVisible(false);
+        setFormError(error instanceof Error ? error.message : 'Unable to save the Fast-Log.');
+      } finally {
+        setConfirming(false);
+        fastLogSubmissionLock.current = false;
+      }
       return;
     }
 
@@ -1712,25 +1513,24 @@ export default function StaffWorkspace({
 
       wasteSubmissionLock.current = true;
       setConfirming(true);
-      setTimeout(() => {
+      try {
         const wasteQuantity = Number(quantity);
         const receiptDate = transactionDate;
-        const previousQuantity = selectedIngredient.quantity;
-        const newQuantity = Number((previousQuantity - wasteQuantity).toFixed(2));
-        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
-        const sameDateCount = wasteReceipts.filter((entry) =>
-          entry.transactionDate.getFullYear() === receiptDate.getFullYear() &&
-          entry.transactionDate.getMonth() === receiptDate.getMonth() &&
-          entry.transactionDate.getDate() === receiptDate.getDate(),
-        ).length;
-        const historicalSampleOffset =
-          receiptDate.getFullYear() === 2026 &&
-          receiptDate.getMonth() === 9 &&
-          receiptDate.getDate() === 25
-            ? 2
-            : 1;
+        if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+        const saved = await recordInventoryTransactions(user.branchId, [{
+          ingredientId: selectedIngredient.id,
+          type: wasteReason === 'Spoiled' || wasteReason === 'Expired' ? 'spoilage' : 'waste',
+          quantity: wasteQuantity,
+          transactionDate: receiptDate.toISOString(),
+          reason: wasteReason,
+          notes: [wasteDescription.trim(), notes.trim()].filter(Boolean).join(' · '),
+        }]);
+        const reference = saved[0]?.reference;
+        if (!reference) throw new Error('The saved waste record did not return a transaction reference.');
+        const previousQuantity = Number(saved[0].before_quantity);
+        const newQuantity = Number(saved[0].after_quantity);
         const receipt: WasteReceipt = {
-          reference: `WS-${datePart}-${String(sameDateCount + historicalSampleOffset).padStart(3, '0')}`,
+          reference,
           ingredientId: selectedIngredient.id,
           quantity: wasteQuantity,
           previousQuantity,
@@ -1740,23 +1540,17 @@ export default function StaffWorkspace({
           description: wasteDescription.trim(),
           notes: notes.trim(),
         };
-        setIngredients((current) =>
-          current.map((item) => item.id === selectedIngredient.id
-            ? {
-                ...item,
-                quantity: newQuantity,
-                lowStock: newQuantity < item.threshold,
-                lastUpdated: formatWasteDate(receiptDate),
-              }
-            : item),
-        );
-        setWasteReceipts((current) => [...current, receipt]);
+        await refreshBackendData();
         setCurrentWasteReceipt(receipt);
         setConfirmationVisible(false);
+        setRoute('wasteSuccess');
+      } catch (error) {
+        setConfirmationVisible(false);
+        setFormError(error instanceof Error ? error.message : 'Unable to save the waste record.');
+      } finally {
         setConfirming(false);
         wasteSubmissionLock.current = false;
-        setRoute('wasteSuccess');
-      }, 250);
+      }
       return;
     }
 
@@ -1776,13 +1570,32 @@ export default function StaffWorkspace({
       }
 
       setConfirming(true);
-      setTimeout(() => {
+      movementSubmissionLock.current = true;
+      try {
         const receiptDate = transactionDate;
-        const deductions = usageDeductions.map((deduction) => ({ ...deduction }));
-        const referenceNumber = usageReceipts.length + 3;
-        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
+        const draftDeductions = usageDeductions.map((deduction) => ({ ...deduction }));
+        if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+        const saved = await recordInventoryTransactions(user.branchId, draftDeductions.map((deduction) => ({
+          ingredientId: deduction.ingredientId,
+          type: usageMode === 'cookingBatch' ? 'usage' : 'stock_out',
+          quantity: deduction.quantity,
+          transactionDate: receiptDate.toISOString(),
+          reason,
+          notes,
+        })));
+        const reference = saved[0]?.reference;
+        if (!reference) throw new Error('The saved stock-out did not return a transaction reference.');
+        const deductions = draftDeductions.map((deduction, index) => {
+          const transaction = saved[index];
+          if (!transaction) throw new Error('The saved stock-out returned incomplete ingredient details.');
+          return {
+            ...deduction,
+            previousQuantity: Number(transaction.before_quantity),
+            newQuantity: Number(transaction.after_quantity),
+          };
+        });
         const receipt: UsageReceipt = {
-          reference: `US-${datePart}-${String(referenceNumber).padStart(3, '0')}`,
+          reference,
           deductions,
           transactionDate: receiptDate,
           reason,
@@ -1791,24 +1604,17 @@ export default function StaffWorkspace({
           batchPreset: usageMode === 'cookingBatch' ? batchPreset : null,
           batchCount: usageMode === 'cookingBatch' ? parsedBatchCount : 1,
         };
-        setIngredients((current) =>
-          current.map((item) => {
-            const deduction = deductions.find((entry) => entry.ingredientId === item.id);
-            if (!deduction) return item;
-            return {
-              ...item,
-              quantity: Number(deduction.newQuantity.toFixed(2)),
-              lowStock: deduction.newQuantity < item.threshold,
-              lastUpdated: formatUsageDate(receiptDate),
-            };
-          }),
-        );
-        setUsageReceipts((current) => [...current, receipt]);
+        await refreshBackendData();
         setCurrentUsageReceipt(receipt);
         setConfirmationVisible(false);
-        setConfirming(false);
         setRoute('stockOutSuccess');
-      }, 250);
+      } catch (error) {
+        setConfirmationVisible(false);
+        setFormError(error instanceof Error ? error.message : 'Unable to save the stock-out.');
+      } finally {
+        movementSubmissionLock.current = false;
+        setConfirming(false);
+      }
       return;
     }
 
@@ -1821,70 +1627,44 @@ export default function StaffWorkspace({
     }
 
     setConfirming(true);
-    setTimeout(() => {
-      const currentRoute = route;
-      const stockInReference = transactionDate
-        ? formatStockInReference(transactionDate, stockReceipts.length + 1)
-        : '';
-      const newQuantity = currentRoute === 'stockIn'
-        ? selectedIngredient.quantity + parsedQuantity
-        : selectedIngredient.quantity - parsedQuantity;
-      const nextIngredients = ingredients.map((item) => {
-        if (item.id !== selectedIngredient.id) return item;
-        return {
-          ...item,
-          quantity: Number(newQuantity.toFixed(2)),
-          lowStock: newQuantity < item.threshold,
-          expiration:
-            currentRoute === 'stockIn' && expirationDate
-              ? formatDate(expirationDate)
-              : item.expiration,
-          nearExpiry: currentRoute === 'stockIn' && expirationDate ? true : item.nearExpiry,
-          receivedBatch: currentRoute === 'stockIn' && transactionDate
-            ? `${stockInReference} · ${formatDate(transactionDate)}`
-            : item.receivedBatch,
-          batchReference: currentRoute === 'stockIn'
-            ? stockInReference
-            : item.batchReference,
-          batches: currentRoute === 'stockIn' && transactionDate
-            ? [
-                ...item.batches,
-                {
-                  reference: stockInReference,
-                  receivedDate: formatDate(transactionDate),
-                  expirationDate: expirationDate ? formatDate(expirationDate) : null,
-                },
-              ]
-            : item.batches,
-        };
-      });
-      setIngredients(nextIngredients);
+    movementSubmissionLock.current = true;
+    try {
+      if (route !== 'stockIn') throw new Error('This transaction type is not supported on this screen.');
+      if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+      const saved = await recordInventoryTransactions(user.branchId, [{
+        ingredientId: selectedIngredient.id,
+        type: 'stock_in',
+        quantity: parsedQuantity,
+        transactionDate: transactionDate.toISOString(),
+        reason: 'Stock-In',
+        notes: notes.trim(),
+        expirationDate: expirationDate?.toISOString().slice(0, 10) ?? null,
+      }]);
+      const savedTransaction = saved[0];
+      if (!savedTransaction) throw new Error('The saved stock-in returned incomplete details.');
+      const receipt: StockReceipt = {
+        reference: savedTransaction.reference,
+        ingredientId: selectedIngredient.id,
+        quantity: parsedQuantity,
+        previousQuantity: Number(savedTransaction.before_quantity),
+        newQuantity: Number(savedTransaction.after_quantity),
+        transactionDate,
+        expirationDate,
+        notes,
+      };
+      if (!receipt.reference) throw new Error('The saved stock-in did not return a transaction reference.');
+      await refreshBackendData();
+      setCurrentReceipt(receipt);
       setConfirmationVisible(false);
-      setConfirming(false);
       setQuantityError('');
-
-      if (currentRoute === 'stockIn') {
-        const receiptNumber = stockReceipts.length + 2;
-        const receipt: StockReceipt = {
-          reference: stockInReference || `SI-0000-${String(receiptNumber).padStart(3, '0')}`,
-          ingredientId: selectedIngredient.id,
-          quantity: parsedQuantity,
-          previousQuantity: selectedIngredient.quantity,
-          newQuantity,
-          transactionDate,
-          expirationDate,
-          notes,
-        };
-        setCurrentReceipt(receipt);
-        setStockReceipts((current) => [...current, receipt]);
-        setRoute('stockInSuccess');
-        return;
-      }
-
-      setSuccessMessage(
-        `${parsedQuantity} ${selectedIngredient.unit} of ${selectedIngredient.name} recorded successfully as a local mock transaction.`,
-      );
-    }, 250);
+      setRoute('stockInSuccess');
+    } catch (error) {
+      setConfirmationVisible(false);
+      setFormError(error instanceof Error ? error.message : 'Unable to save the stock-in.');
+    } finally {
+      movementSubmissionLock.current = false;
+      setConfirming(false);
+    }
   };
 
   const renderTopHeader = (title: string, subtitle?: string) => (
@@ -1907,8 +1687,8 @@ export default function StaffWorkspace({
           <View style={styles.profileBody} />
         </View>
         <View style={styles.greetingCopy}>
-          <Text style={styles.greeting}>Hello, Staff!</Text>
-          <Text style={styles.branchName}>Manila Branch</Text>
+          <Text style={styles.greeting}>Hello, {staffName}!</Text>
+          <Text style={styles.branchName}>{assignedBranch}</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -1935,7 +1715,9 @@ export default function StaffWorkspace({
         <View style={styles.summaryCopy}>
           <Text style={styles.summaryEyebrow}>INVENTORY SUMMARY</Text>
           <View style={styles.summaryTotalRow}>
-            <Text style={styles.summaryTotal}>{ingredients.length.toString().padStart(2, '0')}</Text>
+            <Text style={styles.summaryTotal}>
+              {backendLoading ? '…' : ingredients.length.toString().padStart(2, '0')}
+            </Text>
             <Text style={styles.summaryItems}>items tracked</Text>
           </View>
           <Text style={styles.summaryAlerts}>{lowStockItems.length + expiringItems.length} stock alerts need attention</Text>
@@ -1970,7 +1752,7 @@ export default function StaffWorkspace({
           {
             title: 'Daily Check',
             icon: '✓',
-            onPress: () => setDashboardMessage('Daily Check is ready for this demo branch. No inventory will be changed.'),
+            onPress: startDailyInventoryCheck,
           },
         ].map((action) => (
           <Pressable
@@ -2060,7 +1842,6 @@ export default function StaffWorkspace({
           <Text style={styles.emptyState}>No items nearing expiration match your search.</Text>
         )}
       </ScrollView>
-      <Text style={styles.demoNote}>DEMO PREVIEW · Sample inventory only, not connected to a live store.</Text>
     </ScrollView>
   );
 
@@ -2076,7 +1857,7 @@ export default function StaffWorkspace({
       ListHeaderComponent={
         <View style={styles.inventoryPageHeader}>
           <Text style={styles.pageTitle}>Inventory</Text>
-          <Text style={styles.pageSubtitle}>Manila · Branch 1 / Staff</Text>
+          <Text style={styles.pageSubtitle}>{assignedBranch} / Staff</Text>
           <View style={styles.inventorySearch}>
             <SearchBar value={search} onChangeText={setSearch} />
           </View>
@@ -2098,7 +1879,7 @@ export default function StaffWorkspace({
             ))}
           </ScrollView>
           <Text style={styles.inventoryCount}>
-            {visibleIngredients.length} {visibleIngredients.length === 1 ? 'ingredient' : 'ingredients'} · Manila · Branch 1
+            {visibleIngredients.length} {visibleIngredients.length === 1 ? 'ingredient' : 'ingredients'} · {assignedBranch}
           </Text>
         </View>
       }
@@ -2135,7 +1916,7 @@ export default function StaffWorkspace({
       }
       ListFooterComponent={
         visibleIngredients.length > 0 ? (
-          <Text style={styles.demoNote}>DEMO PREVIEW · Sample inventory only, not connected to a live store.</Text>
+          <Text style={styles.demoNote}>Live branch inventory · Updates are saved to Supabase.</Text>
         ) : null
       }
     />
@@ -2187,7 +1968,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.detailHeaderCopy}>
             <Text style={styles.detailPageTitle}>Ingredient details</Text>
-            <Text style={styles.pageSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.pageSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
 
@@ -2215,7 +1996,7 @@ export default function StaffWorkspace({
         </View>
 
         <View style={styles.detailRows}>
-          <DetailRow label="Branch" value="Manila · Branch 1" />
+          <DetailRow label="Branch" value={assignedBranch} />
           <DetailRow label="Inventory unit" value={selectedIngredient.unitName} />
           <DetailRow label="Received batch" value={selectedIngredient.receivedBatch} />
           <DetailRow label="Expiration" value={selectedIngredient.expiration ?? 'Not recorded'} />
@@ -2236,13 +2017,16 @@ export default function StaffWorkspace({
         >
           <Text style={styles.historyButtonText}>View stock history</Text>
         </Pressable>
-        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Sample data, not a live inventory record.</Text>
       </ScrollView>
     );
   };
 
-  const renderInventoryHistory = () => (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.detailPage} showsVerticalScrollIndicator={false}>
+  const renderInventoryHistory = () => {
+    const ingredientTransactions = historyTransactions.filter(
+      (transaction) => transaction.ingredientId === selectedIngredient?.id,
+    );
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.detailPage} showsVerticalScrollIndicator={false}>
       <View style={styles.detailHeader}>
         <Pressable
           accessibilityRole="button"
@@ -2254,23 +2038,31 @@ export default function StaffWorkspace({
         </Pressable>
         <View style={styles.detailHeaderCopy}>
           <Text style={styles.detailPageTitle}>Stock history</Text>
-          <Text style={styles.pageSubtitle}>{selectedIngredient?.name ?? 'Ingredient'} · Manila · Branch 1</Text>
+          <Text style={styles.pageSubtitle}>{selectedIngredient?.name ?? 'Ingredient'} · {assignedBranch}</Text>
         </View>
       </View>
-      <Text style={styles.historyPlaceholderText}>Sample activity</Text>
-      <View style={styles.historyActivityCard}>
-        <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>+</Text></View>
-        <View style={styles.historyActivityCopy}>
-          <Text style={styles.historyActivityTitle}>Stock-In received</Text>
-          <Text style={styles.historyActivityDetail}>
-            {selectedIngredient?.receivedBatch ?? 'Sample batch'} · {selectedIngredient?.lastUpdated ?? '25 Oct 2026'}
+      <Text style={styles.historyPlaceholderText}>Transaction history</Text>
+      {ingredientTransactions.length > 0 ? ingredientTransactions.map((transaction) => (
+        <View key={transaction.id} style={styles.historyActivityCard}>
+          <View style={styles.historyActivityMarker}>
+            <Text style={styles.historyActivityGlyph}>{transaction.movement > 0 ? '+' : '−'}</Text>
+          </View>
+          <View style={styles.historyActivityCopy}>
+            <Text style={styles.historyActivityTitle}>{transaction.type} · {transaction.reference}</Text>
+            <Text style={styles.historyActivityDetail}>
+              {formatHistoryDateTime(transaction.transactionDate)} · {transaction.reason || 'No reason'}
+            </Text>
+          </View>
+          <Text style={styles.historyActivityAmount}>
+            {transaction.movement > 0 ? '+' : ''}{formatUnitQuantity(transaction.movement, transaction.unit)}
           </Text>
         </View>
-        <Text style={styles.historyActivityAmount}>+{selectedIngredient?.quantity ?? 0} {selectedIngredient?.unit ?? ''}</Text>
-      </View>
-      <Text style={styles.detailDemoNote}>DEMO PREVIEW · This sample history is not connected to live transactions.</Text>
-    </ScrollView>
-  );
+      )) : (
+        <Text style={styles.historyPlaceholderText}>No saved transactions for this ingredient.</Text>
+      )}
+      </ScrollView>
+    );
+  };
 
   const renderStocks = () => (
     <ScrollView
@@ -2278,10 +2070,10 @@ export default function StaffWorkspace({
       contentContainerStyle={styles.pageContent}
       showsVerticalScrollIndicator={false}
     >
-      {renderTopHeader('Stocks', 'Manila · Branch 1 / Staff')}
+      {renderTopHeader('Stocks', `${assignedBranch} / Staff`)}
       <View style={styles.stocksSummaryCard}>
         <Text style={styles.stocksSummaryTitle}>Every movement, accounted for.</Text>
-        <Text style={styles.stocksSummarySubtitle}>Record stock for Manila Branch 1 only.</Text>
+        <Text style={styles.stocksSummarySubtitle}>Record stock for {assignedBranch} only.</Text>
       </View>
       <View style={styles.stockActionList}>
         <ActionCard
@@ -2358,7 +2150,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Alert item details</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -2374,7 +2166,7 @@ export default function StaffWorkspace({
           <View style={styles.alertDetailSummaryCard}>
             <Text style={styles.alertDetailName}>{item.name}</Text>
             <Text style={styles.alertDetailQuantity}>{formatUnitQuantity(item.quantity, item.unit)}</Text>
-            <Text style={styles.alertDetailSubtext}>Manila · Branch 1 · {item.category}</Text>
+            <Text style={styles.alertDetailSubtext}>{assignedBranch} · {item.category}</Text>
           </View>
 
           <View style={styles.alertDetailRows}>
@@ -2450,7 +2242,7 @@ export default function StaffWorkspace({
 
   const renderNotifications = () => (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.notificationPageContent} showsVerticalScrollIndicator={false}>
-      {renderTopHeader('Notifications', 'Manila · Branch 1 / Staff')}
+      {renderTopHeader('Notifications', `${assignedBranch} / Staff`)}
       <ScrollView
         horizontal
         nestedScrollEnabled
@@ -2519,7 +2311,7 @@ export default function StaffWorkspace({
           <Text style={styles.alertEmptyTitle}>No alerts to show</Text>
           <Text style={styles.alertEmptyText}>
             {inventoryAlerts.length === 0
-              ? 'There are no current stock or near-expiry alerts for Manila · Branch 1.'
+              ? `There are no current stock or near-expiry alerts for ${assignedBranch}.`
               : 'No alerts match this filter. Choose another alert type to see current items.'}
           </Text>
         </View>
@@ -2527,7 +2319,7 @@ export default function StaffWorkspace({
       <View style={styles.alertListInfoBanner}>
         <Text style={styles.alertDetailInfoIcon}>i</Text>
         <Text style={styles.alertDetailInfoText}>
-          Stock and expiry alerts show Manila · Branch 1 records only. Tap an item to review its threshold or batch dates.
+          Stock and expiry alerts show {assignedBranch} records only. Tap an item to review its threshold or batch dates.
         </Text>
       </View>
     </ScrollView>
@@ -2556,7 +2348,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Daily inventory check</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -2565,7 +2357,7 @@ export default function StaffWorkspace({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.dailyCheckIntro}>25 Oct 2026 · Enter today's physical quantities.</Text>
+          <Text style={styles.dailyCheckIntro}>{formatDate(new Date())} · Enter today's physical quantities.</Text>
           <View style={styles.dailyTableHeader}>
             <Text style={[styles.dailyColumnTitle, styles.dailyIngredientColumn]}>Ingredient</Text>
             <Text style={[styles.dailyColumnTitle, styles.dailyRecordedColumn]}>Recorded</Text>
@@ -2662,6 +2454,9 @@ export default function StaffWorkspace({
               Correct the highlighted quantities before continuing.
             </Text>
           ) : null}
+          {formError !== '' ? (
+            <Text style={styles.dailyFormError} accessibilityRole="alert">{formError}</Text>
+          ) : null}
 
           <View style={styles.dailyFormActions}>
             <Pressable
@@ -2680,7 +2475,7 @@ export default function StaffWorkspace({
             </Pressable>
           </View>
           <Text style={styles.dailyDemoNote}>
-            Local mock check · Physical counts are audit observations and never adjust stock.
+            Daily checks are saved for owner review. Physical counts never adjust recorded stock.
           </Text>
         </ScrollView>
       </>
@@ -2720,7 +2515,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Daily inventory check</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -2797,23 +2592,25 @@ export default function StaffWorkspace({
     setLogoutConfirmationVisible(true);
   };
 
-  const confirmLogout = () => {
+  const confirmLogout = async () => {
     if (logoutSubmissionLock.current) return;
     logoutSubmissionLock.current = true;
     setLogoutPending(true);
     setLogoutError('');
     try {
-      onLogout();
+      await onLogout();
+      setLogoutConfirmationVisible(false);
     } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : 'Unable to log out. Please try again.');
+    } finally {
       logoutSubmissionLock.current = false;
       setLogoutPending(false);
-      setLogoutError(error instanceof Error ? error.message : 'Unable to log out. Please try again.');
     }
   };
 
   const renderMore = () => (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.morePageContent} showsVerticalScrollIndicator={false}>
-      {renderTopHeader('More', 'Manila · Branch 1 / Staff')}
+      {renderTopHeader('More', `${assignedBranch} / Staff`)}
       {renderStaffIdentityCard()}
       <View style={styles.moreNavigationList}>
         {([
@@ -2884,7 +2681,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Profile &amp; settings</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.profileSettingsContent} showsVerticalScrollIndicator={false}>
@@ -2937,8 +2734,8 @@ export default function StaffWorkspace({
                 onValueChange={(value) =>
                   setNotificationPreferences((current) => ({ ...current, lowStock: value }))
                 }
-                trackColor={{ false: '#D8D8DE', true: '#F6A2BC' }}
-                thumbColor={notificationPreferences.lowStock ? colors.pink : '#FFFFFF'}
+                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
+                thumbColor={notificationPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
               />
             </View>
             <View style={styles.profilePreferenceRow}>
@@ -2949,8 +2746,8 @@ export default function StaffWorkspace({
                 onValueChange={(value) =>
                   setNotificationPreferences((current) => ({ ...current, expiration: value }))
                 }
-                trackColor={{ false: '#D8D8DE', true: '#F6A2BC' }}
-                thumbColor={notificationPreferences.expiration ? colors.pink : '#FFFFFF'}
+                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
+                thumbColor={notificationPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
               />
             </View>
             <Text style={styles.profileNotificationNote}>These preferences control in-app alert visibility only; push notifications are not configured.</Text>
@@ -2964,16 +2761,28 @@ export default function StaffWorkspace({
           <View style={styles.themeSection}>
             <Text style={styles.profileSectionTitle}>Theme toggle</Text>
             <View style={styles.themeSegmentedControl}>
-              <View style={[styles.themeOption, styles.themeOptionSelected]}>
-                <Text style={[styles.themeOptionIcon, styles.themeOptionIconSelected]}>☼</Text>
-                <Text style={[styles.themeOptionText, styles.themeOptionTextSelected]}>Light</Text>
-              </View>
-              <View style={[styles.themeOption, styles.themeOptionDisabled]}>
-                <Text style={styles.themeOptionIcon}>☾</Text>
-                <Text style={styles.themeOptionText}>Dark</Text>
-              </View>
+            {(['light', 'dark'] as const).map((mode) => {
+              const selected = theme.mode === mode;
+              return (
+                <Pressable
+                  key={mode}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${mode === 'dark' ? 'Dark' : 'Light'} mode`}
+                  accessibilityState={{ selected }}
+                  onPress={() => theme.setMode(mode)}
+                  style={[styles.themeOption, selected && styles.themeOptionSelected]}
+                >
+                  <Text style={[styles.themeOptionIcon, selected && styles.themeOptionIconSelected]}>
+                    {mode === 'dark' ? '☾' : '☼'}
+                  </Text>
+                  <Text style={[styles.themeOptionText, selected && styles.themeOptionTextSelected]}>
+                    {mode === 'dark' ? 'Dark' : 'Light'}
+                  </Text>
+                </Pressable>
+              );
+            })}
             </View>
-            <Text style={styles.themeLimitation}>Dark theme is not supported in this light-only app.</Text>
+            <Text style={styles.themeLimitation}>Your theme preference is saved on this device.</Text>
           </View>
 
           <Pressable
@@ -3042,7 +2851,7 @@ export default function StaffWorkspace({
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>Stock-In</Text>
-          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
       <ScrollView
@@ -3054,7 +2863,7 @@ export default function StaffWorkspace({
         <View style={styles.receiptInfoBanner}>
           <Text style={styles.receiptInfoIcon}>i</Text>
           <Text style={styles.receiptInfoText}>
-            Receipt example · 25 Oct 2026, 08:00 AM. Opening Octopus balance: 0 kg.
+            Stock-in records are saved to the assigned branch after confirmation. Perishable ingredients require an expiration date.
           </Text>
         </View>
         {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
@@ -3093,7 +2902,7 @@ export default function StaffWorkspace({
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
-        <Text style={styles.formDemoNote}>Local demo only · This example does not create a live stock record.</Text>
+        <Text style={styles.formDemoNote}>Confirmed Stock-In records are saved to the assigned branch.</Text>
       </ScrollView>
     </>
   );
@@ -3111,7 +2920,7 @@ export default function StaffWorkspace({
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>Waste / Spoilage</Text>
-          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
       <ScrollView
@@ -3287,7 +3096,7 @@ export default function StaffWorkspace({
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>{formTitle}</Text>
-          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
       <ScrollView
@@ -3441,7 +3250,7 @@ export default function StaffWorkspace({
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
-        <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
+        <Text style={styles.formDemoNote}>Confirmed movements are saved to the assigned branch.</Text>
       </ScrollView>
     </>
     );
@@ -3495,7 +3304,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -3518,7 +3327,7 @@ export default function StaffWorkspace({
             {fastLogPresets.filter((preset) => preset.section === 'waste').map(renderPresetCard)}
           </View>
           <Text style={styles.fastLogFootnote}>
-            Preset quantities are illustrative. Date: 25 Oct 2026. Review stock and reason before logging.
+            Preset quantities are editable. Review available stock and the transaction date before logging.
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -3559,7 +3368,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -3643,7 +3452,7 @@ export default function StaffWorkspace({
                       value={draft.quantity}
                       onChangeText={(value) => updateFastLogDeduction(index, 'quantity', value)}
                       placeholder="Enter quantity"
-                      placeholderTextColor="#A0A0AA"
+                      placeholderTextColor={theme.isDark ? theme.colors.secondaryText : '#A0A0AA'}
                       keyboardType="decimal-pad"
                       style={[styles.textInput, styles.fastLogQuantityInput, error ? styles.textInputError : undefined]}
                     />
@@ -3682,7 +3491,7 @@ export default function StaffWorkspace({
             onChange={setTransactionDate}
           />
           <View style={styles.fastLogReceiptDetails}>
-            <DetailRow label="Recorded by" value="Isabel San Esteban" />
+            <DetailRow label="Recorded by" value={staffName} />
           </View>
           <View style={styles.usageInfoBanner}>
             <Text style={styles.permissionIcon}>i</Text>
@@ -3706,7 +3515,7 @@ export default function StaffWorkspace({
               <Text style={styles.cancelButtonText}>Choose another preset</Text>
             </Pressable>
           </View>
-          <Text style={styles.formDemoNote}>Local demo only · Nothing changes until confirmed.</Text>
+          <Text style={styles.formDemoNote}>Preset movements are saved only after confirmation.</Text>
         </ScrollView>
       </>
     );
@@ -3749,7 +3558,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Review Fast-Log</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -3783,7 +3592,7 @@ export default function StaffWorkspace({
           </View>
           <View style={styles.fastLogReceiptDetails}>
             <DetailRow label="Transaction date" value={transactionDate ? formatDate(transactionDate) : '—'} />
-            <DetailRow label="Recorded by" value="Isabel San Esteban" />
+            <DetailRow label="Recorded by" value={staffName} />
             <DetailRow label="Reason" value={fastLogReason} />
             <DetailRow label="Notes" value={fastLogNotes.trim() || '—'} />
           </View>
@@ -3853,7 +3662,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -3896,7 +3705,7 @@ export default function StaffWorkspace({
             })}
           </View>
           <Text style={styles.fastLogReference}>
-            Reference {receipt.reference} · Isabel San Esteban
+            Reference {receipt.reference} · {staffName}
           </Text>
           <View style={styles.fastLogReceiptDetails}>
             <DetailRow label="Reason / description" value={receipt.reason} />
@@ -3951,7 +3760,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Usage preview</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView
@@ -4015,7 +3824,7 @@ export default function StaffWorkspace({
               <Text style={styles.cancelButtonText}>Edit transaction</Text>
             </Pressable>
           </View>
-          <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
+          <Text style={styles.formDemoNote}>Confirmed movements are saved to the assigned branch.</Text>
         </ScrollView>
       </>
     );
@@ -4056,7 +3865,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Stock-Out / Usage</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
@@ -4076,8 +3885,8 @@ export default function StaffWorkspace({
           <View style={styles.receiptDetails}>
             <DetailRow label="Reference" value={receipt.reference} />
             <DetailRow label="Date" value={formatUsageDate(receipt.transactionDate)} />
-            <DetailRow label="Staff" value="Isabel San Esteban" />
-            <DetailRow label="Branch" value="Manila · Branch 1" />
+            <DetailRow label="Staff" value={staffName} />
+            <DetailRow label="Branch" value={assignedBranch} />
             {receipt.deductions.map((deduction) => {
               const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
               return item ? (
@@ -4093,7 +3902,7 @@ export default function StaffWorkspace({
           <View style={styles.permissionNotice}>
             <Text style={styles.permissionIcon}>i</Text>
             <Text style={styles.permissionText}>
-              This is a new transaction example from the recorded {formatQuantity(firstDeduction?.previousQuantity ?? 0)} {firstIngredient?.unit ?? ''} balance.
+              This saved transaction was deducted from the recorded {formatQuantity(firstDeduction?.previousQuantity ?? 0)} {firstIngredient?.unit ?? ''} balance.
               {firstIngredient && (firstDeduction?.newQuantity ?? 0) < firstIngredient.minimumStock
                 ? ` ${firstIngredient.name} remains below the ${formatQuantity(firstIngredient.minimumStock)} ${firstIngredient.unit} minimum.`
                 : ''}
@@ -4113,7 +3922,6 @@ export default function StaffWorkspace({
           >
             <Text style={styles.cancelButtonText}>Back to Stocks</Text>
           </Pressable>
-          <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local sample transaction only.</Text>
         </ScrollView>
       </>
     );
@@ -4142,7 +3950,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Stock-In</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <View style={styles.receiptSuccessBanner}>
@@ -4161,14 +3969,14 @@ export default function StaffWorkspace({
           <DetailRow label="Ingredient" value={`${receiptIngredient.name} · ${receiptIngredient.category}`} />
           <DetailRow label="Transaction date" value={formatReceiptDate(currentReceipt.transactionDate)} />
           <DetailRow label="Expiration" value={currentReceipt.expirationDate ? formatDate(currentReceipt.expirationDate) : 'Not recorded'} />
-          <DetailRow label="Recorded by" value="Isabel San Esteban" />
-          <DetailRow label="Branch" value="Manila · Branch 1" />
+          <DetailRow label="Recorded by" value={staffName} />
+          <DetailRow label="Branch" value={assignedBranch} />
           <DetailRow label="Notes" value={currentReceipt.notes || '—'} />
         </View>
         <View style={styles.permissionNotice}>
           <Text style={styles.permissionIcon}>i</Text>
           <Text style={styles.permissionText}>
-            Historical receipt. The total cooking usage recorded of 5 kg each leave the current balance at 5 kg.
+            This Stock-In was recorded in the branch ledger and reflected in current inventory.
           </Text>
         </View>
         <Pressable accessibilityRole="button" onPress={() => setRoute('stockHistory')} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
@@ -4177,7 +3985,6 @@ export default function StaffWorkspace({
         <Pressable accessibilityRole="button" onPress={() => setRoute('stocks')} style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}>
           <Text style={styles.cancelButtonText}>Back to Stocks</Text>
         </Pressable>
-        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local sample receipt only.</Text>
       </ScrollView>
     );
   };
@@ -4215,7 +4022,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Waste / Spoilage</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <View style={styles.receiptSuccessBanner}>
@@ -4235,12 +4042,12 @@ export default function StaffWorkspace({
           <DetailRow label="Reason" value={receipt.reason === 'Waste / Other' ? 'Other' : receipt.reason} />
           <DetailRow label="Description" value={receipt.description || '—'} />
           <DetailRow label="Notes" value={receipt.notes || '—'} />
-          <DetailRow label="Staff" value="Isabel San Esteban" />
+          <DetailRow label="Staff" value={staffName} />
         </View>
         <View style={styles.permissionNotice}>
           <Text style={styles.permissionIcon}>i</Text>
           <Text style={styles.permissionText}>
-            This new waste event was deducted once after confirmation. Historical example WS-1025-001 (54 pcs → 48 pcs) is already reflected in the opening balance and is never deducted again.
+            This saved waste transaction was deducted once from the recorded balance.
           </Text>
         </View>
         <Pressable
@@ -4263,9 +4070,6 @@ export default function StaffWorkspace({
 
   const renderStockHistory = () => {
     const octopusLedger = historyLedgerExplanation('octopus');
-    const historicalEggWaste = historyTransactions.find(
-      (transaction) => transaction.id === 'seed-ws-eggs',
-    );
 
     return (
       <ScrollView
@@ -4285,7 +4089,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction history</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <View style={styles.historySearchWrap}>
@@ -4297,7 +4101,7 @@ export default function StaffWorkspace({
         </View>
         <View style={styles.historyMetadataRow}>
           <View style={styles.historyMetadataCopy}>
-            <Text style={styles.historyMetadataTitle}>Manila · Branch 1 · 25 Oct 2026</Text>
+            <Text style={styles.historyMetadataTitle}>{assignedBranch} · {formatDate(new Date())}</Text>
             <Text style={styles.historyMetadataSubtitle}>
               {historyTypeFilter === 'All types' ? 'All transaction types' : historyTypeFilter}
               {' · '}{filteredHistoryTransactions.length} {filteredHistoryTransactions.length === 1 ? 'transaction' : 'transactions'}
@@ -4343,20 +4147,15 @@ export default function StaffWorkspace({
                     </Text>
                   </View>
                   <Text style={styles.historyTransactionMeta}>
-                    {formatHistoryDateTime(transaction.transactionDate)} · {transaction.staff.split(' ')[0]} · Branch 1
+                    {formatHistoryDateTime(transaction.transactionDate)} · {transaction.staff.split(' ')[0]} · {transaction.branch}
                   </Text>
                 </Pressable>
               ))}
             </View>
-            {octopusLedger || historicalEggWaste ? (
+            {octopusLedger ? (
               <View style={styles.historyLedgerBanner}>
                 <Text style={styles.permissionIcon}>i</Text>
-                <Text style={styles.permissionText}>
-                  {octopusLedger ? `${octopusLedger} ` : ''}
-                  {historicalEggWaste
-                    ? 'Eggs waste is already reflected in the recorded 48 pcs balance.'
-                    : ''}
-                </Text>
+                <Text style={styles.permissionText}>{octopusLedger}</Text>
               </View>
             ) : null}
           </>
@@ -4376,7 +4175,6 @@ export default function StaffWorkspace({
             </Pressable>
           </View>
         )}
-        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local transaction records for this session and sample history.</Text>
       </ScrollView>
     );
   };
@@ -4399,7 +4197,7 @@ export default function StaffWorkspace({
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>History filters</Text>
-          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
       <Text style={styles.historyFilterLabel}>Transaction type</Text>
@@ -4530,7 +4328,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction details</Text>
-            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <View style={styles.historyDetailSummary}>
@@ -4544,7 +4342,7 @@ export default function StaffWorkspace({
             {transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
           </Text>
           <Text style={styles.historyDetailSummaryReference}>
-            {transaction.reference} · {transaction.historical ? 'Recorded · historical sample' : 'Recorded'}
+            {transaction.reference} · Recorded
           </Text>
         </View>
         <View style={styles.historyDetailRows}>
@@ -4589,14 +4387,7 @@ export default function StaffWorkspace({
           {transaction.batchReference ? <DetailRow label="Batch reference" value={transaction.batchReference} /> : null}
           <DetailRow label="Notes" value={transaction.notes || '—'} />
         </View>
-        {transaction.historical && transaction.ingredientId === 'eggs' ? (
-          <View style={styles.historyLedgerBanner}>
-            <Text style={styles.permissionIcon}>i</Text>
-            <Text style={styles.permissionText}>
-              Historical Eggs waste is already reflected in the recorded 48 pcs balance. This display-only record does not deduct stock again.
-            </Text>
-          </View>
-        ) : ledgerExplanation ? (
+        {ledgerExplanation ? (
           <View style={styles.historyLedgerBanner}>
             <Text style={styles.permissionIcon}>i</Text>
             <Text style={styles.permissionText}>{ledgerExplanation}</Text>
@@ -4694,7 +4485,19 @@ export default function StaffWorkspace({
 
   return (
     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.screenArea}>{screenContent}</View>
+      <View style={styles.screenArea}>
+        {backendError !== '' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading branch data"
+            onPress={() => void refreshBackendData()}
+            style={styles.infoBanner}
+          >
+            <Text style={styles.infoBannerText}>{backendError} · Tap to retry</Text>
+          </Pressable>
+        ) : null}
+        {screenContent}
+      </View>
       <BottomNavigation active={route} onSelect={navigate} />
       <Modal
         visible={logoutConfirmationVisible}
@@ -4718,13 +4521,13 @@ export default function StaffWorkspace({
             </View>
             <Text style={styles.logoutModalTitle}>Are you sure you want to log out?</Text>
             <Text style={styles.logoutModalDescription}>
-              End your demo session on this device? Sign-in uses local sample credentials in this preview.
+              End your secure session on this device? You will need your email and password to sign in again.
             </Text>
             <View style={styles.logoutSessionPanel}>
               <Text style={styles.logoutSessionText}>{staffName} · {staffRole}</Text>
               <Text style={styles.logoutSessionText}>{assignedBranch}</Text>
-              <Text style={styles.logoutSessionNote}>Inventory and transaction data are local mock data and are not synced.</Text>
-              <Text style={styles.logoutSessionNote}>Settings changes are held for this session only.</Text>
+              <Text style={styles.logoutSessionNote}>Saved inventory records stay safe.</Text>
+              <Text style={styles.logoutSessionNote}>No unsaved changes on this screen.</Text>
             </View>
             {logoutError !== '' ? (
               <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text>
@@ -4785,7 +4588,7 @@ export default function StaffWorkspace({
                       {dailyDiscrepancies.map((line) => (
                         <React.Fragment key={line.ingredientId}>
                           <Text style={styles.dailyModalSummaryText}>
-                            {line.name} · Manila · Branch 1
+                            {line.name} · {assignedBranch}
                           </Text>
                           <Text style={styles.dailyModalSummaryText}>
                             Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Physical{' '}
@@ -4801,7 +4604,7 @@ export default function StaffWorkspace({
                     </>
                   ) : (
                     <>
-                      <Text style={styles.dailyModalSummaryText}>Manila · Branch 1</Text>
+                      <Text style={styles.dailyModalSummaryText}>{assignedBranch}</Text>
                       <Text style={styles.dailyModalSummaryText}>
                         {dailyCheckLines.length} ingredients counted · 0 discrepancies
                       </Text>
@@ -4838,7 +4641,7 @@ export default function StaffWorkspace({
                   Send this physical count for owner review. Recorded balances will not change.
                 </Text>
                 <View style={styles.dailyModalSummary}>
-                  <Text style={styles.dailyModalSummaryText}>Manila · Branch 1 · 25 Oct 2026</Text>
+                  <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(new Date())}</Text>
                   <Text style={styles.dailyModalSummaryEmphasis}>
                     {dailyCheckLines.length} ingredients counted · {dailyDiscrepancies.length}{' '}
                     {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}
@@ -4868,15 +4671,15 @@ export default function StaffWorkspace({
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
-                    disabled={dailyCheckSubmissionLock.current}
+                    disabled={dailyCheckSubmitting}
                     onPress={submitDailyInventoryCheck}
                     style={({ pressed }) => [
                       styles.dailyModalPrimaryButton,
                       pressed && styles.pressed,
-                      dailyCheckSubmissionLock.current && styles.confirmButtonDisabled,
+                      dailyCheckSubmitting && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>Submit check</Text>
+                    <Text style={styles.dailyModalPrimaryText}>{dailyCheckSubmitting ? 'Submitting…' : 'Submit check'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -5130,12 +4933,12 @@ export default function StaffWorkspace({
             </Text>
             <Text style={styles.confirmSubtitle}>
               {route === 'waste'
-                ? 'Record this waste event for Manila · Branch 1?'
+                ? `Record this waste event for ${assignedBranch}?`
                 : route === 'fastLogPreview'
                 ? 'Confirm the edited quantities. Nothing is deducted until you confirm.'
                 : route === 'usagePreview'
-                ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from Manila · Branch 1?`
-                : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?`}
+                ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from ${assignedBranch}?`
+                : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for ${assignedBranch}?`}
             </Text>
             {route === 'waste' && selectedIngredient && transactionDate ? (
               <View style={styles.confirmSummary}>
@@ -5172,7 +4975,7 @@ export default function StaffWorkspace({
                   );
                 })}
                 <Text style={styles.confirmSummaryText}>{fastLogReason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
-                <Text style={styles.confirmSummaryText}>Isabel San Esteban</Text>
+                <Text style={styles.confirmSummaryText}>{staffName}</Text>
                 <Text style={styles.confirmSummaryText}>Notes: {fastLogNotes.trim() || '—'}</Text>
               </View>
             ) : route === 'usagePreview' ? (
@@ -5192,7 +4995,7 @@ export default function StaffWorkspace({
                   );
                 })}
                 <Text style={styles.confirmSummaryText}>{reason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
-                <Text style={styles.confirmSummaryText}>Isabel San Esteban</Text>
+                <Text style={styles.confirmSummaryText}>{staffName}</Text>
                 {usageDeductions.some((deduction) => {
                   const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
                   return item && deduction.newQuantity < item.minimumStock;
@@ -5270,7 +5073,17 @@ export default function StaffWorkspace({
   );
 }
 
-const styles = StyleSheet.create({
+function useStaffStyles() {
+  const theme = useTheme();
+  const cachedStyles = staffStylesCache.get(theme);
+  if (cachedStyles) return cachedStyles;
+  const styles = createStaffStyles(theme);
+  staffStylesCache.set(theme, styles);
+  return styles;
+}
+
+function createStaffStyles(theme: AppTheme) {
+  return StyleSheet.create(createThemedStyles({
   workspace: { flex: 1, backgroundColor: colors.white },
   screenArea: { flex: 1, minHeight: 0 },
   scroll: { flex: 1 },
@@ -6185,4 +5998,8 @@ const styles = StyleSheet.create({
   calendarDayTextSelected: { color: colors.white, fontFamily: font.semibold },
   calendarCancel: { alignSelf: 'flex-end', paddingHorizontal: 13, paddingVertical: 9, marginTop: 8 },
   calendarCancelText: { color: colors.muted, fontFamily: font.medium, fontSize: 10 },
-});
+  }, theme));
+}
+
+type StaffStyles = ReturnType<typeof createStaffStyles>;
+const staffStylesCache = new WeakMap<AppTheme, StaffStyles>();

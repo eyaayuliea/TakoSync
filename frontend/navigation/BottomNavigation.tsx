@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 
 const colors = {
   pink: '#F20D55',
@@ -131,6 +132,8 @@ export default function BottomNavigation({
   active: StaffRoute;
   onSelect: (route: StaffTab) => void;
 }) {
+  const { colors: themeColors, isDark } = useTheme();
+  const styles = useNavigationStyles();
   const selectedTab = activeStaffTab(active);
 
   return (
@@ -138,7 +141,9 @@ export default function BottomNavigation({
       <View style={styles.bar}>
         {destinations.map((destination) => {
           const selected = destination.route === selectedTab;
-          const iconColor = selected ? colors.white : colors.orange;
+          const iconColor = selected
+            ? isDark ? themeColors.text : colors.white
+            : themeColors.action;
           return (
             <Pressable
               key={destination.route}
@@ -162,7 +167,9 @@ export default function BottomNavigation({
   );
 }
 
-const styles = StyleSheet.create({
+function useNavigationStyles() {
+  const theme = useTheme();
+  return useMemo(() => StyleSheet.create(createThemedStyles({
   outer: {
     paddingHorizontal: 13,
     paddingTop: 4,
@@ -209,7 +216,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
   },
   pressed: { opacity: 0.76 },
-});
+  }, theme)), [theme]);
+}
 
 const iconStyles = StyleSheet.create({
   home: { width: 20, height: 20, alignItems: 'center', justifyContent: 'flex-end' },
