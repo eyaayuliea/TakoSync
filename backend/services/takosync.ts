@@ -1,4 +1,4 @@
-import { requireSupabase } from '../../frontend/services/supabase';
+import { getStaffLoginEmail, requireSupabase } from '../../frontend/services/supabase';
 import type { Json } from '../types/database';
 
 export type AppUser = {
@@ -129,9 +129,13 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   };
 }
 
-export async function signIn(email: string, password: string): Promise<AppUser> {
+export async function signIn(loginIdentifier: string, password: string): Promise<AppUser> {
   const client = requireSupabase();
-  const { error } = await client.auth.signInWithPassword({ email: email.trim(), password });
+  const identifier = loginIdentifier.trim();
+  const email = identifier.toLowerCase() === 'staff'
+    ? getStaffLoginEmail()
+    : identifier;
+  const { error } = await client.auth.signInWithPassword({ email, password });
   assertNoError(error);
   const user = await getCurrentUser();
   if (!user) throw new Error('Supabase did not return an authenticated session.');

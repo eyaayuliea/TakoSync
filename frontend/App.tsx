@@ -6,6 +6,7 @@ import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import appConfig from '../app.json';
 import {
+  ActivityIndicator,
   Image,
   ImageBackground,
   Pressable,
@@ -194,7 +195,7 @@ function AppContent() {
   const handleLogin = async () => {
     if (authLock.current) return;
     if (!username.trim() || !password) {
-      setLoginError('Enter your email and password to continue.');
+      setLoginError('Enter your username or email and password to continue.');
       return;
     }
     authLock.current = true;
@@ -333,7 +334,7 @@ function AppContent() {
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
-                        <Text style={styles.loginLabel}>Email *</Text>
+                        <Text style={styles.loginLabel}>Username or email *</Text>
                         <TextInput
                           value={username}
                           onChangeText={(value) => {
@@ -341,11 +342,12 @@ function AppContent() {
                             setLoginError('');
                           }}
                           style={styles.loginInput}
-                          placeholder="Enter your email"
+                          placeholder="Enter staff or your email address"
                           placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
                           autoCapitalize="none"
                           autoCorrect={false}
-                          accessibilityLabel="Email, required"
+                          accessibilityLabel="Username or email, required"
+                          editable={!authenticating}
                           returnKeyType="next"
                         />
                         <Text style={[styles.loginLabel, styles.passwordLabel]}>Password *</Text>
@@ -360,11 +362,12 @@ function AppContent() {
                           placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
                           secureTextEntry
                           accessibilityLabel="Password, required"
+                          editable={!authenticating}
                           returnKeyType="done"
                           onSubmitEditing={handleLogin}
                         />
                         <Text style={styles.loginHelper}>
-                          Sign in with the email and password assigned to your account. Contact the owner if you need access.
+                          Staff can sign in with username “staff”. Owners should use their account email. Contact the owner if you need access.
                         </Text>
                         {!isSupabaseConfigured && (
                           <Text style={styles.errorText}>
@@ -378,7 +381,10 @@ function AppContent() {
                           disabled={authenticating || !isSupabaseConfigured}
                           style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed, (authenticating || !isSupabaseConfigured) && { opacity: 0.6 }]}
                         >
-                          <Text style={styles.loginButtonText}>{authenticating ? 'Signing in…' : 'Log In'}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                            {authenticating && <ActivityIndicator size="small" color="#FFFFFF" />}
+                            <Text style={styles.loginButtonText}>{authenticating ? 'Signing in…' : 'Log In'}</Text>
+                          </View>
                         </Pressable>
                       </View>
                     </ScrollView>

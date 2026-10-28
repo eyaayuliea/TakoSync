@@ -35,6 +35,7 @@ The client intentionally refuses sign-in when Supabase configuration is missing.
 
    This applies `backend/supabase/migrations/202610280001_initial_schema.sql`. The migration creates exactly three fixed branch records. The app cannot insert or delete branches.
 3. In the Supabase dashboard, configure Auth email settings and disable public sign-ups. Create user accounts through the dashboard or a trusted administrative process. Do not add a service-role key to the app.
+   - The login screen accepts `staff` as the Staff username and maps it to `staff@YOUR_PROJECT_REF.supabase.co`. Create the Auth user with that exact email (replace `YOUR_PROJECT_REF` with the project ref from the Supabase URL) and set its password privately in the dashboard. The project-specific alias avoids requiring a separate mailbox; create/confirm the user in the dashboard rather than relying on email delivery.
 4. New Auth users receive a Staff profile assigned to Branch 1 by the database trigger. Change the assigned branch only through the trusted SQL editor or an authorized Owner management workflow. To designate the initial Owner after creating their Auth user, use the Supabase SQL editor:
 
    ```sql

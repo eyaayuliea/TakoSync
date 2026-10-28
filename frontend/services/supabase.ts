@@ -24,3 +24,10 @@ export function requireSupabase() {
   }
   return supabase;
 }
+
+export function getStaffLoginEmail(): string {
+  if (!supabaseUrl) {
+    throw new Error('Backend is not configured. Add the Supabase URL and publishable key to .env and restart Expo.');
+  }
+  return `staff@${new URL(supabaseUrl).hostname}`;
+}
