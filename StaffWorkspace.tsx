@@ -143,6 +143,10 @@ function formatReceiptDate(date: Date) {
   return `${formatDate(date)} · 08:00 AM`;
 }
 
+function formatUsageDate(date: Date) {
+  return `${formatDate(date)} · 10:30 AM`;
+}
+
 type StockReceipt = {
   reference: string;
   ingredientId: string;
@@ -153,6 +157,41 @@ type StockReceipt = {
   expirationDate: Date | null;
   notes: string;
 };
+
+type UsageDeduction = {
+  ingredientId: string;
+  quantity: number;
+  previousQuantity: number;
+  newQuantity: number;
+};
+
+type UsageReceipt = {
+  reference: string;
+  deductions: UsageDeduction[];
+  transactionDate: Date;
+  reason: string;
+  notes: string;
+  mode: 'manual' | 'cookingBatch';
+  batchPreset: string | null;
+  batchCount: number;
+};
+
+const cookingBatchPresets = [
+  {
+    name: 'Standard takoyaki batch',
+    deductions: [
+      { ingredientId: 'octopus', quantity: 1 },
+      { ingredientId: 'flour', quantity: 0.5 },
+    ],
+  },
+  {
+    name: 'Rush-hour takoyaki batch',
+    deductions: [
+      { ingredientId: 'octopus', quantity: 1.5 },
+      { ingredientId: 'flour', quantity: 1 },
+    ],
+  },
+] as const;
 
 const openingDate = new Date(2026, 9, 25);
 const openingExpirationDate = new Date(2026, 9, 30);
@@ -224,11 +263,13 @@ function IngredientCard({
   item,
   onPress,
   compact = false,
+  cardWidth,
   statusOverride,
 }: {
   item: Ingredient;
   onPress?: () => void;
   compact?: boolean;
+  cardWidth?: number;
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
 }) {
   const Wrapper = onPress ? Pressable : View;
@@ -238,7 +279,11 @@ function IngredientCard({
   return (
     <Wrapper
       {...(onPress ? { onPress, accessibilityRole: 'button' as const } : {})}
-      style={[styles.ingredientCard, !compact && styles.listIngredientCard]}
+      style={[
+        styles.ingredientCard,
+        !compact && styles.listIngredientCard,
+        compact && cardWidth !== undefined ? { width: cardWidth } : null,
+      ]}
     >
       <IngredientThumbnail item={item} />
       <View style={styles.ingredientCopy}>
@@ -495,6 +540,10 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [selectedIngredientId, setSelectedIngredientId] = useState('');
   const [ingredientListOpen, setIngredientListOpen] = useState(false);
   const [quantity, setQuantity] = useState('');
+  const [usageMode, setUsageMode] = useState<'manual' | 'cookingBatch'>('manual');
+  const [batchPreset, setBatchPreset] = useState<string>(cookingBatchPresets[0].name);
+  const [batchPresetOpen, setBatchPresetOpen] = useState(false);
+  const [batchCount, setBatchCount] = useState('1');
   const [transactionDate, setTransactionDate] = useState<Date | null>(new Date());
   const [expirationDate, setExpirationDate] = useState<Date | null>(null);
   const [reason, setReason] = useState('Cooking usage');
@@ -507,8 +556,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [stockReceipts, setStockReceipts] = useState<StockReceipt[]>([]);
   const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
+  const [usageReceipts, setUsageReceipts] = useState<UsageReceipt[]>([]);
+  const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
+  const [dashboardCarouselWidth, setDashboardCarouselWidth] = useState(0);
   const [readNotifications, setReadNotifications] = useState<string[]>(['activity-stock-in']);
   const [notificationPreferences, setNotificationPreferences] = useState({
     lowStock: true,
@@ -517,6 +569,27 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   });
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
+  const selectedBatch = cookingBatchPresets.find((preset) => preset.name === batchPreset) ?? cookingBatchPresets[0];
+  const parsedBatchCount = Number(batchCount);
+  const usageDeductions: UsageDeduction[] = usageMode === 'manual'
+    ? selectedIngredient
+      ? [{
+          ingredientId: selectedIngredient.id,
+          quantity: Number(quantity),
+          previousQuantity: selectedIngredient.quantity,
+          newQuantity: selectedIngredient.quantity - Number(quantity),
+        }]
+      : []
+    : selectedBatch.deductions.map((deduction) => {
+        const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+        const deductionQuantity = deduction.quantity * parsedBatchCount;
+        return {
+          ingredientId: deduction.ingredientId,
+          quantity: deductionQuantity,
+          previousQuantity: ingredient?.quantity ?? 0,
+          newQuantity: (ingredient?.quantity ?? 0) - deductionQuantity,
+        };
+      });
   const normalizedSearch = search.trim().toLowerCase();
   const visibleIngredients = useMemo(
     () =>
@@ -552,6 +625,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const visibleNotifications = notifications.filter((item) => notificationPreferences[item.kind]);
   const unreadCount = visibleNotifications.filter((item) => !readNotifications.includes(item.id)).length;
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
+  const dashboardCardWidth = Math.max(0, dashboardCarouselWidth - 12);
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
 
@@ -565,18 +639,22 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     source: StaffTab,
   ) => {
     setReturnRoute(source);
-    setSelectedIngredientId(formRoute === 'stockIn' ? 'octopus' : '');
+    setSelectedIngredientId(formRoute === 'stockIn' || formRoute === 'stockOut' ? 'octopus' : '');
     setIngredientListOpen(false);
-    setQuantity(formRoute === 'stockIn' ? '5' : '');
-    setTransactionDate(formRoute === 'stockIn' ? openingDate : new Date());
+    setQuantity(formRoute === 'stockIn' ? '5' : formRoute === 'stockOut' ? '1' : '');
+    setUsageMode('manual');
+    setBatchPresetOpen(false);
+    setBatchCount('1');
+    setTransactionDate(formRoute === 'stockIn' || formRoute === 'stockOut' ? openingDate : new Date());
     setExpirationDate(formRoute === 'stockIn' ? openingExpirationDate : null);
     setReason(formRoute === 'waste' ? 'Spoilage' : 'Cooking usage');
     setReasonListOpen(false);
-    setNotes(formRoute === 'stockIn' ? 'Opening delivery' : '');
+    setNotes(formRoute === 'stockIn' ? 'Opening delivery' : formRoute === 'stockOut' ? 'Extra cooking preparation' : '');
     setSuccessMessage('');
     setFormError('');
     setQuantityError('');
     setCurrentReceipt(null);
+    setCurrentUsageReceipt(null);
     setConfirmationVisible(false);
     setRoute(formRoute);
   };
@@ -592,7 +670,14 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const changeQuantity = (value: string) => {
     setQuantity(value);
     setFormError('');
-    if (quantityError && value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) > 0) {
+    const parsedValue = Number(value);
+    if (
+      quantityError &&
+      value.trim() !== '' &&
+      Number.isFinite(parsedValue) &&
+      parsedValue > 0 &&
+      (!selectedIngredient || parsedValue <= selectedIngredient.quantity)
+    ) {
       setQuantityError('');
     }
   };
@@ -600,6 +685,23 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const validateTransaction = () => {
     setSuccessMessage('');
     setFormError('');
+    if (route === 'stockOut' && usageMode === 'cookingBatch') {
+      if (!Number.isFinite(parsedBatchCount) || parsedBatchCount <= 0) {
+        setFormError('Enter a batch count greater than 0.');
+        return false;
+      }
+      if (!transactionDate) {
+        setFormError('Choose a transaction date.');
+        return false;
+      }
+      const unavailableDeduction = usageDeductions.find((deduction) => deduction.quantity > deduction.previousQuantity);
+      if (unavailableDeduction) {
+        const ingredient = ingredients.find((item) => item.id === unavailableDeduction.ingredientId);
+        setFormError(`${ingredient?.name ?? 'Ingredient'} usage exceeds available stock.`);
+        return false;
+      }
+      return true;
+    }
     const parsedQuantity = Number(quantity);
     if (!selectedIngredient) {
       setFormError('Choose an ingredient to continue.');
@@ -618,7 +720,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       setFormError('Choose an expiration date for this perishable ingredient.');
       return false;
     }
-    if ((route === 'stockOut' || route === 'fastLog' || route === 'waste') && parsedQuantity > selectedIngredient.quantity) {
+    if (route === 'stockOut' && parsedQuantity > selectedIngredient.quantity) {
+      setQuantityError('Quantity used exceeds the available stock.');
+      return false;
+    }
+    if ((route === 'fastLog' || route === 'waste') && parsedQuantity > selectedIngredient.quantity) {
       setFormError(`Only ${selectedIngredient.quantity} ${selectedIngredient.unit} available. Enter a smaller quantity.`);
       return false;
     }
@@ -627,11 +733,69 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
 
   const reviewTransaction = () => {
     if (!validateTransaction()) return;
+    if (route === 'stockOut') {
+      setConfirmationVisible(false);
+      setRoute('usagePreview');
+      return;
+    }
     setConfirmationVisible(true);
   };
 
   const confirmTransaction = () => {
-    if (confirming || !selectedIngredient || !transactionDate) return;
+    if (confirming || !transactionDate) return;
+    if (route === 'usagePreview') {
+      if (
+        usageDeductions.length === 0 ||
+        usageDeductions.some((deduction) =>
+          !Number.isFinite(deduction.quantity) ||
+          deduction.quantity <= 0 ||
+          deduction.quantity > deduction.previousQuantity,
+        )
+      ) {
+        setConfirmationVisible(false);
+        setRoute('stockOut');
+        setQuantityError('Quantity used exceeds the available stock.');
+        return;
+      }
+
+      setConfirming(true);
+      setTimeout(() => {
+        const receiptDate = transactionDate;
+        const deductions = usageDeductions.map((deduction) => ({ ...deduction }));
+        const referenceNumber = usageReceipts.length + 3;
+        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
+        const receipt: UsageReceipt = {
+          reference: `US-${datePart}-${String(referenceNumber).padStart(3, '0')}`,
+          deductions,
+          transactionDate: receiptDate,
+          reason,
+          notes,
+          mode: usageMode,
+          batchPreset: usageMode === 'cookingBatch' ? batchPreset : null,
+          batchCount: usageMode === 'cookingBatch' ? parsedBatchCount : 1,
+        };
+        setIngredients((current) =>
+          current.map((item) => {
+            const deduction = deductions.find((entry) => entry.ingredientId === item.id);
+            if (!deduction) return item;
+            return {
+              ...item,
+              quantity: Number(deduction.newQuantity.toFixed(2)),
+              lowStock: deduction.newQuantity < item.threshold,
+              lastUpdated: formatUsageDate(receiptDate),
+            };
+          }),
+        );
+        setUsageReceipts((current) => [...current, receipt]);
+        setCurrentUsageReceipt(receipt);
+        setConfirmationVisible(false);
+        setConfirming(false);
+        setRoute('stockOutSuccess');
+      }, 250);
+      return;
+    }
+
+    if (!selectedIngredient) return;
     const parsedQuantity = Number(quantity);
     if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
       setQuantityError('Enter a quantity greater than 0.');
@@ -790,19 +954,24 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
 
       <View style={styles.sectionHeadingRow}>
         <Text style={styles.sectionTitle}>Low-Stock Items</Text>
-        <Pressable onPress={() => navigate('inventory')}>
-          <Text style={styles.viewAll}>View all ›</Text>
-        </Pressable>
       </View>
       <ScrollView
+        style={styles.dashboardCarousel}
         horizontal
         nestedScrollEnabled
         directionalLockEnabled
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.horizontalCards}
+        onLayout={(event) => setDashboardCarouselWidth(event.nativeEvent.layout.width)}
       >
         {lowStockItems.filter(dashboardMatches).map((item) => (
-          <IngredientCard key={`low-${item.id}`} item={item} compact onPress={() => openForm('stockOut', 'dashboard')} />
+          <IngredientCard
+            key={`low-${item.id}`}
+            item={item}
+            compact
+            cardWidth={dashboardCardWidth}
+            onPress={() => openForm('stockOut', 'dashboard')}
+          />
         ))}
         {lowStockItems.filter(dashboardMatches).length === 0 && (
           <Text style={styles.emptyState}>No low-stock items match your search.</Text>
@@ -814,17 +983,20 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={styles.sectionHint}>{expiringItems.length} items</Text>
       </View>
       <ScrollView
+        style={styles.dashboardCarousel}
         horizontal
         nestedScrollEnabled
         directionalLockEnabled
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.horizontalCards}
+        onLayout={(event) => setDashboardCarouselWidth(event.nativeEvent.layout.width)}
       >
         {expiringItems.filter(dashboardMatches).map((item) => (
           <IngredientCard
             key={`expiry-${item.id}`}
             item={item}
             compact
+            cardWidth={dashboardCardWidth}
             statusOverride={{ label: 'Expiring soon', tone: 'warning' }}
             onPress={() => openForm('stockOut', 'dashboard')}
           />
@@ -1218,9 +1390,13 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         style={styles.selectInput}
       >
         <Text style={[styles.selectText, !selectedIngredient && styles.placeholderText]}>
-          {selectedIngredient ? selectedIngredient.name : 'Select an ingredient'}
+          {selectedIngredient
+            ? route === 'stockOut'
+              ? `${selectedIngredient.name} · ${formatQuantity(selectedIngredient.quantity)} ${selectedIngredient.unit} available`
+              : selectedIngredient.name
+            : 'Select an ingredient'}
         </Text>
-        {selectedIngredient && route !== 'stockIn' ? (
+        {selectedIngredient && route !== 'stockIn' && route !== 'stockOut' ? (
           <Text style={styles.availableQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit} available</Text>
         ) : null}
         <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
@@ -1234,6 +1410,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 setSelectedIngredientId(item.id);
                 setIngredientListOpen(false);
                 setFormError('');
+                setQuantityError('');
               }}
               style={styles.dropdownOption}
             >
@@ -1318,7 +1495,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       ? 'Rush-Hour Fast-Log'
       : route === 'waste'
         ? 'Waste / Spoilage'
-        : 'Stock-Out';
+        : 'Stock-Out / Usage';
     const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity used *';
     const reasonLabel = route === 'fastLog' ? 'Preset *' : 'Reason *';
     const reasonOptions = route === 'waste'
@@ -1342,6 +1519,34 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {route === 'stockOut' && (
+          <View style={styles.usageModeRow}>
+            {([
+              { key: 'manual', label: 'Manual quantity' },
+              { key: 'cookingBatch', label: 'Cooking batch' },
+            ] as const).map((mode) => {
+              const selected = usageMode === mode.key;
+              return (
+                <Pressable
+                  key={mode.key}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    setUsageMode(mode.key);
+                    setFormError('');
+                    setQuantityError('');
+                    setBatchPresetOpen(false);
+                  }}
+                  style={[styles.usageModeChip, selected && styles.usageModeChipSelected]}
+                >
+                  <Text style={[styles.usageModeChipText, selected && styles.usageModeChipTextSelected]}>
+                    {mode.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
         {successMessage !== '' && (
           <View style={styles.successBanner} accessibilityRole="alert">
             <Text style={styles.successIcon}>✓</Text>
@@ -1352,15 +1557,69 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           </View>
         )}
         {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
-        {renderIngredientSelector()}
-        <TextField
-          label={quantityLabel}
-          value={quantity}
-          onChangeText={changeQuantity}
-          placeholder="Enter quantity"
-          keyboardType="decimal-pad"
-          error={quantityError}
-        />
+        {route === 'stockOut' && usageMode === 'cookingBatch' ? (
+          <>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Cooking batch *</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setBatchPresetOpen((open) => !open)}
+                style={styles.selectInput}
+              >
+                <Text style={styles.selectText}>{batchPreset}</Text>
+                <Text style={styles.selectChevron}>{batchPresetOpen ? '⌃' : '⌄'}</Text>
+              </Pressable>
+              {batchPresetOpen && (
+                <View style={styles.reasonDropdown}>
+                  {cookingBatchPresets.map((preset) => (
+                    <Pressable
+                      key={preset.name}
+                      onPress={() => {
+                        setBatchPreset(preset.name);
+                        setBatchPresetOpen(false);
+                        setFormError('');
+                      }}
+                      style={styles.reasonOption}
+                    >
+                      <Text style={[styles.reasonOptionText, batchPreset === preset.name && styles.reasonOptionSelected]}>
+                        {preset.name}
+                      </Text>
+                      <Text style={styles.dropdownQuantity}>
+                        {preset.deductions.map((deduction) => {
+                          const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
+                          return item ? `${item.name} ${formatQuantity(deduction.quantity)} ${item.unit}` : '';
+                        }).filter(Boolean).join(' · ')} per batch
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
+            <TextField
+              label="Number of batches *"
+              value={batchCount}
+              onChangeText={(value) => {
+                setBatchCount(value);
+                setFormError('');
+              }}
+              placeholder="Enter batch count"
+              keyboardType="decimal-pad"
+            />
+          </>
+        ) : (
+          <>
+            {renderIngredientSelector()}
+            <TextField
+              label={quantityLabel}
+              value={quantity}
+              onChangeText={changeQuantity}
+              placeholder="Enter quantity"
+              keyboardType="decimal-pad"
+              error={route === 'stockOut' ? quantityError : undefined}
+              suffix={route === 'stockOut' ? selectedIngredient?.unit : undefined}
+            />
+          </>
+        )}
         <DatePickerField
           label="Transaction date *"
           value={transactionDate}
@@ -1394,7 +1653,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <View style={styles.formButtons}>
           <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
             <Text style={styles.saveButtonText}>
-              {route === 'fastLog' ? 'Review Fast-Log' : route === 'waste' ? 'Review Waste' : 'Review Stock-Out'}
+              {route === 'stockOut'
+                ? 'Preview transaction'
+                : route === 'fastLog'
+                  ? 'Review Fast-Log'
+                  : 'Review Waste'}
             </Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
@@ -1404,6 +1667,196 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
       </ScrollView>
     </>
+    );
+  };
+
+  const renderUsagePreview = () => {
+    const deductions = usageDeductions.map((deduction) => ({
+      ...deduction,
+      ingredient: ingredients.find((item) => item.id === deduction.ingredientId),
+    }));
+    const leavesBelowMinimum = deductions.some(
+      ({ ingredient, newQuantity }) => ingredient !== undefined && newQuantity < ingredient.minimumStock,
+    );
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to edit usage"
+            onPress={() => setRoute('stockOut')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Usage preview</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.compactFormContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.usageInfoBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              Review the ingredient, quantity and remaining stock before recording.
+            </Text>
+          </View>
+          <View style={styles.usageSummaryCard}>
+            <Text style={styles.usageSummaryHeading}>
+              {usageMode === 'cookingBatch' ? batchPreset : selectedIngredient?.name ?? 'Stock summary'}
+            </Text>
+            {usageMode === 'manual' && selectedIngredient ? (
+              <>
+                <DetailRow label="Ingredient" value={selectedIngredient.name} />
+                <DetailRow label="Available" value={`${formatQuantity(selectedIngredient.quantity)} ${selectedIngredient.unit}`} />
+                <DetailRow label="Quantity used" value={`-${formatQuantity(Number(quantity))} ${selectedIngredient.unit}`} />
+                <DetailRow label="After usage" value={`${formatQuantity(selectedIngredient.quantity - Number(quantity))} ${selectedIngredient.unit}`} />
+                <DetailRow label="Minimum stock" value={`${formatQuantity(selectedIngredient.minimumStock)} ${selectedIngredient.unit}`} />
+              </>
+            ) : (
+              deductions.map(({ ingredient, quantity: amount, newQuantity }) => ingredient ? (
+                <DetailRow
+                  key={ingredient.id}
+                  label={`${ingredient.name} · −${formatQuantity(amount)} ${ingredient.unit}`}
+                  value={`${formatQuantity(newQuantity)} ${ingredient.unit} remaining`}
+                />
+              ) : null)
+            )}
+            <DetailRow label="Reason" value={reason} />
+          </View>
+          <View style={styles.usageReceiptDetails}>
+            <DetailRow label="Transaction date" value={transactionDate ? formatDate(transactionDate) : '—'} />
+            <DetailRow label="Notes" value={notes.trim() || '—'} />
+          </View>
+          {leavesBelowMinimum && (
+            <View style={styles.usageWarningBanner}>
+              <Text style={styles.usageWarningText}>
+                Low stock will remain after this deduction. Quantities cannot fall below zero.
+              </Text>
+            </View>
+          )}
+          <View style={styles.formButtons}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setConfirmationVisible(true)}
+              style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.saveButtonText}>Confirm usage</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setRoute('stockOut')}
+              style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.cancelButtonText}>Edit transaction</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderUsageSuccess = () => {
+    const receipt = currentUsageReceipt;
+    if (!receipt) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No usage receipt to display</Text>
+          <Pressable onPress={() => setRoute('stocks')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Stocks</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const firstDeduction = receipt.deductions[0];
+    const firstIngredient = ingredients.find((item) => item.id === firstDeduction?.ingredientId);
+    const afterLines = receipt.deductions.map((deduction) => {
+      const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
+      return item
+        ? `${formatQuantity(deduction.previousQuantity)} ${item.unit} → ${formatQuantity(deduction.newQuantity)} ${item.unit} remaining`
+        : '';
+    }).filter(Boolean);
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Stocks"
+            onPress={() => setRoute('stocks')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Stock-Out / Usage</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.receiptSuccessBanner}>
+            <Text style={styles.receiptSuccessIcon}>✓</Text>
+            <Text style={styles.receiptSuccessText}>Stock-out recorded successfully.</Text>
+          </View>
+          <View style={styles.receiptSummaryCard}>
+            <Text style={styles.receiptSummaryTitle}>
+              {receipt.mode === 'cookingBatch' ? receipt.batchPreset : `${firstIngredient?.name ?? 'Ingredient'} · ${receipt.reason}`}
+            </Text>
+            <Text style={styles.receiptSummaryQuantity}>
+              -{formatQuantity(firstDeduction?.quantity ?? 0)} {firstIngredient?.unit ?? ''}
+            </Text>
+            <Text style={styles.receiptSummarySubtitle}>{afterLines.join(' · ')}</Text>
+          </View>
+          <View style={styles.receiptDetails}>
+            <DetailRow label="Reference" value={receipt.reference} />
+            <DetailRow label="Date" value={formatUsageDate(receipt.transactionDate)} />
+            <DetailRow label="Staff" value="Isabel San Esteban" />
+            <DetailRow label="Branch" value="Manila · Branch 1" />
+            {receipt.deductions.map((deduction) => {
+              const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
+              return item ? (
+                <DetailRow
+                  key={item.id}
+                  label={item.name}
+                  value={`-${formatQuantity(deduction.quantity)} ${item.unit}`}
+                />
+              ) : null;
+            })}
+            <DetailRow label="Notes" value={receipt.notes.trim() || '—'} />
+          </View>
+          <View style={styles.permissionNotice}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              This is a new transaction example from the recorded {formatQuantity(firstDeduction?.previousQuantity ?? 0)} {firstIngredient?.unit ?? ''} balance.
+              {firstIngredient && (firstDeduction?.newQuantity ?? 0) < firstIngredient.minimumStock
+                ? ` ${firstIngredient.name} remains below the ${formatQuantity(firstIngredient.minimumStock)} ${firstIngredient.unit} minimum.`
+                : ''}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute('stockHistory')}
+            style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.historyButtonText}>View transaction history</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute('stocks')}
+            style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.cancelButtonText}>Back to Stocks</Text>
+          </Pressable>
+          <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local sample transaction only.</Text>
+        </ScrollView>
+      </>
     );
   };
 
@@ -1481,11 +1934,25 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
         </View>
       </View>
-      <Text style={styles.historyPlaceholderText}>Local demo receipts</Text>
-      {stockReceipts.length === 0 ? (
+      <Text style={styles.historyPlaceholderText}>Local demo transactions</Text>
+      {stockReceipts.length === 0 && usageReceipts.length === 0 ? (
         <Text style={styles.emptyState}>No sample receipts have been confirmed in this session.</Text>
       ) : (
         <View style={styles.stockHistoryList}>
+          {usageReceipts.slice().reverse().map((receipt) => {
+            const first = receipt.deductions[0];
+            const item = ingredients.find((ingredient) => ingredient.id === first?.ingredientId);
+            return (
+              <View key={receipt.reference} style={styles.historyActivityCard}>
+                <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
+                <View style={styles.historyActivityCopy}>
+                  <Text style={styles.historyActivityTitle}>{item?.name ?? 'Ingredient'} usage · {receipt.reason}</Text>
+                  <Text style={styles.historyActivityDetail}>{receipt.reference} · {formatUsageDate(receipt.transactionDate)}</Text>
+                </View>
+                <Text style={styles.historyUsageAmount}>-{formatQuantity(first?.quantity ?? 0)} {item?.unit ?? ''}</Text>
+              </View>
+            );
+          })}
           {stockReceipts.slice().reverse().map((receipt) => {
             const item = ingredients.find((ingredient) => ingredient.id === receipt.ingredientId);
             return (
@@ -1530,6 +1997,12 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     case 'waste':
       screenContent = renderMovementForm();
       break;
+    case 'usagePreview':
+      screenContent = renderUsagePreview();
+      break;
+    case 'stockOutSuccess':
+      screenContent = renderUsageSuccess();
+      break;
     case 'stockInSuccess':
       screenContent = renderStockInSuccess();
       break;
@@ -1558,11 +2031,13 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       >
         <View style={styles.confirmBackdrop}>
           <View style={styles.confirmCard}>
-            <View style={styles.confirmIcon}>
+            <View style={[styles.confirmIcon, route === 'usagePreview' && styles.usageConfirmIcon]}>
               <Text style={styles.confirmIconText}>↓</Text>
             </View>
             <Text style={styles.confirmTitle}>
-              {route === 'stockIn'
+              {route === 'usagePreview'
+                ? 'Confirm cooking usage'
+                : route === 'stockIn'
                 ? 'Confirm Stock-In'
                 : route === 'fastLog'
                   ? 'Confirm Fast-Log'
@@ -1571,9 +2046,41 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                     : 'Confirm Stock-Out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
-              Record this ingredient {route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?
+              {route === 'usagePreview'
+                ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from Manila · Branch 1?`
+                : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?`}
             </Text>
-            {selectedIngredient ? (
+            {route === 'usagePreview' ? (
+              <View style={styles.confirmSummary}>
+                {usageDeductions.map((deduction) => {
+                  const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+                  if (!ingredient) return null;
+                  return (
+                    <React.Fragment key={ingredient.id}>
+                      <Text style={styles.confirmSummaryText}>
+                        {ingredient.name} · -{formatQuantity(deduction.quantity)} {ingredient.unit}
+                      </Text>
+                      <Text style={styles.confirmSummaryText}>
+                        Available {formatQuantity(deduction.previousQuantity)} {ingredient.unit} → Remaining {formatQuantity(deduction.newQuantity)} {ingredient.unit}
+                      </Text>
+                    </React.Fragment>
+                  );
+                })}
+                <Text style={styles.confirmSummaryText}>{reason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
+                <Text style={styles.confirmSummaryText}>Isabel San Esteban</Text>
+                {usageDeductions.some((deduction) => {
+                  const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
+                  return item && deduction.newQuantity < item.minimumStock;
+                }) ? (
+                  <Text style={styles.confirmSummaryText}>
+                    This will remain below the {formatQuantity(
+                      ingredients.find((item) => item.id === usageDeductions[0]?.ingredientId)?.minimumStock ?? 0,
+                    )} {ingredients.find((item) => item.id === usageDeductions[0]?.ingredientId)?.unit ?? ''} minimum.
+                  </Text>
+                ) : null}
+                <Text style={styles.confirmSummaryText}>Notes: {notes.trim() || '—'}</Text>
+              </View>
+            ) : selectedIngredient ? (
               <View style={styles.confirmSummary}>
                 <View style={styles.confirmSummaryRow}>
                   <Text style={styles.confirmSummaryText}>
@@ -1618,7 +2125,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 onPress={confirmTransaction}
                 style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed, confirming && styles.confirmButtonDisabled]}
               >
-                <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Confirm'}</Text>
+                <Text style={styles.confirmButtonText}>
+                  {confirming ? 'Recording…' : route === 'usagePreview' ? 'Record usage' : 'Confirm'}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -1707,6 +2216,7 @@ const styles = StyleSheet.create({
   historyActivityTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   historyActivityDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 3 },
   historyActivityAmount: { color: colors.green, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
+  historyUsageAmount: { color: colors.red, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
   stockHistoryList: { gap: 9, marginTop: 10 },
   formContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 24 },
   dashboardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 17 },
@@ -1770,9 +2280,10 @@ const styles = StyleSheet.create({
   quickActionIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginBottom: 4 },
   quickActionGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 21, lineHeight: 25 },
   quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'center' },
+  dashboardCarousel: { width: '100%', flexGrow: 0 },
   horizontalCards: { gap: 9, paddingRight: 18, paddingBottom: 2 },
   ingredientCard: {
-    minHeight: 116, width: 206, flexShrink: 0, flexDirection: 'row', alignItems: 'center', padding: 9,
+    minHeight: 116, flexShrink: 0, flexDirection: 'row', alignItems: 'center', padding: 9,
     borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
     elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
@@ -1797,7 +2308,6 @@ const styles = StyleSheet.create({
   goodBadge: { backgroundColor: colors.paleGreen },
   goodBadgeText: { color: colors.green },
   cardChevron: { color: '#B5B5BF', fontFamily: font.regular, fontSize: 19, marginLeft: 3 },
-  viewAll: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
   expirationHeading: { marginTop: 20 },
   demoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 22 },
   pageHeader: { marginBottom: 17 },
@@ -1931,6 +2441,22 @@ const styles = StyleSheet.create({
   receiptSuccessBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: '#F0F6F0', marginTop: 14, marginBottom: 13 },
   receiptSuccessIcon: { color: colors.green, fontFamily: font.bold, fontSize: 16, marginRight: 8 },
   receiptSuccessText: { color: colors.green, fontFamily: font.medium, fontSize: 9 },
+  usageModeRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  usageModeChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: '#EEEEEF' },
+  usageModeChipSelected: { backgroundColor: colors.navy },
+  usageModeChipText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  usageModeChipTextSelected: { color: colors.white },
+  usageInfoBanner: { flexDirection: 'row', alignItems: 'flex-start', padding: 11, borderRadius: 11, backgroundColor: '#FFF5CB', marginBottom: 13 },
+  usageSummaryCard: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#EEEEEF',
+    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }, marginBottom: 11,
+  },
+  usageSummaryHeading: { color: colors.navy, fontFamily: font.semibold, fontSize: 11, paddingVertical: 5 },
+  usageReceiptDetails: { paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 11 },
+  usageWarningBanner: { padding: 11, borderRadius: 11, backgroundColor: colors.paleRed, marginBottom: 11 },
+  usageWarningText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14 },
+  usageConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
   receiptSummaryCard: { paddingHorizontal: 16, paddingVertical: 15, borderRadius: 17, backgroundColor: colors.navy, marginBottom: 14 },
   receiptSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
   receiptSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 31, lineHeight: 37, marginTop: 3 },
