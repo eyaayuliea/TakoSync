@@ -73,7 +73,7 @@ type Ingredient = {
   tint: string;
 };
 
-const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments'];
+const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments', 'Produce'];
 const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function formatDate(date: Date) {
@@ -389,7 +389,7 @@ function SearchBar({
   );
 }
 
-function IngredientThumbnail({ item, large = false }: { item: Ingredient; large?: boolean }) {
+function IngredientThumbnail({ item, large = false, small = false }: { item: Ingredient; large?: boolean; small?: boolean }) {
   const styles = useStaffStyles();
   const { colors: themeColors, isDark } = useTheme();
   return (
@@ -397,11 +397,14 @@ function IngredientThumbnail({ item, large = false }: { item: Ingredient; large?
       style={[
         styles.ingredientThumbnail,
         large && styles.largeThumbnail,
+        small && styles.smallThumbnail,
         { backgroundColor: isDark ? themeColors.surfaceSecondary : item.tint },
       ]}
       accessibilityLabel={`${item.name} image placeholder`}
     >
-      <Text style={large ? styles.largeThumbnailEmoji : styles.thumbnailEmoji}>{item.emoji}</Text>
+      <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
+        {item.emoji}
+      </Text>
     </View>
   );
 }
@@ -440,7 +443,7 @@ function IngredientCard({
 }) {
   const styles = useStaffStyles();
   const Wrapper = onPress ? Pressable : View;
-  const statusLabel = statusOverride?.label ?? (item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
+  const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
 
   return (
@@ -467,7 +470,7 @@ function IngredientCard({
 
 function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress: () => void }) {
   const styles = useStaffStyles();
-  const statusLabel = item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock';
+  const statusLabel = item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock';
   const statusTone = item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good';
 
   return (
@@ -477,7 +480,7 @@ function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress:
       onPress={onPress}
       style={({ pressed }) => [styles.inventoryCard, pressed && styles.pressed]}
     >
-      <IngredientThumbnail item={item} />
+      <IngredientThumbnail item={item} small />
       <View style={styles.inventoryCardCopy}>
         <Text style={styles.inventoryIngredientName}>{item.name}</Text>
         <Text style={styles.inventoryIngredientCategory}>{item.category}</Text>
@@ -1037,7 +1040,7 @@ export default function StaffWorkspace({
       }),
     [category, ingredients, normalizedSearch],
   );
-  const lowStockItems = ingredients.filter((item) => item.quantity < item.minimumStock);
+  const lowStockItems = ingredients.filter((item) => item.quantity <= 0 || item.quantity < item.minimumStock);
   const expiringBatches = ingredients.flatMap((item) =>
     item.batches.flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDate);
@@ -2820,7 +2823,13 @@ export default function StaffWorkspace({
       </Pressable>
       {ingredientListOpen && (
         <View style={styles.dropdown}>
-          {ingredients.map((item) => (
+          {ingredients.length === 0 ? (
+            <Text style={styles.ingredientPickerEmpty}>
+              {backendLoading
+                ? 'Loading branch ingredients…'
+                : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}
+            </Text>
+          ) : ingredients.map((item) => (
             <Pressable
               key={item.id}
               onPress={() => {
@@ -2947,7 +2956,13 @@ export default function StaffWorkspace({
           {wasteFieldErrors.item ? <Text style={styles.fieldError}>{wasteFieldErrors.item}</Text> : null}
           {ingredientListOpen ? (
             <View style={styles.reasonDropdown}>
-              {ingredients.map((item) => (
+              {ingredients.length === 0 ? (
+                <Text style={styles.ingredientPickerEmpty}>
+                  {backendLoading
+                    ? 'Loading branch ingredients…'
+                    : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}
+                </Text>
+              ) : ingredients.map((item) => (
                 <Pressable
                   key={item.id}
                   accessibilityRole="button"
@@ -2957,11 +2972,17 @@ export default function StaffWorkspace({
                     setIngredientListOpen(false);
                     setWasteFieldErrors((current) => ({ ...current, item: '' }));
                   }}
-                  style={styles.reasonOption}
+                  style={styles.ingredientReasonOption}
                 >
-                  <Text style={[styles.reasonOptionText, item.id === selectedIngredientId && styles.reasonOptionSelected]}>
-                    {item.name} · {formatUnitQuantity(item.quantity, item.unit)} before this event
-                  </Text>
+                  <IngredientThumbnail item={item} small />
+                  <View style={styles.dropdownCopy}>
+                    <Text style={[styles.reasonOptionText, item.id === selectedIngredientId && styles.reasonOptionSelected]}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.dropdownQuantity}>
+                      {formatUnitQuantity(item.quantity, item.unit)} before this event
+                    </Text>
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -3422,7 +3443,13 @@ export default function StaffWorkspace({
                 </Pressable>
                 {fastLogIngredientPickerIndex === index ? (
                   <View style={styles.reasonDropdown}>
-                    {ingredients.map((option) => (
+                    {ingredients.length === 0 ? (
+                      <Text style={styles.ingredientPickerEmpty}>
+                        {backendLoading
+                          ? 'Loading branch ingredients…'
+                          : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}
+                      </Text>
+                    ) : ingredients.map((option) => (
                       option.id !== draft.ingredientId && fastLogDraftDeductions.some(
                         (otherDraft, otherIndex) => otherIndex !== index && otherDraft.ingredientId === option.id,
                       ) ? null : (
@@ -3432,14 +3459,20 @@ export default function StaffWorkspace({
                           updateFastLogDeduction(index, 'ingredientId', option.id);
                           setFastLogIngredientPickerIndex(null);
                         }}
-                        style={styles.reasonOption}
+                        style={styles.ingredientReasonOption}
                       >
-                        <Text style={[
-                          styles.reasonOptionText,
-                          option.id === draft.ingredientId && styles.reasonOptionSelected,
-                        ]}>
-                          {option.name} · {formatUnitQuantity(option.quantity, option.unit)} available
-                        </Text>
+                        <IngredientThumbnail item={option} small />
+                        <View style={styles.dropdownCopy}>
+                          <Text style={[
+                            styles.reasonOptionText,
+                            option.id === draft.ingredientId && styles.reasonOptionSelected,
+                          ]}>
+                            {option.name}
+                          </Text>
+                          <Text style={styles.dropdownQuantity}>
+                            {formatUnitQuantity(option.quantity, option.unit)} available
+                          </Text>
+                        </View>
                       </Pressable>
                       )
                     ))}
@@ -5393,7 +5426,9 @@ function createStaffStyles(theme: AppTheme) {
   },
   listIngredientCard: { width: '100%', minHeight: 108 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
   thumbnailEmoji: { fontSize: 29 },
+  smallThumbnailEmoji: { fontSize: 20 },
   largeThumbnail: { width: 70, height: 80 },
   largeThumbnailEmoji: { fontSize: 34 },
   ingredientCopy: { flex: 1, minWidth: 0, justifyContent: 'center', marginLeft: 9 },
@@ -5886,12 +5921,20 @@ function createStaffStyles(theme: AppTheme) {
   availableQuantity: { color: colors.muted, fontFamily: font.medium, fontSize: 8, marginRight: 8 },
   selectChevron: { color: colors.orange, fontSize: 18, marginLeft: 5 },
   dropdown: { borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },
+  ingredientPickerEmpty: {
+    paddingHorizontal: 12, paddingVertical: 13, color: colors.muted,
+    fontFamily: font.regular, fontSize: 9, lineHeight: 14,
+  },
   dropdownOption: { flexDirection: 'row', alignItems: 'center', padding: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
-  dropdownCopy: { marginLeft: 10 },
+  dropdownCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
   dropdownName: { color: colors.navy, fontFamily: font.medium, fontSize: 10 },
   dropdownQuantity: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   reasonDropdown: { borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },
   reasonOption: { paddingHorizontal: 13, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: colors.line },
+  ingredientReasonOption: {
+    minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9,
+    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: colors.line,
+  },
   reasonOptionText: { color: colors.ink, fontFamily: font.regular, fontSize: 10 },
   reasonOptionSelected: { color: colors.pink, fontFamily: font.semibold },
   formButtons: { gap: 9, marginTop: 7 },

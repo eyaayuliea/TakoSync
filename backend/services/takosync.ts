@@ -68,7 +68,11 @@ const ingredientVisuals: Record<string, { emoji: string; tint: string; type: str
   octopus: { emoji: '🐙', tint: '#FCE9DE', type: 'Frozen seafood' },
   flour: { emoji: '🌾', tint: '#FFF1D8', type: 'Dry goods' },
   eggs: { emoji: '🥚', tint: '#FFF4D8', type: 'Fresh eggs' },
-  sauces: { emoji: '🫙', tint: '#FBE7E9', type: 'Takoyaki sauce' },
+  sauces: { emoji: '🧴', tint: '#FBE7E9', type: 'Takoyaki sauce' },
+  'japanese-mayonnaise': { emoji: '🥫', tint: '#FFF4D8', type: 'Japanese mayonnaise' },
+  'bonito-flakes': { emoji: '🐟', tint: '#FFF1D8', type: 'Dried fish flakes' },
+  'spring-onions': { emoji: '🌱', tint: '#E8F6EC', type: 'Fresh produce' },
+  'cooking-oil': { emoji: '🫗', tint: '#FFF4D8', type: 'Cooking oil' },
 };
 
 function assertNoError(error: { message: string } | null): void {
@@ -181,9 +185,8 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
     batches.set(batch.ingredient_id, [...(batches.get(batch.ingredient_id) ?? []), batch]);
   }
 
-  return (ingredientsResult.data ?? []).flatMap((ingredient) => {
+  return (ingredientsResult.data ?? []).map((ingredient) => {
     const stock = inventory.get(ingredient.id);
-    if (!stock) return [];
     const itemBatches = batches.get(ingredient.id) ?? [];
     const nextBatch = itemBatches.find((batch) => batch.expiration_date);
     const expirationDate = nextBatch?.expiration_date ?? null;
@@ -191,19 +194,19 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
     const daysUntilExpiration = expirationTime === null
       ? null
       : Math.ceil((expirationTime - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
-    const minimumStock = Number(stock.minimum_stock);
-    const quantity = Number(stock.quantity);
+    const minimumStock = Number(stock?.minimum_stock ?? 0);
+    const quantity = Number(stock?.quantity ?? 0);
     const visual = ingredientVisuals[ingredient.id] ?? { emoji: '📦', tint: '#F2F2F4', type: categories.get(ingredient.category_id) ?? 'Ingredient' };
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
-    return [{
+    return {
       id: ingredient.id,
       name: ingredient.name,
       category: categories.get(ingredient.category_id) ?? 'Other',
       quantity,
       unit: ingredient.unit,
       threshold: minimumStock,
-      lowStock: quantity <= minimumStock,
+      lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
       expiration: formattedExpiration,
       nearExpiry: daysUntilExpiration !== null && daysUntilExpiration <= 7,
       minimumStock,
@@ -224,10 +227,10 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
         receivedDate: formatDate(batch.received_date) ?? '',
         expirationDate: formatDate(batch.expiration_date),
       })),
-      lastUpdated: new Date(stock.updated_at).toLocaleString('en-GB'),
+      lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
       emoji: visual.emoji,
       tint: visual.tint,
-    }];
+    };
   });
 }
 
@@ -358,7 +361,7 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
   return transactions.flatMap((row) => {
     const ingredient = ingredients.get(row.ingredient_id);
     if (!ingredient) return [];
-    return [{
+    return {
       id: row.id,
       reference: row.reference,
       type: typeNames[row.type],
@@ -378,7 +381,7 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
       beforeQuantity: Number(row.before_quantity),
       afterQuantity: Number(row.after_quantity),
       batchReference: row.batch_id ? batches.get(row.batch_id) ?? null : null,
-    }];
+    };
   });
 }
 
