@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   Image,
+  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,7 +12,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import BottomNavigation, { type StaffRoute, type StaffTab } from './BottomNavigation';
 
@@ -47,6 +47,12 @@ type Ingredient = {
   threshold: number;
   lowStock: boolean;
   expiration: string | null;
+  nearExpiry: boolean;
+  minimumStock: number;
+  type: string;
+  unitName: string;
+  receivedBatch: string;
+  lastUpdated: string;
   emoji: string;
   tint: string;
 };
@@ -56,11 +62,17 @@ const initialIngredients: Ingredient[] = [
     id: 'octopus',
     name: 'Octopus',
     category: 'Seafood',
-    quantity: 1.2,
+    quantity: 3,
     unit: 'kg',
-    threshold: 2,
+    threshold: 5,
     lowStock: true,
-    expiration: null,
+    expiration: '30 Oct 2026',
+    nearExpiry: false,
+    minimumStock: 5,
+    type: 'Frozen seafood',
+    unitName: 'Kilograms (kg)',
+    receivedBatch: 'OCT-2510 · 25 Oct 2026',
+    lastUpdated: '25 Oct 2026 · 10:15 AM',
     emoji: '🐙',
     tint: '#FCE9DE',
   },
@@ -68,23 +80,35 @@ const initialIngredients: Ingredient[] = [
     id: 'flour',
     name: 'Flour',
     category: 'Dry Goods',
-    quantity: 8,
+    quantity: 12,
     unit: 'kg',
-    threshold: 3,
+    threshold: 5,
     lowStock: false,
     expiration: null,
+    nearExpiry: false,
+    minimumStock: 5,
+    type: 'Dry goods',
+    unitName: 'Kilograms (kg)',
+    receivedBatch: 'FLR-2510 · 24 Oct 2026',
+    lastUpdated: '25 Oct 2026 · 9:30 AM',
     emoji: '🌾',
     tint: '#FFF1D8',
   },
   {
     id: 'eggs',
     name: 'Eggs',
-    category: 'Dairy & Eggs',
-    quantity: 2,
-    unit: 'trays',
-    threshold: 3,
-    lowStock: true,
-    expiration: 'Oct 30',
+    category: 'Dairy & eggs',
+    quantity: 48,
+    unit: 'pcs',
+    threshold: 24,
+    lowStock: false,
+    expiration: '2 Nov 2026',
+    nearExpiry: false,
+    minimumStock: 24,
+    type: 'Fresh eggs',
+    unitName: 'Pieces (pcs)',
+    receivedBatch: 'EGG-2510 · 25 Oct 2026',
+    lastUpdated: '25 Oct 2026 · 10:20 AM',
     emoji: '🥚',
     tint: '#FFF4D8',
   },
@@ -92,21 +116,49 @@ const initialIngredients: Ingredient[] = [
     id: 'sauces',
     name: 'Sauces',
     category: 'Condiments',
-    quantity: 4,
-    unit: 'bottles',
+    quantity: 2,
+    unit: 'L',
     threshold: 2,
     lowStock: false,
-    expiration: 'Oct 31',
+    expiration: '29 Oct 2026',
+    nearExpiry: true,
+    minimumStock: 1,
+    type: 'Takoyaki sauce',
+    unitName: 'Liters (L)',
+    receivedBatch: 'SAU-2510 · 23 Oct 2026',
+    lastUpdated: '25 Oct 2026 · 10:05 AM',
     emoji: '🫙',
     tint: '#FBE7E9',
   },
 ];
 
-const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & Eggs', 'Condiments'];
+const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments'];
 const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function formatDate(date: Date) {
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatReceiptDate(date: Date) {
+  return `${formatDate(date)} · 08:00 AM`;
+}
+
+type StockReceipt = {
+  reference: string;
+  ingredientId: string;
+  quantity: number;
+  previousQuantity: number;
+  newQuantity: number;
+  transactionDate: Date;
+  expirationDate: Date | null;
+  notes: string;
+};
+
+const openingDate = new Date(2026, 9, 25);
+const openingExpirationDate = new Date(2026, 9, 30);
+
+function formatQuantity(quantity: number) {
+  return Number.isInteger(quantity) ? `${quantity}` : `${Number(quantity.toFixed(2))}`;
 }
 
 function SearchBar({
@@ -150,11 +202,19 @@ function IngredientThumbnail({ item, large = false }: { item: Ingredient; large?
   );
 }
 
-function StatusBadge({ label, tone }: { label: string; tone: 'low' | 'good' | 'warning' }) {
+function StatusBadge({
+  label,
+  tone,
+  alignRight = false,
+}: {
+  label: string;
+  tone: 'low' | 'good' | 'warning';
+  alignRight?: boolean;
+}) {
   const toneStyle = tone === 'low' ? styles.lowBadge : tone === 'warning' ? styles.warningBadge : styles.goodBadge;
   const textStyle = tone === 'low' ? styles.lowBadgeText : tone === 'warning' ? styles.warningBadgeText : styles.goodBadgeText;
   return (
-    <View style={[styles.statusBadge, toneStyle]}>
+    <View style={[styles.statusBadge, toneStyle, alignRight && styles.statusBadgeRight]}>
       <Text style={[styles.statusBadgeText, textStyle]}>{label}</Text>
     </View>
   );
@@ -172,8 +232,8 @@ function IngredientCard({
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
 }) {
   const Wrapper = onPress ? Pressable : View;
-  const statusLabel = statusOverride?.label ?? (item.lowStock ? 'Low stock' : item.expiration ? 'Expiring soon' : 'In stock');
-  const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.expiration ? 'warning' : 'good');
+  const statusLabel = statusOverride?.label ?? (item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
+  const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
 
   return (
     <Wrapper
@@ -190,6 +250,63 @@ function IngredientCard({
       </View>
       <Text style={styles.cardChevron}>›</Text>
     </Wrapper>
+  );
+}
+
+function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress: () => void }) {
+  const statusLabel = item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock';
+  const statusTone = item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}, ${statusLabel}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.inventoryCard, pressed && styles.pressed]}
+    >
+      <IngredientThumbnail item={item} />
+      <View style={styles.inventoryCardCopy}>
+        <Text style={styles.inventoryIngredientName}>{item.name}</Text>
+        <Text style={styles.inventoryIngredientCategory}>{item.category}</Text>
+      </View>
+      <View style={styles.inventoryQuantityColumn}>
+        <Text style={styles.inventoryQuantity}>{item.quantity} {item.unit}</Text>
+        <StatusBadge label={statusLabel} tone={statusTone} alignRight />
+      </View>
+    </Pressable>
+  );
+}
+
+function FilterChip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[styles.categoryChip, styles.inventoryChip, selected && styles.inventoryChipSelected]}
+    >
+      <Text style={[styles.categoryChipText, styles.inventoryChipText, selected && styles.inventoryChipTextSelected]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function CubeOutlineIcon() {
+  return (
+    <View style={styles.emptyCube}>
+      <View style={styles.emptyCubeTopLeft} />
+      <View style={styles.emptyCubeTopRight} />
+      <View style={styles.emptyCubeBody} />
+      <View style={styles.emptyCubeSeam} />
+    </View>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -230,6 +347,8 @@ function TextField({
   placeholder,
   keyboardType,
   multiline = false,
+  error,
+  suffix,
 }: {
   label: string;
   value: string;
@@ -237,20 +356,39 @@ function TextField({
   placeholder: string;
   keyboardType?: 'default' | 'numeric' | 'decimal-pad';
   multiline?: boolean;
+  error?: string;
+  suffix?: string;
 }) {
   return (
     <View style={styles.fieldGroup}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#A0A0AA"
-        keyboardType={keyboardType}
-        multiline={multiline}
-        textAlignVertical={multiline ? 'top' : 'center'}
-        style={[styles.textInput, multiline && styles.notesInput]}
-      />
+      {suffix ? (
+        <View style={[styles.suffixedInput, error ? styles.textInputError : undefined]}>
+          <TextInput
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            placeholderTextColor="#A0A0AA"
+            keyboardType={keyboardType}
+            multiline={multiline}
+            textAlignVertical={multiline ? 'top' : 'center'}
+            style={[styles.textInput, styles.suffixedTextInput]}
+          />
+          <Text style={styles.inputSuffix}>{suffix}</Text>
+        </View>
+      ) : (
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#A0A0AA"
+          keyboardType={keyboardType}
+          multiline={multiline}
+          textAlignVertical={multiline ? 'top' : 'center'}
+          style={[styles.textInput, multiline && styles.notesInput, error !== undefined && error !== '' && styles.textInputError]}
+        />
+      )}
+      {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
   );
 }
@@ -349,8 +487,6 @@ function DatePickerField({
 }
 
 export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
-  const { width } = useWindowDimensions();
-  const wideForm = width >= 360;
   const [route, setRoute] = useState<StaffRoute>('dashboard');
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
   const [ingredients, setIngredients] = useState(initialIngredients);
@@ -366,6 +502,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [notes, setNotes] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [formError, setFormError] = useState('');
+  const [quantityError, setQuantityError] = useState('');
+  const [confirmationVisible, setConfirmationVisible] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [stockReceipts, setStockReceipts] = useState<StockReceipt[]>([]);
+  const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [readNotifications, setReadNotifications] = useState<string[]>(['activity-stock-in']);
@@ -387,7 +528,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     [category, ingredients, normalizedSearch],
   );
   const lowStockItems = ingredients.filter((item) => item.lowStock);
-  const expiringItems = ingredients.filter((item) => item.expiration !== null);
+  const expiringItems = ingredients.filter((item) => item.nearExpiry);
   const notifications = [
     ...lowStockItems.map((item) => ({
       id: `low-${item.id}`,
@@ -420,73 +561,131 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   };
 
   const openForm = (
-    formRoute: 'stockIn' | 'stockOut',
-    source: StaffTab = route === 'stockIn' || route === 'stockOut' ? 'stocks' : route,
+    formRoute: 'stockIn' | 'stockOut' | 'fastLog' | 'waste',
+    source: StaffTab,
   ) => {
     setReturnRoute(source);
-    setSelectedIngredientId('');
+    setSelectedIngredientId(formRoute === 'stockIn' ? 'octopus' : '');
     setIngredientListOpen(false);
-    setQuantity('');
-    setTransactionDate(new Date());
-    setExpirationDate(null);
-    setReason('Cooking usage');
+    setQuantity(formRoute === 'stockIn' ? '5' : '');
+    setTransactionDate(formRoute === 'stockIn' ? openingDate : new Date());
+    setExpirationDate(formRoute === 'stockIn' ? openingExpirationDate : null);
+    setReason(formRoute === 'waste' ? 'Spoilage' : 'Cooking usage');
     setReasonListOpen(false);
-    setNotes('');
+    setNotes(formRoute === 'stockIn' ? 'Opening delivery' : '');
     setSuccessMessage('');
     setFormError('');
+    setQuantityError('');
+    setCurrentReceipt(null);
+    setConfirmationVisible(false);
     setRoute(formRoute);
   };
 
   const returnFromForm = () => {
     setIngredientListOpen(false);
+    setConfirmationVisible(false);
     setRoute(returnRoute);
     setSuccessMessage('');
     setFormError('');
   };
 
-  const handleSave = () => {
+  const changeQuantity = (value: string) => {
+    setQuantity(value);
+    setFormError('');
+    if (quantityError && value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) > 0) {
+      setQuantityError('');
+    }
+  };
+
+  const validateTransaction = () => {
     setSuccessMessage('');
     setFormError('');
     const parsedQuantity = Number(quantity);
     if (!selectedIngredient) {
       setFormError('Choose an ingredient to continue.');
-      return;
+      return false;
     }
     if (!quantity.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      setFormError('Enter a quantity greater than zero.');
-      return;
+      setQuantityError('Enter a quantity greater than 0.');
+      return false;
     }
+    setQuantityError('');
     if (!transactionDate) {
       setFormError('Choose a transaction date.');
-      return;
+      return false;
     }
-    if (route === 'stockOut' && parsedQuantity > selectedIngredient.quantity) {
+    if (route === 'stockIn' && selectedIngredient.category !== 'Dry Goods' && !expirationDate) {
+      setFormError('Choose an expiration date for this perishable ingredient.');
+      return false;
+    }
+    if ((route === 'stockOut' || route === 'fastLog' || route === 'waste') && parsedQuantity > selectedIngredient.quantity) {
       setFormError(`Only ${selectedIngredient.quantity} ${selectedIngredient.unit} available. Enter a smaller quantity.`);
+      return false;
+    }
+    return true;
+  };
+
+  const reviewTransaction = () => {
+    if (!validateTransaction()) return;
+    setConfirmationVisible(true);
+  };
+
+  const confirmTransaction = () => {
+    if (confirming || !selectedIngredient || !transactionDate) return;
+    const parsedQuantity = Number(quantity);
+    if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+      setQuantityError('Enter a quantity greater than 0.');
+      setConfirmationVisible(false);
       return;
     }
 
-    setIngredients((current) =>
-      current.map((item) => {
+    setConfirming(true);
+    setTimeout(() => {
+      const currentRoute = route;
+      const newQuantity = currentRoute === 'stockIn'
+        ? selectedIngredient.quantity + parsedQuantity
+        : selectedIngredient.quantity - parsedQuantity;
+      const nextIngredients = ingredients.map((item) => {
         if (item.id !== selectedIngredient.id) return item;
-        const nextQuantity = route === 'stockIn'
-          ? item.quantity + parsedQuantity
-          : item.quantity - parsedQuantity;
         return {
           ...item,
-          quantity: Number(nextQuantity.toFixed(2)),
-          lowStock: nextQuantity < item.threshold,
+          quantity: Number(newQuantity.toFixed(2)),
+          lowStock: newQuantity < item.threshold,
           expiration:
-            route === 'stockIn' && expirationDate
-              ? expirationDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            currentRoute === 'stockIn' && expirationDate
+              ? formatDate(expirationDate)
               : item.expiration,
+          nearExpiry: currentRoute === 'stockIn' && expirationDate ? true : item.nearExpiry,
         };
-      }),
-    );
-    setSuccessMessage(
-      route === 'stockIn'
-        ? `${parsedQuantity} ${selectedIngredient.unit} of ${selectedIngredient.name} added successfully.`
-        : `${parsedQuantity} ${selectedIngredient.unit} of ${selectedIngredient.name} recorded successfully.`,
-    );
+      });
+      setIngredients(nextIngredients);
+      setConfirmationVisible(false);
+      setConfirming(false);
+      setQuantityError('');
+
+      if (currentRoute === 'stockIn') {
+        const receiptNumber = stockReceipts.length + 1;
+        const referenceDate = transactionDate.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }).replace('/', '');
+        const receipt: StockReceipt = {
+          reference: `SI-${referenceDate}-${String(receiptNumber).padStart(3, '0')}`,
+          ingredientId: selectedIngredient.id,
+          quantity: parsedQuantity,
+          previousQuantity: selectedIngredient.quantity,
+          newQuantity,
+          transactionDate,
+          expirationDate,
+          notes,
+        };
+        setCurrentReceipt(receipt);
+        setStockReceipts((current) => [...current, receipt]);
+        setRoute('stockInSuccess');
+        return;
+      }
+
+      setSuccessMessage(
+        `${parsedQuantity} ${selectedIngredient.unit} of ${selectedIngredient.name} recorded successfully as a local mock transaction.`,
+      );
+    }, 250);
   };
 
   const renderTopHeader = (title: string, subtitle?: string) => (
@@ -495,17 +694,6 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       {subtitle ? <Text style={styles.pageSubtitle}>{subtitle}</Text> : null}
     </View>
   );
-
-  const renderIngredientList = (items: Ingredient[], emptyText: string) =>
-    items.length > 0 ? (
-      <View style={styles.ingredientList}>
-        {items.map((item) => (
-          <IngredientCard key={item.id} item={item} onPress={() => openForm('stockOut', 'inventory')} />
-        ))}
-      </View>
-    ) : (
-      <Text style={styles.emptyState}>{emptyText}</Text>
-    );
 
   const renderDashboard = () => (
     <ScrollView
@@ -606,7 +794,13 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           <Text style={styles.viewAll}>View all ›</Text>
         </Pressable>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalCards}>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        directionalLockEnabled
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalCards}
+      >
         {lowStockItems.filter(dashboardMatches).map((item) => (
           <IngredientCard key={`low-${item.id}`} item={item} compact onPress={() => openForm('stockOut', 'dashboard')} />
         ))}
@@ -619,7 +813,13 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={styles.sectionTitle}>Nearing Expiration</Text>
         <Text style={styles.sectionHint}>{expiringItems.length} items</Text>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalCards}>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        directionalLockEnabled
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalCards}
+      >
         {expiringItems.filter(dashboardMatches).map((item) => (
           <IngredientCard
             key={`expiry-${item.id}`}
@@ -638,41 +838,209 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   );
 
   const renderInventory = () => (
-    <ScrollView
+    <FlatList
       style={styles.scroll}
-      contentContainerStyle={styles.pageContent}
+      contentContainerStyle={styles.inventoryListContent}
+      data={visibleIngredients}
+      keyExtractor={(item) => item.id}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
-    >
-      {renderTopHeader('Inventory', `${ingredients.length} ingredients in your branch`)}
-      <SearchBar value={search} onChangeText={setSearch} />
+      ItemSeparatorComponent={() => <View style={styles.inventoryCardSeparator} />}
+      ListHeaderComponent={
+        <View style={styles.inventoryPageHeader}>
+          <Text style={styles.pageTitle}>Inventory</Text>
+          <Text style={styles.pageSubtitle}>Manila · Branch 1 / Staff</Text>
+          <View style={styles.inventorySearch}>
+            <SearchBar value={search} onChangeText={setSearch} />
+          </View>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            directionalLockEnabled
+            showsHorizontalScrollIndicator={false}
+            style={styles.inventoryFilterScroll}
+            contentContainerStyle={styles.inventoryFilters}
+          >
+            {categories.map((filter) => (
+              <FilterChip
+                key={filter}
+                label={filter}
+                selected={filter === category}
+                onPress={() => setCategory(filter)}
+              />
+            ))}
+          </ScrollView>
+          <Text style={styles.inventoryCount}>
+            {visibleIngredients.length} {visibleIngredients.length === 1 ? 'ingredient' : 'ingredients'} · Manila · Branch 1
+          </Text>
+        </View>
+      }
+      renderItem={({ item }) => (
+        <InventoryIngredientCard
+          item={item}
+          onPress={() => {
+            setSelectedIngredientId(item.id);
+            setRoute('ingredientDetails');
+          }}
+        />
+      )}
+      ListEmptyComponent={
+        <View style={styles.inventoryEmpty}>
+          <CubeOutlineIcon />
+          <Text style={styles.inventoryEmptyTitle}>No ingredients found</Text>
+          <Text style={styles.inventoryEmptyMessage}>
+            {search.trim()
+              ? `No results for '${search.trim()}'. Try a different name or clear your category filters.`
+              : `No results${category !== 'All' ? ` in '${category}'` : ''}. Try a different name or clear your category filters.`}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setSearch('');
+              setCategory('All');
+            }}
+            style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.clearFiltersText}>Clear filters</Text>
+          </Pressable>
+        </View>
+      }
+      ListFooterComponent={
+        visibleIngredients.length > 0 ? (
+          <Text style={styles.demoNote}>DEMO PREVIEW · Sample inventory only, not connected to a live store.</Text>
+        ) : null
+      }
+    />
+  );
+
+  const renderIngredientDetails = () => {
+    if (!selectedIngredient) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>Ingredient not found</Text>
+          <Pressable onPress={() => setRoute('inventory')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to inventory</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const gap = selectedIngredient.minimumStock - selectedIngredient.quantity;
+    const stockGap = gap > 0
+      ? `${gap} ${selectedIngredient.unit} below minimum`
+      : gap < 0
+        ? `${Math.abs(gap)} ${selectedIngredient.unit} above minimum`
+        : 'At minimum stock';
+    const statusLabel = selectedIngredient.lowStock
+      ? 'Low Stock'
+      : selectedIngredient.nearExpiry
+        ? 'Near Expiry'
+        : 'In Stock';
+    const statusTone = selectedIngredient.lowStock
+      ? 'low'
+      : selectedIngredient.nearExpiry
+        ? 'warning'
+        : 'good';
+
+    return (
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryList}
-        style={styles.categoryScroll}
+        style={styles.scroll}
+        contentContainerStyle={styles.detailPage}
+        showsVerticalScrollIndicator={false}
       >
-        {categories.map((filter) => {
-          const selected = filter === category;
-          return (
-            <Pressable
-              key={filter}
-              onPress={() => setCategory(filter)}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              style={[styles.categoryChip, selected && styles.categoryChipSelected]}
-            >
-              <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>{filter}</Text>
-            </Pressable>
-          );
-        })}
+        <View style={styles.detailHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to inventory"
+            onPress={() => setRoute('inventory')}
+            style={styles.detailBackButton}
+          >
+            <Text style={styles.detailBackArrow}>‹</Text>
+          </Pressable>
+          <View style={styles.detailHeaderCopy}>
+            <Text style={styles.detailPageTitle}>Ingredient details</Text>
+            <Text style={styles.pageSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+
+        <View style={styles.ingredientSummary}>
+          <IngredientThumbnail item={selectedIngredient} large />
+          <View style={styles.ingredientSummaryCopy}>
+            <Text style={styles.detailIngredientName}>{selectedIngredient.name}</Text>
+            <Text style={styles.detailIngredientCategory}>{selectedIngredient.category} · {selectedIngredient.type}</Text>
+            <StatusBadge label={statusLabel} tone={statusTone} />
+          </View>
+        </View>
+
+        <View style={styles.stockSummaryCard}>
+          <Text style={styles.stockSummaryQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit}</Text>
+          <Text style={styles.stockSummaryCaption}>Recorded available stock</Text>
+          <View style={styles.stockSummaryDivider} />
+          <View style={styles.stockSummaryLine}>
+            <Text style={styles.stockSummaryLabel}>Minimum stock</Text>
+            <Text style={styles.stockSummaryValue}>{selectedIngredient.minimumStock} {selectedIngredient.unit}</Text>
+          </View>
+          <View style={styles.stockSummaryLine}>
+            <Text style={styles.stockSummaryLabel}>Stock gap</Text>
+            <Text style={[styles.stockSummaryValue, gap > 0 && styles.stockGapWarning]}>{stockGap}</Text>
+          </View>
+        </View>
+
+        <View style={styles.detailRows}>
+          <DetailRow label="Branch" value="Manila · Branch 1" />
+          <DetailRow label="Inventory unit" value={selectedIngredient.unitName} />
+          <DetailRow label="Received batch" value={selectedIngredient.receivedBatch} />
+          <DetailRow label="Expiration" value={selectedIngredient.expiration ?? 'Not recorded'} />
+          <DetailRow label="Last updated" value={selectedIngredient.lastUpdated} />
+        </View>
+
+        <View style={styles.permissionNotice}>
+          <Text style={styles.permissionIcon}>i</Text>
+          <Text style={styles.permissionText}>
+            Master ingredient information is read-only. Only the owner can add, edit or delete master records.
+          </Text>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRoute('inventoryHistory')}
+          style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.historyButtonText}>View stock history</Text>
+        </Pressable>
+        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Sample data, not a live inventory record.</Text>
       </ScrollView>
-      <View style={styles.inventorySectionHeading}>
-        <Text style={styles.sectionTitle}>{category === 'All' ? 'All Ingredients' : category}</Text>
-        <Text style={styles.sectionHint}>{visibleIngredients.length} items</Text>
+    );
+  };
+
+  const renderInventoryHistory = () => (
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.detailPage} showsVerticalScrollIndicator={false}>
+      <View style={styles.detailHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to ingredient details"
+          onPress={() => setRoute('ingredientDetails')}
+          style={styles.detailBackButton}
+        >
+          <Text style={styles.detailBackArrow}>‹</Text>
+        </Pressable>
+        <View style={styles.detailHeaderCopy}>
+          <Text style={styles.detailPageTitle}>Stock history</Text>
+          <Text style={styles.pageSubtitle}>{selectedIngredient?.name ?? 'Ingredient'} · Manila · Branch 1</Text>
+        </View>
       </View>
-      {renderIngredientList(visibleIngredients, 'No ingredients match your search.')}
-      <Text style={styles.demoNote}>DEMO PREVIEW · Inventory updates stay on this device only.</Text>
+      <Text style={styles.historyPlaceholderText}>Sample activity</Text>
+      <View style={styles.historyActivityCard}>
+        <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>+</Text></View>
+        <View style={styles.historyActivityCopy}>
+          <Text style={styles.historyActivityTitle}>Stock-In received</Text>
+          <Text style={styles.historyActivityDetail}>
+            {selectedIngredient?.receivedBatch ?? 'Sample batch'} · {selectedIngredient?.lastUpdated ?? '25 Oct 2026'}
+          </Text>
+        </View>
+        <Text style={styles.historyActivityAmount}>+{selectedIngredient?.quantity ?? 0} {selectedIngredient?.unit ?? ''}</Text>
+      </View>
+      <Text style={styles.detailDemoNote}>DEMO PREVIEW · This sample history is not connected to live transactions.</Text>
     </ScrollView>
   );
 
@@ -682,26 +1050,42 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       contentContainerStyle={styles.pageContent}
       showsVerticalScrollIndicator={false}
     >
-      {renderTopHeader('Stocks', 'Manage ingredient movement')}
-      <Text style={styles.sectionTitle}>Choose an action</Text>
-      <Text style={styles.stocksIntro}>Keep your Manila Branch stock records up to date.</Text>
+      {renderTopHeader('Stocks', 'Manila · Branch 1 / Staff')}
+      <View style={styles.stocksSummaryCard}>
+        <Text style={styles.stocksSummaryTitle}>Every movement, accounted for.</Text>
+        <Text style={styles.stocksSummarySubtitle}>Record stock for Manila Branch 1 only.</Text>
+      </View>
       <View style={styles.stockActionList}>
         <ActionCard
           title="Stock-In"
-          description="Record newly received ingredients"
-          icon="+"
+          description="Receive ingredients and track batch expiry"
+          icon="↓"
           onPress={() => openForm('stockIn', 'stocks')}
         />
         <ActionCard
           title="Stock-Out"
-          description="Record usage, spoilage, or other stock"
-          icon="↗"
+          description="Log manual usage or a cooking batch"
+          icon="↑"
           onPress={() => openForm('stockOut', 'stocks')}
+        />
+        <ActionCard
+          title="Rush-Hour Fast-Log"
+          description="Cooking waste and spoilage presets"
+          icon="⚡"
+          onPress={() => openForm('fastLog', 'stocks')}
+        />
+        <ActionCard
+          title="Waste / Spoilage"
+          description="Record lost or unusable ingredients"
+          icon="⌫"
+          onPress={() => openForm('waste', 'stocks')}
         />
       </View>
       <View style={styles.stockTip}>
         <Text style={styles.stockTipIcon}>i</Text>
-        <Text style={styles.stockTipText}>Transactions are saved as a local demo and do not reach a live inventory.</Text>
+        <Text style={styles.stockTipText}>
+          Check available stock before confirming a deduction. Master ingredients are managed by the owner.
+        </Text>
       </View>
     </ScrollView>
   );
@@ -836,7 +1220,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={[styles.selectText, !selectedIngredient && styles.placeholderText]}>
           {selectedIngredient ? selectedIngredient.name : 'Select an ingredient'}
         </Text>
-        {selectedIngredient && route === 'stockOut' ? (
+        {selectedIngredient && route !== 'stockIn' ? (
           <Text style={styles.availableQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit} available</Text>
         ) : null}
         <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
@@ -871,82 +1255,90 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
-        <Text style={styles.formTitle}>Stock-In</Text>
-        <View style={styles.headerSpacer} />
+        <View style={styles.formHeaderCopy}>
+          <Text style={styles.formTitle}>Stock-In</Text>
+          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+        </View>
       </View>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.formContent}
+        contentContainerStyle={styles.compactFormContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {successMessage !== '' && (
-          <View style={styles.successBanner} accessibilityRole="alert">
-            <Text style={styles.successIcon}>✓</Text>
-            <Text style={styles.successText}>{successMessage}</Text>
-            <Pressable onPress={() => setSuccessMessage('')} accessibilityRole="button" accessibilityLabel="Dismiss success message">
-              <Text style={styles.bannerDismiss}>×</Text>
-            </Pressable>
-          </View>
-        )}
+        <View style={styles.receiptInfoBanner}>
+          <Text style={styles.receiptInfoIcon}>i</Text>
+          <Text style={styles.receiptInfoText}>
+            Receipt example · 25 Oct 2026, 08:00 AM. Opening Octopus balance: 0 kg.
+          </Text>
+        </View>
         {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
         {renderIngredientSelector()}
-        <View style={[styles.formRow, wideForm && styles.formRowWide]}>
-          <View style={styles.rowField}>
-            <TextField
-              label="Quantity Received *"
-              value={quantity}
-              onChangeText={(value) => { setQuantity(value); setFormError(''); setSuccessMessage(''); }}
-              placeholder="Enter quantity"
-              keyboardType="decimal-pad"
-            />
-          </View>
-          <View style={styles.rowField}>
-            <DatePickerField
-              label="Transaction Date *"
-              value={transactionDate}
-              onChange={(date) => { setTransactionDate(date); setFormError(''); setSuccessMessage(''); }}
-            />
-          </View>
-        </View>
-        <DatePickerField
-          label="Expiration Date (optional)"
-          value={expirationDate}
-          onChange={(date) => { setExpirationDate(date); setSuccessMessage(''); }}
-        />
-        <Text style={styles.helperText}>Choose an expiration date if the ingredient has a limited shelf life.</Text>
         <TextField
-          label="Notes (optional)"
+          label="Quantity received *"
+          value={quantity}
+          onChangeText={changeQuantity}
+          placeholder="Enter quantity"
+          keyboardType="decimal-pad"
+          error={quantityError}
+          suffix={selectedIngredient?.unit}
+        />
+        <DatePickerField
+          label="Transaction date *"
+          value={transactionDate}
+          onChange={(date) => { setTransactionDate(date); setFormError(''); }}
+        />
+        <DatePickerField
+          label="Expiration date"
+          value={expirationDate}
+          onChange={setExpirationDate}
+        />
+        <Text style={styles.helperText}>Required for perishable ingredients. Track by received batch.</Text>
+        <TextField
+          label="Notes"
           value={notes}
           onChangeText={setNotes}
-          placeholder="Add a note"
-          multiline
+          placeholder="Add receipt notes"
         />
         <View style={styles.formButtons}>
-          <Pressable accessibilityRole="button" onPress={handleSave} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-            <Text style={styles.saveButtonText}>Save Stock-In</Text>
+          <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
+            <Text style={styles.saveButtonText}>Review Stock-In</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
-        <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
+        <Text style={styles.formDemoNote}>Local demo only · This example does not create a live stock record.</Text>
       </ScrollView>
     </>
   );
 
-  const renderStockOutForm = () => (
+  const renderMovementForm = () => {
+    const formTitle = route === 'fastLog'
+      ? 'Rush-Hour Fast-Log'
+      : route === 'waste'
+        ? 'Waste / Spoilage'
+        : 'Stock-Out';
+    const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity used *';
+    const reasonLabel = route === 'fastLog' ? 'Preset *' : 'Reason *';
+    const reasonOptions = route === 'waste'
+      ? ['Spoilage', 'Expired', 'Other']
+      : ['Cooking usage', 'Spoilage', 'Other'];
+
+    return (
     <>
       <View style={styles.formHeader}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
-        <Text style={styles.formTitle}>Stock-Out</Text>
-        <View style={styles.headerSpacer} />
+        <View style={styles.formHeaderCopy}>
+          <Text style={styles.formTitle}>{formTitle}</Text>
+          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+        </View>
       </View>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.formContent}
+        contentContainerStyle={styles.compactFormContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -961,26 +1353,21 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         )}
         {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
         {renderIngredientSelector()}
-        <View style={[styles.formRow, wideForm && styles.formRowWide]}>
-          <View style={styles.rowField}>
-            <TextField
-              label="Quantity Used *"
-              value={quantity}
-              onChangeText={(value) => { setQuantity(value); setFormError(''); setSuccessMessage(''); }}
-              placeholder="Enter quantity"
-              keyboardType="decimal-pad"
-            />
-          </View>
-          <View style={styles.rowField}>
-            <DatePickerField
-              label="Transaction Date *"
-              value={transactionDate}
-              onChange={(date) => { setTransactionDate(date); setFormError(''); setSuccessMessage(''); }}
-            />
-          </View>
-        </View>
+        <TextField
+          label={quantityLabel}
+          value={quantity}
+          onChangeText={changeQuantity}
+          placeholder="Enter quantity"
+          keyboardType="decimal-pad"
+          error={quantityError}
+        />
+        <DatePickerField
+          label="Transaction date *"
+          value={transactionDate}
+          onChange={(date) => { setTransactionDate(date); setFormError(''); }}
+        />
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Reason *</Text>
+          <Text style={styles.fieldLabel}>{reasonLabel}</Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => setReasonListOpen((open) => !open)}
@@ -991,7 +1378,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           </Pressable>
           {reasonListOpen && (
             <View style={styles.reasonDropdown}>
-              {['Cooking usage', 'Spoilage', 'Other'].map((option) => (
+              {reasonOptions.map((option) => (
                 <Pressable
                   key={option}
                   onPress={() => { setReason(option); setReasonListOpen(false); }}
@@ -1003,10 +1390,12 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
             </View>
           )}
         </View>
-        <TextField label="Notes (optional)" value={notes} onChangeText={setNotes} placeholder="Add a note" multiline />
+        <TextField label="Notes" value={notes} onChangeText={setNotes} placeholder="Add a note" multiline />
         <View style={styles.formButtons}>
-          <Pressable accessibilityRole="button" onPress={handleSave} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-            <Text style={styles.saveButtonText}>Save Stock-Out</Text>
+          <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
+            <Text style={styles.saveButtonText}>
+              {route === 'fastLog' ? 'Review Fast-Log' : route === 'waste' ? 'Review Waste' : 'Review Stock-Out'}
+            </Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -1015,6 +1404,105 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
       </ScrollView>
     </>
+    );
+  };
+
+  const renderStockInSuccess = () => {
+    const receiptIngredient = currentReceipt
+      ? ingredients.find((item) => item.id === currentReceipt.ingredientId)
+      : undefined;
+    if (!currentReceipt || !receiptIngredient) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No receipt to display</Text>
+          <Pressable onPress={() => setRoute('stocks')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Stocks</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.formHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={() => setRoute('stocks')} style={styles.backButton}>
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Stock-In</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <View style={styles.receiptSuccessBanner}>
+          <Text style={styles.receiptSuccessIcon}>✓</Text>
+          <Text style={styles.receiptSuccessText}>Stock-In recorded successfully.</Text>
+        </View>
+        <View style={styles.receiptSummaryCard}>
+          <Text style={styles.receiptSummaryTitle}>{receiptIngredient.name} received</Text>
+          <Text style={styles.receiptSummaryQuantity}>+{formatQuantity(currentReceipt.quantity)} {receiptIngredient.unit}</Text>
+          <Text style={styles.receiptSummarySubtitle}>
+            Available after receipt: {formatQuantity(currentReceipt.newQuantity)} {receiptIngredient.unit}
+          </Text>
+        </View>
+        <View style={styles.receiptDetails}>
+          <DetailRow label="Reference" value={currentReceipt.reference} />
+          <DetailRow label="Ingredient" value={`${receiptIngredient.name} · ${receiptIngredient.category}`} />
+          <DetailRow label="Transaction date" value={formatReceiptDate(currentReceipt.transactionDate)} />
+          <DetailRow label="Expiration" value={currentReceipt.expirationDate ? formatDate(currentReceipt.expirationDate) : 'Not recorded'} />
+          <DetailRow label="Recorded by" value="Isabel San Esteban" />
+          <DetailRow label="Branch" value="Manila · Branch 1" />
+          <DetailRow label="Notes" value={currentReceipt.notes || '—'} />
+        </View>
+        <View style={styles.permissionNotice}>
+          <Text style={styles.permissionIcon}>i</Text>
+          <Text style={styles.permissionText}>
+            Historical receipt. The total cooking usage recorded of 5 kg each leave the current balance at 5 kg.
+          </Text>
+        </View>
+        <Pressable accessibilityRole="button" onPress={() => setRoute('stockHistory')} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
+          <Text style={styles.historyButtonText}>View transaction history</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setRoute('stocks')} style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}>
+          <Text style={styles.cancelButtonText}>Back to Stocks</Text>
+        </Pressable>
+        <Text style={styles.detailDemoNote}>DEMO PREVIEW · Local sample receipt only.</Text>
+      </ScrollView>
+    );
+  };
+
+  const renderStockHistory = () => (
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.formHeader}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={() => setRoute('stocks')} style={styles.backButton}>
+          <Text style={styles.backGlyph}>‹</Text>
+        </Pressable>
+        <View style={styles.formHeaderCopy}>
+          <Text style={styles.formTitle}>Transaction history</Text>
+          <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+        </View>
+      </View>
+      <Text style={styles.historyPlaceholderText}>Local demo receipts</Text>
+      {stockReceipts.length === 0 ? (
+        <Text style={styles.emptyState}>No sample receipts have been confirmed in this session.</Text>
+      ) : (
+        <View style={styles.stockHistoryList}>
+          {stockReceipts.slice().reverse().map((receipt) => {
+            const item = ingredients.find((ingredient) => ingredient.id === receipt.ingredientId);
+            return (
+              <View key={receipt.reference} style={styles.historyActivityCard}>
+                <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
+                <View style={styles.historyActivityCopy}>
+                  <Text style={styles.historyActivityTitle}>{item?.name ?? 'Ingredient'} received</Text>
+                  <Text style={styles.historyActivityDetail}>{receipt.reference} · {formatReceiptDate(receipt.transactionDate)}</Text>
+                </View>
+                <Text style={styles.historyActivityAmount}>+{formatQuantity(receipt.quantity)} {item?.unit ?? ''}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+      <Text style={styles.detailDemoNote}>DEMO PREVIEW · These local entries are discarded when the app restarts.</Text>
+    </ScrollView>
   );
 
   let screenContent: React.ReactNode;
@@ -1025,6 +1513,12 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     case 'inventory':
       screenContent = renderInventory();
       break;
+    case 'ingredientDetails':
+      screenContent = renderIngredientDetails();
+      break;
+    case 'inventoryHistory':
+      screenContent = renderInventoryHistory();
+      break;
     case 'stocks':
       screenContent = renderStocks();
       break;
@@ -1032,7 +1526,15 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       screenContent = renderStockInForm();
       break;
     case 'stockOut':
-      screenContent = renderStockOutForm();
+    case 'fastLog':
+    case 'waste':
+      screenContent = renderMovementForm();
+      break;
+    case 'stockInSuccess':
+      screenContent = renderStockInSuccess();
+      break;
+    case 'stockHistory':
+      screenContent = renderStockHistory();
       break;
     case 'notifications':
       screenContent = renderNotifications();
@@ -1046,6 +1548,82 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.screenArea}>{screenContent}</View>
       <BottomNavigation active={route} onSelect={navigate} />
+      <Modal
+        visible={confirmationVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!confirming) setConfirmationVisible(false);
+        }}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmIcon}>
+              <Text style={styles.confirmIconText}>↓</Text>
+            </View>
+            <Text style={styles.confirmTitle}>
+              {route === 'stockIn'
+                ? 'Confirm Stock-In'
+                : route === 'fastLog'
+                  ? 'Confirm Fast-Log'
+                  : route === 'waste'
+                    ? 'Confirm Waste / Spoilage'
+                    : 'Confirm Stock-Out'}
+            </Text>
+            <Text style={styles.confirmSubtitle}>
+              Record this ingredient {route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?
+            </Text>
+            {selectedIngredient ? (
+              <View style={styles.confirmSummary}>
+                <View style={styles.confirmSummaryRow}>
+                  <Text style={styles.confirmSummaryText}>
+                    {selectedIngredient.name} · {route === 'stockIn' ? '+' : '−'}{quantity} {selectedIngredient.unit}
+                  </Text>
+                </View>
+                <Text style={styles.confirmSummaryText}>{transactionDate ? formatReceiptDate(transactionDate) : ''}</Text>
+                {route === 'stockIn' ? (
+                  <>
+                    <Text style={styles.confirmSummaryText}>
+                      Expires {expirationDate ? formatDate(expirationDate) : 'not recorded'}
+                    </Text>
+                    <Text style={styles.confirmBalance}>
+                      {formatQuantity(selectedIngredient.quantity)} {selectedIngredient.unit} → {formatQuantity(
+                        selectedIngredient.quantity + Number(quantity),
+                      )} {selectedIngredient.unit} after receipt
+                    </Text>
+                    <Text style={styles.confirmSummaryText}>Notes: {notes || '—'}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.confirmSummaryText}>Reason: {reason}</Text>
+                    <Text style={styles.confirmBalance}>
+                      Available after: {formatQuantity(selectedIngredient.quantity - Number(quantity))} {selectedIngredient.unit}
+                    </Text>
+                  </>
+                )}
+              </View>
+            ) : null}
+            <View style={styles.confirmActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={confirming}
+                onPress={() => setConfirmationVisible(false)}
+                style={({ pressed }) => [styles.confirmCancelButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={confirming}
+                onPress={confirmTransaction}
+                style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed, confirming && styles.confirmButtonDisabled]}
+              >
+                <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Confirm'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1056,6 +1634,80 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   dashboardContent: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 20 },
   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },
+  inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },
+  inventoryPageHeader: { marginBottom: 14 },
+  inventorySearch: { marginTop: 14 },
+  inventoryFilterScroll: { flexGrow: 0, marginBottom: 17 },
+  inventoryFilters: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 7, paddingRight: 8 },
+  inventoryCount: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginBottom: 10 },
+  inventoryCardSeparator: { height: 9 },
+  inventoryCard: {
+    minHeight: 91, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    paddingVertical: 8, borderRadius: 16, backgroundColor: '#EEEEEF', elevation: 2,
+    shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+  },
+  inventoryCardCopy: { flex: 1, minWidth: 0, marginLeft: 12 },
+  inventoryIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
+  inventoryIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 3 },
+  inventoryQuantityColumn: { minWidth: 82, alignItems: 'flex-end', justifyContent: 'center', marginLeft: 8 },
+  inventoryQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
+  inventoryChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
+  inventoryChipText: { color: colors.navy },
+  inventoryChipTextSelected: { color: colors.white },
+  inventoryEmpty: { flexGrow: 1, minHeight: 290, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, paddingBottom: 20 },
+  emptyCube: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  emptyCubeTopLeft: { position: 'absolute', top: 5, left: 7, width: 19, height: 19, borderColor: colors.orange, borderLeftWidth: 2, borderTopWidth: 2, transform: [{ rotate: '45deg' }] },
+  emptyCubeTopRight: { position: 'absolute', top: 5, right: 7, width: 19, height: 19, borderColor: colors.orange, borderRightWidth: 2, borderTopWidth: 2, transform: [{ rotate: '-45deg' }] },
+  emptyCubeBody: { width: 31, height: 24, marginTop: 9, borderColor: colors.orange, borderWidth: 2, borderTopWidth: 0, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
+  emptyCubeSeam: { position: 'absolute', top: 16, width: 2, height: 20, backgroundColor: colors.orange },
+  inventoryEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 16, textAlign: 'center' },
+  inventoryEmptyMessage: { maxWidth: 295, color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 16, textAlign: 'center', marginTop: 7 },
+  clearFiltersButton: { width: '100%', maxWidth: 300, minHeight: 45, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink, marginTop: 20 },
+  clearFiltersText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  inventoryFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  detailBackFallback: { padding: 12 },
+  detailBackLabel: { color: colors.pink, fontFamily: font.medium, fontSize: 10 },
+  detailPage: { paddingHorizontal: 19, paddingTop: 18, paddingBottom: 25 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
+  detailBackButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#EEEEEF', marginRight: 11 },
+  detailBackArrow: { color: colors.navy, fontFamily: font.regular, fontSize: 30, lineHeight: 32, marginTop: -4 },
+  detailHeaderCopy: { flex: 1 },
+  detailPageTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 17, lineHeight: 23 },
+  ingredientSummary: { flexDirection: 'row', alignItems: 'center', marginBottom: 19 },
+  ingredientSummaryCopy: { flex: 1, marginLeft: 14 },
+  detailIngredientName: { color: colors.navy, fontFamily: font.bold, fontSize: 19 },
+  detailIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2, marginBottom: 4 },
+  stockSummaryCard: {
+    paddingHorizontal: 17, paddingVertical: 16, borderRadius: 18, backgroundColor: '#EEEEEF',
+    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 }, marginBottom: 16,
+  },
+  stockSummaryQuantity: { color: colors.navy, fontFamily: font.bold, fontSize: 30, lineHeight: 37 },
+  stockSummaryCaption: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 1 },
+  stockSummaryDivider: { height: 1, backgroundColor: '#DADADD', marginVertical: 12 },
+  stockSummaryLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
+  stockSummaryLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
+  stockSummaryValue: { color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'right', flexShrink: 1, marginLeft: 10 },
+  stockGapWarning: { color: colors.red },
+  detailRows: { paddingHorizontal: 13, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 15 },
+  detailRow: { minHeight: 43, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
+  detailLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
+  detailValue: { flexShrink: 1, color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'right' },
+  permissionNotice: { flexDirection: 'row', alignItems: 'flex-start', padding: 12, borderRadius: 13, backgroundColor: '#FFF5CB', marginBottom: 15 },
+  permissionIcon: { width: 18, height: 18, overflow: 'hidden', borderRadius: 9, backgroundColor: colors.orange, color: colors.white, fontFamily: font.bold, fontSize: 11, textAlign: 'center', marginRight: 9 },
+  permissionText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
+  historyButton: { minHeight: 47, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
+  historyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
+  historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
+  historyActivityCard: { flexDirection: 'row', alignItems: 'center', padding: 13, borderRadius: 15, backgroundColor: '#EEEEEF' },
+  historyActivityMarker: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginRight: 10 },
+  historyActivityGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 18 },
+  historyActivityCopy: { flex: 1 },
+  historyActivityTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  historyActivityDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 3 },
+  historyActivityAmount: { color: colors.green, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
+  stockHistoryList: { gap: 9, marginTop: 10 },
   formContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 24 },
   dashboardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 17 },
   profileAvatar: {
@@ -1118,9 +1770,9 @@ const styles = StyleSheet.create({
   quickActionIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginBottom: 4 },
   quickActionGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 21, lineHeight: 25 },
   quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'center' },
-  horizontalCards: { gap: 9, paddingBottom: 2 },
+  horizontalCards: { gap: 9, paddingRight: 18, paddingBottom: 2 },
   ingredientCard: {
-    minHeight: 116, width: 206, flexDirection: 'row', alignItems: 'center', padding: 9,
+    minHeight: 116, width: 206, flexShrink: 0, flexDirection: 'row', alignItems: 'center', padding: 9,
     borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
     elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
@@ -1136,6 +1788,7 @@ const styles = StyleSheet.create({
   ingredientQuantity: { color: colors.orange, fontFamily: font.semibold, fontSize: 10, marginTop: 3 },
   ingredientExpiration: { color: colors.muted, fontFamily: font.medium, fontSize: 8, marginTop: 2 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 9, paddingHorizontal: 6, paddingVertical: 3, marginTop: 4 },
+  statusBadgeRight: { alignSelf: 'flex-end' },
   statusBadgeText: { fontFamily: font.medium, fontSize: 7 },
   lowBadge: { backgroundColor: colors.yellow },
   lowBadgeText: { color: colors.navy },
@@ -1153,6 +1806,7 @@ const styles = StyleSheet.create({
   categoryScroll: { flexGrow: 0, marginBottom: 19 },
   categoryList: { gap: 8, paddingRight: 6 },
   categoryChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.pale },
+  inventoryChip: { flexShrink: 0 },
   categoryChipSelected: { backgroundColor: colors.pink, borderColor: colors.pink },
   categoryChipText: { color: colors.muted, fontFamily: font.medium, fontSize: 9 },
   categoryChipTextSelected: { color: colors.white },
@@ -1160,15 +1814,18 @@ const styles = StyleSheet.create({
   ingredientList: { gap: 10 },
   emptyState: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 16, paddingVertical: 15 },
   stocksIntro: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 16, marginTop: 3 },
+  stocksSummaryCard: { paddingHorizontal: 15, paddingVertical: 15, borderRadius: 16, backgroundColor: colors.navy, marginBottom: 15 },
+  stocksSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 14 },
+  stocksSummarySubtitle: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 9, marginTop: 4 },
   stockActionList: { gap: 14, marginTop: 21 },
   actionCard: {
-    minHeight: 120, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 17, paddingVertical: 18,
-    borderRadius: 19, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
+    minHeight: 82, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, paddingVertical: 11,
+    borderRadius: 16, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line,
     elevation: 3, shadowColor: colors.navy, shadowOpacity: 0.07, shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
   },
-  actionIconBox: { width: 53, height: 53, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#FFF1E2', marginRight: 14 },
-  actionIcon: { color: colors.orange, fontFamily: font.medium, fontSize: 30, lineHeight: 34 },
+  actionIconBox: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#FFF5E9', marginRight: 12 },
+  actionIcon: { color: colors.orange, fontFamily: font.medium, fontSize: 23, lineHeight: 28 },
   actionCopy: { flex: 1 },
   actionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 16 },
   actionDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 3 },
@@ -1209,13 +1866,18 @@ const styles = StyleSheet.create({
   logoutButton: { alignItems: 'center', justifyContent: 'center', minHeight: 47, borderRadius: 14, backgroundColor: colors.pale, marginTop: 22 },
   logoutButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 11 },
   formHeader: {
-    minHeight: 57, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 17,
+    minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 17,
     borderBottomWidth: 1, borderBottomColor: colors.line,
   },
+  formHeaderCopy: { flex: 1, marginLeft: 10 },
   backButton: { width: 37, height: 37, alignItems: 'center', justifyContent: 'center', borderRadius: 19, backgroundColor: colors.pale },
   backGlyph: { color: colors.navy, fontSize: 30, lineHeight: 32, marginTop: -3 },
-  formTitle: { flex: 1, color: colors.ink, fontFamily: font.semibold, fontSize: 17, textAlign: 'center', marginRight: 37 },
-  headerSpacer: { width: 0 },
+  formTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, lineHeight: 19 },
+  formSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
+  compactFormContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 22 },
+  receiptInfoBanner: { flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11, backgroundColor: '#FFF5CB', marginBottom: 12 },
+  receiptInfoIcon: { width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white, backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10, textAlign: 'center', marginRight: 8 },
+  receiptInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   formError: { color: colors.red, fontFamily: font.medium, fontSize: 10, lineHeight: 15, padding: 10, borderRadius: 10, backgroundColor: colors.paleRed, marginBottom: 13 },
   successBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: colors.paleGreen, marginBottom: 14 },
   successIcon: { color: colors.green, fontFamily: font.bold, fontSize: 16, marginRight: 8 },
@@ -1223,14 +1885,19 @@ const styles = StyleSheet.create({
   fieldGroup: { marginBottom: 14 },
   fieldLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 10, marginBottom: 6 },
   textInput: {
-    minHeight: 45, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 11,
-    borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#FAFAFB',
+    minHeight: 42, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11,
+    borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',
     color: colors.ink, fontFamily: font.regular, fontSize: 10,
   },
+  textInputError: { borderWidth: 1.5, borderColor: colors.red },
+  suffixedInput: { minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 1, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF' },
+  suffixedTextInput: { flex: 1, minHeight: 40, borderWidth: 0, backgroundColor: 'transparent' },
+  inputSuffix: { color: colors.muted, fontFamily: font.medium, fontSize: 10, paddingHorizontal: 12 },
+  fieldError: { color: colors.red, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 4 },
   notesInput: { minHeight: 76 },
   dateInput: {
-    minHeight: 45, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#FAFAFB',
+    minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',
   },
   dateInputText: { color: colors.ink, fontFamily: font.regular, fontSize: 10 },
   placeholderText: { color: '#A0A0AA' },
@@ -1240,8 +1907,8 @@ const styles = StyleSheet.create({
   rowField: { flex: 1, minWidth: 0 },
   helperText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: -8, marginBottom: 14 },
   selectInput: {
-    minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
-    borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#FAFAFB',
+    minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
+    borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',
   },
   selectText: { flex: 1, color: colors.ink, fontFamily: font.regular, fontSize: 10 },
   availableQuantity: { color: colors.muted, fontFamily: font.medium, fontSize: 8, marginRight: 8 },
@@ -1261,6 +1928,31 @@ const styles = StyleSheet.create({
   cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#EEEEF0' },
   cancelButtonText: { color: '#555560', fontFamily: font.semibold, fontSize: 11 },
   formDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', marginTop: 14 },
+  receiptSuccessBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: '#F0F6F0', marginTop: 14, marginBottom: 13 },
+  receiptSuccessIcon: { color: colors.green, fontFamily: font.bold, fontSize: 16, marginRight: 8 },
+  receiptSuccessText: { color: colors.green, fontFamily: font.medium, fontSize: 9 },
+  receiptSummaryCard: { paddingHorizontal: 16, paddingVertical: 15, borderRadius: 17, backgroundColor: colors.navy, marginBottom: 14 },
+  receiptSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
+  receiptSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 31, lineHeight: 37, marginTop: 3 },
+  receiptSummarySubtitle: { color: '#E2E2E9', fontFamily: font.regular, fontSize: 9, marginTop: 2 },
+  receiptDetails: { paddingHorizontal: 12, borderRadius: 15, backgroundColor: '#EEEEEF', marginBottom: 13 },
+  receiptBackButton: { marginTop: 9 },
+  confirmBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: 'rgba(25, 25, 34, 0.55)' },
+  confirmCard: { width: '100%', maxWidth: 370, padding: 18, borderRadius: 19, backgroundColor: colors.white, elevation: 12, shadowColor: '#000000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 7 } },
+  confirmIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FCE3EB', marginBottom: 11 },
+  confirmIconText: { color: colors.pink, fontFamily: font.semibold, fontSize: 22, lineHeight: 26 },
+  confirmTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
+  confirmSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 5 },
+  confirmSummary: { padding: 11, borderRadius: 12, backgroundColor: '#EEEEEF', gap: 5, marginTop: 13 },
+  confirmSummaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  confirmSummaryText: { color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
+  confirmBalance: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, lineHeight: 14 },
+  confirmActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 9, marginTop: 15 },
+  confirmCancelButton: { minWidth: 82, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
+  confirmCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  confirmButton: { minWidth: 104, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
+  confirmButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  confirmButtonDisabled: { opacity: 0.6 },
   pressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
   modalBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 22, backgroundColor: 'rgba(16, 16, 39, 0.42)' },
   calendarModal: { width: '100%', maxWidth: 350, padding: 18, borderRadius: 20, backgroundColor: colors.white },

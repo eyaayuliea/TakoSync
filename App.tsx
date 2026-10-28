@@ -38,7 +38,7 @@ const DASHBOARD_COLORS = {
 } as const;
 const DEMO_ACCOUNTS = [
   { username: 'lorraine', password: 'jade123', role: 'Owner' },
-  { username: 'staff', password: 'tako-staff-2026', role: 'Staff' },
+  { username: 'staff', password: "stafftakoyaki'26", role: 'Staff' },
 ] as const;
 type PreviewInventoryItem = {
   name: string;
@@ -48,12 +48,12 @@ type PreviewInventoryItem = {
   expiration: string | null;
 };
 const DEMO_INVENTORY: PreviewInventoryItem[] = [
-  { name: 'Octopus', category: 'Seafood', quantity: '1.2 kg', lowStock: true, expiration: null },
+  { name: 'Octopus', category: 'Seafood', quantity: '3kg', lowStock: true, expiration: null },
   { name: 'Takoyaki batter', category: 'Dry goods', quantity: '2 bags', lowStock: true, expiration: null },
   { name: 'Spring onion', category: 'Produce', quantity: '450 g', lowStock: true, expiration: null },
-  { name: 'Tako sauce', category: 'Condiments', quantity: '4 bottles', lowStock: false, expiration: 'Oct 30' },
-  { name: 'Bonito flakes', category: 'Dry goods', quantity: '6 packs', lowStock: false, expiration: 'Oct 31' },
-  { name: 'Takoyaki flour', category: 'Dry goods', quantity: '12 bags', lowStock: false, expiration: null },
+  { name: 'Flour', category: 'Dry Goods', quantity: '907g', lowStock: false, expiration: '27 Oct 2026' },
+  { name: 'Tako sauce', category: 'Condiments', quantity: '4 bottles', lowStock: false, expiration: '30 Oct 2026' },
+  { name: 'Bonito flakes', category: 'Dry goods', quantity: '6 packs', lowStock: false, expiration: '31 Oct 2026' },
   { name: 'Tenkasu', category: 'Dry goods', quantity: '8 packs', lowStock: false, expiration: null },
   { name: 'Eggs', category: 'Produce', quantity: '5 trays', lowStock: false, expiration: null },
 ];
@@ -86,6 +86,7 @@ export default function App() {
   const isWideScreen = width > 600 && height > 500;
   const frameWidth = isWideScreen ? Math.min(430, height * 0.5) : width;
   const frameHeight = isWideScreen ? Math.min(height, frameWidth * 2) : height;
+  const itemCarouselCardWidth = Math.max(0, frameWidth - 36);
   const visibleScreen =
     (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
       ? 'login'
@@ -449,21 +450,32 @@ export default function App() {
                         </Pressable>
                       </View>
                       {visibleLowStockItems.length > 0 ? (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemCarousel}>
+                        <ScrollView
+                          horizontal
+                          nestedScrollEnabled
+                          directionalLockEnabled
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.itemCarousel}
+                        >
                           {visibleLowStockItems.map((item) => (
-                            <View key={item.name} style={styles.itemCard}>
-                              <Image
-                                source={require('./assets/takoyaki-plate.png')}
-                                style={styles.itemImage}
-                                resizeMode="cover"
-                                accessibilityLabel={`${item.name} demo image`}
-                              />
+                            <View key={item.name} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
+                              <View style={styles.itemImageContainer}>
+                                <Image
+                                  source={require('./assets/takoyaki-plate.png')}
+                                  style={styles.itemImage}
+                                  resizeMode="cover"
+                                  accessibilityLabel={`${item.name} demo image`}
+                                />
+                              </View>
                               <View style={styles.itemDetails}>
                                 <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                                <Text style={styles.itemCategory}>{item.category}</Text>
+                                <Text style={styles.itemCategory} numberOfLines={1}>{item.category}</Text>
+                              </View>
+                              <View style={styles.itemStatusColumn}>
                                 <Text style={styles.itemQuantity}>{item.quantity}</Text>
                                 <View style={styles.warningBadge}>
-                                  <Text style={styles.warningBadgeText}>Low stock</Text>
+                                  <Text style={styles.warningBadgeIcon}>⚠</Text>
+                                  <Text style={styles.warningBadgeText} numberOfLines={1}>Low Stock</Text>
                                 </View>
                               </View>
                             </View>
@@ -478,24 +490,34 @@ export default function App() {
                         <Text style={styles.expirationCount}>{expiringItems.length} items</Text>
                       </View>
                       {visibleExpiringItems.length > 0 ? (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemCarousel}>
+                        <ScrollView
+                          horizontal
+                          nestedScrollEnabled
+                          directionalLockEnabled
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.itemCarousel}
+                        >
                           {visibleExpiringItems.map((item) => (
-                            <View key={item.name} style={styles.itemCard}>
-                              <Image
-                                source={require('./assets/takoyaki-plate.png')}
-                                style={styles.itemImage}
-                                resizeMode="cover"
-                                accessibilityLabel={`${item.name} demo image`}
-                              />
+                            <View key={item.name} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
+                              <View style={styles.itemImageContainer}>
+                                <Image
+                                  source={require('./assets/takoyaki-plate.png')}
+                                  style={styles.itemImage}
+                                  resizeMode="cover"
+                                  accessibilityLabel={`${item.name} demo image`}
+                                />
+                              </View>
                               <View style={styles.itemDetails}>
                                 <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                                <Text style={styles.itemCategory}>{item.category}</Text>
+                                <Text style={styles.itemCategory} numberOfLines={3}>
+                                  {item.category} · Exp. {item.expiration}
+                                </Text>
+                              </View>
+                              <View style={styles.itemStatusColumn}>
                                 <Text style={styles.itemQuantity}>{item.quantity}</Text>
-                                <View style={styles.expirationMeta}>
-                                  <Text style={styles.expirationDate}>Exp. {item.expiration}</Text>
-                                  <View style={styles.expirationBadge}>
-                                    <Text style={styles.expirationBadgeText}>Soon</Text>
-                                  </View>
+                                <View style={styles.expirationBadge}>
+                                  <Text style={styles.expirationBadgeIcon}>▦</Text>
+                                  <Text style={styles.expirationBadgeText} numberOfLines={1}>Near Expiry</Text>
                                 </View>
                               </View>
                             </View>
@@ -726,26 +748,37 @@ const styles = StyleSheet.create({
   quickActionGlyph: { fontFamily: 'Poppins_600SemiBold', fontSize: 20, lineHeight: 24 },
   quickActionLabel: { color: DASHBOARD_COLORS.navy, fontFamily: 'Poppins_500Medium', fontSize: 9, textAlign: 'center' },
   viewAllText: { color: DASHBOARD_COLORS.pink, fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
-  itemCarousel: { gap: 10, paddingBottom: 3 },
+  itemCarousel: { gap: 12, paddingBottom: 5 },
   itemCard: {
-    width: 208, minHeight: 118, flexDirection: 'row', alignItems: 'center', padding: 10,
-    borderRadius: 17, backgroundColor: DASHBOARD_COLORS.white, borderWidth: 1, borderColor: '#F0F0F2',
-    elevation: 2, shadowColor: DASHBOARD_COLORS.navy, shadowOpacity: 0.05, shadowRadius: 5,
+    height: 108, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, flexShrink: 0,
+    borderRadius: 24, backgroundColor: '#EEEEEE', borderWidth: 1, borderColor: '#E8E8EA',
+    elevation: 2, shadowColor: DASHBOARD_COLORS.navy, shadowOpacity: 0.07, shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
   },
-  itemImage: { width: 66, height: 78, borderRadius: 13, backgroundColor: DASHBOARD_COLORS.butterCream },
-  itemDetails: { flex: 1, minWidth: 0, justifyContent: 'center', marginLeft: 10 },
-  itemName: { color: DASHBOARD_COLORS.black, fontFamily: 'Poppins_600SemiBold', fontSize: 11 },
-  itemCategory: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 1 },
-  itemQuantity: { color: DASHBOARD_COLORS.orange, fontFamily: 'Poppins_600SemiBold', fontSize: 11, marginTop: 4 },
-  warningBadge: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9, backgroundColor: DASHBOARD_COLORS.warning, marginTop: 5 },
-  warningBadgeText: { color: DASHBOARD_COLORS.navy, fontFamily: 'Poppins_500Medium', fontSize: 8 },
+  itemImageContainer: {
+    width: 86, height: 86, flexShrink: 0, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: DASHBOARD_COLORS.white, overflow: 'hidden',
+  },
+  itemImage: { width: '100%', height: '100%', borderRadius: 20 },
+  itemDetails: { flex: 1, flexShrink: 1, minWidth: 0, justifyContent: 'center', marginLeft: 12, marginRight: 6 },
+  itemName: { color: DASHBOARD_COLORS.black, fontFamily: 'Poppins_600SemiBold', fontSize: 18, lineHeight: 24 },
+  itemCategory: { color: '#555560', fontFamily: 'Poppins_400Regular', fontSize: 14, lineHeight: 19, marginTop: 2 },
+  itemStatusColumn: { width: 100, flexShrink: 0, alignItems: 'flex-end', justifyContent: 'center' },
+  itemQuantity: { color: DASHBOARD_COLORS.black, fontFamily: 'Poppins_600SemiBold', fontSize: 18, lineHeight: 24, marginBottom: 3 },
+  warningBadge: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end',
+    paddingHorizontal: 7, paddingVertical: 4, borderRadius: 9, backgroundColor: DASHBOARD_COLORS.warning,
+  },
+  warningBadgeIcon: { color: DASHBOARD_COLORS.navy, fontSize: 11, lineHeight: 13, marginRight: 3 },
+  warningBadgeText: { color: DASHBOARD_COLORS.navy, fontFamily: 'Poppins_500Medium', fontSize: 10 },
   expirationHeading: { marginTop: 20 },
   expirationCount: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_400Regular', fontSize: 10 },
-  expirationMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 3, marginTop: 5 },
-  expirationDate: { flexShrink: 1, color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_500Medium', fontSize: 8 },
-  expirationBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, backgroundColor: DASHBOARD_COLORS.error },
-  expirationBadgeText: { color: DASHBOARD_COLORS.white, fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
+  expirationBadge: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end',
+    paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, backgroundColor: DASHBOARD_COLORS.error,
+  },
+  expirationBadgeIcon: { color: DASHBOARD_COLORS.white, fontSize: 11, lineHeight: 13, marginRight: 3 },
+  expirationBadgeText: { color: DASHBOARD_COLORS.white, fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
   emptySearchText: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_400Regular', fontSize: 11, marginBottom: 8 },
   demoNotice: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_400Regular', fontSize: 9, lineHeight: 14, textAlign: 'center', marginTop: 21 },
   historyView: { paddingTop: 8 },

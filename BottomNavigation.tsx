@@ -15,6 +15,12 @@ export type StaffRoute =
   | 'stocks'
   | 'stockIn'
   | 'stockOut'
+  | 'fastLog'
+  | 'waste'
+  | 'stockInSuccess'
+  | 'stockHistory'
+  | 'ingredientDetails'
+  | 'inventoryHistory'
   | 'notifications'
   | 'more';
 
@@ -83,7 +89,9 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
 }
 
 export function activeStaffTab(route: StaffRoute): StaffTab {
-  return route === 'stockIn' || route === 'stockOut' ? 'stocks' : route;
+  if (route === 'stockIn' || route === 'stockOut' || route === 'fastLog' || route === 'waste' || route === 'stockInSuccess' || route === 'stockHistory') return 'stocks';
+  if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
+  return route;
 }
 
 export default function BottomNavigation({
