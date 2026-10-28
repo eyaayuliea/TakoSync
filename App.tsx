@@ -17,6 +17,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import StaffWorkspace from './StaffWorkspace';
 
 const PINK = '#F20D55';
 const NAVY = '#101026';
@@ -61,7 +62,7 @@ const DEMO_ACTIVITY = [
   { action: 'Daily Check', item: 'Branch inventory', detail: 'Completed · Today, 8:15 AM' },
   { action: 'Stock-Out', item: 'Octopus', detail: 'Used 0.8 kg · Yesterday, 6:20 PM' },
 ];
-type Screen = 'loading' | 'welcome' | 'login' | 'dashboard';
+type Screen = 'loading' | 'welcome' | 'login' | 'dashboard' | 'staffWorkspace';
 type Role = (typeof DEMO_ACCOUNTS)[number]['role'];
 type AuthenticatedUser = { username: string; role: Role };
 type DashboardTab = 'Dashboard' | 'History' | 'Alerts';
@@ -85,7 +86,10 @@ export default function App() {
   const isWideScreen = width > 600 && height > 500;
   const frameWidth = isWideScreen ? Math.min(430, height * 0.5) : width;
   const frameHeight = isWideScreen ? Math.min(height, frameWidth * 2) : height;
-  const visibleScreen = screen === 'dashboard' && authenticatedUser === null ? 'login' : screen;
+  const visibleScreen =
+    (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
+      ? 'login'
+      : screen;
 
   useEffect(() => {
     if (screen !== 'loading' || !fontsLoaded) return;
@@ -128,7 +132,7 @@ export default function App() {
 
     setAuthenticatedUser({ username: account.username, role: account.role });
     setLoginError('');
-    setScreen('dashboard');
+    setScreen(account.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
   };
 
   const handleLogout = () => {
@@ -432,7 +436,6 @@ export default function App() {
                       ))}
                     </View>
                   )}
-
                   {(dashboardTab === 'Dashboard' || dashboardTab === 'Alerts') && (
                     <>
                       <View style={styles.sectionHeadingRow}>
@@ -545,6 +548,9 @@ export default function App() {
                   })}
                 </View>
               </View>
+            )}
+            {visibleScreen === 'staffWorkspace' && authenticatedUser?.role === 'Staff' && (
+              <StaffWorkspace onLogout={handleLogout} />
             )}
           </View>
         </View>
