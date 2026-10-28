@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Image,
   FlatList,
@@ -191,6 +191,9 @@ type FastLogReceipt = {
   preset: FastLogPreset;
   deductions: UsageDeduction[];
   transactionDate: Date;
+  reason: string;
+  notes: string;
+  pieces: number | null;
 };
 
 const fastLogPresets: FastLogPreset[] = [
@@ -623,13 +626,21 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [quantityError, setQuantityError] = useState('');
   const [confirmationVisible, setConfirmationVisible] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const fastLogSubmissionLock = useRef(false);
   const [stockReceipts, setStockReceipts] = useState<StockReceipt[]>([]);
   const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
   const [usageReceipts, setUsageReceipts] = useState<UsageReceipt[]>([]);
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [selectedFastLogPresetId, setSelectedFastLogPresetId] = useState('');
+  const [fastLogDraftDeductions, setFastLogDraftDeductions] = useState<{ ingredientId: string; quantity: string }[]>([]);
+  const [fastLogReason, setFastLogReason] = useState('');
+  const [fastLogNotes, setFastLogNotes] = useState('');
+  const [fastLogPieces, setFastLogPieces] = useState('');
+  const [fastLogFieldErrors, setFastLogFieldErrors] = useState<Record<string, string>>({});
+  const [fastLogIngredientPickerIndex, setFastLogIngredientPickerIndex] = useState<number | null>(null);
   const [fastLogReceipts, setFastLogReceipts] = useState<FastLogReceipt[]>([]);
   const [currentFastLogReceipt, setCurrentFastLogReceipt] = useState<FastLogReceipt | null>(null);
+  const [fastLogPopupVisible, setFastLogPopupVisible] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [dashboardCarouselWidth, setDashboardCarouselWidth] = useState(0);
@@ -643,17 +654,18 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
   const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
   const selectedFastLogPreset = fastLogPresets.find((preset) => preset.id === selectedFastLogPresetId);
-  const fastLogDeductions: UsageDeduction[] = selectedFastLogPreset
-    ? selectedFastLogPreset.deductions.map((deduction) => {
+  const fastLogDeductions: UsageDeduction[] = fastLogDraftDeductions
+    .map((deduction) => {
         const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+        const parsedQuantity = Number(deduction.quantity);
         return {
           ingredientId: deduction.ingredientId,
-          quantity: deduction.quantity,
+          quantity: parsedQuantity,
           previousQuantity: ingredient?.quantity ?? 0,
-          newQuantity: (ingredient?.quantity ?? 0) - deduction.quantity,
+          newQuantity: (ingredient?.quantity ?? 0) - parsedQuantity,
         };
       })
-    : [];
+    ;
   const parsedBatchCount = Number(batchCount);
   const usageDeductions: UsageDeduction[] = usageMode === 'manual'
     ? selectedIngredient
@@ -743,13 +755,93 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     setRoute(formRoute);
   };
 
-  const selectFastLogPreset = (preset: FastLogPreset) => {
+  const prepareFastLogPreset = (preset: FastLogPreset) => {
     setSelectedFastLogPresetId(preset.id);
+    setFastLogDraftDeductions(
+      preset.deductions.map((deduction) => ({
+        ingredientId: deduction.ingredientId,
+        quantity: String(deduction.quantity),
+      })),
+    );
+    setFastLogReason(preset.reasonDetail);
+    setFastLogNotes('');
+    setFastLogPieces(preset.pieces ? String(preset.pieces) : '');
+    setFastLogFieldErrors({});
+    setFastLogIngredientPickerIndex(null);
     setTransactionDate(openingDate);
     setConfirmationVisible(false);
     setConfirming(false);
     setFormError('');
+  };
+
+  const selectFastLogPreset = (preset: FastLogPreset) => {
+    prepareFastLogPreset(preset);
     setRoute('fastLogReview');
+  };
+
+  const openFastLogPopup = () => {
+    setSelectedFastLogPresetId('');
+    setFastLogDraftDeductions([]);
+    setFastLogReason('');
+    setFastLogNotes('');
+    setFastLogFieldErrors({});
+    setFormError('');
+    setFastLogPopupVisible(true);
+  };
+
+  const closeFastLogPopup = () => {
+    if (confirming) return;
+    setFastLogPopupVisible(false);
+    setSelectedFastLogPresetId('');
+    setFastLogDraftDeductions([]);
+    setFastLogReason('');
+    setFastLogNotes('');
+    setFastLogFieldErrors({});
+    setFormError('');
+  };
+
+  const validateFastLogDraft = () => {
+    const errors: Record<string, string> = {};
+    if (!selectedFastLogPreset || !fastLogReason.trim()) {
+      errors.reason = 'Enter a reason or description.';
+    }
+    if (selectedFastLogPreset?.section === 'cooking') {
+      const pieces = Number(fastLogPieces);
+      if (!fastLogPieces.trim() || !Number.isFinite(pieces) || pieces <= 0) {
+        errors.pieces = 'Enter a batch size greater than 0.';
+      }
+    }
+    fastLogDraftDeductions.forEach((deduction, index) => {
+      const key = `${deduction.ingredientId}-${index}`;
+      const parsedQuantity = Number(deduction.quantity);
+      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+      if (!deduction.quantity.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+        errors[key] = 'Enter a quantity greater than 0.';
+      } else if (ingredient && parsedQuantity > ingredient.quantity) {
+        errors[key] = `Only ${formatUnitQuantity(ingredient.quantity, ingredient.unit)} available.`;
+      }
+    });
+    setFastLogFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const updateFastLogDeduction = (
+    index: number,
+    property: 'ingredientId' | 'quantity',
+    value: string,
+  ) => {
+    setFastLogDraftDeductions((current) =>
+      current.map((deduction, itemIndex) =>
+        itemIndex === index ? { ...deduction, [property]: value } : deduction,
+      ),
+    );
+    setFastLogFieldErrors((current) => {
+      const next = { ...current };
+      const existing = fastLogDraftDeductions[index];
+      if (existing) delete next[`${existing.ingredientId}-${index}`];
+      return next;
+    });
+    setFormError('');
   };
 
   const returnToFastLogList = () => {
@@ -831,6 +923,11 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   };
 
   const reviewTransaction = () => {
+    if (route === 'fastLogReview') {
+      if (!validateFastLogDraft()) return;
+      setRoute('fastLogPreview');
+      return;
+    }
     if (!validateTransaction()) return;
     if (route === 'stockOut') {
       setConfirmationVisible(false);
@@ -842,7 +939,8 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
 
   const confirmTransaction = () => {
     if (confirming || !transactionDate) return;
-    if (route === 'fastLogReview') {
+    if (route === 'fastLogPreview' || fastLogPopupVisible) {
+      if (fastLogSubmissionLock.current) return;
       if (
         !selectedFastLogPreset ||
         fastLogDeductions.length === 0 ||
@@ -850,12 +948,14 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           !Number.isFinite(deduction.quantity) ||
           deduction.quantity <= 0 ||
           deduction.quantity > deduction.previousQuantity,
-        )
+        ) ||
+        !fastLogReason.trim()
       ) {
-        setFormError('This preset exceeds available stock and cannot be recorded.');
+        setFormError('The edited preset is invalid or exceeds available stock.');
         return;
       }
 
+      fastLogSubmissionLock.current = true;
       setConfirming(true);
       setTimeout(() => {
         const receiptDate = transactionDate;
@@ -867,6 +967,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           preset: selectedFastLogPreset,
           deductions,
           transactionDate: receiptDate,
+          reason: fastLogReason,
+          notes: fastLogNotes,
+          pieces: selectedFastLogPreset.pieces ? Number(fastLogPieces) : null,
         };
         setIngredients((current) =>
           current.map((item) => {
@@ -884,7 +987,18 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         setCurrentFastLogReceipt(receipt);
         setConfirmationVisible(false);
         setConfirming(false);
-        setRoute('fastLogSuccess');
+        fastLogSubmissionLock.current = false;
+        if (fastLogPopupVisible) {
+          setFastLogPopupVisible(false);
+          setSelectedFastLogPresetId('');
+          setFastLogDraftDeductions([]);
+          setFastLogReason('');
+          setFastLogNotes('');
+          setFastLogFieldErrors({});
+          setDashboardMessage(`${selectedFastLogPreset.name} recorded successfully. Inventory updated locally.`);
+        } else {
+          setRoute('fastLogSuccess');
+        }
       }, 250);
       return;
     }
@@ -1097,6 +1211,26 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           </Pressable>
         ))}
       </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Start Rush-Hour Fast-Log"
+        onPress={openFastLogPopup}
+        style={({ pressed }) => [styles.dashboardFastLogCard, pressed && styles.pressed]}
+      >
+        <View style={styles.dashboardFastLogIcon}>
+          <Text style={styles.dashboardFastLogIconText}>⚡</Text>
+        </View>
+        <View style={styles.dashboardFastLogCopy}>
+          <Text style={styles.dashboardFastLogTitle}>Rush-Hour Fast-Log</Text>
+          <Text style={styles.dashboardFastLogSubtitle}>
+            Record usage or waste quickly during busy hours.
+          </Text>
+        </View>
+        <View style={styles.dashboardFastLogAction}>
+          <Text style={styles.dashboardFastLogActionText}>Start fast-log</Text>
+          <Text style={styles.dashboardFastLogChevron}>›</Text>
+        </View>
+      </Pressable>
 
       <View style={styles.sectionHeadingRow}>
         <Text style={styles.sectionTitle}>Low-Stock Items</Text>
@@ -1915,14 +2049,6 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     }
 
     const isCooking = preset.section === 'cooking';
-    const allAvailable = fastLogDeductions.every(
-      (deduction) => deduction.quantity > 0 && deduction.quantity <= deduction.previousQuantity,
-    );
-    const hasBelowMinimum = fastLogDeductions.some((deduction) => {
-      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-      return ingredient !== undefined && deduction.newQuantity < ingredient.minimumStock;
-    });
-
     return (
       <>
         <View style={styles.formHeader}>
@@ -1942,73 +2068,138 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.compactFormContent}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.fastLogSummaryCard}>
             <Text style={styles.fastLogSummaryTitle}>
-              {preset.id === 'standard-batch'
-                ? 'Standard cooking batch'
-                : preset.id === 'half-batch'
-                  ? 'Half cooking batch'
-                  : preset.name}
+              {preset.name}
             </Text>
             <Text style={styles.fastLogSummaryAmount}>
-              {isCooking
-                ? `${preset.pieces} pieces · 1 batch`
-                : formatUnitQuantity(
-                    preset.deductions[0].quantity,
-                    ingredients.find((item) => item.id === preset.deductions[0].ingredientId)?.unit ?? '',
-                  )}
+              {isCooking ? `${fastLogPieces || '0'} pieces · 1 batch` : 'Editable waste / spoilage preset'}
             </Text>
             <Text style={styles.fastLogSummaryNote}>
-              {isCooking ? 'Configured preset · Amounts shown below' : `Reason: ${preset.reasonDetail}`}
+              {isCooking ? 'Configured preset · Adjust actual quantities below' : 'Preset template · Adjust the actual item and quantity below'}
             </Text>
           </View>
+          {isCooking ? (
+            <TextField
+              label="Batch size (pieces) *"
+              value={fastLogPieces}
+              onChangeText={(value) => {
+                setFastLogPieces(value);
+                setFastLogFieldErrors((current) => ({ ...current, pieces: '' }));
+              }}
+              placeholder="Enter batch size"
+              keyboardType="decimal-pad"
+              error={fastLogFieldErrors.pieces}
+            />
+          ) : null}
           <Text style={styles.fastLogSectionTitle}>Ingredient deductions</Text>
-          <View style={styles.fastLogRowsCard}>
-            {fastLogDeductions.map((deduction) => {
-              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-              return ingredient ? (
-                <View key={ingredient.id} style={styles.fastLogBalanceRow}>
-                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
-                  <Text style={styles.fastLogBalanceValue}>
-                    -{formatQuantity(deduction.quantity)} {ingredient.unit} / {formatQuantity(deduction.previousQuantity)} → {formatQuantity(deduction.newQuantity)} {ingredient.unit}
+          {fastLogDraftDeductions.map((draft, index) => {
+            const ingredient = ingredients.find((item) => item.id === draft.ingredientId);
+            const errorKey = `${draft.ingredientId}-${index}`;
+            const error = fastLogFieldErrors[errorKey];
+            return (
+              <View key={`${preset.id}-deduction-${index}`} style={styles.fastLogEditCard}>
+                <Text style={styles.fieldLabel}>Ingredient {index + 1} *</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Choose ingredient ${index + 1}`}
+                  onPress={() => setFastLogIngredientPickerIndex((current) => current === index ? null : index)}
+                  style={styles.selectInput}
+                >
+                  <Text style={styles.selectText}>
+                    {ingredient ? `${ingredient.name} · ${formatUnitQuantity(ingredient.quantity, ingredient.unit)} available` : 'Select ingredient'}
                   </Text>
+                  <Text style={styles.selectChevron}>{fastLogIngredientPickerIndex === index ? '⌃' : '⌄'}</Text>
+                </Pressable>
+                {fastLogIngredientPickerIndex === index ? (
+                  <View style={styles.reasonDropdown}>
+                    {ingredients.map((option) => (
+                      option.id !== draft.ingredientId && fastLogDraftDeductions.some(
+                        (otherDraft, otherIndex) => otherIndex !== index && otherDraft.ingredientId === option.id,
+                      ) ? null : (
+                      <Pressable
+                        key={option.id}
+                        onPress={() => {
+                          updateFastLogDeduction(index, 'ingredientId', option.id);
+                          setFastLogIngredientPickerIndex(null);
+                        }}
+                        style={styles.reasonOption}
+                      >
+                        <Text style={[
+                          styles.reasonOptionText,
+                          option.id === draft.ingredientId && styles.reasonOptionSelected,
+                        ]}>
+                          {option.name} · {formatUnitQuantity(option.quantity, option.unit)} available
+                        </Text>
+                      </Pressable>
+                      )
+                    ))}
+                  </View>
+                ) : null}
+                <View style={styles.fastLogQuantityEditRow}>
+                  <Text style={styles.fieldLabel}>Actual quantity *</Text>
+                  <View style={styles.fastLogQuantityInputWrap}>
+                    <TextInput
+                      value={draft.quantity}
+                      onChangeText={(value) => updateFastLogDeduction(index, 'quantity', value)}
+                      placeholder="Enter quantity"
+                      placeholderTextColor="#A0A0AA"
+                      keyboardType="decimal-pad"
+                      style={[styles.textInput, styles.fastLogQuantityInput, error ? styles.textInputError : undefined]}
+                    />
+                    <Text style={styles.inputSuffix}>{ingredient?.unit ?? 'unit'}</Text>
+                  </View>
                 </View>
-              ) : null;
-            })}
-          </View>
+                {error ? <Text style={styles.fieldError}>{error}</Text> : null}
+                {ingredient ? (
+                  <Text style={styles.fastLogAvailableHint}>
+                    Current stock: {formatUnitQuantity(ingredient.quantity, ingredient.unit)}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })}
+          <TextField
+            label="Reason / description *"
+            value={fastLogReason}
+            onChangeText={(value) => {
+              setFastLogReason(value);
+              setFastLogFieldErrors((current) => ({ ...current, reason: '' }));
+            }}
+            placeholder={isCooking ? 'Describe this cooking batch' : 'Describe the waste or spoilage'}
+            error={fastLogFieldErrors.reason}
+          />
+          <TextField
+            label="Notes"
+            value={fastLogNotes}
+            onChangeText={setFastLogNotes}
+            placeholder="Optional notes"
+            multiline
+          />
+          <DatePickerField
+            label="Transaction date *"
+            value={transactionDate}
+            onChange={setTransactionDate}
+          />
           <View style={styles.fastLogReceiptDetails}>
-            <DetailRow label="Transaction date" value={formatDate(openingDate)} />
             <DetailRow label="Recorded by" value="Isabel San Esteban" />
-            {!isCooking ? <DetailRow label="Reason" value={preset.reasonDetail} /> : null}
           </View>
           <View style={styles.usageInfoBanner}>
             <Text style={styles.permissionIcon}>i</Text>
             <Text style={styles.permissionText}>
-              {allAvailable
-                ? `All quantities are available. Stock levels will remain ${hasBelowMinimum ? 'below' : 'above'} minimum. This preset never allows a negative balance.`
-                : 'One or more quantities exceed available stock. Choose another preset; negative balances are not allowed.'}
+              Preset values are editable. All deductions are checked against available stock before preview.
             </Text>
           </View>
-          {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
           <View style={styles.formButtons}>
             <Pressable
               accessibilityRole="button"
-              disabled={!allAvailable}
-              onPress={() => {
-                if (allAvailable) {
-                  setFormError('');
-                  setConfirmationVisible(true);
-                }
-              }}
-              style={({ pressed }) => [
-                styles.saveButton,
-                !allAvailable && styles.confirmButtonDisabled,
-                pressed && styles.pressed,
-              ]}
+              onPress={reviewTransaction}
+              style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
             >
-              <Text style={styles.saveButtonText}>Confirm preset</Text>
+              <Text style={styles.saveButtonText}>Preview transaction</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -2019,6 +2210,120 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
             </Pressable>
           </View>
           <Text style={styles.formDemoNote}>Local demo only · Nothing changes until confirmed.</Text>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderFastLogPreview = () => {
+    const preset = selectedFastLogPreset;
+    if (!preset) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No preset selected</Text>
+          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const deductionsValid = fastLogDeductions.length > 0 && fastLogDeductions.every(
+      (deduction) =>
+        Number.isFinite(deduction.quantity) &&
+        deduction.quantity > 0 &&
+        deduction.quantity <= deduction.previousQuantity,
+    );
+    const belowMinimum = fastLogDeductions.some((deduction) => {
+      const item = ingredients.find((entry) => entry.id === deduction.ingredientId);
+      return item !== undefined && deduction.newQuantity < item.minimumStock;
+    });
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Edit preset"
+            onPress={() => setRoute('fastLogReview')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Review Fast-Log</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.compactFormContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.fastLogSummaryCard}>
+            <Text style={styles.fastLogSummaryTitle}>{preset.name}</Text>
+            <Text style={styles.fastLogSummaryAmount}>
+              {preset.pieces ? `${fastLogPieces || preset.pieces} pieces · 1 batch` : fastLogDeductions.map((entry) => {
+                const item = ingredients.find((ingredient) => ingredient.id === entry.ingredientId);
+                return item ? formatUnitQuantity(entry.quantity, item.unit) : '';
+              }).filter(Boolean).join(' · ')}
+            </Text>
+            <Text style={styles.fastLogSummaryNote}>Review the actual edited quantities and balances below.</Text>
+          </View>
+          <Text style={styles.fastLogSectionTitle}>Ingredient deductions</Text>
+          <View style={styles.fastLogRowsCard}>
+            {fastLogDeductions.map((deduction, index) => {
+              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+              return ingredient ? (
+                <View key={`${ingredient.id}-${index}`} style={styles.fastLogBalanceRow}>
+                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
+                  <Text style={styles.fastLogBalanceValue}>
+                    -{formatUnitQuantity(deduction.quantity, ingredient.unit)} / {formatQuantity(deduction.previousQuantity)} → {formatUnitQuantity(deduction.newQuantity, ingredient.unit)}
+                  </Text>
+                </View>
+              ) : null;
+            })}
+          </View>
+          <View style={styles.fastLogReceiptDetails}>
+            <DetailRow label="Transaction date" value={transactionDate ? formatDate(transactionDate) : '—'} />
+            <DetailRow label="Recorded by" value="Isabel San Esteban" />
+            <DetailRow label="Reason" value={fastLogReason} />
+            <DetailRow label="Notes" value={fastLogNotes.trim() || '—'} />
+          </View>
+          <View style={belowMinimum ? styles.usageWarningBanner : styles.usageInfoBanner}>
+            {belowMinimum ? (
+              <Text style={styles.usageWarningText}>
+                One or more ingredients will remain below minimum stock. Deductions remain within available stock.
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.permissionIcon}>i</Text>
+                <Text style={styles.permissionText}>All quantities are available. No balance can fall below zero.</Text>
+              </>
+            )}
+          </View>
+          {formError !== '' ? <Text style={styles.formError} accessibilityRole="alert">{formError}</Text> : null}
+          <View style={styles.formButtons}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!deductionsValid}
+              onPress={() => deductionsValid && setConfirmationVisible(true)}
+              style={({ pressed }) => [
+                styles.saveButton,
+                !deductionsValid && styles.confirmButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.saveButtonText}>Confirm preset</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setRoute('fastLogReview')}
+              style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.cancelButtonText}>Edit transaction</Text>
+            </Pressable>
+          </View>
         </ScrollView>
       </>
     );
@@ -2069,14 +2374,14 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
             <Text style={styles.receiptSummaryTitle}>{receipt.preset.name}</Text>
             <Text style={styles.receiptSummaryQuantity}>
               {isCooking
-                ? `${receipt.preset.pieces} pieces`
+                ? `${receipt.pieces ?? receipt.preset.pieces} pieces`
                 : `-${formatUnitQuantity(
                     receipt.deductions[0].quantity,
                     ingredients.find((item) => item.id === receipt.deductions[0].ingredientId)?.unit ?? '',
                   )}`}
             </Text>
             <Text style={styles.receiptSummarySubtitle}>
-              {isCooking ? 'One batch' : receipt.preset.reasonDetail} · {formatUsageDate(receipt.transactionDate)}
+              {isCooking ? 'One batch' : receipt.reason} · {formatUsageDate(receipt.transactionDate)}
             </Text>
           </View>
           <Text style={styles.fastLogSectionTitle}>Updated ingredient balances</Text>
@@ -2096,6 +2401,10 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           <Text style={styles.fastLogReference}>
             Reference {receipt.reference} · Isabel San Esteban
           </Text>
+          <View style={styles.fastLogReceiptDetails}>
+            <DetailRow label="Reason / description" value={receipt.reason} />
+            <DetailRow label="Notes" value={receipt.notes.trim() || '—'} />
+          </View>
           <View style={styles.usageInfoBanner}>
             <Text style={styles.permissionIcon}>i</Text>
             <Text style={styles.permissionText}>
@@ -2470,6 +2779,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     case 'fastLogReview':
       screenContent = renderFastLogReview();
       break;
+    case 'fastLogPreview':
+      screenContent = renderFastLogPreview();
+      break;
     case 'fastLogSuccess':
       screenContent = renderFastLogSuccess();
       break;
@@ -2498,6 +2810,218 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       <View style={styles.screenArea}>{screenContent}</View>
       <BottomNavigation active={route} onSelect={navigate} />
       <Modal
+        visible={fastLogPopupVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeFastLogPopup}
+      >
+        <KeyboardAvoidingView
+          style={styles.fastLogPopupBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close Rush-Hour Fast-Log"
+            onPress={closeFastLogPopup}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.fastLogPopupCard}>
+            <View style={styles.fastLogPopupHandle} />
+            <View style={styles.fastLogPopupHeader}>
+              <View style={styles.fastLogPopupHeading}>
+                <Text style={styles.fastLogPopupTitle}>Rush-Hour Fast-Log</Text>
+                <Text style={styles.fastLogPopupSubtitle}>Record common usage or waste</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close popup"
+                disabled={confirming}
+                onPress={closeFastLogPopup}
+                style={styles.fastLogPopupClose}
+              >
+                <Text style={styles.fastLogPopupCloseText}>×</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.fastLogPopupScroll}
+              contentContainerStyle={styles.fastLogPopupScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.fastLogPopupSectionTitle}>Choose a preset</Text>
+              {fastLogPresets.map((preset) => {
+                const isSelected = selectedFastLogPresetId === preset.id;
+                const summary = preset.deductions.map((deduction) => {
+                  const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+                  return ingredient
+                    ? `${ingredient.name} ${formatUnitQuantity(deduction.quantity, ingredient.unit)}`
+                    : '';
+                }).filter(Boolean).join(' · ');
+                return (
+                  <Pressable
+                    key={preset.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    disabled={confirming}
+                    onPress={() => {
+                      prepareFastLogPreset(preset);
+                      setFastLogPopupVisible(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.fastLogPopupPreset,
+                      isSelected && styles.fastLogPopupPresetSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.fastLogPopupPresetCopy}>
+                      <Text style={styles.fastLogPopupPresetName}>{preset.name}</Text>
+                      <Text style={styles.fastLogPopupPresetDetail}>
+                        {preset.section === 'waste' ? preset.reason : 'Cooking usage'} · {summary}
+                      </Text>
+                    </View>
+                    <Text style={[
+                      styles.fastLogPopupPresetCheck,
+                      isSelected && styles.fastLogPopupPresetCheckSelected,
+                    ]}>{isSelected ? '✓' : '›'}</Text>
+                  </Pressable>
+                );
+              })}
+
+              {selectedFastLogPreset ? (
+                <View style={styles.fastLogPopupEditor}>
+                  <Text style={styles.fastLogPopupSectionTitle}>Confirm actual quantities</Text>
+                  <Text style={styles.fastLogPopupActionType}>
+                    {selectedFastLogPreset.section === 'waste' ? 'Waste / spoilage' : 'Cooking usage'}
+                    {selectedFastLogPreset.pieces ? ` · ${fastLogPieces || selectedFastLogPreset.pieces} pieces` : ''}
+                  </Text>
+                  {selectedFastLogPreset.pieces ? (
+                    <View style={styles.fastLogPopupPieces}>
+                      <Text style={styles.fieldLabel}>Batch size (pieces)</Text>
+                      <TextInput
+                        accessibilityLabel="Batch size in pieces"
+                        value={fastLogPieces}
+                        editable={!confirming}
+                        onChangeText={(value) => {
+                          setFastLogPieces(value);
+                          setFastLogFieldErrors((current) => ({ ...current, pieces: '' }));
+                        }}
+                        keyboardType="number-pad"
+                        style={styles.fastLogPopupTextInput}
+                      />
+                      {fastLogFieldErrors.pieces ? (
+                        <Text style={styles.fieldError}>{fastLogFieldErrors.pieces}</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {fastLogDraftDeductions.map((draft, index) => {
+                    const ingredient = ingredients.find((item) => item.id === draft.ingredientId);
+                    const error = fastLogFieldErrors[`${draft.ingredientId}-${index}`];
+                    if (!ingredient) return null;
+                    return (
+                      <View key={`${draft.ingredientId}-${index}`} style={styles.fastLogPopupDeduction}>
+                        <View style={styles.fastLogPopupDeductionHeading}>
+                          <Text style={styles.fastLogPopupIngredientName}>{ingredient.name}</Text>
+                          <Text style={styles.fastLogPopupAvailable}>
+                            Available {formatUnitQuantity(ingredient.quantity, ingredient.unit)}
+                          </Text>
+                        </View>
+                        <View style={[styles.fastLogQuantityInputWrap, error ? styles.textInputError : undefined]}>
+                          <TextInput
+                            accessibilityLabel={`${ingredient.name} quantity`}
+                            value={draft.quantity}
+                            editable={!confirming}
+                            onChangeText={(value) => updateFastLogDeduction(index, 'quantity', value)}
+                            keyboardType="decimal-pad"
+                            selectTextOnFocus
+                            style={[styles.textInput, styles.fastLogQuantityInput]}
+                          />
+                          <Text style={styles.inputSuffix}>{ingredient.unit}</Text>
+                        </View>
+                        {error ? <Text style={styles.fieldError}>{error}</Text> : null}
+                      </View>
+                    );
+                  })}
+                  <View style={styles.fastLogPopupNotes}>
+                    <Text style={styles.fieldLabel}>Reason or description</Text>
+                    <TextInput
+                      accessibilityLabel="Reason or description"
+                      value={fastLogReason}
+                      editable={!confirming}
+                      onChangeText={(value) => {
+                        setFastLogReason(value);
+                        setFastLogFieldErrors((current) => ({ ...current, reason: '' }));
+                      }}
+                      placeholder="Add a short reason"
+                      style={styles.fastLogPopupTextInput}
+                    />
+                    {fastLogFieldErrors.reason ? (
+                      <Text style={styles.fieldError}>{fastLogFieldErrors.reason}</Text>
+                    ) : null}
+                    <Text style={[styles.fieldLabel, styles.fastLogPopupNotesLabel]}>Notes (optional)</Text>
+                    <TextInput
+                      accessibilityLabel="Fast-Log notes"
+                      value={fastLogNotes}
+                      editable={!confirming}
+                      onChangeText={setFastLogNotes}
+                      placeholder="Add notes"
+                      style={styles.fastLogPopupTextInput}
+                    />
+                  </View>
+                  {fastLogDraftDeductions.some((draft) => {
+                    const item = ingredients.find((ingredient) => ingredient.id === draft.ingredientId);
+                    return item && Number(draft.quantity) > 0 &&
+                      Number(draft.quantity) <= item.quantity &&
+                      item.quantity - Number(draft.quantity) < item.minimumStock;
+                  }) ? (
+                    <Text style={styles.fastLogPopupWarning}>
+                      The resulting balance will be below the minimum stock level.
+                    </Text>
+                  ) : null}
+                  {formError ? <Text style={styles.fastLogPopupError}>{formError}</Text> : null}
+                  <View style={styles.fastLogPopupActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={confirming}
+                      onPress={() => {
+                        setSelectedFastLogPresetId('');
+                        setFastLogDraftDeductions([]);
+                        setFastLogReason('');
+                        setFastLogNotes('');
+                        setFastLogFieldErrors({});
+                      }}
+                      style={({ pressed }) => [styles.fastLogPopupCancel, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.fastLogPopupCancelText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={confirming}
+                      onPress={() => {
+                        if (!validateFastLogDraft()) return;
+                        confirmTransaction();
+                      }}
+                      style={({ pressed }) => [
+                        styles.fastLogPopupSave,
+                        pressed && styles.pressed,
+                        confirming && styles.confirmButtonDisabled,
+                      ]}
+                    >
+                      <Text style={styles.fastLogPopupSaveText}>
+                        {confirming
+                          ? 'Recording…'
+                          : selectedFastLogPreset.section === 'waste'
+                            ? 'Record waste'
+                            : 'Record usage'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
         visible={confirmationVisible}
         transparent
         animationType="fade"
@@ -2509,12 +3033,12 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
           <View style={styles.confirmCard}>
             <View style={[
               styles.confirmIcon,
-              (route === 'usagePreview' || route === 'fastLogReview') && styles.usageConfirmIcon,
+              (route === 'usagePreview' || route === 'fastLogPreview') && styles.usageConfirmIcon,
             ]}>
               <Text style={styles.confirmIconText}>↓</Text>
             </View>
             <Text style={styles.confirmTitle}>
-              {route === 'fastLogReview'
+              {route === 'fastLogPreview'
                 ? selectedFastLogPreset?.section === 'cooking'
                   ? 'Log one cooking batch?'
                   : 'Log waste preset?'
@@ -2529,29 +3053,29 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                     : 'Confirm Stock-Out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
-              {route === 'fastLogReview'
-                ? 'Confirm the configured quantities. Nothing is deducted until you confirm.'
+              {route === 'fastLogPreview'
+                ? 'Confirm the edited quantities. Nothing is deducted until you confirm.'
                 : route === 'usagePreview'
                 ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from Manila · Branch 1?`
                 : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?`}
             </Text>
-            {route === 'fastLogReview' && selectedFastLogPreset ? (
+            {route === 'fastLogPreview' && selectedFastLogPreset ? (
               <View style={styles.confirmSummary}>
                 <Text style={styles.confirmSummaryText}>
-                  {selectedFastLogPreset.name} · {selectedFastLogPreset.pieces
-                    ? `${selectedFastLogPreset.pieces} pieces`
-                    : selectedFastLogPreset.reason}
+                  {selectedFastLogPreset.name} · {selectedFastLogPreset.pieces ? `${fastLogPieces || selectedFastLogPreset.pieces} pieces` : fastLogReason}
                 </Text>
-                {fastLogDeductions.map((deduction) => {
+                {fastLogDeductions.map((deduction, index) => {
                   const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
                   if (!ingredient) return null;
                   return (
-                    <Text key={ingredient.id} style={styles.confirmSummaryText}>
+                    <Text key={`${ingredient.id}-${index}`} style={styles.confirmSummaryText}>
                       {ingredient.name} {formatUnitQuantity(deduction.quantity, ingredient.unit)} → {formatQuantity(deduction.previousQuantity)} → {formatUnitQuantity(deduction.newQuantity, ingredient.unit)}
                     </Text>
                   );
                 })}
-                <Text style={styles.confirmSummaryText}>{formatDate(openingDate)} · Isabel San Esteban</Text>
+                <Text style={styles.confirmSummaryText}>{fastLogReason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
+                <Text style={styles.confirmSummaryText}>Isabel San Esteban</Text>
+                <Text style={styles.confirmSummaryText}>Notes: {fastLogNotes.trim() || '—'}</Text>
               </View>
             ) : route === 'usagePreview' ? (
               <View style={styles.confirmSummary}>
@@ -2631,7 +3155,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 <Text style={styles.confirmButtonText}>
                   {confirming
                     ? 'Recording…'
-                    : route === 'fastLogReview'
+                    : route === 'fastLogPreview'
                       ? selectedFastLogPreset?.section === 'waste' ? 'Log waste' : 'Log batch'
                       : route === 'usagePreview'
                         ? 'Record usage'
@@ -2779,7 +3303,7 @@ const styles = StyleSheet.create({
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   sectionTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 15 },
   sectionHint: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
-  quickActions: { flexDirection: 'row', gap: 8, marginBottom: 21 },
+  quickActions: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   quickAction: {
     flex: 1, minWidth: 0, minHeight: 80, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 2, paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white,
@@ -2789,6 +3313,98 @@ const styles = StyleSheet.create({
   quickActionIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginBottom: 4 },
   quickActionGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 21, lineHeight: 25 },
   quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'center' },
+  dashboardFastLogCard: {
+    minHeight: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
+    paddingVertical: 7, borderRadius: 14, backgroundColor: '#F5F5F7',
+    borderWidth: 1, borderColor: colors.line, marginBottom: 16,
+    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06,
+    shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+  },
+  dashboardFastLogIcon: {
+    width: 38, height: 38, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, backgroundColor: colors.navy, marginRight: 10,
+  },
+  dashboardFastLogIconText: { color: colors.orange, fontSize: 19, lineHeight: 23 },
+  dashboardFastLogCopy: { flex: 1, minWidth: 0, marginRight: 6 },
+  dashboardFastLogTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  dashboardFastLogSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
+  dashboardFastLogAction: { flexDirection: 'row', alignItems: 'center', paddingLeft: 7 },
+  dashboardFastLogActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  dashboardFastLogChevron: { color: colors.pink, fontFamily: font.semibold, fontSize: 17, marginLeft: 3 },
+  fastLogPopupBackdrop: {
+    flex: 1, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 28, backgroundColor: 'rgba(16, 16, 39, 0.48)',
+  },
+  fastLogPopupCard: {
+    width: '85%', maxWidth: 360, maxHeight: '78%', alignSelf: 'center',
+    paddingTop: 13, paddingHorizontal: 15, paddingBottom: 15,
+    borderRadius: 20, backgroundColor: colors.white,
+    elevation: 18, shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 14,
+    shadowOffset: { width: 0, height: -4 },
+  },
+  fastLogPopupHandle: {
+    width: 36, height: 4, alignSelf: 'center', borderRadius: 2,
+    backgroundColor: '#D8D8DE', marginBottom: 10,
+  },
+  fastLogPopupHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line,
+  },
+  fastLogPopupHeading: { flex: 1, minWidth: 0 },
+  fastLogPopupTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
+  fastLogPopupSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2 },
+  fastLogPopupClose: {
+    width: 31, height: 31, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 16, backgroundColor: '#F2F2F4', marginLeft: 10,
+  },
+  fastLogPopupCloseText: { color: colors.navy, fontFamily: font.medium, fontSize: 21, lineHeight: 24 },
+  fastLogPopupScroll: { flexShrink: 1 },
+  fastLogPopupScrollContent: { paddingTop: 12, paddingBottom: 5 },
+  fastLogPopupSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginBottom: 7 },
+  fastLogPopupPreset: {
+    minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
+    paddingVertical: 7, borderRadius: 12, backgroundColor: '#F5F5F7',
+    borderWidth: 1, borderColor: colors.line, marginBottom: 6,
+  },
+  fastLogPopupPresetSelected: { backgroundColor: '#FFF7FA', borderColor: '#F5AFC2' },
+  fastLogPopupPresetCopy: { flex: 1, minWidth: 0 },
+  fastLogPopupPresetName: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  fastLogPopupPresetDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
+  fastLogPopupPresetCheck: { color: colors.muted, fontFamily: font.semibold, fontSize: 17, marginLeft: 8 },
+  fastLogPopupPresetCheckSelected: { color: colors.pink },
+  fastLogPopupEditor: {
+    padding: 11, borderRadius: 14, backgroundColor: colors.white,
+    borderWidth: 1, borderColor: colors.line, marginTop: 5,
+  },
+  fastLogPopupActionType: { color: colors.orange, fontFamily: font.medium, fontSize: 8, marginTop: -4, marginBottom: 7 },
+  fastLogPopupPieces: { marginBottom: 8 },
+  fastLogPopupDeduction: { marginTop: 5 },
+  fastLogPopupDeductionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  fastLogPopupIngredientName: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  fastLogPopupAvailable: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
+  fastLogPopupNotes: { marginTop: 10 },
+  fastLogPopupNotesLabel: { marginTop: 8 },
+  fastLogPopupTextInput: {
+    minHeight: 38, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10,
+    borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#F5F5F7',
+    color: colors.navy, fontFamily: font.regular, fontSize: 9,
+  },
+  fastLogPopupWarning: {
+    color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 12,
+    padding: 8, borderRadius: 9, backgroundColor: colors.yellow, marginTop: 9,
+  },
+  fastLogPopupError: { color: colors.red, fontFamily: font.medium, fontSize: 8, marginTop: 8 },
+  fastLogPopupActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 11 },
+  fastLogPopupCancel: {
+    minWidth: 75, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 12, borderRadius: 11, backgroundColor: '#EEEEF0',
+  },
+  fastLogPopupCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  fastLogPopupSave: {
+    minWidth: 116, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 13, borderRadius: 11, backgroundColor: colors.pink,
+  },
+  fastLogPopupSaveText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   dashboardCarousel: { width: '100%', flexGrow: 0 },
   horizontalCards: { gap: 9, paddingRight: 18, paddingBottom: 2 },
   ingredientCard: {
@@ -2888,6 +3504,17 @@ const styles = StyleSheet.create({
   fastLogBalanceValue: { flexShrink: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'right' },
   fastLogReceiptDetails: { paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 12 },
   fastLogReference: { color: colors.navy, fontFamily: font.medium, fontSize: 9, marginBottom: 12 },
+  fastLogEditCard: {
+    padding: 11, borderRadius: 13, backgroundColor: '#EEEEEF', marginBottom: 9,
+    borderWidth: 1, borderColor: colors.line,
+  },
+  fastLogQuantityEditRow: { marginTop: 9 },
+  fastLogQuantityInputWrap: {
+    minHeight: 42, flexDirection: 'row', alignItems: 'center',
+    borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: colors.white,
+  },
+  fastLogQuantityInput: { flex: 1, minHeight: 40, borderWidth: 0, backgroundColor: 'transparent' },
+  fastLogAvailableHint: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
   notificationList: { gap: 10 },
   notificationPageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   markReadButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: '#FCE3EB', marginBottom: 17 },
