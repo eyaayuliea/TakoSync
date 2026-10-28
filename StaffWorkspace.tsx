@@ -176,7 +176,71 @@ type UsageReceipt = {
   batchCount: number;
 };
 
-const cookingBatchPresets = [
+type FastLogPreset = {
+  id: string;
+  section: 'cooking' | 'waste';
+  name: string;
+  pieces?: number;
+  reason: string;
+  reasonDetail: string;
+  deductions: { ingredientId: string; quantity: number }[];
+};
+
+type FastLogReceipt = {
+  reference: string;
+  preset: FastLogPreset;
+  deductions: UsageDeduction[];
+  transactionDate: Date;
+};
+
+const fastLogPresets: FastLogPreset[] = [
+  {
+    id: 'standard-batch',
+    section: 'cooking',
+    name: 'Standard batch',
+    pieces: 40,
+    reason: 'Cooking usage',
+    reasonDetail: 'One cooking batch',
+    deductions: [
+      { ingredientId: 'octopus', quantity: 0.5 },
+      { ingredientId: 'flour', quantity: 1 },
+      { ingredientId: 'eggs', quantity: 4 },
+      { ingredientId: 'sauces', quantity: 0.1 },
+    ],
+  },
+  {
+    id: 'half-batch',
+    section: 'cooking',
+    name: 'Half batch',
+    pieces: 20,
+    reason: 'Cooking usage',
+    reasonDetail: 'Half cooking batch',
+    deductions: [
+      { ingredientId: 'octopus', quantity: 0.25 },
+      { ingredientId: 'flour', quantity: 0.5 },
+      { ingredientId: 'eggs', quantity: 2 },
+      { ingredientId: 'sauces', quantity: 0.05 },
+    ],
+  },
+  {
+    id: 'cracked-egg',
+    section: 'waste',
+    name: 'Cracked egg · Waste',
+    reason: 'Waste',
+    reasonDetail: 'Damaged during handling',
+    deductions: [{ ingredientId: 'eggs', quantity: 1 }],
+  },
+  {
+    id: 'sauce-spoilage',
+    section: 'waste',
+    name: 'Sauce spoilage',
+    reason: 'Spoilage',
+    reasonDetail: 'Unusable after opening',
+    deductions: [{ ingredientId: 'sauces', quantity: 0.1 }],
+  },
+];
+
+const stockOutBatchPresets = [
   {
     name: 'Standard takoyaki batch',
     deductions: [
@@ -198,6 +262,11 @@ const openingExpirationDate = new Date(2026, 9, 30);
 
 function formatQuantity(quantity: number) {
   return Number.isInteger(quantity) ? `${quantity}` : `${Number(quantity.toFixed(2))}`;
+}
+
+function formatUnitQuantity(quantity: number, unit: string) {
+  const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
+  return `${formatQuantity(quantity)} ${displayUnit}`;
 }
 
 function SearchBar({
@@ -541,7 +610,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [ingredientListOpen, setIngredientListOpen] = useState(false);
   const [quantity, setQuantity] = useState('');
   const [usageMode, setUsageMode] = useState<'manual' | 'cookingBatch'>('manual');
-  const [batchPreset, setBatchPreset] = useState<string>(cookingBatchPresets[0].name);
+  const [batchPreset, setBatchPreset] = useState<string>(stockOutBatchPresets[0].name);
   const [batchPresetOpen, setBatchPresetOpen] = useState(false);
   const [batchCount, setBatchCount] = useState('1');
   const [transactionDate, setTransactionDate] = useState<Date | null>(new Date());
@@ -558,6 +627,9 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
   const [usageReceipts, setUsageReceipts] = useState<UsageReceipt[]>([]);
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
+  const [selectedFastLogPresetId, setSelectedFastLogPresetId] = useState('');
+  const [fastLogReceipts, setFastLogReceipts] = useState<FastLogReceipt[]>([]);
+  const [currentFastLogReceipt, setCurrentFastLogReceipt] = useState<FastLogReceipt | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [dashboardCarouselWidth, setDashboardCarouselWidth] = useState(0);
@@ -569,7 +641,19 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
   });
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
-  const selectedBatch = cookingBatchPresets.find((preset) => preset.name === batchPreset) ?? cookingBatchPresets[0];
+  const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
+  const selectedFastLogPreset = fastLogPresets.find((preset) => preset.id === selectedFastLogPresetId);
+  const fastLogDeductions: UsageDeduction[] = selectedFastLogPreset
+    ? selectedFastLogPreset.deductions.map((deduction) => {
+        const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+        return {
+          ingredientId: deduction.ingredientId,
+          quantity: deduction.quantity,
+          previousQuantity: ingredient?.quantity ?? 0,
+          newQuantity: (ingredient?.quantity ?? 0) - deduction.quantity,
+        };
+      })
+    : [];
   const parsedBatchCount = Number(batchCount);
   const usageDeductions: UsageDeduction[] = usageMode === 'manual'
     ? selectedIngredient
@@ -659,6 +743,21 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
     setRoute(formRoute);
   };
 
+  const selectFastLogPreset = (preset: FastLogPreset) => {
+    setSelectedFastLogPresetId(preset.id);
+    setTransactionDate(openingDate);
+    setConfirmationVisible(false);
+    setConfirming(false);
+    setFormError('');
+    setRoute('fastLogReview');
+  };
+
+  const returnToFastLogList = () => {
+    setConfirmationVisible(false);
+    setConfirming(false);
+    setRoute(selectedFastLogPreset?.section === 'waste' ? 'waste' : 'fastLog');
+  };
+
   const returnFromForm = () => {
     setIngredientListOpen(false);
     setConfirmationVisible(false);
@@ -743,6 +842,53 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
 
   const confirmTransaction = () => {
     if (confirming || !transactionDate) return;
+    if (route === 'fastLogReview') {
+      if (
+        !selectedFastLogPreset ||
+        fastLogDeductions.length === 0 ||
+        fastLogDeductions.some((deduction) =>
+          !Number.isFinite(deduction.quantity) ||
+          deduction.quantity <= 0 ||
+          deduction.quantity > deduction.previousQuantity,
+        )
+      ) {
+        setFormError('This preset exceeds available stock and cannot be recorded.');
+        return;
+      }
+
+      setConfirming(true);
+      setTimeout(() => {
+        const receiptDate = transactionDate;
+        const deductions = fastLogDeductions.map((deduction) => ({ ...deduction }));
+        const referenceNumber = fastLogReceipts.length + 1;
+        const datePart = `${String(receiptDate.getMonth() + 1).padStart(2, '0')}${String(receiptDate.getDate()).padStart(2, '0')}`;
+        const receipt: FastLogReceipt = {
+          reference: `FL-${datePart}-${String(referenceNumber).padStart(3, '0')}`,
+          preset: selectedFastLogPreset,
+          deductions,
+          transactionDate: receiptDate,
+        };
+        setIngredients((current) =>
+          current.map((item) => {
+            const deduction = deductions.find((entry) => entry.ingredientId === item.id);
+            if (!deduction) return item;
+            return {
+              ...item,
+              quantity: Number(deduction.newQuantity.toFixed(2)),
+              lowStock: deduction.newQuantity < item.threshold,
+              lastUpdated: formatUsageDate(receiptDate),
+            };
+          }),
+        );
+        setFastLogReceipts((current) => [...current, receipt]);
+        setCurrentFastLogReceipt(receipt);
+        setConfirmationVisible(false);
+        setConfirming(false);
+        setRoute('fastLogSuccess');
+      }, 250);
+      return;
+    }
+
     if (route === 'usagePreview') {
       if (
         usageDeductions.length === 0 ||
@@ -1571,7 +1717,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
               </Pressable>
               {batchPresetOpen && (
                 <View style={styles.reasonDropdown}>
-                  {cookingBatchPresets.map((preset) => (
+                  {stockOutBatchPresets.map((preset) => (
                     <Pressable
                       key={preset.name}
                       onPress={() => {
@@ -1667,6 +1813,313 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         <Text style={styles.formDemoNote}>Local demo only · No live stock record will be created.</Text>
       </ScrollView>
     </>
+    );
+  };
+
+  const renderFastLogList = () => {
+    const renderPresetCard = (preset: FastLogPreset) => (
+      <Pressable
+        key={preset.id}
+        accessibilityRole="button"
+        accessibilityLabel={`Review ${preset.name}`}
+        onPress={() => selectFastLogPreset(preset)}
+        style={({ pressed }) => [styles.fastLogPresetCard, pressed && styles.pressed]}
+      >
+        <Text style={styles.fastLogPresetTitle}>
+          {preset.name}{preset.pieces ? ` · ${preset.pieces} pieces` : ''}
+        </Text>
+        {preset.section === 'cooking' ? (
+          <View style={styles.fastLogPresetIngredients}>
+            {preset.deductions.map((deduction) => {
+              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+              return ingredient ? (
+                <Text key={ingredient.id} style={styles.fastLogPresetDetail}>
+                  {ingredient.name} {formatUnitQuantity(deduction.quantity, ingredient.unit)}
+                </Text>
+              ) : null;
+            })}
+          </View>
+        ) : (
+          <Text style={styles.fastLogPresetDetail}>
+            {preset.deductions.map((deduction) => {
+              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+              return ingredient ? `${ingredient.name} ${formatUnitQuantity(deduction.quantity, ingredient.unit)}` : '';
+            }).filter(Boolean).join(' · ')} · Reason: {preset.reasonDetail}
+          </Text>
+        )}
+        <Text style={styles.fastLogReviewLink}>Review preset →</Text>
+      </Pressable>
+    );
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Stocks"
+            onPress={() => setRoute('stocks')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.fastLogListContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.usageInfoBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              Tap a preset once to review. Confirm after checking the configured ingredient quantities.
+            </Text>
+          </View>
+          <Text style={styles.fastLogSectionTitle}>Cooking batches</Text>
+          <View style={styles.fastLogPresetList}>
+            {fastLogPresets.filter((preset) => preset.section === 'cooking').map(renderPresetCard)}
+          </View>
+          <Text style={[styles.fastLogSectionTitle, styles.fastLogSecondSection]}>Waste / spoilage presets</Text>
+          <View style={styles.fastLogPresetList}>
+            {fastLogPresets.filter((preset) => preset.section === 'waste').map(renderPresetCard)}
+          </View>
+          <Text style={styles.fastLogFootnote}>
+            Preset quantities are illustrative. Date: 25 Oct 2026. Review stock and reason before logging.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute('stockHistory')}
+            style={({ pressed }) => [styles.historyButton, styles.fastLogHistoryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.historyButtonText}>View transaction history</Text>
+          </Pressable>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderFastLogReview = () => {
+    const preset = selectedFastLogPreset;
+    if (!preset) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>Choose a preset to review</Text>
+          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const isCooking = preset.section === 'cooking';
+    const allAvailable = fastLogDeductions.every(
+      (deduction) => deduction.quantity > 0 && deduction.quantity <= deduction.previousQuantity,
+    );
+    const hasBelowMinimum = fastLogDeductions.some((deduction) => {
+      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+      return ingredient !== undefined && deduction.newQuantity < ingredient.minimumStock;
+    });
+
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to presets"
+            onPress={returnToFastLogList}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.compactFormContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.fastLogSummaryCard}>
+            <Text style={styles.fastLogSummaryTitle}>
+              {preset.id === 'standard-batch'
+                ? 'Standard cooking batch'
+                : preset.id === 'half-batch'
+                  ? 'Half cooking batch'
+                  : preset.name}
+            </Text>
+            <Text style={styles.fastLogSummaryAmount}>
+              {isCooking
+                ? `${preset.pieces} pieces · 1 batch`
+                : formatUnitQuantity(
+                    preset.deductions[0].quantity,
+                    ingredients.find((item) => item.id === preset.deductions[0].ingredientId)?.unit ?? '',
+                  )}
+            </Text>
+            <Text style={styles.fastLogSummaryNote}>
+              {isCooking ? 'Configured preset · Amounts shown below' : `Reason: ${preset.reasonDetail}`}
+            </Text>
+          </View>
+          <Text style={styles.fastLogSectionTitle}>Ingredient deductions</Text>
+          <View style={styles.fastLogRowsCard}>
+            {fastLogDeductions.map((deduction) => {
+              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+              return ingredient ? (
+                <View key={ingredient.id} style={styles.fastLogBalanceRow}>
+                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
+                  <Text style={styles.fastLogBalanceValue}>
+                    -{formatQuantity(deduction.quantity)} {ingredient.unit} / {formatQuantity(deduction.previousQuantity)} → {formatQuantity(deduction.newQuantity)} {ingredient.unit}
+                  </Text>
+                </View>
+              ) : null;
+            })}
+          </View>
+          <View style={styles.fastLogReceiptDetails}>
+            <DetailRow label="Transaction date" value={formatDate(openingDate)} />
+            <DetailRow label="Recorded by" value="Isabel San Esteban" />
+            {!isCooking ? <DetailRow label="Reason" value={preset.reasonDetail} /> : null}
+          </View>
+          <View style={styles.usageInfoBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              {allAvailable
+                ? `All quantities are available. Stock levels will remain ${hasBelowMinimum ? 'below' : 'above'} minimum. This preset never allows a negative balance.`
+                : 'One or more quantities exceed available stock. Choose another preset; negative balances are not allowed.'}
+            </Text>
+          </View>
+          {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
+          <View style={styles.formButtons}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!allAvailable}
+              onPress={() => {
+                if (allAvailable) {
+                  setFormError('');
+                  setConfirmationVisible(true);
+                }
+              }}
+              style={({ pressed }) => [
+                styles.saveButton,
+                !allAvailable && styles.confirmButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.saveButtonText}>Confirm preset</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={returnToFastLogList}
+              style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.cancelButtonText}>Choose another preset</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.formDemoNote}>Local demo only · Nothing changes until confirmed.</Text>
+        </ScrollView>
+      </>
+    );
+  };
+
+  const renderFastLogSuccess = () => {
+    const receipt = currentFastLogReceipt;
+    if (!receipt) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No Fast-Log receipt to display</Text>
+          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const isCooking = receipt.preset.section === 'cooking';
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Fast-Log"
+            onPress={() => setRoute(receipt.preset.section === 'waste' ? 'waste' : 'fastLog')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
+            <Text style={styles.formSubtitle}>Manila · Branch 1 / Staff</Text>
+          </View>
+        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.compactFormContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.receiptSuccessBanner}>
+            <Text style={styles.receiptSuccessIcon}>✓</Text>
+            <Text style={styles.receiptSuccessText}>
+              {isCooking ? `${receipt.preset.name === 'Standard batch' ? 'Standard cooking batch' : 'Half cooking batch'} logged.` : `${receipt.preset.name} logged.`}
+            </Text>
+          </View>
+          <View style={styles.receiptSummaryCard}>
+            <Text style={styles.receiptSummaryTitle}>{receipt.preset.name}</Text>
+            <Text style={styles.receiptSummaryQuantity}>
+              {isCooking
+                ? `${receipt.preset.pieces} pieces`
+                : `-${formatUnitQuantity(
+                    receipt.deductions[0].quantity,
+                    ingredients.find((item) => item.id === receipt.deductions[0].ingredientId)?.unit ?? '',
+                  )}`}
+            </Text>
+            <Text style={styles.receiptSummarySubtitle}>
+              {isCooking ? 'One batch' : receipt.preset.reasonDetail} · {formatUsageDate(receipt.transactionDate)}
+            </Text>
+          </View>
+          <Text style={styles.fastLogSectionTitle}>Updated ingredient balances</Text>
+          <View style={styles.fastLogRowsCard}>
+            {receipt.deductions.map((deduction) => {
+              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+              return ingredient ? (
+                <View key={ingredient.id} style={styles.fastLogBalanceRow}>
+                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
+                  <Text style={styles.fastLogBalanceValue}>
+                    {formatQuantity(deduction.newQuantity)} {ingredient.unit} remaining
+                  </Text>
+                </View>
+              ) : null;
+            })}
+          </View>
+          <Text style={styles.fastLogReference}>
+            Reference {receipt.reference} · Isabel San Esteban
+          </Text>
+          <View style={styles.usageInfoBanner}>
+            <Text style={styles.permissionIcon}>i</Text>
+            <Text style={styles.permissionText}>
+              New preset example from the recorded balances. Each ingredient deduction is saved together in history.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute(receipt.preset.section === 'waste' ? 'waste' : 'fastLog')}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.saveButtonText}>
+              {receipt.preset.section === 'waste' ? 'Back to Waste Presets' : 'Back to Fast-Log'}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute('stockHistory')}
+            style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.cancelButtonText}>View transaction history</Text>
+          </Pressable>
+        </ScrollView>
+      </>
     );
   };
 
@@ -1825,7 +2278,7 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 <DetailRow
                   key={item.id}
                   label={item.name}
-                  value={`-${formatQuantity(deduction.quantity)} ${item.unit}`}
+                  value={`-${formatUnitQuantity(deduction.quantity, item.unit)}`}
                 />
               ) : null;
             })}
@@ -1935,10 +2388,25 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
         </View>
       </View>
       <Text style={styles.historyPlaceholderText}>Local demo transactions</Text>
-      {stockReceipts.length === 0 && usageReceipts.length === 0 ? (
+      {stockReceipts.length === 0 && usageReceipts.length === 0 && fastLogReceipts.length === 0 ? (
         <Text style={styles.emptyState}>No sample receipts have been confirmed in this session.</Text>
       ) : (
         <View style={styles.stockHistoryList}>
+          {fastLogReceipts.slice().reverse().map((receipt) => (
+            <View key={receipt.reference} style={styles.historyActivityCard}>
+              <View style={styles.historyActivityMarker}><Text style={styles.historyActivityGlyph}>↓</Text></View>
+              <View style={styles.historyActivityCopy}>
+                <Text style={styles.historyActivityTitle}>{receipt.preset.name} · Fast-Log</Text>
+                <Text style={styles.historyActivityDetail}>
+                  {receipt.reference} · {receipt.deductions.map((deduction) => {
+                    const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
+                    return item ? `${item.name} -${formatUnitQuantity(deduction.quantity, item.unit)}` : '';
+                  }).filter(Boolean).join(' · ')} · {formatUsageDate(receipt.transactionDate)}
+                </Text>
+              </View>
+              <Text style={styles.historyActivityAmount}>{receipt.deductions.length} items</Text>
+            </View>
+          ))}
           {usageReceipts.slice().reverse().map((receipt) => {
             const first = receipt.deductions[0];
             const item = ingredients.find((ingredient) => ingredient.id === first?.ingredientId);
@@ -1993,9 +2461,17 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       screenContent = renderStockInForm();
       break;
     case 'stockOut':
+      screenContent = renderMovementForm();
+      break;
     case 'fastLog':
     case 'waste':
-      screenContent = renderMovementForm();
+      screenContent = renderFastLogList();
+      break;
+    case 'fastLogReview':
+      screenContent = renderFastLogReview();
+      break;
+    case 'fastLogSuccess':
+      screenContent = renderFastLogSuccess();
       break;
     case 'usagePreview':
       screenContent = renderUsagePreview();
@@ -2031,11 +2507,18 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
       >
         <View style={styles.confirmBackdrop}>
           <View style={styles.confirmCard}>
-            <View style={[styles.confirmIcon, route === 'usagePreview' && styles.usageConfirmIcon]}>
+            <View style={[
+              styles.confirmIcon,
+              (route === 'usagePreview' || route === 'fastLogReview') && styles.usageConfirmIcon,
+            ]}>
               <Text style={styles.confirmIconText}>↓</Text>
             </View>
             <Text style={styles.confirmTitle}>
-              {route === 'usagePreview'
+              {route === 'fastLogReview'
+                ? selectedFastLogPreset?.section === 'cooking'
+                  ? 'Log one cooking batch?'
+                  : 'Log waste preset?'
+                : route === 'usagePreview'
                 ? 'Confirm cooking usage'
                 : route === 'stockIn'
                 ? 'Confirm Stock-In'
@@ -2046,11 +2529,31 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                     : 'Confirm Stock-Out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
-              {route === 'usagePreview'
+              {route === 'fastLogReview'
+                ? 'Confirm the configured quantities. Nothing is deducted until you confirm.'
+                : route === 'usagePreview'
                 ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from Manila · Branch 1?`
                 : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for Manila · Branch 1?`}
             </Text>
-            {route === 'usagePreview' ? (
+            {route === 'fastLogReview' && selectedFastLogPreset ? (
+              <View style={styles.confirmSummary}>
+                <Text style={styles.confirmSummaryText}>
+                  {selectedFastLogPreset.name} · {selectedFastLogPreset.pieces
+                    ? `${selectedFastLogPreset.pieces} pieces`
+                    : selectedFastLogPreset.reason}
+                </Text>
+                {fastLogDeductions.map((deduction) => {
+                  const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+                  if (!ingredient) return null;
+                  return (
+                    <Text key={ingredient.id} style={styles.confirmSummaryText}>
+                      {ingredient.name} {formatUnitQuantity(deduction.quantity, ingredient.unit)} → {formatQuantity(deduction.previousQuantity)} → {formatUnitQuantity(deduction.newQuantity, ingredient.unit)}
+                    </Text>
+                  );
+                })}
+                <Text style={styles.confirmSummaryText}>{formatDate(openingDate)} · Isabel San Esteban</Text>
+              </View>
+            ) : route === 'usagePreview' ? (
               <View style={styles.confirmSummary}>
                 {usageDeductions.map((deduction) => {
                   const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
@@ -2126,7 +2629,13 @@ export default function StaffWorkspace({ onLogout }: { onLogout: () => void }) {
                 style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed, confirming && styles.confirmButtonDisabled]}
               >
                 <Text style={styles.confirmButtonText}>
-                  {confirming ? 'Recording…' : route === 'usagePreview' ? 'Record usage' : 'Confirm'}
+                  {confirming
+                    ? 'Recording…'
+                    : route === 'fastLogReview'
+                      ? selectedFastLogPreset?.section === 'waste' ? 'Log waste' : 'Log batch'
+                      : route === 'usagePreview'
+                        ? 'Record usage'
+                        : 'Confirm'}
                 </Text>
               </Pressable>
             </View>
@@ -2343,6 +2852,42 @@ const styles = StyleSheet.create({
   stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 13, borderRadius: 13, backgroundColor: '#F7F6FB', marginTop: 19 },
   stockTipIcon: { width: 17, height: 17, borderRadius: 9, overflow: 'hidden', color: colors.white, backgroundColor: colors.navy, fontFamily: font.semibold, fontSize: 11, textAlign: 'center', marginRight: 9 },
   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
+  fastLogListContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 22 },
+  fastLogSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 12, marginBottom: 8 },
+  fastLogSecondSection: { marginTop: 17 },
+  fastLogPresetList: { gap: 9 },
+  fastLogPresetCard: {
+    paddingHorizontal: 13, paddingVertical: 11, borderRadius: 15, backgroundColor: '#EEEEEF',
+    borderWidth: 1, borderColor: colors.line, elevation: 2, shadowColor: colors.navy,
+    shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+  },
+  fastLogPresetTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11, marginBottom: 5 },
+  fastLogPresetIngredients: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 11, rowGap: 2 },
+  fastLogPresetDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
+  fastLogReviewLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 9, marginTop: 7 },
+  fastLogFootnote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 16 },
+  fastLogHistoryButton: { marginTop: 13 },
+  fastLogSummaryCard: {
+    paddingHorizontal: 15, paddingVertical: 13, borderRadius: 16, backgroundColor: colors.navy,
+    marginBottom: 16, elevation: 3, shadowColor: colors.navy, shadowOpacity: 0.12,
+    shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
+  },
+  fastLogSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
+  fastLogSummaryAmount: { color: colors.orange, fontFamily: font.semibold, fontSize: 16, marginTop: 4 },
+  fastLogSummaryNote: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  fastLogRowsCard: {
+    paddingHorizontal: 12, borderRadius: 14, backgroundColor: '#EEEEEF', marginBottom: 12,
+    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  fastLogBalanceRow: {
+    minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, borderBottomWidth: 1, borderBottomColor: '#DDDDDF',
+  },
+  fastLogBalanceName: { flexShrink: 0, color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  fastLogBalanceValue: { flexShrink: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'right' },
+  fastLogReceiptDetails: { paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 12 },
+  fastLogReference: { color: colors.navy, fontFamily: font.medium, fontSize: 9, marginBottom: 12 },
   notificationList: { gap: 10 },
   notificationPageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   markReadButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: '#FCE3EB', marginBottom: 17 },
