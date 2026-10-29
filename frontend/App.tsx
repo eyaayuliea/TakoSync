@@ -20,6 +20,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
+import OwnerLoginScreen from './owner/OwnerLoginScreen';
+import OwnerWorkspace from './owner/OwnerWorkspace';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured } from './services/supabase';
 import {
@@ -55,7 +57,7 @@ type PreviewInventoryItem = {
   expiration: string | null;
   branch?: string;
 };
-type Screen = 'loading' | 'welcome' | 'login' | 'dashboard' | 'staffWorkspace';
+type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'ownerDashboard' | 'dashboard' | 'staffWorkspace';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'History' | 'Alerts';
 
@@ -77,6 +79,7 @@ function AppContent() {
   const [loginError, setLoginError] = useState('');
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
+  const ownerPreviewRequested = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
@@ -111,7 +114,7 @@ function AppContent() {
     let active = true;
     getCurrentUser()
       .then((user) => {
-        if (!active || !user) return;
+        if (!active || !user || ownerPreviewRequested.current) return;
         setAuthenticatedUser(user);
         setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
       })
@@ -245,9 +248,17 @@ function AppContent() {
     setScreen('welcome');
   };
 
+  const openOwnerPreview = () => {
+    ownerPreviewRequested.current = true;
+    setScreen('ownerDashboard');
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+      <StatusBar
+        barStyle={screen === 'ownerLogin' || screen === 'ownerDashboard' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={screen === 'ownerLogin' ? '#E8B77E' : screen === 'ownerDashboard' ? '#FFFFFF' : colors.background}
+      />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
           <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
@@ -273,7 +284,7 @@ function AppContent() {
                   />
                 </View>
 
-                <View style={[styles.pinkPanel, { height: frameHeight * 0.53 }]}>
+                <View style={[styles.pinkPanel, { height: frameHeight * (frameHeight < 700 ? 0.65 : 0.53) }]}>
                   <View style={[styles.panelContent, { paddingTop: foodSize * 0.37 }]}>
                     <Text style={styles.heading}>Welcome!</Text>
                     <Text style={styles.description}>
@@ -281,14 +292,22 @@ function AppContent() {
                     </Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Get Started"
+                      accessibilityLabel="Staff Login"
                       onPress={() => {
                         setLoginError('');
                         setScreen('login');
                       }}
                       style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
                     >
-                      <Text style={styles.buttonText}>Get Started</Text>
+                      <Text style={styles.buttonText}>Staff Login</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Owner Login"
+                      onPress={() => setScreen('ownerLogin')}
+                      style={({ pressed }) => [styles.ownerWelcomeButton, pressed && styles.buttonPressed]}
+                    >
+                      <Text style={styles.buttonText}>Owner Login</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -300,6 +319,17 @@ function AppContent() {
                   accessibilityLabel="A plate of takoyaki"
                 />
               </View>
+            )}
+
+            {visibleScreen === 'ownerLogin' && (
+              <OwnerLoginScreen
+                onBack={() => setScreen('welcome')}
+                onPreviewDashboard={openOwnerPreview}
+              />
+            )}
+
+            {visibleScreen === 'ownerDashboard' && (
+              <OwnerWorkspace onExitPreview={() => setScreen('ownerLogin')} />
             )}
 
             {visibleScreen === 'login' && (
@@ -763,6 +793,21 @@ function useAppStyles() {
     marginTop: 30, minWidth: 150, minHeight: 44, paddingHorizontal: 24,
     borderRadius: 25, backgroundColor: NAVY, alignItems: 'center', justifyContent: 'center',
     elevation: 3, shadowColor: '#000000', shadowOpacity: 0.16, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+  },
+  ownerWelcomeButton: {
+    marginTop: 12,
+    minWidth: 150,
+    minHeight: 44,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+    backgroundColor: NAVY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   buttonPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
   buttonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },

@@ -38,6 +38,8 @@ Inventory changes and daily checks are submitted to Supabase. Notification categ
 
 The current Owner dashboard reads inventory, low-stock and near-expiry items, recent transactions, and daily checks awaiting review across accessible branches. The dashboard is read-only: its Stock-In, Stock-Out, Waste, and Daily Check quick actions explicitly report that those actions are unavailable there.
 
+The Owner Login screen is a frontend-only preview with local field validation and a mock invalid-credentials message. In development builds it also provides a mock-data Owner Dashboard preview shortcut with branch selection, inventory filtering, item details, and sample activity. Neither preview path authenticates or contacts Supabase; the previously connected Owner monitoring route remains separate.
+
 The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner-side ingredient management, staff/branch assignment, and daily-check approval or rejection screens are not implemented.
 
 ## Architecture
@@ -209,6 +211,8 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Stock-In, Stock-Out/usage, waste/spoilage, Fast-Log | Implemented through the database transaction function |
 | Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push notification delivery |
 | Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
+| Owner Login screen | Frontend preview only; mock error state, no authentication request |
+| Owner mobile dashboard, branch picker, inventory, and item details | Development-only frontend preview using clearly labeled local sample data |
 | Owner inventory, activity, and alert monitoring | Read-only dashboard for accessible branches |
 | Owner management of ingredients, accounts, or branch assignments | Not implemented in the app |
 | Owner review/approval of physical checks | Pending checks are displayed; approval/rejection workflow is not implemented |
