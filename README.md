@@ -1,31 +1,149 @@
-# TakoSync
+# TakoSync: A Mobile Inventory Monitoring and Stock Auditing System for Gelo’s Takoyaki
 
-TakoSync is an Expo + React Native + TypeScript application for branch-based inventory operations.
+## Project overview
 
-## Run
+TakoSync is a React Native and Expo application for monitoring ingredient inventory and recording stock activity for Gelo’s Takoyaki’s three branches. It addresses the difficulty of keeping branch stock records current, identifying low or expiring items, and documenting differences between recorded and physically counted inventory.
 
-1. Install dependencies with `npm install`.
-2. Copy `.env.example` to `.env` and set your Supabase project URL and public publishable/anon key.
-3. Start Expo with `npx expo start`.
-4. Type-check with `npm run typecheck`.
+The app has a mobile-first interface and an Expo web target. One Supabase project provides the shared database and authentication for the available clients. This repository does not contain a separate web administration application or a custom application server.
 
-The client intentionally refuses sign-in when Supabase configuration is missing. No credentials or live Supabase project are included in this repository.
+> **Project source:** A standalone Project Charter file was not present in the repository during this review. This README reflects the supplied project brief, the existing backend documentation, and the behavior implemented in the code and migrations.
 
-## Project structure
+## Objectives
 
-- `App.tsx` is the Expo entrypoint.
-- `frontend/App.tsx` handles Supabase email/password authentication and Owner routing.
-- `frontend/services/supabase.ts` configures the public-key Supabase client and persists Auth sessions with AsyncStorage.
-- `frontend/staff/StaffWorkspace.tsx` contains Staff navigation and inventory workflows.
-- `backend/services/takosync.ts` contains authentication, inventory, transaction, daily-check, and Owner read services.
-- `backend/types/database.ts` contains the typed database contract.
-- `backend/supabase/migrations/` contains the SQL schema, RLS policies, and transactional RPCs.
-- `backend/supabase/seed.sql` contains optional sample inventory fixtures.
+- Provide staff with inventory information for their assigned branch.
+- Record stock receipts, deductions, usage, waste, and spoilage with a transaction history.
+- Support low-stock and near-expiry monitoring.
+- Record daily physical counts and discrepancies without silently overwriting recorded stock.
+- Give the Owner a view of inventory and recent activity across the three branches.
 
-## Connect a Supabase project
+## Modules and features
 
-1. Create or select your Supabase project.
-2. Install the Supabase CLI if needed, then from this repository run:
+### Staff Module
+
+The Staff interface currently includes:
+
+- Supabase email/password sign-in, session restoration, and logout.
+- A dashboard and ingredient inventory with search, category filters, and ingredient details.
+- Stock-In receipts with batch and expiry information.
+- Stock-Out and usage entries, including cooking-batch and Fast-Log workflows.
+- Waste and spoilage recording with reasons and notes.
+- Low-stock and near-expiry alerts derived from branch inventory and active batches.
+- Transaction history with filters and transaction details.
+- Daily physical inventory checks that record observed quantities and discrepancies for Owner review.
+- Bottom navigation for Dashboard, Inventory, Stocks, Notifications, and More; theme preference is stored on the device.
+
+Inventory changes and daily checks are submitted to Supabase. Notification category toggles are UI state only: push delivery and persistent notification preferences are not implemented.
+
+### Owner Module
+
+The current Owner dashboard reads inventory, low-stock and near-expiry items, recent transactions, and daily checks awaiting review across accessible branches. The dashboard is read-only: its Stock-In, Stock-Out, Waste, and Daily Check quick actions explicitly report that those actions are unavailable there.
+
+The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner-side ingredient management, staff/branch assignment, and daily-check approval or rejection screens are not implemented.
+
+## Architecture
+
+```text
+Expo app (React Native / web)
+  ├─ screens, navigation, theme, and local UI state
+  ├─ frontend/services/ (Supabase client and application data operations)
+  └─ public Supabase key + Auth session
+             │
+             ▼
+Supabase Auth + PostgreSQL
+  ├─ shared data for the three branches
+  ├─ Row Level Security (RLS)
+  └─ database functions for inventory transactions and physical checks
+```
+
+The app calls Supabase directly through the Supabase JavaScript client. Database schema, policies, and transaction logic live under `backend/supabase/`. There is no separate Node/Express server. The database type contract is in `backend/types/`.
+
+## Technology stack
+
+| Area | Technology |
+|---|---|
+| Application | React Native 0.81, React 19, Expo SDK 54 |
+| Language | TypeScript 5 |
+| Web target | Expo web, React Native Web |
+| Authentication and database client | Supabase Auth and `@supabase/supabase-js` |
+| Database | Supabase PostgreSQL, SQL migrations, RLS, and PostgreSQL functions |
+| Session storage | `@react-native-async-storage/async-storage` |
+| Fonts | Poppins via Expo Google Fonts |
+
+## Repository structure
+
+```text
+.
+├── App.tsx                         # Expo entry point; forwards to frontend/App.tsx
+├── app.json                        # Expo application configuration
+├── assets/                         # Images used by the app
+├── frontend/
+│   ├── App.tsx                     # Loading, welcome, login, and Owner routing/UI
+│   ├── navigation/                 # Staff bottom navigation
+│   ├── services/                   # Supabase client and application data operations
+│   ├── staff/                      # Staff workspace and inventory workflows
+│   └── theme/                      # Theme provider and persisted theme preference
+├── backend/
+│   ├── README.md                   # Supabase setup notes
+│   ├── supabase/
+│   │   ├── config.toml
+│   │   ├── migrations/             # Schema, three branches, RLS, and database functions
+│   │   └── seed.sql                # Optional sample inventory fixtures
+│   └── types/
+│       └── database.ts             # Typed Supabase database contract
+├── .env.example                    # Safe placeholder environment values
+├── package.json
+└── tsconfig.json
+```
+
+`.expo/`, dependencies, environment files other than `.env.example`, and build output are local/generated files and are excluded by `.gitignore`.
+
+## Prerequisites
+
+- Node.js LTS and npm.
+- A device with Expo Go or an installed iOS/Android simulator for mobile use; a modern browser for web.
+- A Supabase project for sign-in and live inventory workflows.
+- The Supabase CLI only if you will apply migrations from the command line.
+
+## Install and run
+
+From the repository root:
+
+```sh
+npm install
+cp .env.example .env
+```
+
+Edit `.env` with the URL and **public** publishable key (or legacy anon key) for your Supabase project, then start Expo:
+
+```sh
+npm run start
+```
+
+Use the Expo terminal to open a device/simulator, or run the web target:
+
+```sh
+npm run web
+```
+
+Other available launch commands are `npm run android` and `npm run ios` (a suitable simulator/device is required). Restart Expo after changing `.env`.
+
+## Environment variables
+
+`.env.example` contains placeholders only:
+
+```dotenv
+EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-publishable-or-anon-key
+```
+
+Expo embeds variables prefixed with `EXPO_PUBLIC_` in the client bundle. Only a client-safe publishable/anon key belongs here. Never use a service-role key, database password, or other privileged credential in the app. `.env` is ignored by Git.
+
+Without both variables, the app intentionally disables sign-in and reports that Supabase is not configured.
+
+## Database setup
+
+1. Create a Supabase project and install the [Supabase CLI](https://supabase.com/docs/guides/cli).
+2. From the repository root, authenticate, link the project, and apply migrations:
 
    ```sh
    supabase login
@@ -33,56 +151,89 @@ The client intentionally refuses sign-in when Supabase configuration is missing.
    supabase --workdir backend db push
    ```
 
-   This applies `backend/supabase/migrations/202610280001_initial_schema.sql`. The migration creates exactly three fixed branch records. The app cannot insert or delete branches.
-3. In the Supabase dashboard, configure Auth email settings and disable public sign-ups. Create user accounts through the dashboard or a trusted administrative process. Do not add a service-role key to the app.
-   - The login screen accepts `staff` as the Staff username and maps it to `staff@YOUR_PROJECT_REF.supabase.co`. Create the Auth user with that exact email (replace `YOUR_PROJECT_REF` with the project ref from the Supabase URL) and set its password privately in the dashboard. The project-specific alias avoids requiring a separate mailbox; create/confirm the user in the dashboard rather than relying on email delivery.
-4. New Auth users receive a Staff profile assigned to Branch 1 by the database trigger. Change the assigned branch only through the trusted SQL editor or an authorized Owner management workflow. To designate the initial Owner after creating their Auth user, use the Supabase SQL editor:
+3. Configure Supabase Auth email settings and create accounts through the Supabase dashboard or another trusted administrative process. `enable_signup = false` in `backend/supabase/config.toml` applies to a local Supabase stack; disable public sign-ups separately in the hosted project's dashboard.
+4. Configure `.env` as described above.
 
-   ```sql
-   update public.profiles
-   set role = 'owner', branch_id = null, full_name = 'Owner name'
-   where email = 'owner@example.com';
-   ```
+The migrations create three fixed branch records, the inventory and audit tables, branch-level RLS policies, and the RPC functions used for inventory transactions and daily checks. The second migration provisions eight default ingredient records and inventory rows. The app cannot create or delete branches.
 
-   To assign a Staff account to another branch, update `branch_id` to one of the seeded branch UUIDs ending in `0001`, `0002`, or `0003`. Never accept role or branch assignments from user-editable Auth metadata.
-5. Copy `.env.example` to `.env`. Use the project URL and the client-safe publishable key (or legacy anon key):
+New Auth users receive a Staff profile assigned to Branch 1. To designate the first Owner, create the Auth user, then promote the matching profile in the Supabase SQL editor:
 
-   ```dotenv
-   EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-   EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLIC_PUBLISHABLE_OR_ANON_KEY
-   ```
+```sql
+update public.profiles
+set role = 'owner', branch_id = null, full_name = 'Owner name'
+where email = 'owner@example.com';
+```
 
-   Restart Expo after editing environment values. `EXPO_PUBLIC_` values are bundled into the application; only the public key belongs here. `.env` is ignored by Git.
-6. If using the sample ingredients and opening quantities, review `backend/supabase/seed.sql` first and run it in the Supabase SQL editor. These records are fixtures, not verified real-world balances. Remove or replace them before using production inventory. The seed contains sample Branch 1 quantities, empty Branch 2/3 quantities, sample categories, and example batch expiry dates.
+Assign Staff only to a fixed branch through a trusted administrative process. For example, Branch 2's ID is `00000000-0000-4000-8000-000000000002`:
 
-## Database and security
+```sql
+update public.profiles
+set branch_id = '00000000-0000-4000-8000-000000000002'
+where email = 'staff@example.com' and role = 'staff';
+```
 
-The migration creates:
+Never accept role or branch assignments from user-editable Auth metadata.
 
-- `branches` — exactly three fixed Gelo's Takoyaki branches.
-- `profiles` — Auth-linked user profile, Owner/Staff role, active state, and assigned branch.
-- `ingredient_categories` and `ingredients` — master ingredient details and units.
-- `inventory` — one quantity and minimum-stock threshold per branch/ingredient.
-- `ingredient_batches` — received quantities, remaining quantities, and expiry dates.
-- `inventory_transactions` — stock-in, stock-out, usage, waste, spoilage, and owner adjustment ledger.
-- `daily_stock_checks` and `daily_stock_count_lines` — immutable physical observations and recorded differences.
+`backend/supabase/seed.sql` is **optional sample data**, not real opening stock. It includes sample balances for four ingredients at Branch 1, zero balances for those ingredients at Branches 2 and 3, and example batches/expiry dates. Review it before use. For a remote project, run the reviewed SQL manually in the Supabase SQL editor only if you want those fixtures. Local Supabase resets use the configured seed file; `supabase --workdir backend db reset` resets the local database and should not be used against a production database.
 
-RLS is enabled on every application table. Staff reads are limited to their assigned active branch; Owners can read across active branches. Profile changes are Owner-only, and inventory/transaction mutations are not granted directly to clients. `record_inventory_transactions` validates branch access and stock availability, adjusts quantities atomically, records a ledger entry, creates batches on Stock-In, and consumes available batches on deductions. `submit_daily_stock_check` stores the observed quantities and discrepancy status without changing inventory.
+## Authentication, branch access, and security
 
-Never put a Supabase service-role key, database password, or other privileged credential in Expo configuration or frontend code.
+- Staff authenticate with Supabase email/password. The login form accepts `staff` as a username and maps it to `staff@YOUR_PROJECT_REF.supabase.co`; provision that exact Auth email and password through a trusted process. Owners sign in with their account email.
+- A database trigger creates new profiles as Staff assigned to Branch 1. Set up the initial Owner and change Staff assignments through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
+- RLS scopes Staff inventory and activity reads to their active assigned branch. An active Owner can read across active branches. The database contains exactly three initially provisioned branch records.
+- Direct client inventory writes are not granted. The `record_inventory_transactions` database function validates access and stock, updates inventory and batches, and records the ledger entry atomically. `submit_daily_stock_check` records physical counts and discrepancies without changing inventory.
+- Never trust user-editable Auth metadata for roles or branch assignment. Never ship service-role credentials in the client.
 
-## Connected workflows and current limits
+## Checks and troubleshooting
 
-- Sign-in and session restoration use Supabase Auth. The database supplies role, name, and assigned-branch identity.
-- Staff inventory, low-stock/near-expiry alerts, ingredient detail, transaction history, Stock-In, Stock-Out/usage, Fast-Log, waste/spoilage, and daily physical checks read from or write to Supabase.
-- Owner dashboard reads inventory and recent activity across accessible branches, and lists daily checks awaiting review.
-- Daily checks are audit observations; recorded stock is never overwritten by a physical count.
-- Existing theme and notification preferences remain on-device. They are not represented as server-side push-notification settings.
-- The current Owner UI is a monitoring screen. It does not yet include workflows for ingredient/master-data management, branch assignment, or approving/rejecting daily checks. The database permissions and pending-check records do not imply those UI workflows exist.
-- The only configured seed ingredient set is a sample. Add the actual ingredients and opening quantities through an authorized setup workflow before operational use.
+Run the available TypeScript check:
 
-Live authentication, RLS behavior, and RPC operations require your Supabase project credentials and are not verifiable from this repository alone.
+```sh
+npm run typecheck
+```
 
-## Assets
+There is currently no configured test or lint script in `package.json`. To troubleshoot:
 
-`assets/takosync-logo.png` and `assets/takoyaki-plate.png` are reference-derived assets from the original UI work. Replace them with original high-resolution brand assets when available.
+- **Sign-in disabled:** set both environment variables and restart Expo.
+- **Auth/profile error:** verify that the Auth user exists, has a database profile, and is active. Check the trusted account provisioning and assigned branch.
+- **Missing inventory or permission errors:** verify that migrations were applied to the linked Supabase project and inspect its RLS policies.
+- **Sample quantities look unexpected:** review whether the optional seed fixtures were applied; they are not verified real inventory.
+- **Web startup issues:** use `npm run web` and confirm dependencies are installed with `npm install`.
+
+## Implementation status and limitations
+
+| Capability | Status |
+|---|---|
+| Staff authentication, session restoration, and logout | Implemented against Supabase Auth; requires project configuration and provisioned accounts |
+| Staff inventory, search, categories, ingredient details, and history | Implemented against Supabase |
+| Stock-In, Stock-Out/usage, waste/spoilage, Fast-Log | Implemented through the database transaction function |
+| Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push notification delivery |
+| Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
+| Owner inventory, activity, and alert monitoring | Read-only dashboard for accessible branches |
+| Owner management of ingredients, accounts, or branch assignments | Not implemented in the app |
+| Owner review/approval of physical checks | Pending checks are displayed; approval/rejection workflow is not implemented |
+| Separate Owner web application | Not present; the Expo app has a web target |
+| Live backend integration | Requires a configured Supabase project; live Auth, RLS, and database behavior cannot be verified from this repository alone |
+
+The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Notification preferences are not persisted or connected to a push service.
+
+## Project scope
+
+TakoSync is scoped to staff inventory operations and Owner monitoring for Gelo’s Takoyaki’s three branches. The current repository does not implement a separate custom backend, a separate web administration product, or the Owner management/review workflows listed above. No additional account types are part of the current database role model.
+
+## Project team
+
+**Programmers / development team**
+
+- **Marbibi, Marjea A.**
+- **Sahorda, Michelle Ann**
+
+These members are recognized as the project's programmers/development team. This README does not attribute specific features to an individual.
+
+| Member | Project role |
+|---|---|
+| Lucero, Denise Mae | Project team member |
+| Marbibi, Marjea A. | Programmer / development team |
+| Sahorda, Michelle Ann | Programmer / development team |
+| San Esteban, Isabel | Project team member |
+| Zarate, Lorraine Jade | Project team member |

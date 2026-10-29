@@ -28,7 +28,7 @@ import {
   signIn,
   signOut,
   type AppUser,
-} from '../backend/services/takosync';
+} from './services/takosync';
 
 const PINK = '#F20D55';
 const NAVY = '#101026';

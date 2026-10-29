@@ -1,5 +1,5 @@
-import { getStaffLoginEmail, requireSupabase } from '../../frontend/services/supabase';
-import type { Json } from '../types/database';
+import { getStaffLoginEmail, requireSupabase } from './supabase';
+import type { Json } from '../../backend/types/database';
 
 export type AppUser = {
   id: string;

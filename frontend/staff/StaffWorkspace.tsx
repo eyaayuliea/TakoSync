@@ -21,7 +21,7 @@ import {
   recordInventoryTransactions,
   submitDailyStockCheck,
   type AppUser,
-} from '../../backend/services/takosync';
+} from '../services/takosync';
 
 const colors = {
   pink: '#F20D55',
