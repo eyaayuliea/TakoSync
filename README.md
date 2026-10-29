@@ -225,15 +225,15 @@ TakoSync is scoped to staff inventory operations and Owner monitoring for Gelo�
 
 **Programmers / development team**
 
-- **Marbibi, Marjea A.**
-- **Sahorda, Michelle Ann**
+- **Marbibi, Marjea A.** — Frontend Developer
+- **Sahorda, Michelle Ann (Mitch)** — Backend Developer
 
-These members are recognized as the project's programmers/development team. This README does not attribute specific features to an individual.
+Marjea leads frontend development, and Mitch leads backend development.
 
 | Member | Project role |
 |---|---|
 | Lucero, Denise Mae | Project team member |
-| Marbibi, Marjea A. | Programmer / development team |
-| Sahorda, Michelle Ann | Programmer / development team |
-| San Esteban, Isabel | Project team member |
-| Zarate, Lorraine Jade | Project team member |
+| Marbibi, Marjea A. | Frontend Developer |
+| Sahorda, Michelle Ann | Backend Developer |
+| San Esteban, Isabel | Designer |
+| Zarate, Lorraine Jade | Tester |
