@@ -16,6 +16,8 @@ export type InventoryItem = {
   category: string;
   quantity: number;
   unit: string;
+  quantityPrecision: number;
+  expirationTracking: boolean;
   threshold: number;
   lowStock: boolean;
   expiration: string | null;
@@ -190,7 +192,10 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
   const client = requireSupabase();
   const [inventoryResult, ingredientsResult, categoriesResult, batchesResult] = await Promise.all([
     client.from('inventory').select('branch_id, ingredient_id, quantity, minimum_stock, updated_at').eq('branch_id', branchId),
-    client.from('ingredients').select('id, category_id, name, unit, active').eq('active', true).order('name'),
+    client.from('ingredients')
+      .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active')
+      .eq('active', true)
+      .order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
       .select('ingredient_id, batch_reference, received_date, expiration_date, quantity_remaining')
@@ -230,6 +235,8 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
       category: categories.get(ingredient.category_id) ?? 'Other',
       quantity,
       unit: ingredient.unit,
+      quantityPrecision: ingredient.quantity_precision,
+      expirationTracking: ingredient.expiration_tracking,
       threshold: minimumStock,
       lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
       expiration: formattedExpiration,

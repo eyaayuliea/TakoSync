@@ -61,6 +61,8 @@ type Ingredient = {
   category: string;
   quantity: number;
   unit: string;
+  quantityPrecision: number;
+  expirationTracking: boolean;
   threshold: number;
   lowStock: boolean;
   expiration: string | null;
@@ -83,6 +85,29 @@ function formatDate(date: Date) {
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function formatLocalIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function manilaBusinessDate(now = new Date()) {
+  const dateParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const part = (type: 'year' | 'month' | 'day') =>
+    Number(dateParts.find((value) => value.type === type)?.value);
+  return new Date(part('year'), part('month') - 1, part('day'));
+}
+
+function manilaMidnightTimestamp(date: Date) {
+  return `${formatLocalIsoDate(date)}T00:00:00+08:00`;
+}
+
 function formatReceiptDate(date: Date) {
   return `${formatDate(date)} · 08:00 AM`;
 }
@@ -94,17 +119,6 @@ function formatUsageDate(date: Date) {
 function formatWasteDate(date: Date) {
   return `${formatDate(date)} · 08:30 AM`;
 }
-
-type StockReceipt = {
-  reference: string;
-  ingredientId: string;
-  quantity: number;
-  previousQuantity: number;
-  newQuantity: number;
-  transactionDate: Date;
-  expirationDate: Date | null;
-  notes: string;
-};
 
 type UsageDeduction = {
   ingredientId: string;
@@ -122,26 +136,6 @@ type UsageReceipt = {
   mode: 'manual' | 'cookingBatch';
   batchPreset: string | null;
   batchCount: number;
-};
-
-type FastLogPreset = {
-  id: string;
-  section: 'cooking' | 'waste';
-  name: string;
-  pieces?: number;
-  reason: string;
-  reasonDetail: string;
-  deductions: { ingredientId: string; quantity: number }[];
-};
-
-type FastLogReceipt = {
-  reference: string;
-  preset: FastLogPreset;
-  deductions: UsageDeduction[];
-  transactionDate: Date;
-  reason: string;
-  notes: string;
-  pieces: number | null;
 };
 
 type DailyCheckLine = {
@@ -226,66 +220,12 @@ function formatHistoryDateTime(date: Date) {
 
 const wasteReasons: WasteReason[] = ['Waste / Other', 'Damaged', 'Spoiled', 'Expired'];
 
-const fastLogPresets: FastLogPreset[] = [
-  {
-    id: 'standard-batch',
-    section: 'cooking',
-    name: 'Standard batch',
-    pieces: 40,
-    reason: 'Cooking usage',
-    reasonDetail: 'One cooking batch',
-    deductions: [
-      { ingredientId: 'octopus', quantity: 0.5 },
-      { ingredientId: 'flour', quantity: 1 },
-      { ingredientId: 'eggs', quantity: 4 },
-      { ingredientId: 'sauces', quantity: 0.1 },
-    ],
-  },
-  {
-    id: 'half-batch',
-    section: 'cooking',
-    name: 'Half batch',
-    pieces: 20,
-    reason: 'Cooking usage',
-    reasonDetail: 'Half cooking batch',
-    deductions: [
-      { ingredientId: 'octopus', quantity: 0.25 },
-      { ingredientId: 'flour', quantity: 0.5 },
-      { ingredientId: 'eggs', quantity: 2 },
-      { ingredientId: 'sauces', quantity: 0.05 },
-    ],
-  },
-  {
-    id: 'cracked-egg',
-    section: 'waste',
-    name: 'Cracked egg · Waste',
-    reason: 'Waste',
-    reasonDetail: 'Damaged during handling',
-    deductions: [{ ingredientId: 'eggs', quantity: 1 }],
-  },
-  {
-    id: 'sauce-spoilage',
-    section: 'waste',
-    name: 'Sauce spoilage',
-    reason: 'Spoilage',
-    reasonDetail: 'Unusable after opening',
-    deductions: [{ ingredientId: 'sauces', quantity: 0.1 }],
-  },
-];
-
 const stockOutBatchPresets = [
   {
     name: 'Standard takoyaki batch',
     deductions: [
       { ingredientId: 'octopus', quantity: 1 },
       { ingredientId: 'flour', quantity: 0.5 },
-    ],
-  },
-  {
-    name: 'Rush-hour takoyaki batch',
-    deductions: [
-      { ingredientId: 'octopus', quantity: 1.5 },
-      { ingredientId: 'flour', quantity: 1 },
     ],
   },
 ] as const;
@@ -600,7 +540,17 @@ function TextField({
           style={[styles.textInput, multiline && styles.notesInput, error !== undefined && error !== '' && styles.textInputError]}
         />
       )}
-      {error ? <Text style={styles.fieldError}>{error}</Text> : null}
+      {error ? <InlineFieldError message={error} /> : null}
+    </View>
+  );
+}
+
+function InlineFieldError({ message }: { message: string }) {
+  const styles = useStaffStyles();
+  return (
+    <View style={styles.inlineFieldError} accessibilityRole="alert">
+      <Text style={styles.inlineFieldErrorIcon}>!</Text>
+      <Text style={styles.fieldError}>{message}</Text>
     </View>
   );
 }
@@ -609,10 +559,14 @@ function DatePickerField({
   label,
   value,
   onChange,
+  error,
+  allowClear = false,
 }: {
   label: string;
   value: Date | null;
-  onChange: (date: Date) => void;
+  onChange: (date: Date | null) => void;
+  error?: string;
+  allowClear?: boolean;
 }) {
   const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
@@ -639,13 +593,24 @@ function DatePickerField({
             setMonth(value ?? new Date());
             setVisible(true);
           }}
-          style={styles.dateInput}
+          style={[styles.dateInput, error ? styles.textInputError : undefined]}
         >
           <Text style={[styles.dateInputText, !value && styles.placeholderText]}>
             {value ? formatDate(value) : 'Select a date'}
           </Text>
+          {allowClear && value ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Clear ${label.toLowerCase()}`}
+              onPress={() => onChange(null)}
+              style={styles.clearDateButton}
+            >
+              <Text style={styles.clearDateText}>×</Text>
+            </Pressable>
+          ) : null}
           <Text style={styles.calendarGlyph}>▦</Text>
         </Pressable>
+        {error ? <InlineFieldError message={error} /> : null}
       </View>
       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
         <View style={styles.modalBackdrop}>
@@ -746,6 +711,10 @@ export default function StaffWorkspace({
   const [selectedIngredientId, setSelectedIngredientId] = useState('');
   const [ingredientListOpen, setIngredientListOpen] = useState(false);
   const [quantity, setQuantity] = useState('');
+  const [stockInFieldErrors, setStockInFieldErrors] = useState<Record<string, string>>({});
+  const [stockInValidationAttempted, setStockInValidationAttempted] = useState(false);
+  const [stockOutFieldErrors, setStockOutFieldErrors] = useState<Record<string, string>>({});
+  const [stockOutValidationAttempted, setStockOutValidationAttempted] = useState(false);
   const [usageMode, setUsageMode] = useState<'manual' | 'cookingBatch'>('manual');
   const [batchPreset, setBatchPreset] = useState<string>(stockOutBatchPresets[0].name);
   const [batchPresetOpen, setBatchPresetOpen] = useState(false);
@@ -764,20 +733,15 @@ export default function StaffWorkspace({
   const [confirmationVisible, setConfirmationVisible] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const movementSubmissionLock = useRef(false);
-  const fastLogSubmissionLock = useRef(false);
+  const [stockOutAlert, setStockOutAlert] = useState<{
+    ingredientId: string;
+    remainingQuantity: number;
+    minimumStock: number;
+    outOfStock: boolean;
+  } | null>(null);
   const wasteSubmissionLock = useRef(false);
-  const [currentReceipt, setCurrentReceipt] = useState<StockReceipt | null>(null);
   const [currentWasteReceipt, setCurrentWasteReceipt] = useState<WasteReceipt | null>(null);
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
-  const [selectedFastLogPresetId, setSelectedFastLogPresetId] = useState('');
-  const [fastLogDraftDeductions, setFastLogDraftDeductions] = useState<{ ingredientId: string; quantity: string }[]>([]);
-  const [fastLogReason, setFastLogReason] = useState('');
-  const [fastLogNotes, setFastLogNotes] = useState('');
-  const [fastLogPieces, setFastLogPieces] = useState('');
-  const [fastLogFieldErrors, setFastLogFieldErrors] = useState<Record<string, string>>({});
-  const [fastLogIngredientPickerIndex, setFastLogIngredientPickerIndex] = useState<number | null>(null);
-  const [currentFastLogReceipt, setCurrentFastLogReceipt] = useState<FastLogReceipt | null>(null);
-  const [fastLogPopupVisible, setFastLogPopupVisible] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -863,6 +827,117 @@ export default function StaffWorkspace({
   };
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
+  const validateStockInValues = ({
+    ingredientId = selectedIngredientId,
+    quantityValue = quantity,
+    transactionDateValue = transactionDate,
+    expirationDateValue = expirationDate,
+  }: {
+    ingredientId?: string;
+    quantityValue?: string;
+    transactionDateValue?: Date | null;
+    expirationDateValue?: Date | null;
+  } = {}) => {
+    const errors: Record<string, string> = {};
+    const ingredient = ingredients.find((item) => item.id === ingredientId);
+    if (!ingredient) {
+      errors.ingredient = 'Ingredient is required.';
+    }
+
+    if (!quantityValue.trim()) {
+      errors.quantity = 'Quantity is required.';
+    } else {
+      const parsedQuantity = Number(quantityValue);
+      if (Number.isFinite(parsedQuantity) && parsedQuantity <= 0) {
+        errors.quantity = 'Quantity must exceed zero.';
+      } else {
+        const precision = ingredient?.quantityPrecision ?? 2;
+        const validFormat = precision === 0
+          ? /^\d+$/.test(quantityValue.trim())
+          : new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`).test(quantityValue.trim());
+        if (!Number.isFinite(parsedQuantity) || !validFormat) {
+          errors.quantity = precision === 0
+            ? `Enter a whole number of ${ingredient?.unit ?? 'units'}.`
+            : `Enter a valid quantity with up to ${precision} decimal places.`;
+        }
+      }
+    }
+
+    if (!transactionDateValue) {
+      errors.transactionDate = 'Transaction date is required.';
+    }
+    if (ingredient?.expirationTracking && !expirationDateValue) {
+      errors.expirationDate = 'Expiration date is required for this ingredient.';
+    } else if (
+      transactionDateValue &&
+      expirationDateValue &&
+      new Date(
+        expirationDateValue.getFullYear(),
+        expirationDateValue.getMonth(),
+        expirationDateValue.getDate(),
+      ).getTime() < new Date(
+        transactionDateValue.getFullYear(),
+        transactionDateValue.getMonth(),
+        transactionDateValue.getDate(),
+      ).getTime()
+    ) {
+      errors.expirationDate = 'Expiration date cannot be before the transaction date.';
+    }
+    return errors;
+  };
+  const updateStockInValidation = (values: Parameters<typeof validateStockInValues>[0]) => {
+    const errors = validateStockInValues(values);
+    setStockInFieldErrors(errors);
+    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+  };
+  const validateStockOutValues = ({
+    ingredientId = selectedIngredientId,
+    quantityValue = quantity,
+    transactionDateValue = transactionDate,
+    reasonValue = reason,
+  }: {
+    ingredientId?: string;
+    quantityValue?: string;
+    transactionDateValue?: Date | null;
+    reasonValue?: string;
+  } = {}) => {
+    const errors: Record<string, string> = {};
+    const ingredient = ingredients.find((item) => item.id === ingredientId);
+    if (!ingredient) {
+      errors.ingredient = 'Ingredient is required.';
+    }
+
+    if (!quantityValue.trim()) {
+      errors.quantity = 'Quantity used is required.';
+    } else {
+      const parsedQuantity = Number(quantityValue);
+      const precision = ingredient?.quantityPrecision ?? 2;
+      const validFormat = precision === 0
+        ? /^\d+$/.test(quantityValue.trim())
+        : new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`).test(quantityValue.trim());
+      if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0 || !validFormat) {
+        errors.quantity = precision === 0
+          ? `Enter a whole number of ${ingredient?.unit ?? 'units'} greater than zero.`
+          : `Enter a valid quantity with up to ${precision} decimal places greater than zero.`;
+      } else if (ingredient && parsedQuantity > ingredient.quantity) {
+        errors.quantity = 'Quantity used exceeds the available stock.';
+      }
+    }
+
+    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {
+      errors.transactionDate = 'Transaction date is required.';
+    }
+    if (!reasonValue.trim()) {
+      errors.reason = 'Reason is required.';
+    }
+    return errors;
+  };
+  const updateStockOutValidation = (values: Parameters<typeof validateStockOutValues>[0]) => {
+    const errors = validateStockOutValues(values);
+    setStockOutFieldErrors(errors);
+    setQuantityError(errors.quantity ?? '');
+    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+  };
   const staffName = user.displayName;
   const staffRole = user.role;
   const staffEmail = user.email;
@@ -986,19 +1061,6 @@ export default function StaffWorkspace({
     dailyCheckResults.length > 0 &&
     dailyCheckResults.every((line) => line.valid);
   const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
-  const selectedFastLogPreset = fastLogPresets.find((preset) => preset.id === selectedFastLogPresetId);
-  const fastLogDeductions: UsageDeduction[] = fastLogDraftDeductions
-    .map((deduction) => {
-        const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-        const parsedQuantity = Number(deduction.quantity);
-        return {
-          ingredientId: deduction.ingredientId,
-          quantity: parsedQuantity,
-          previousQuantity: ingredient?.quantity ?? 0,
-          newQuantity: (ingredient?.quantity ?? 0) - parsedQuantity,
-        };
-      })
-    ;
   const parsedBatchCount = Number(batchCount);
   const usageDeductions: UsageDeduction[] = usageMode === 'manual'
     ? selectedIngredient
@@ -1192,19 +1254,23 @@ export default function StaffWorkspace({
   };
 
   const openForm = (
-    formRoute: 'stockIn' | 'stockOut' | 'fastLog' | 'waste',
+    formRoute: 'stockIn' | 'stockOut' | 'waste',
     source: StaffTab,
   ) => {
     setReturnRoute(source);
     setSelectedIngredientId('');
     setIngredientListOpen(false);
     setQuantity('');
+    setStockInFieldErrors({});
+    setStockInValidationAttempted(false);
+    setStockOutFieldErrors({});
+    setStockOutValidationAttempted(false);
     setUsageMode('manual');
     setBatchPresetOpen(false);
     setBatchCount('1');
-    setTransactionDate(new Date());
+    setTransactionDate(formRoute === 'stockOut' ? manilaBusinessDate() : new Date());
     setExpirationDate(null);
-    setReason(formRoute === 'waste' ? 'Waste / Other' : 'Cooking usage');
+    setReason(formRoute === 'waste' ? 'Waste / Other' : formRoute === 'stockOut' ? '' : 'Cooking usage');
     setReasonListOpen(false);
     setNotes('');
     setWasteDescription('');
@@ -1213,106 +1279,11 @@ export default function StaffWorkspace({
     setSuccessMessage('');
     setFormError('');
     setQuantityError('');
-    setCurrentReceipt(null);
     setCurrentWasteReceipt(null);
     setCurrentUsageReceipt(null);
     setConfirmationVisible(false);
+    setStockOutAlert(null);
     setRoute(formRoute);
-  };
-
-  const prepareFastLogPreset = (preset: FastLogPreset) => {
-    setSelectedFastLogPresetId(preset.id);
-    setFastLogDraftDeductions(
-      preset.deductions.map((deduction) => ({
-        ingredientId: deduction.ingredientId,
-        quantity: String(deduction.quantity),
-      })),
-    );
-    setFastLogReason(preset.reasonDetail);
-    setFastLogNotes('');
-    setFastLogPieces(preset.pieces ? String(preset.pieces) : '');
-    setFastLogFieldErrors({});
-    setFastLogIngredientPickerIndex(null);
-    setTransactionDate(new Date());
-    setConfirmationVisible(false);
-    setConfirming(false);
-    setFormError('');
-  };
-
-  const selectFastLogPreset = (preset: FastLogPreset) => {
-    prepareFastLogPreset(preset);
-    setRoute('fastLogReview');
-  };
-
-  const openFastLogPopup = () => {
-    setSelectedFastLogPresetId('');
-    setFastLogDraftDeductions([]);
-    setFastLogReason('');
-    setFastLogNotes('');
-    setFastLogFieldErrors({});
-    setFormError('');
-    setFastLogPopupVisible(true);
-  };
-
-  const closeFastLogPopup = () => {
-    if (confirming) return;
-    setFastLogPopupVisible(false);
-    setSelectedFastLogPresetId('');
-    setFastLogDraftDeductions([]);
-    setFastLogReason('');
-    setFastLogNotes('');
-    setFastLogFieldErrors({});
-    setFormError('');
-  };
-
-  const validateFastLogDraft = () => {
-    const errors: Record<string, string> = {};
-    if (!selectedFastLogPreset || !fastLogReason.trim()) {
-      errors.reason = 'Enter a reason or description.';
-    }
-    if (selectedFastLogPreset?.section === 'cooking') {
-      const pieces = Number(fastLogPieces);
-      if (!fastLogPieces.trim() || !Number.isFinite(pieces) || pieces <= 0) {
-        errors.pieces = 'Enter a batch size greater than 0.';
-      }
-    }
-    fastLogDraftDeductions.forEach((deduction, index) => {
-      const key = `${deduction.ingredientId}-${index}`;
-      const parsedQuantity = Number(deduction.quantity);
-      const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-      if (!deduction.quantity.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-        errors[key] = 'Enter a quantity greater than 0.';
-      } else if (ingredient && parsedQuantity > ingredient.quantity) {
-        errors[key] = `Only ${formatUnitQuantity(ingredient.quantity, ingredient.unit)} available.`;
-      }
-    });
-    setFastLogFieldErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const updateFastLogDeduction = (
-    index: number,
-    property: 'ingredientId' | 'quantity',
-    value: string,
-  ) => {
-    setFastLogDraftDeductions((current) =>
-      current.map((deduction, itemIndex) =>
-        itemIndex === index ? { ...deduction, [property]: value } : deduction,
-      ),
-    );
-    setFastLogFieldErrors((current) => {
-      const next = { ...current };
-      const existing = fastLogDraftDeductions[index];
-      if (existing) delete next[`${existing.ingredientId}-${index}`];
-      return next;
-    });
-    setFormError('');
-  };
-
-  const returnToFastLogList = () => {
-    setConfirmationVisible(false);
-    setConfirming(false);
-    setRoute('fastLog');
   };
 
   const returnFromForm = () => {
@@ -1325,7 +1296,18 @@ export default function StaffWorkspace({
 
   const changeQuantity = (value: string) => {
     setQuantity(value);
+    setSuccessMessage('');
     setFormError('');
+    if (route === 'stockIn' && stockInValidationAttempted) {
+      updateStockInValidation({ quantityValue: value });
+      return;
+    }
+    if (route === 'stockOut') {
+      const validationErrors = validateStockOutValues({ quantityValue: value });
+      setQuantityError(validationErrors.quantity ?? '');
+      if (stockOutValidationAttempted) updateStockOutValidation({ quantityValue: value });
+      return;
+    }
     const parsedValue = Number(value);
     if (
       quantityError &&
@@ -1376,13 +1358,39 @@ export default function StaffWorkspace({
   const validateTransaction = () => {
     setSuccessMessage('');
     setFormError('');
-    if (route === 'stockOut' && usageMode === 'cookingBatch') {
-      if (!Number.isFinite(parsedBatchCount) || parsedBatchCount <= 0) {
-        setFormError('Enter a batch count greater than 0.');
+    if (route === 'stockIn') {
+      const errors = validateStockInValues();
+      setStockInValidationAttempted(true);
+      setStockInFieldErrors(errors);
+      if (Object.keys(errors).length > 0) {
+        setFormError('Check the required fields to continue.');
         return false;
       }
-      if (!transactionDate) {
-        setFormError('Choose a transaction date.');
+      return true;
+    }
+    if (route === 'stockOut') {
+      setStockOutValidationAttempted(true);
+      if (usageMode === 'manual') {
+        const errors = validateStockOutValues();
+        setStockOutFieldErrors(errors);
+        setQuantityError(errors.quantity ?? '');
+        if (Object.keys(errors).length > 0) {
+          setFormError('Check the required fields to continue.');
+          return false;
+        }
+        return true;
+      }
+
+      const errors: Record<string, string> = {};
+      if (!transactionDate) errors.transactionDate = 'Transaction date is required.';
+      if (!reason.trim()) errors.reason = 'Reason is required.';
+      setStockOutFieldErrors(errors);
+      if (Object.keys(errors).length > 0) {
+        setFormError('Check the required fields to continue.');
+        return false;
+      }
+      if (!Number.isFinite(parsedBatchCount) || parsedBatchCount <= 0) {
+        setFormError('Enter a batch count greater than 0.');
         return false;
       }
       const unavailableDeduction = usageDeductions.find((deduction) => deduction.quantity > deduction.previousQuantity);
@@ -1407,15 +1415,7 @@ export default function StaffWorkspace({
       setFormError('Choose a transaction date.');
       return false;
     }
-    if (route === 'stockIn' && selectedIngredient.category !== 'Dry Goods' && !expirationDate) {
-      setFormError('Choose an expiration date for this perishable ingredient.');
-      return false;
-    }
-    if (route === 'stockOut' && parsedQuantity > selectedIngredient.quantity) {
-      setQuantityError('Quantity used exceeds the available stock.');
-      return false;
-    }
-    if ((route === 'fastLog' || route === 'waste') && parsedQuantity > selectedIngredient.quantity) {
+    if (route === 'waste' && parsedQuantity > selectedIngredient.quantity) {
       setFormError(`Only ${selectedIngredient.quantity} ${selectedIngredient.unit} available. Enter a smaller quantity.`);
       return false;
     }
@@ -1428,15 +1428,9 @@ export default function StaffWorkspace({
       setConfirmationVisible(true);
       return;
     }
-    if (route === 'fastLogReview') {
-      if (!validateFastLogDraft()) return;
-      setRoute('fastLogPreview');
-      return;
-    }
     if (!validateTransaction()) return;
     if (route === 'stockOut') {
-      setConfirmationVisible(false);
-      setRoute('usagePreview');
+      setConfirmationVisible(true);
       return;
     }
     setConfirmationVisible(true);
@@ -1444,82 +1438,6 @@ export default function StaffWorkspace({
 
   const confirmTransaction = async () => {
     if (confirming || movementSubmissionLock.current || !transactionDate) return;
-    if (route === 'fastLogPreview' || fastLogPopupVisible) {
-      if (fastLogSubmissionLock.current) return;
-      if (
-        !selectedFastLogPreset ||
-        fastLogDeductions.length === 0 ||
-        fastLogDeductions.some((deduction) =>
-          !Number.isFinite(deduction.quantity) ||
-          deduction.quantity <= 0 ||
-          deduction.quantity > deduction.previousQuantity,
-        ) ||
-        !fastLogReason.trim()
-      ) {
-        setFormError('The edited preset is invalid or exceeds available stock.');
-        return;
-      }
-
-      fastLogSubmissionLock.current = true;
-      setConfirming(true);
-      try {
-        const receiptDate = transactionDate;
-        const draftDeductions = fastLogDeductions.map((deduction) => ({ ...deduction }));
-        if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
-        const saved = await recordInventoryTransactions(user.branchId, draftDeductions.map((deduction) => ({
-          ingredientId: deduction.ingredientId,
-          type: selectedFastLogPreset.section === 'waste' ? 'waste' : 'usage',
-          quantity: deduction.quantity,
-          transactionDate: receiptDate.toISOString(),
-          reason: fastLogReason.trim(),
-          notes: fastLogNotes.trim(),
-        })));
-        const reference = saved[0]?.reference;
-        if (!reference) throw new Error('The saved Fast-Log did not return a transaction reference.');
-        const deductions = draftDeductions.map((deduction, index) => {
-          const transaction = saved[index];
-          if (!transaction) throw new Error('The saved Fast-Log returned incomplete ingredient details.');
-          return {
-            ...deduction,
-            previousQuantity: Number(transaction.before_quantity),
-            newQuantity: Number(transaction.after_quantity),
-          };
-        });
-        const receipt: FastLogReceipt = {
-          reference,
-          preset: selectedFastLogPreset,
-          deductions,
-          transactionDate: receiptDate,
-          reason: fastLogReason,
-          notes: fastLogNotes,
-          pieces: selectedFastLogPreset.pieces ? Number(fastLogPieces) : null,
-        };
-        await refreshBackendData();
-        setCurrentFastLogReceipt(receipt);
-        setConfirmationVisible(false);
-        setConfirming(false);
-        fastLogSubmissionLock.current = false;
-        if (fastLogPopupVisible) {
-          setFastLogPopupVisible(false);
-          setSelectedFastLogPresetId('');
-          setFastLogDraftDeductions([]);
-          setFastLogReason('');
-          setFastLogNotes('');
-          setFastLogFieldErrors({});
-          setDashboardMessage(`${selectedFastLogPreset.name} saved to the branch inventory.`);
-        } else {
-          setRoute('fastLogSuccess');
-        }
-      } catch (error) {
-        setConfirmationVisible(false);
-        setFormError(error instanceof Error ? error.message : 'Unable to save the Fast-Log.');
-      } finally {
-        setConfirming(false);
-        fastLogSubmissionLock.current = false;
-      }
-      return;
-    }
-
     if (route === 'waste') {
       if (wasteSubmissionLock.current) return;
       if (!validateWasteForm() || !selectedIngredient || !transactionDate) return;
@@ -1572,7 +1490,7 @@ export default function StaffWorkspace({
       return;
     }
 
-    if (route === 'usagePreview') {
+    if (route === 'usagePreview' || route === 'stockOut') {
       if (
         usageDeductions.length === 0 ||
         usageDeductions.some((deduction) =>
@@ -1597,7 +1515,7 @@ export default function StaffWorkspace({
           ingredientId: deduction.ingredientId,
           type: usageMode === 'cookingBatch' ? 'usage' : 'stock_out',
           quantity: deduction.quantity,
-          transactionDate: receiptDate.toISOString(),
+          transactionDate: manilaMidnightTimestamp(receiptDate),
           reason,
           notes,
         })));
@@ -1622,6 +1540,22 @@ export default function StaffWorkspace({
           batchPreset: usageMode === 'cookingBatch' ? batchPreset : null,
           batchCount: usageMode === 'cookingBatch' ? parsedBatchCount : 1,
         };
+        const alertDeduction = deductions.find((deduction) => {
+          const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+          return ingredient !== undefined && (
+            deduction.newQuantity <= 0 ||
+            (ingredient.minimumStock > 0 && deduction.newQuantity < ingredient.minimumStock)
+          );
+        });
+        const alertIngredient = alertDeduction
+          ? ingredients.find((item) => item.id === alertDeduction.ingredientId)
+          : undefined;
+        setStockOutAlert(alertDeduction && alertIngredient ? {
+          ingredientId: alertIngredient.id,
+          remainingQuantity: alertDeduction.newQuantity,
+          minimumStock: alertIngredient.minimumStock,
+          outOfStock: alertDeduction.newQuantity <= 0,
+        } : null);
         await refreshBackendData();
         setCurrentUsageReceipt(receipt);
         setConfirmationVisible(false);
@@ -1653,29 +1587,26 @@ export default function StaffWorkspace({
         ingredientId: selectedIngredient.id,
         type: 'stock_in',
         quantity: parsedQuantity,
-        transactionDate: transactionDate.toISOString(),
+        transactionDate: formatLocalIsoDate(transactionDate),
         reason: 'Stock-In',
         notes: notes.trim(),
-        expirationDate: expirationDate?.toISOString().slice(0, 10) ?? null,
+        expirationDate: expirationDate ? formatLocalIsoDate(expirationDate) : null,
       }]);
       const savedTransaction = saved[0];
       if (!savedTransaction) throw new Error('The saved stock-in returned incomplete details.');
-      const receipt: StockReceipt = {
-        reference: savedTransaction.reference,
-        ingredientId: selectedIngredient.id,
-        quantity: parsedQuantity,
-        previousQuantity: Number(savedTransaction.before_quantity),
-        newQuantity: Number(savedTransaction.after_quantity),
-        transactionDate,
-        expirationDate,
-        notes,
-      };
-      if (!receipt.reference) throw new Error('The saved stock-in did not return a transaction reference.');
+      if (!savedTransaction.reference) throw new Error('The saved stock-in did not return a transaction reference.');
       await refreshBackendData();
-      setCurrentReceipt(receipt);
       setConfirmationVisible(false);
       setQuantityError('');
-      setRoute('stockInSuccess');
+      setSelectedIngredientId('');
+      setQuantity('');
+      setExpirationDate(null);
+      setNotes('');
+      setTransactionDate(new Date());
+      setStockInFieldErrors({});
+      setStockInValidationAttempted(false);
+      setSuccessMessage('Stock-In recorded successfully.');
+      setRoute('stockIn');
     } catch (error) {
       setConfirmationVisible(false);
       setFormError(error instanceof Error ? error.message : 'Unable to save the stock-in.');
@@ -1805,27 +1736,6 @@ export default function StaffWorkspace({
           </Pressable>
         ))}
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Start Rush-Hour Fast-Log"
-        onPress={openFastLogPopup}
-        style={({ pressed }) => [styles.dashboardFastLogCard, pressed && styles.pressed]}
-      >
-        <View style={styles.dashboardFastLogIcon}>
-          <Text style={styles.dashboardFastLogIconText}>⚡</Text>
-        </View>
-        <View style={styles.dashboardFastLogCopy}>
-          <Text style={styles.dashboardFastLogTitle}>Rush-Hour Fast-Log</Text>
-          <Text style={styles.dashboardFastLogSubtitle}>
-            Record usage or waste quickly during busy hours.
-          </Text>
-        </View>
-        <View style={styles.dashboardFastLogAction}>
-          <Text style={styles.dashboardFastLogActionText}>Start fast-log</Text>
-          <Text style={styles.dashboardFastLogChevron}>›</Text>
-        </View>
-      </Pressable>
-
       <View style={styles.sectionHeadingRow}>
         <Text style={styles.sectionTitle}>Low-Stock Items</Text>
         <Text style={styles.sectionHint}>{lowStockItems.length} items</Text>
@@ -2112,23 +2022,11 @@ export default function StaffWorkspace({
           icon="↑"
           onPress={() => openForm('stockOut', 'stocks')}
         />
-        <ActionCard
-          title="Rush-Hour Fast-Log"
-          description="Cooking waste and spoilage presets"
-          icon="⚡"
-          onPress={() => openForm('fastLog', 'stocks')}
-        />
-        <ActionCard
-          title="Waste / Spoilage"
-          description="Record lost or unusable ingredients"
-          icon="⌫"
-          onPress={() => openForm('waste', 'stocks')}
-        />
       </View>
       <View style={styles.stockTip}>
         <Text style={styles.stockTipIcon}>i</Text>
         <Text style={styles.stockTipText}>
-          Check available stock before confirming a deduction. Master ingredients are managed by the owner.
+          Record ingredient receipts and deductions for {assignedBranch}. Master ingredients are managed by the owner.
         </Text>
       </View>
     </ScrollView>
@@ -2651,12 +2549,6 @@ export default function StaffWorkspace({
             onPress: () => setRoute('stockHistory'),
           },
           {
-            icon: '↗',
-            title: 'Rush-Hour Fast-Log',
-            description: 'Common cooking and waste presets',
-            onPress: () => setRoute('fastLog'),
-          },
-          {
             icon: '♙',
             title: 'Profile & settings',
             description: 'Account, access and secure logout',
@@ -2828,7 +2720,13 @@ export default function StaffWorkspace({
         accessibilityRole="button"
         accessibilityLabel={selectedIngredient ? `${selectedIngredient.name}, ${selectedIngredient.quantity} ${selectedIngredient.unit} available` : 'Choose ingredient'}
         onPress={() => setIngredientListOpen((open) => !open)}
-        style={styles.selectInput}
+        style={[
+          styles.selectInput,
+          (route === 'stockIn' && stockInFieldErrors.ingredient) ||
+          (route === 'stockOut' && stockOutFieldErrors.ingredient)
+            ? styles.textInputError
+            : undefined,
+        ]}
       >
         <Text style={[styles.selectText, !selectedIngredient && styles.placeholderText]}>
           {selectedIngredient
@@ -2842,15 +2740,53 @@ export default function StaffWorkspace({
         ) : null}
         <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
       </Pressable>
+      {route === 'stockIn' && stockInFieldErrors.ingredient ? (
+        <InlineFieldError message={stockInFieldErrors.ingredient} />
+      ) : null}
+      {route === 'stockOut' && stockOutFieldErrors.ingredient ? (
+        <InlineFieldError message={stockOutFieldErrors.ingredient} />
+      ) : null}
       {ingredientListOpen && (
-        <View style={styles.dropdown}>
+        <ScrollView
+          style={styles.dropdown}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+        >
           {ingredients.length === 0 ? (
             <Text style={styles.ingredientPickerEmpty}>
               {backendLoading
                 ? 'Loading branch ingredients…'
-                : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}
+                : backendError || 'No active ingredients are configured for this branch.'}
             </Text>
-          ) : ingredients.map((item) => (
+          ) : route === 'stockIn' ? [...new Set(ingredients.map((item) => item.category).sort((a, b) => a.localeCompare(b)))].map((group) => (
+            <View key={group}>
+              <Text style={styles.ingredientCategoryHeading}>{group}</Text>
+              {ingredients
+                .filter((item) => item.category === group)
+                .map((item) => (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: item.id === selectedIngredientId }}
+                    onPress={() => {
+                      setSelectedIngredientId(item.id);
+                      setIngredientListOpen(false);
+                      setSuccessMessage('');
+                      setFormError('');
+                      setQuantityError('');
+                      if (stockInValidationAttempted) updateStockInValidation({ ingredientId: item.id });
+                    }}
+                    style={styles.dropdownOption}
+                  >
+                    <IngredientThumbnail item={item} />
+                    <View style={styles.dropdownCopy}>
+                      <Text style={styles.dropdownName}>{item.name}</Text>
+                      <Text style={styles.dropdownQuantity}>{item.unit} · {item.quantity} available</Text>
+                    </View>
+                  </Pressable>
+                ))}
+            </View>
+          )) : ingredients.map((item) => (
             <Pressable
               key={item.id}
               onPress={() => {
@@ -2858,6 +2794,9 @@ export default function StaffWorkspace({
                 setIngredientListOpen(false);
                 setFormError('');
                 setQuantityError('');
+                if (route === 'stockOut' && stockOutValidationAttempted) {
+                  updateStockOutValidation({ ingredientId: item.id });
+                }
               }}
               style={styles.dropdownOption}
             >
@@ -2868,7 +2807,7 @@ export default function StaffWorkspace({
               </View>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
       )}
     </View>
   );
@@ -2890,43 +2829,65 @@ export default function StaffWorkspace({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.receiptInfoBanner}>
-          <Text style={styles.receiptInfoIcon}>i</Text>
-          <Text style={styles.receiptInfoText}>
-            Stock-in records are saved to the assigned branch after confirmation. Perishable ingredients require an expiration date.
-          </Text>
-        </View>
-        {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
+        {formError !== '' && (
+          <View style={styles.stockInErrorBanner} accessibilityRole="alert">
+            <Text style={styles.stockInErrorIcon}>!</Text>
+            <Text style={styles.stockInErrorText}>{formError}</Text>
+          </View>
+        )}
+        {successMessage !== '' ? (
+          <View style={styles.successBanner} accessibilityRole="alert">
+            <Text style={styles.successIcon}>✓</Text>
+            <Text style={styles.successText}>{successMessage}</Text>
+          </View>
+        ) : null}
         {renderIngredientSelector()}
         <TextField
-          label="Quantity received *"
+          label="Quantity Received *"
           value={quantity}
           onChangeText={changeQuantity}
           placeholder="Enter quantity"
           keyboardType="decimal-pad"
-          error={quantityError}
+          error={stockInFieldErrors.quantity}
           suffix={selectedIngredient?.unit}
         />
         <DatePickerField
-          label="Transaction date *"
+          label={route === 'stockOut' ? 'Transaction Date *' : 'Transaction date *'}
           value={transactionDate}
-          onChange={(date) => { setTransactionDate(date); setFormError(''); }}
+          error={stockInFieldErrors.transactionDate}
+          onChange={(date) => {
+            setTransactionDate(date);
+            setSuccessMessage('');
+            setFormError('');
+            if (stockInValidationAttempted) updateStockInValidation({ transactionDateValue: date });
+          }}
         />
         <DatePickerField
-          label="Expiration date"
+          label="Expiration Date"
           value={expirationDate}
-          onChange={setExpirationDate}
+          error={stockInFieldErrors.expirationDate}
+          allowClear
+          onChange={(date) => {
+            setExpirationDate(date);
+            setSuccessMessage('');
+            setFormError('');
+            if (stockInValidationAttempted) updateStockInValidation({ expirationDateValue: date });
+          }}
         />
-        <Text style={styles.helperText}>Required for perishable ingredients. Track by received batch.</Text>
+        <Text style={styles.helperText}>Track expiry by received batch.</Text>
         <TextField
           label="Notes"
           value={notes}
-          onChangeText={setNotes}
-          placeholder="Add receipt notes"
+          onChangeText={(value) => {
+            setNotes(value);
+            setSuccessMessage('');
+          }}
+          placeholder="Delivered by Supplier"
+          multiline
         />
         <View style={styles.formButtons}>
           <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-            <Text style={styles.saveButtonText}>Review Stock-In</Text>
+            <Text style={styles.saveButtonText}>Save</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -3119,16 +3080,17 @@ export default function StaffWorkspace({
   );
 
   const renderMovementForm = () => {
-    const formTitle = route === 'fastLog'
-      ? 'Rush-Hour Fast-Log'
-      : route === 'waste'
-        ? 'Waste / Spoilage'
+    const formTitle = route === 'waste'
+      ? 'Waste / Spoilage'
+      : route === 'stockOut'
+        ? 'Stock-Out'
         : 'Stock-Out / Usage';
-    const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity used *';
-    const reasonLabel = route === 'fastLog' ? 'Preset *' : 'Reason *';
+    const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity Used *';
     const reasonOptions = route === 'waste'
       ? ['Spoilage', 'Expired', 'Other']
-      : ['Cooking usage', 'Spoilage', 'Other'];
+      : route === 'stockOut'
+        ? ['Cooking usage', 'Preparation usage', 'Other']
+        : ['Cooking usage', 'Spoilage', 'Other'];
 
     return (
     <>
@@ -3163,6 +3125,8 @@ export default function StaffWorkspace({
                     setUsageMode(mode.key);
                     setFormError('');
                     setQuantityError('');
+                    setStockOutFieldErrors({});
+                    setStockOutValidationAttempted(false);
                     setBatchPresetOpen(false);
                   }}
                   style={[styles.usageModeChip, selected && styles.usageModeChipSelected]}
@@ -3184,7 +3148,12 @@ export default function StaffWorkspace({
             </Pressable>
           </View>
         )}
-        {formError !== '' && <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>}
+        {formError !== '' && (route === 'stockOut' ? (
+          <View style={styles.stockInErrorBanner} accessibilityRole="alert">
+            <Text style={styles.stockInErrorIcon}>!</Text>
+            <Text style={styles.stockInErrorText}>{formError}</Text>
+          </View>
+        ) : <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>)}
         {route === 'stockOut' && usageMode === 'cookingBatch' ? (
           <>
             <View style={styles.fieldGroup}>
@@ -3243,32 +3212,53 @@ export default function StaffWorkspace({
               onChangeText={changeQuantity}
               placeholder="Enter quantity"
               keyboardType="decimal-pad"
-              error={route === 'stockOut' ? quantityError : undefined}
+              error={route === 'stockOut' ? stockOutFieldErrors.quantity || quantityError : undefined}
               suffix={route === 'stockOut' ? selectedIngredient?.unit : undefined}
             />
           </>
         )}
         <DatePickerField
-          label="Transaction date *"
+          label="Transaction Date *"
           value={transactionDate}
-          onChange={(date) => { setTransactionDate(date); setFormError(''); }}
+          error={route === 'stockOut' ? stockOutFieldErrors.transactionDate : undefined}
+          onChange={(date) => {
+            setTransactionDate(date);
+            setFormError('');
+            if (route === 'stockOut' && stockOutValidationAttempted) {
+              updateStockOutValidation({ transactionDateValue: date });
+            }
+          }}
         />
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>{reasonLabel}</Text>
+          <Text style={styles.fieldLabel}>Reason *</Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => setReasonListOpen((open) => !open)}
-            style={styles.selectInput}
+            style={[
+              styles.selectInput,
+              route === 'stockOut' && stockOutFieldErrors.reason ? styles.textInputError : undefined,
+            ]}
           >
-            <Text style={styles.selectText}>{reason}</Text>
+            <Text style={[styles.selectText, !reason && styles.placeholderText]}>
+              {reason || 'Select a reason'}
+            </Text>
             <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>
           </Pressable>
+          {route === 'stockOut' && stockOutFieldErrors.reason ? (
+            <InlineFieldError message={stockOutFieldErrors.reason} />
+          ) : null}
           {reasonListOpen && (
             <View style={styles.reasonDropdown}>
               {reasonOptions.map((option) => (
                 <Pressable
                   key={option}
-                  onPress={() => { setReason(option); setReasonListOpen(false); }}
+                  onPress={() => {
+                    setReason(option);
+                    setReasonListOpen(false);
+                    if (route === 'stockOut' && stockOutValidationAttempted) {
+                      updateStockOutValidation({ reasonValue: option });
+                    }
+                  }}
                   style={styles.reasonOption}
                 >
                   <Text style={[styles.reasonOptionText, reason === option && styles.reasonOptionSelected]}>{option}</Text>
@@ -3277,16 +3267,16 @@ export default function StaffWorkspace({
             </View>
           )}
         </View>
-        <TextField label="Notes" value={notes} onChangeText={setNotes} placeholder="Add a note" multiline />
+        <TextField
+          label="Notes"
+          value={notes}
+          onChangeText={setNotes}
+          placeholder={route === 'stockOut' ? 'Add context (optional)' : 'Add a note'}
+          multiline
+        />
         <View style={styles.formButtons}>
           <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-            <Text style={styles.saveButtonText}>
-              {route === 'stockOut'
-                ? 'Preview transaction'
-                : route === 'fastLog'
-                  ? 'Review Fast-Log'
-                  : 'Review Waste'}
-            </Text>
+            <Text style={styles.saveButtonText}>{route === 'stockOut' ? 'Save' : 'Review Waste'}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -3295,500 +3285,6 @@ export default function StaffWorkspace({
         <Text style={styles.formDemoNote}>Confirmed movements are saved to the assigned branch.</Text>
       </ScrollView>
     </>
-    );
-  };
-
-  const renderFastLogList = () => {
-    const renderPresetCard = (preset: FastLogPreset) => (
-      <Pressable
-        key={preset.id}
-        accessibilityRole="button"
-        accessibilityLabel={`Review ${preset.name}`}
-        onPress={() => selectFastLogPreset(preset)}
-        style={({ pressed }) => [styles.fastLogPresetCard, pressed && styles.pressed]}
-      >
-        <Text style={styles.fastLogPresetTitle}>
-          {preset.name}{preset.pieces ? ` · ${preset.pieces} pieces` : ''}
-        </Text>
-        {preset.section === 'cooking' ? (
-          <View style={styles.fastLogPresetIngredients}>
-            {preset.deductions.map((deduction) => {
-              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-              return ingredient ? (
-                <Text key={ingredient.id} style={styles.fastLogPresetDetail}>
-                  {ingredient.name} {formatUnitQuantity(deduction.quantity, ingredient.unit)}
-                </Text>
-              ) : null;
-            })}
-          </View>
-        ) : (
-          <Text style={styles.fastLogPresetDetail}>
-            {preset.deductions.map((deduction) => {
-              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-              return ingredient ? `${ingredient.name} ${formatUnitQuantity(deduction.quantity, ingredient.unit)}` : '';
-            }).filter(Boolean).join(' · ')} · Reason: {preset.reasonDetail}
-          </Text>
-        )}
-        <Text style={styles.fastLogReviewLink}>Review preset →</Text>
-      </Pressable>
-    );
-
-    return (
-      <>
-        <View style={styles.formHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back to Stocks"
-            onPress={() => setRoute('stocks')}
-            style={styles.backButton}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
-          </View>
-        </View>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.fastLogListContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.usageInfoBanner}>
-            <Text style={styles.permissionIcon}>i</Text>
-            <Text style={styles.permissionText}>
-              Tap a preset once to review. Confirm after checking the configured ingredient quantities.
-            </Text>
-          </View>
-          <Text style={styles.fastLogSectionTitle}>Cooking batches</Text>
-          <View style={styles.fastLogPresetList}>
-            {fastLogPresets.filter((preset) => preset.section === 'cooking').map(renderPresetCard)}
-          </View>
-          <Text style={[styles.fastLogSectionTitle, styles.fastLogSecondSection]}>Waste / spoilage presets</Text>
-          <View style={styles.fastLogPresetList}>
-            {fastLogPresets.filter((preset) => preset.section === 'waste').map(renderPresetCard)}
-          </View>
-          <Text style={styles.fastLogFootnote}>
-            Preset quantities are editable. Review available stock and the transaction date before logging.
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setRoute('stockHistory')}
-            style={({ pressed }) => [styles.historyButton, styles.fastLogHistoryButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.historyButtonText}>View transaction history</Text>
-          </Pressable>
-        </ScrollView>
-      </>
-    );
-  };
-
-  const renderFastLogReview = () => {
-    const preset = selectedFastLogPreset;
-    if (!preset) {
-      return (
-        <View style={styles.inventoryFallback}>
-          <Text style={styles.inventoryEmptyTitle}>Choose a preset to review</Text>
-          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    const isCooking = preset.section === 'cooking';
-    return (
-      <>
-        <View style={styles.formHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back to presets"
-            onPress={returnToFastLogList}
-            style={styles.backButton}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
-          </View>
-        </View>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.compactFormContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.fastLogSummaryCard}>
-            <Text style={styles.fastLogSummaryTitle}>
-              {preset.name}
-            </Text>
-            <Text style={styles.fastLogSummaryAmount}>
-              {isCooking ? `${fastLogPieces || '0'} pieces · 1 batch` : 'Editable waste / spoilage preset'}
-            </Text>
-            <Text style={styles.fastLogSummaryNote}>
-              {isCooking ? 'Configured preset · Adjust actual quantities below' : 'Preset template · Adjust the actual item and quantity below'}
-            </Text>
-          </View>
-          {isCooking ? (
-            <TextField
-              label="Batch size (pieces) *"
-              value={fastLogPieces}
-              onChangeText={(value) => {
-                setFastLogPieces(value);
-                setFastLogFieldErrors((current) => ({ ...current, pieces: '' }));
-              }}
-              placeholder="Enter batch size"
-              keyboardType="decimal-pad"
-              error={fastLogFieldErrors.pieces}
-            />
-          ) : null}
-          <Text style={styles.fastLogSectionTitle}>Ingredient deductions</Text>
-          {fastLogDraftDeductions.map((draft, index) => {
-            const ingredient = ingredients.find((item) => item.id === draft.ingredientId);
-            const errorKey = `${draft.ingredientId}-${index}`;
-            const error = fastLogFieldErrors[errorKey];
-            return (
-              <View key={`${preset.id}-deduction-${index}`} style={styles.fastLogEditCard}>
-                <Text style={styles.fieldLabel}>Ingredient {index + 1} *</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Choose ingredient ${index + 1}`}
-                  onPress={() => setFastLogIngredientPickerIndex((current) => current === index ? null : index)}
-                  style={styles.selectInput}
-                >
-                  <Text style={styles.selectText}>
-                    {ingredient ? `${ingredient.name} · ${formatUnitQuantity(ingredient.quantity, ingredient.unit)} available` : 'Select ingredient'}
-                  </Text>
-                  <Text style={styles.selectChevron}>{fastLogIngredientPickerIndex === index ? '⌃' : '⌄'}</Text>
-                </Pressable>
-                {fastLogIngredientPickerIndex === index ? (
-                  <View style={styles.reasonDropdown}>
-                    {ingredients.length === 0 ? (
-                      <Text style={styles.ingredientPickerEmpty}>
-                        {backendLoading
-                          ? 'Loading branch ingredients…'
-                          : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}
-                      </Text>
-                    ) : ingredients.map((option) => (
-                      option.id !== draft.ingredientId && fastLogDraftDeductions.some(
-                        (otherDraft, otherIndex) => otherIndex !== index && otherDraft.ingredientId === option.id,
-                      ) ? null : (
-                      <Pressable
-                        key={option.id}
-                        onPress={() => {
-                          updateFastLogDeduction(index, 'ingredientId', option.id);
-                          setFastLogIngredientPickerIndex(null);
-                        }}
-                        style={styles.ingredientReasonOption}
-                      >
-                        <IngredientThumbnail item={option} small />
-                        <View style={styles.dropdownCopy}>
-                          <Text style={[
-                            styles.reasonOptionText,
-                            option.id === draft.ingredientId && styles.reasonOptionSelected,
-                          ]}>
-                            {option.name}
-                          </Text>
-                          <Text style={styles.dropdownQuantity}>
-                            {formatUnitQuantity(option.quantity, option.unit)} available
-                          </Text>
-                        </View>
-                      </Pressable>
-                      )
-                    ))}
-                  </View>
-                ) : null}
-                <View style={styles.fastLogQuantityEditRow}>
-                  <Text style={styles.fieldLabel}>Actual quantity *</Text>
-                  <View style={styles.fastLogQuantityInputWrap}>
-                    <TextInput
-                      value={draft.quantity}
-                      onChangeText={(value) => updateFastLogDeduction(index, 'quantity', value)}
-                      placeholder="Enter quantity"
-                      placeholderTextColor={theme.isDark ? theme.colors.secondaryText : '#A0A0AA'}
-                      keyboardType="decimal-pad"
-                      style={[styles.textInput, styles.fastLogQuantityInput, error ? styles.textInputError : undefined]}
-                    />
-                    <Text style={styles.inputSuffix}>{ingredient?.unit ?? 'unit'}</Text>
-                  </View>
-                </View>
-                {error ? <Text style={styles.fieldError}>{error}</Text> : null}
-                {ingredient ? (
-                  <Text style={styles.fastLogAvailableHint}>
-                    Current stock: {formatUnitQuantity(ingredient.quantity, ingredient.unit)}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })}
-          <TextField
-            label="Reason / description *"
-            value={fastLogReason}
-            onChangeText={(value) => {
-              setFastLogReason(value);
-              setFastLogFieldErrors((current) => ({ ...current, reason: '' }));
-            }}
-            placeholder={isCooking ? 'Describe this cooking batch' : 'Describe the waste or spoilage'}
-            error={fastLogFieldErrors.reason}
-          />
-          <TextField
-            label="Notes"
-            value={fastLogNotes}
-            onChangeText={setFastLogNotes}
-            placeholder="Optional notes"
-            multiline
-          />
-          <DatePickerField
-            label="Transaction date *"
-            value={transactionDate}
-            onChange={setTransactionDate}
-          />
-          <View style={styles.fastLogReceiptDetails}>
-            <DetailRow label="Recorded by" value={staffName} />
-          </View>
-          <View style={styles.usageInfoBanner}>
-            <Text style={styles.permissionIcon}>i</Text>
-            <Text style={styles.permissionText}>
-              Preset values are editable. All deductions are checked against available stock before preview.
-            </Text>
-          </View>
-          <View style={styles.formButtons}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={reviewTransaction}
-              style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.saveButtonText}>Preview transaction</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={returnToFastLogList}
-              style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.cancelButtonText}>Choose another preset</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.formDemoNote}>Preset movements are saved only after confirmation.</Text>
-        </ScrollView>
-      </>
-    );
-  };
-
-  const renderFastLogPreview = () => {
-    const preset = selectedFastLogPreset;
-    if (!preset) {
-      return (
-        <View style={styles.inventoryFallback}>
-          <Text style={styles.inventoryEmptyTitle}>No preset selected</Text>
-          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    const deductionsValid = fastLogDeductions.length > 0 && fastLogDeductions.every(
-      (deduction) =>
-        Number.isFinite(deduction.quantity) &&
-        deduction.quantity > 0 &&
-        deduction.quantity <= deduction.previousQuantity,
-    );
-    const belowMinimum = fastLogDeductions.some((deduction) => {
-      const item = ingredients.find((entry) => entry.id === deduction.ingredientId);
-      return item !== undefined && deduction.newQuantity < item.minimumStock;
-    });
-
-    return (
-      <>
-        <View style={styles.formHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Edit preset"
-            onPress={() => setRoute('fastLogReview')}
-            style={styles.backButton}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Review Fast-Log</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
-          </View>
-        </View>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.compactFormContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.fastLogSummaryCard}>
-            <Text style={styles.fastLogSummaryTitle}>{preset.name}</Text>
-            <Text style={styles.fastLogSummaryAmount}>
-              {preset.pieces ? `${fastLogPieces || preset.pieces} pieces · 1 batch` : fastLogDeductions.map((entry) => {
-                const item = ingredients.find((ingredient) => ingredient.id === entry.ingredientId);
-                return item ? formatUnitQuantity(entry.quantity, item.unit) : '';
-              }).filter(Boolean).join(' · ')}
-            </Text>
-            <Text style={styles.fastLogSummaryNote}>Review the actual edited quantities and balances below.</Text>
-          </View>
-          <Text style={styles.fastLogSectionTitle}>Ingredient deductions</Text>
-          <View style={styles.fastLogRowsCard}>
-            {fastLogDeductions.map((deduction, index) => {
-              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-              return ingredient ? (
-                <View key={`${ingredient.id}-${index}`} style={styles.fastLogBalanceRow}>
-                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
-                  <Text style={styles.fastLogBalanceValue}>
-                    -{formatUnitQuantity(deduction.quantity, ingredient.unit)} / {formatQuantity(deduction.previousQuantity)} → {formatUnitQuantity(deduction.newQuantity, ingredient.unit)}
-                  </Text>
-                </View>
-              ) : null;
-            })}
-          </View>
-          <View style={styles.fastLogReceiptDetails}>
-            <DetailRow label="Transaction date" value={transactionDate ? formatDate(transactionDate) : '—'} />
-            <DetailRow label="Recorded by" value={staffName} />
-            <DetailRow label="Reason" value={fastLogReason} />
-            <DetailRow label="Notes" value={fastLogNotes.trim() || '—'} />
-          </View>
-          <View style={belowMinimum ? styles.usageWarningBanner : styles.usageInfoBanner}>
-            {belowMinimum ? (
-              <Text style={styles.usageWarningText}>
-                One or more ingredients will remain below minimum stock. Deductions remain within available stock.
-              </Text>
-            ) : (
-              <>
-                <Text style={styles.permissionIcon}>i</Text>
-                <Text style={styles.permissionText}>All quantities are available. No balance can fall below zero.</Text>
-              </>
-            )}
-          </View>
-          {formError !== '' ? <Text style={styles.formError} accessibilityRole="alert">{formError}</Text> : null}
-          <View style={styles.formButtons}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!deductionsValid}
-              onPress={() => deductionsValid && setConfirmationVisible(true)}
-              style={({ pressed }) => [
-                styles.saveButton,
-                !deductionsValid && styles.confirmButtonDisabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.saveButtonText}>Confirm preset</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setRoute('fastLogReview')}
-              style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.cancelButtonText}>Edit transaction</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </>
-    );
-  };
-
-  const renderFastLogSuccess = () => {
-    const receipt = currentFastLogReceipt;
-    if (!receipt) {
-      return (
-        <View style={styles.inventoryFallback}>
-          <Text style={styles.inventoryEmptyTitle}>No Fast-Log receipt to display</Text>
-          <Pressable onPress={() => setRoute('fastLog')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to Fast-Log</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    const isCooking = receipt.preset.section === 'cooking';
-    return (
-      <>
-        <View style={styles.formHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back to Fast-Log"
-            onPress={() => setRoute(receipt.preset.section === 'waste' ? 'waste' : 'fastLog')}
-            style={styles.backButton}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Rush-Hour Fast-Log</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
-          </View>
-        </View>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.compactFormContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.receiptSuccessBanner}>
-            <Text style={styles.receiptSuccessIcon}>✓</Text>
-            <Text style={styles.receiptSuccessText}>
-              {isCooking ? `${receipt.preset.name === 'Standard batch' ? 'Standard cooking batch' : 'Half cooking batch'} logged.` : `${receipt.preset.name} logged.`}
-            </Text>
-          </View>
-          <View style={styles.receiptSummaryCard}>
-            <Text style={styles.receiptSummaryTitle}>{receipt.preset.name}</Text>
-            <Text style={styles.receiptSummaryQuantity}>
-              {isCooking
-                ? `${receipt.pieces ?? receipt.preset.pieces} pieces`
-                : `-${formatUnitQuantity(
-                    receipt.deductions[0].quantity,
-                    ingredients.find((item) => item.id === receipt.deductions[0].ingredientId)?.unit ?? '',
-                  )}`}
-            </Text>
-            <Text style={styles.receiptSummarySubtitle}>
-              {isCooking ? 'One batch' : receipt.reason} · {formatUsageDate(receipt.transactionDate)}
-            </Text>
-          </View>
-          <Text style={styles.fastLogSectionTitle}>Updated ingredient balances</Text>
-          <View style={styles.fastLogRowsCard}>
-            {receipt.deductions.map((deduction) => {
-              const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-              return ingredient ? (
-                <View key={ingredient.id} style={styles.fastLogBalanceRow}>
-                  <Text style={styles.fastLogBalanceName}>{ingredient.name}</Text>
-                  <Text style={styles.fastLogBalanceValue}>
-                    {formatQuantity(deduction.newQuantity)} {ingredient.unit} remaining
-                  </Text>
-                </View>
-              ) : null;
-            })}
-          </View>
-          <Text style={styles.fastLogReference}>
-            Reference {receipt.reference} · {staffName}
-          </Text>
-          <View style={styles.fastLogReceiptDetails}>
-            <DetailRow label="Reason / description" value={receipt.reason} />
-            <DetailRow label="Notes" value={receipt.notes.trim() || '—'} />
-          </View>
-          <View style={styles.usageInfoBanner}>
-            <Text style={styles.permissionIcon}>i</Text>
-            <Text style={styles.permissionText}>
-              New preset example from the recorded balances. Each ingredient deduction is saved together in history.
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setRoute(receipt.preset.section === 'waste' ? 'waste' : 'fastLog')}
-            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.saveButtonText}>
-              {receipt.preset.section === 'waste' ? 'Back to Waste Presets' : 'Back to Fast-Log'}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setRoute('stockHistory')}
-            style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.cancelButtonText}>View transaction history</Text>
-          </Pressable>
-        </ScrollView>
-      </>
     );
   };
 
@@ -3925,7 +3421,7 @@ export default function StaffWorkspace({
         <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
           <View style={styles.receiptSuccessBanner}>
             <Text style={styles.receiptSuccessIcon}>✓</Text>
-            <Text style={styles.receiptSuccessText}>Stock-out recorded successfully.</Text>
+            <Text style={styles.receiptSuccessText}>Stock-Out recorded successfully.</Text>
           </View>
           <View style={styles.receiptSummaryCard}>
             <Text style={styles.receiptSummaryTitle}>
@@ -3978,68 +3474,6 @@ export default function StaffWorkspace({
           </Pressable>
         </ScrollView>
       </>
-    );
-  };
-
-  const renderStockInSuccess = () => {
-    const receiptIngredient = currentReceipt
-      ? ingredients.find((item) => item.id === currentReceipt.ingredientId)
-      : undefined;
-    if (!currentReceipt || !receiptIngredient) {
-      return (
-        <View style={styles.inventoryFallback}>
-          <Text style={styles.inventoryEmptyTitle}>No receipt to display</Text>
-          <Pressable onPress={() => setRoute('stocks')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to Stocks</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    return (
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.formHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={() => setRoute('stocks')} style={styles.backButton}>
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Stock-In</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
-          </View>
-        </View>
-        <View style={styles.receiptSuccessBanner}>
-          <Text style={styles.receiptSuccessIcon}>✓</Text>
-          <Text style={styles.receiptSuccessText}>Stock-In recorded successfully.</Text>
-        </View>
-        <View style={styles.receiptSummaryCard}>
-          <Text style={styles.receiptSummaryTitle}>{receiptIngredient.name} received</Text>
-          <Text style={styles.receiptSummaryQuantity}>+{formatQuantity(currentReceipt.quantity)} {receiptIngredient.unit}</Text>
-          <Text style={styles.receiptSummarySubtitle}>
-            Available after receipt: {formatQuantity(currentReceipt.newQuantity)} {receiptIngredient.unit}
-          </Text>
-        </View>
-        <View style={styles.receiptDetails}>
-          <DetailRow label="Reference" value={currentReceipt.reference} />
-          <DetailRow label="Ingredient" value={`${receiptIngredient.name} · ${receiptIngredient.category}`} />
-          <DetailRow label="Transaction date" value={formatReceiptDate(currentReceipt.transactionDate)} />
-          <DetailRow label="Expiration" value={currentReceipt.expirationDate ? formatDate(currentReceipt.expirationDate) : 'Not recorded'} />
-          <DetailRow label="Recorded by" value={staffName} />
-          <DetailRow label="Branch" value={assignedBranch} />
-          <DetailRow label="Notes" value={currentReceipt.notes || '—'} />
-        </View>
-        <View style={styles.permissionNotice}>
-          <Text style={styles.permissionIcon}>i</Text>
-          <Text style={styles.permissionText}>
-            This Stock-In was recorded in the branch ledger and reflected in current inventory.
-          </Text>
-        </View>
-        <Pressable accessibilityRole="button" onPress={() => setRoute('stockHistory')} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
-          <Text style={styles.historyButtonText}>View transaction history</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setRoute('stocks')} style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}>
-          <Text style={styles.cancelButtonText}>Back to Stocks</Text>
-        </Pressable>
-      </ScrollView>
     );
   };
 
@@ -4498,29 +3932,14 @@ export default function StaffWorkspace({
     case 'stockOut':
       screenContent = renderMovementForm();
       break;
-    case 'fastLog':
-      screenContent = renderFastLogList();
-      break;
     case 'waste':
       screenContent = renderWasteForm();
-      break;
-    case 'fastLogReview':
-      screenContent = renderFastLogReview();
-      break;
-    case 'fastLogPreview':
-      screenContent = renderFastLogPreview();
-      break;
-    case 'fastLogSuccess':
-      screenContent = renderFastLogSuccess();
       break;
     case 'usagePreview':
       screenContent = renderUsagePreview();
       break;
     case 'stockOutSuccess':
       screenContent = renderUsageSuccess();
-      break;
-    case 'stockInSuccess':
-      screenContent = renderStockInSuccess();
       break;
     case 'wasteSuccess':
       screenContent = renderWasteSuccess();
@@ -4567,7 +3986,9 @@ export default function StaffWorkspace({
           onRemoveProduct={removeMenuProduct}
         />
       </View>
-      <BottomNavigation active={route} onSelect={navigate} />
+      {route !== 'stockOut' && route !== 'usagePreview' ? (
+        <BottomNavigation active={route} onSelect={navigate} />
+      ) : null}
       <Modal
         visible={logoutConfirmationVisible}
         transparent
@@ -4757,218 +4178,6 @@ export default function StaffWorkspace({
         </View>
       </Modal>
       <Modal
-        visible={fastLogPopupVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeFastLogPopup}
-      >
-        <KeyboardAvoidingView
-          style={styles.fastLogPopupBackdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close Rush-Hour Fast-Log"
-            onPress={closeFastLogPopup}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.fastLogPopupCard}>
-            <View style={styles.fastLogPopupHandle} />
-            <View style={styles.fastLogPopupHeader}>
-              <View style={styles.fastLogPopupHeading}>
-                <Text style={styles.fastLogPopupTitle}>Rush-Hour Fast-Log</Text>
-                <Text style={styles.fastLogPopupSubtitle}>Record common usage or waste</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close popup"
-                disabled={confirming}
-                onPress={closeFastLogPopup}
-                style={styles.fastLogPopupClose}
-              >
-                <Text style={styles.fastLogPopupCloseText}>×</Text>
-              </Pressable>
-            </View>
-            <ScrollView
-              style={styles.fastLogPopupScroll}
-              contentContainerStyle={styles.fastLogPopupScrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={styles.fastLogPopupSectionTitle}>Choose a preset</Text>
-              {fastLogPresets.map((preset) => {
-                const isSelected = selectedFastLogPresetId === preset.id;
-                const summary = preset.deductions.map((deduction) => {
-                  const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-                  return ingredient
-                    ? `${ingredient.name} ${formatUnitQuantity(deduction.quantity, ingredient.unit)}`
-                    : '';
-                }).filter(Boolean).join(' · ');
-                return (
-                  <Pressable
-                    key={preset.id}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
-                    disabled={confirming}
-                    onPress={() => {
-                      prepareFastLogPreset(preset);
-                      setFastLogPopupVisible(true);
-                    }}
-                    style={({ pressed }) => [
-                      styles.fastLogPopupPreset,
-                      isSelected && styles.fastLogPopupPresetSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <View style={styles.fastLogPopupPresetCopy}>
-                      <Text style={styles.fastLogPopupPresetName}>{preset.name}</Text>
-                      <Text style={styles.fastLogPopupPresetDetail}>
-                        {preset.section === 'waste' ? preset.reason : 'Cooking usage'} · {summary}
-                      </Text>
-                    </View>
-                    <Text style={[
-                      styles.fastLogPopupPresetCheck,
-                      isSelected && styles.fastLogPopupPresetCheckSelected,
-                    ]}>{isSelected ? '✓' : '›'}</Text>
-                  </Pressable>
-                );
-              })}
-
-              {selectedFastLogPreset ? (
-                <View style={styles.fastLogPopupEditor}>
-                  <Text style={styles.fastLogPopupSectionTitle}>Confirm actual quantities</Text>
-                  <Text style={styles.fastLogPopupActionType}>
-                    {selectedFastLogPreset.section === 'waste' ? 'Waste / spoilage' : 'Cooking usage'}
-                    {selectedFastLogPreset.pieces ? ` · ${fastLogPieces || selectedFastLogPreset.pieces} pieces` : ''}
-                  </Text>
-                  {selectedFastLogPreset.pieces ? (
-                    <View style={styles.fastLogPopupPieces}>
-                      <Text style={styles.fieldLabel}>Batch size (pieces)</Text>
-                      <TextInput
-                        accessibilityLabel="Batch size in pieces"
-                        value={fastLogPieces}
-                        editable={!confirming}
-                        onChangeText={(value) => {
-                          setFastLogPieces(value);
-                          setFastLogFieldErrors((current) => ({ ...current, pieces: '' }));
-                        }}
-                        keyboardType="number-pad"
-                        style={styles.fastLogPopupTextInput}
-                      />
-                      {fastLogFieldErrors.pieces ? (
-                        <Text style={styles.fieldError}>{fastLogFieldErrors.pieces}</Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                  {fastLogDraftDeductions.map((draft, index) => {
-                    const ingredient = ingredients.find((item) => item.id === draft.ingredientId);
-                    const error = fastLogFieldErrors[`${draft.ingredientId}-${index}`];
-                    if (!ingredient) return null;
-                    return (
-                      <View key={`${draft.ingredientId}-${index}`} style={styles.fastLogPopupDeduction}>
-                        <View style={styles.fastLogPopupDeductionHeading}>
-                          <Text style={styles.fastLogPopupIngredientName}>{ingredient.name}</Text>
-                          <Text style={styles.fastLogPopupAvailable}>
-                            Available {formatUnitQuantity(ingredient.quantity, ingredient.unit)}
-                          </Text>
-                        </View>
-                        <View style={[styles.fastLogQuantityInputWrap, error ? styles.textInputError : undefined]}>
-                          <TextInput
-                            accessibilityLabel={`${ingredient.name} quantity`}
-                            value={draft.quantity}
-                            editable={!confirming}
-                            onChangeText={(value) => updateFastLogDeduction(index, 'quantity', value)}
-                            keyboardType="decimal-pad"
-                            selectTextOnFocus
-                            style={[styles.textInput, styles.fastLogQuantityInput]}
-                          />
-                          <Text style={styles.inputSuffix}>{ingredient.unit}</Text>
-                        </View>
-                        {error ? <Text style={styles.fieldError}>{error}</Text> : null}
-                      </View>
-                    );
-                  })}
-                  <View style={styles.fastLogPopupNotes}>
-                    <Text style={styles.fieldLabel}>Reason or description</Text>
-                    <TextInput
-                      accessibilityLabel="Reason or description"
-                      value={fastLogReason}
-                      editable={!confirming}
-                      onChangeText={(value) => {
-                        setFastLogReason(value);
-                        setFastLogFieldErrors((current) => ({ ...current, reason: '' }));
-                      }}
-                      placeholder="Add a short reason"
-                      style={styles.fastLogPopupTextInput}
-                    />
-                    {fastLogFieldErrors.reason ? (
-                      <Text style={styles.fieldError}>{fastLogFieldErrors.reason}</Text>
-                    ) : null}
-                    <Text style={[styles.fieldLabel, styles.fastLogPopupNotesLabel]}>Notes (optional)</Text>
-                    <TextInput
-                      accessibilityLabel="Fast-Log notes"
-                      value={fastLogNotes}
-                      editable={!confirming}
-                      onChangeText={setFastLogNotes}
-                      placeholder="Add notes"
-                      style={styles.fastLogPopupTextInput}
-                    />
-                  </View>
-                  {fastLogDraftDeductions.some((draft) => {
-                    const item = ingredients.find((ingredient) => ingredient.id === draft.ingredientId);
-                    return item && Number(draft.quantity) > 0 &&
-                      Number(draft.quantity) <= item.quantity &&
-                      item.quantity - Number(draft.quantity) < item.minimumStock;
-                  }) ? (
-                    <Text style={styles.fastLogPopupWarning}>
-                      The resulting balance will be below the minimum stock level.
-                    </Text>
-                  ) : null}
-                  {formError ? <Text style={styles.fastLogPopupError}>{formError}</Text> : null}
-                  <View style={styles.fastLogPopupActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={confirming}
-                      onPress={() => {
-                        setSelectedFastLogPresetId('');
-                        setFastLogDraftDeductions([]);
-                        setFastLogReason('');
-                        setFastLogNotes('');
-                        setFastLogFieldErrors({});
-                      }}
-                      style={({ pressed }) => [styles.fastLogPopupCancel, pressed && styles.pressed]}
-                    >
-                      <Text style={styles.fastLogPopupCancelText}>Cancel</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={confirming}
-                      onPress={() => {
-                        if (!validateFastLogDraft()) return;
-                        confirmTransaction();
-                      }}
-                      style={({ pressed }) => [
-                        styles.fastLogPopupSave,
-                        pressed && styles.pressed,
-                        confirming && styles.confirmButtonDisabled,
-                      ]}
-                    >
-                      <Text style={styles.fastLogPopupSaveText}>
-                        {confirming
-                          ? 'Recording…'
-                          : selectedFastLogPreset.section === 'waste'
-                            ? 'Record waste'
-                            : 'Record usage'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : null}
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-      <Modal
         visible={confirmationVisible}
         transparent
         animationType="fade"
@@ -4980,7 +4189,7 @@ export default function StaffWorkspace({
           <View style={styles.confirmCard}>
             <View style={[
               styles.confirmIcon,
-              (route === 'usagePreview' || route === 'fastLogPreview') && styles.usageConfirmIcon,
+              route === 'usagePreview' && styles.usageConfirmIcon,
               route === 'waste' && styles.wasteConfirmIcon,
             ]}>
               {route === 'waste' ? <WasteTrashIcon /> : <Text style={styles.confirmIconText}>↓</Text>}
@@ -4988,26 +4197,24 @@ export default function StaffWorkspace({
             <Text style={styles.confirmTitle}>
               {route === 'waste'
                 ? 'Confirm waste record'
-                : route === 'fastLogPreview'
-                ? selectedFastLogPreset?.section === 'cooking'
-                  ? 'Log one cooking batch?'
-                  : 'Log waste preset?'
+                : route === 'stockOut'
+                ? 'Confirm Stock-Out / Usage'
                 : route === 'usagePreview'
                 ? 'Confirm cooking usage'
                 : route === 'stockIn'
                 ? 'Confirm Stock-In'
-                : route === 'fastLog'
-                  ? 'Confirm Fast-Log'
-                  : 'Confirm Stock-Out'}
+                : 'Confirm Stock-Out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
               {route === 'waste'
                 ? `Record this waste event for ${assignedBranch}?`
-                : route === 'fastLogPreview'
-                ? 'Confirm the edited quantities. Nothing is deducted until you confirm.'
+                : route === 'stockOut'
+                ? 'Record ingredients used in preparation?'
                 : route === 'usagePreview'
                 ? `Deduct this ${usageMode === 'manual' ? 'manual usage' : 'cooking batch'} from ${assignedBranch}?`
-                : `Record this ingredient ${route === 'stockIn' ? 'receipt' : 'deduction'} for ${assignedBranch}?`}
+                : route === 'stockIn'
+                ? 'Record this ingredient receipt?'
+                : `Record this ingredient deduction for ${assignedBranch}?`}
             </Text>
             {route === 'waste' && selectedIngredient && transactionDate ? (
               <View style={styles.confirmSummary}>
@@ -5029,25 +4236,7 @@ export default function StaffWorkspace({
                 </Text>
                 <Text style={styles.confirmSummaryText}>Notes: {notes.trim() || '—'}</Text>
               </View>
-            ) : route === 'fastLogPreview' && selectedFastLogPreset ? (
-              <View style={styles.confirmSummary}>
-                <Text style={styles.confirmSummaryText}>
-                  {selectedFastLogPreset.name} · {selectedFastLogPreset.pieces ? `${fastLogPieces || selectedFastLogPreset.pieces} pieces` : fastLogReason}
-                </Text>
-                {fastLogDeductions.map((deduction, index) => {
-                  const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
-                  if (!ingredient) return null;
-                  return (
-                    <Text key={`${ingredient.id}-${index}`} style={styles.confirmSummaryText}>
-                      {ingredient.name} {formatUnitQuantity(deduction.quantity, ingredient.unit)} → {formatQuantity(deduction.previousQuantity)} → {formatUnitQuantity(deduction.newQuantity, ingredient.unit)}
-                    </Text>
-                  );
-                })}
-                <Text style={styles.confirmSummaryText}>{fastLogReason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
-                <Text style={styles.confirmSummaryText}>{staffName}</Text>
-                <Text style={styles.confirmSummaryText}>Notes: {fastLogNotes.trim() || '—'}</Text>
-              </View>
-            ) : route === 'usagePreview' ? (
+            ) : route === 'usagePreview' || route === 'stockOut' ? (
               <View style={styles.confirmSummary}>
                 {usageDeductions.map((deduction) => {
                   const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
@@ -5063,7 +4252,8 @@ export default function StaffWorkspace({
                     </React.Fragment>
                   );
                 })}
-                <Text style={styles.confirmSummaryText}>{reason} · {transactionDate ? formatDate(transactionDate) : ''}</Text>
+                <Text style={styles.confirmSummaryText}>{assignedBranch} · {reason}</Text>
+                <Text style={styles.confirmSummaryText}>{transactionDate ? formatDate(transactionDate) : ''}</Text>
                 <Text style={styles.confirmSummaryText}>{staffName}</Text>
                 {usageDeductions.some((deduction) => {
                   const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
@@ -5076,6 +4266,18 @@ export default function StaffWorkspace({
                   </Text>
                 ) : null}
                 <Text style={styles.confirmSummaryText}>Notes: {notes.trim() || '—'}</Text>
+              </View>
+            ) : route === 'stockIn' && selectedIngredient && transactionDate ? (
+              <View style={styles.confirmSummary}>
+                <Text style={styles.confirmSummaryText}>
+                  {selectedIngredient.name} · +{formatUnitQuantity(Number(quantity), selectedIngredient.unit)}
+                </Text>
+                <Text style={styles.confirmSummaryText}>
+                  {assignedBranch} · {formatDate(transactionDate)}
+                </Text>
+                {expirationDate ? (
+                  <Text style={styles.confirmSummaryText}>Expires {formatDate(expirationDate)}</Text>
+                ) : null}
               </View>
             ) : selectedIngredient ? (
               <View style={styles.confirmSummary}>
@@ -5107,35 +4309,157 @@ export default function StaffWorkspace({
                 )}
               </View>
             ) : null}
-            <View style={styles.confirmActions}>
-              <Pressable
-                accessibilityRole="button"
-                disabled={confirming}
-                onPress={() => setConfirmationVisible(false)}
-                style={({ pressed }) => [styles.confirmCancelButton, pressed && styles.pressed]}
-              >
-                <Text style={styles.confirmCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={confirming}
-                onPress={confirmTransaction}
-                style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed, confirming && styles.confirmButtonDisabled]}
-              >
-                <Text style={styles.confirmButtonText}>
-                  {confirming
-                    ? 'Recording…'
-                    : route === 'waste'
-                      ? 'Record waste'
-                      : route === 'fastLogPreview'
-                      ? selectedFastLogPreset?.section === 'waste' ? 'Log waste' : 'Log batch'
-                      : route === 'usagePreview'
-                        ? 'Record usage'
-                        : 'Confirm'}
-                </Text>
-              </Pressable>
+            <View style={route === 'stockIn' || route === 'stockOut' ? styles.stockInConfirmActions : styles.confirmActions}>
+              {route === 'stockIn' ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={confirmTransaction}
+                    style={({ pressed }) => [
+                      styles.confirmButton,
+                      styles.stockInConfirmButton,
+                      pressed && styles.pressed,
+                      confirming && styles.confirmButtonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Confirm Stock-In'}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={() => setConfirmationVisible(false)}
+                    style={({ pressed }) => [
+                      styles.confirmCancelButton,
+                      styles.stockInConfirmButton,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.confirmCancelText}>Cancel</Text>
+                  </Pressable>
+                </>
+              ) : route === 'stockOut' ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={confirmTransaction}
+                    style={({ pressed }) => [
+                      styles.confirmButton,
+                      styles.stockInConfirmButton,
+                      pressed && styles.pressed,
+                      confirming && styles.confirmButtonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.confirmButtonText}>
+                      {confirming ? 'Recording…' : 'Record Usage'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={() => setConfirmationVisible(false)}
+                    style={({ pressed }) => [
+                      styles.confirmCancelButton,
+                      styles.stockInConfirmButton,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.confirmCancelText}>Cancel</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={() => setConfirmationVisible(false)}
+                    style={({ pressed }) => [styles.confirmCancelButton, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.confirmCancelText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={confirming}
+                    onPress={confirmTransaction}
+                    style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed, confirming && styles.confirmButtonDisabled]}
+                  >
+                    <Text style={styles.confirmButtonText}>
+                      {confirming
+                        ? 'Recording…'
+                        : route === 'waste'
+                          ? 'Record waste'
+                          : route === 'usagePreview'
+                            ? 'Record usage'
+                            : 'Confirm'}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
             </View>
           </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={route === 'stockOutSuccess' && stockOutAlert !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStockOutAlert(null)}
+      >
+        <View style={styles.lowStockAlertBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss stock alert"
+            onPress={() => setStockOutAlert(null)}
+            style={StyleSheet.absoluteFill}
+          />
+          {stockOutAlert ? (() => {
+            const alertIngredient = ingredients.find((item) => item.id === stockOutAlert.ingredientId);
+            if (!alertIngredient) return null;
+            const shortage = Math.max(0, stockOutAlert.minimumStock - stockOutAlert.remainingQuantity);
+            return (
+              <View style={styles.lowStockAlertCard}>
+                <Text style={styles.lowStockAlertTitle}>
+                  {stockOutAlert.outOfStock
+                    ? `Out of stock: ${alertIngredient.name}`
+                    : `Low stock: ${alertIngredient.name}`}
+                </Text>
+                <Text style={styles.lowStockAlertDescription}>
+                  Stock-out recorded successfully.
+                </Text>
+                <View style={styles.lowStockAlertSummary}>
+                  <Text style={styles.lowStockAlertSummaryText}>
+                    {formatUnitQuantity(stockOutAlert.remainingQuantity, alertIngredient.unit)} available
+                  </Text>
+                  {stockOutAlert.minimumStock > 0 ? (
+                    <Text style={styles.lowStockAlertSummaryText}>
+                      Minimum {formatUnitQuantity(stockOutAlert.minimumStock, alertIngredient.unit)} · {formatUnitQuantity(shortage, alertIngredient.unit)} below the threshold
+                    </Text>
+                  ) : null}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setStockOutAlert(null);
+                    setSelectedAlertIngredientId(alertIngredient.id);
+                    setSelectedAlertBatchReference('');
+                    setSelectedAlertKind('lowStock');
+                    setRoute('notificationAlertDetails');
+                  }}
+                  style={({ pressed }) => [styles.lowStockAlertPrimary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.lowStockAlertPrimaryText}>View Alerts</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setStockOutAlert(null)}
+                  style={({ pressed }) => [styles.lowStockAlertSecondary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.lowStockAlertSecondaryText}>Done</Text>
+                </Pressable>
+              </View>
+            );
+          })() : null}
         </View>
       </Modal>
     </KeyboardAvoidingView>
@@ -5363,98 +4687,6 @@ function createStaffStyles(theme: AppTheme) {
   quickActionIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginBottom: 4 },
   quickActionGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 21, lineHeight: 25 },
   quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'center' },
-  dashboardFastLogCard: {
-    minHeight: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
-    paddingVertical: 7, borderRadius: 14, backgroundColor: '#F5F5F7',
-    borderWidth: 1, borderColor: colors.line, marginBottom: 16,
-    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06,
-    shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
-  },
-  dashboardFastLogIcon: {
-    width: 38, height: 38, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 12, backgroundColor: colors.navy, marginRight: 10,
-  },
-  dashboardFastLogIconText: { color: colors.orange, fontSize: 19, lineHeight: 23 },
-  dashboardFastLogCopy: { flex: 1, minWidth: 0, marginRight: 6 },
-  dashboardFastLogTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
-  dashboardFastLogSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
-  dashboardFastLogAction: { flexDirection: 'row', alignItems: 'center', paddingLeft: 7 },
-  dashboardFastLogActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
-  dashboardFastLogChevron: { color: colors.pink, fontFamily: font.semibold, fontSize: 17, marginLeft: 3 },
-  fastLogPopupBackdrop: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 28, backgroundColor: 'rgba(16, 16, 39, 0.48)',
-  },
-  fastLogPopupCard: {
-    width: '85%', maxWidth: 360, maxHeight: '78%', alignSelf: 'center',
-    paddingTop: 13, paddingHorizontal: 15, paddingBottom: 15,
-    borderRadius: 20, backgroundColor: colors.white,
-    elevation: 18, shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 14,
-    shadowOffset: { width: 0, height: -4 },
-  },
-  fastLogPopupHandle: {
-    width: 36, height: 4, alignSelf: 'center', borderRadius: 2,
-    backgroundColor: '#D8D8DE', marginBottom: 10,
-  },
-  fastLogPopupHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  fastLogPopupHeading: { flex: 1, minWidth: 0 },
-  fastLogPopupTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
-  fastLogPopupSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2 },
-  fastLogPopupClose: {
-    width: 31, height: 31, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 16, backgroundColor: '#F2F2F4', marginLeft: 10,
-  },
-  fastLogPopupCloseText: { color: colors.navy, fontFamily: font.medium, fontSize: 21, lineHeight: 24 },
-  fastLogPopupScroll: { flexShrink: 1 },
-  fastLogPopupScrollContent: { paddingTop: 12, paddingBottom: 5 },
-  fastLogPopupSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginBottom: 7 },
-  fastLogPopupPreset: {
-    minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
-    paddingVertical: 7, borderRadius: 12, backgroundColor: '#F5F5F7',
-    borderWidth: 1, borderColor: colors.line, marginBottom: 6,
-  },
-  fastLogPopupPresetSelected: { backgroundColor: '#FFF7FA', borderColor: '#F5AFC2' },
-  fastLogPopupPresetCopy: { flex: 1, minWidth: 0 },
-  fastLogPopupPresetName: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
-  fastLogPopupPresetDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
-  fastLogPopupPresetCheck: { color: colors.muted, fontFamily: font.semibold, fontSize: 17, marginLeft: 8 },
-  fastLogPopupPresetCheckSelected: { color: colors.pink },
-  fastLogPopupEditor: {
-    padding: 11, borderRadius: 14, backgroundColor: colors.white,
-    borderWidth: 1, borderColor: colors.line, marginTop: 5,
-  },
-  fastLogPopupActionType: { color: colors.orange, fontFamily: font.medium, fontSize: 8, marginTop: -4, marginBottom: 7 },
-  fastLogPopupPieces: { marginBottom: 8 },
-  fastLogPopupDeduction: { marginTop: 5 },
-  fastLogPopupDeductionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  fastLogPopupIngredientName: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
-  fastLogPopupAvailable: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
-  fastLogPopupNotes: { marginTop: 10 },
-  fastLogPopupNotesLabel: { marginTop: 8 },
-  fastLogPopupTextInput: {
-    minHeight: 38, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10,
-    borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#F5F5F7',
-    color: colors.navy, fontFamily: font.regular, fontSize: 9,
-  },
-  fastLogPopupWarning: {
-    color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 12,
-    padding: 8, borderRadius: 9, backgroundColor: colors.yellow, marginTop: 9,
-  },
-  fastLogPopupError: { color: colors.red, fontFamily: font.medium, fontSize: 8, marginTop: 8 },
-  fastLogPopupActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 11 },
-  fastLogPopupCancel: {
-    minWidth: 75, minHeight: 39, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 12, borderRadius: 11, backgroundColor: '#EEEEF0',
-  },
-  fastLogPopupCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
-  fastLogPopupSave: {
-    minWidth: 116, minHeight: 39, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 13, borderRadius: 11, backgroundColor: colors.pink,
-  },
-  fastLogPopupSaveText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   dashboardIngredientList: { gap: 8 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
@@ -5508,53 +4740,6 @@ function createStaffStyles(theme: AppTheme) {
   stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 13, borderRadius: 13, backgroundColor: '#F7F6FB', marginTop: 19 },
   stockTipIcon: { width: 17, height: 17, borderRadius: 9, overflow: 'hidden', color: colors.white, backgroundColor: colors.navy, fontFamily: font.semibold, fontSize: 11, textAlign: 'center', marginRight: 9 },
   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
-  fastLogListContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 22 },
-  fastLogSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 12, marginBottom: 8 },
-  fastLogSecondSection: { marginTop: 17 },
-  fastLogPresetList: { gap: 9 },
-  fastLogPresetCard: {
-    paddingHorizontal: 13, paddingVertical: 11, borderRadius: 15, backgroundColor: '#EEEEEF',
-    borderWidth: 1, borderColor: colors.line, elevation: 2, shadowColor: colors.navy,
-    shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
-  },
-  fastLogPresetTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11, marginBottom: 5 },
-  fastLogPresetIngredients: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 11, rowGap: 2 },
-  fastLogPresetDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
-  fastLogReviewLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 9, marginTop: 7 },
-  fastLogFootnote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 16 },
-  fastLogHistoryButton: { marginTop: 13 },
-  fastLogSummaryCard: {
-    paddingHorizontal: 15, paddingVertical: 13, borderRadius: 16, backgroundColor: colors.navy,
-    marginBottom: 16, elevation: 3, shadowColor: colors.navy, shadowOpacity: 0.12,
-    shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
-  },
-  fastLogSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
-  fastLogSummaryAmount: { color: colors.orange, fontFamily: font.semibold, fontSize: 16, marginTop: 4 },
-  fastLogSummaryNote: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 8, marginTop: 3 },
-  fastLogRowsCard: {
-    paddingHorizontal: 12, borderRadius: 14, backgroundColor: '#EEEEEF', marginBottom: 12,
-    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  fastLogBalanceRow: {
-    minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    gap: 8, borderBottomWidth: 1, borderBottomColor: '#DDDDDF',
-  },
-  fastLogBalanceName: { flexShrink: 0, color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
-  fastLogBalanceValue: { flexShrink: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'right' },
-  fastLogReceiptDetails: { paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 12 },
-  fastLogReference: { color: colors.navy, fontFamily: font.medium, fontSize: 9, marginBottom: 12 },
-  fastLogEditCard: {
-    padding: 11, borderRadius: 13, backgroundColor: '#EEEEEF', marginBottom: 9,
-    borderWidth: 1, borderColor: colors.line,
-  },
-  fastLogQuantityEditRow: { marginTop: 9 },
-  fastLogQuantityInputWrap: {
-    minHeight: 42, flexDirection: 'row', alignItems: 'center',
-    borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: colors.white,
-  },
-  fastLogQuantityInput: { flex: 1, minHeight: 40, borderWidth: 0, backgroundColor: 'transparent' },
-  fastLogAvailableHint: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
   notificationList: { gap: 10 },
   notificationPageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   markReadButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: '#FCE3EB', marginBottom: 17 },
@@ -5912,6 +5097,9 @@ function createStaffStyles(theme: AppTheme) {
   receiptInfoBanner: { flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11, backgroundColor: '#FFF5CB', marginBottom: 12 },
   receiptInfoIcon: { width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white, backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10, textAlign: 'center', marginRight: 8 },
   receiptInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
+  stockInErrorBanner: { flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 11, backgroundColor: colors.paleRed, marginBottom: 13 },
+  stockInErrorIcon: { width: 17, height: 17, overflow: 'hidden', borderRadius: 9, borderWidth: 1, borderColor: colors.red, color: colors.red, fontFamily: font.bold, fontSize: 10, textAlign: 'center', lineHeight: 15, marginRight: 8 },
+  stockInErrorText: { flex: 1, color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
   formError: { color: colors.red, fontFamily: font.medium, fontSize: 10, lineHeight: 15, padding: 10, borderRadius: 10, backgroundColor: colors.paleRed, marginBottom: 13 },
   successBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: colors.paleGreen, marginBottom: 14 },
   successIcon: { color: colors.green, fontFamily: font.bold, fontSize: 16, marginRight: 8 },
@@ -5928,12 +5116,16 @@ function createStaffStyles(theme: AppTheme) {
   suffixedTextInput: { flex: 1, minHeight: 40, borderWidth: 0, backgroundColor: 'transparent' },
   inputSuffix: { color: colors.muted, fontFamily: font.medium, fontSize: 10, paddingHorizontal: 12 },
   fieldError: { color: colors.red, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 4 },
+  inlineFieldError: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  inlineFieldErrorIcon: { width: 13, height: 13, overflow: 'hidden', borderRadius: 7, borderWidth: 1, borderColor: colors.red, color: colors.red, fontFamily: font.bold, fontSize: 8, textAlign: 'center', lineHeight: 11, marginRight: 5 },
   notesInput: { minHeight: 76 },
   dateInput: {
     minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',
   },
   dateInputText: { color: colors.ink, fontFamily: font.regular, fontSize: 10 },
+  clearDateButton: { width: 25, height: 32, alignItems: 'center', justifyContent: 'center' },
+  clearDateText: { color: colors.muted, fontFamily: font.medium, fontSize: 18, lineHeight: 21 },
   placeholderText: { color: '#A0A0AA' },
   calendarGlyph: { color: colors.orange, fontSize: 17 },
   formRow: { flexDirection: 'column', gap: 0 },
@@ -5947,7 +5139,8 @@ function createStaffStyles(theme: AppTheme) {
   selectText: { flex: 1, color: colors.ink, fontFamily: font.regular, fontSize: 10 },
   availableQuantity: { color: colors.muted, fontFamily: font.medium, fontSize: 8, marginRight: 8 },
   selectChevron: { color: colors.orange, fontSize: 18, marginLeft: 5 },
-  dropdown: { borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },
+  dropdown: { maxHeight: 230, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },
+  ingredientCategoryHeading: { paddingHorizontal: 10, paddingTop: 9, paddingBottom: 4, color: colors.muted, fontFamily: font.semibold, fontSize: 8, textTransform: 'uppercase' },
   ingredientPickerEmpty: {
     paddingHorizontal: 12, paddingVertical: 13, color: colors.muted,
     fontFamily: font.regular, fontSize: 9, lineHeight: 14,
@@ -6006,7 +5199,7 @@ function createStaffStyles(theme: AppTheme) {
   receiptDetails: { paddingHorizontal: 12, borderRadius: 15, backgroundColor: '#EEEEEF', marginBottom: 13 },
   receiptBackButton: { marginTop: 9 },
   confirmBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: 'rgba(25, 25, 34, 0.55)' },
-  confirmCard: { width: '100%', maxWidth: 370, padding: 18, borderRadius: 19, backgroundColor: colors.white, elevation: 12, shadowColor: '#000000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 7 } },
+  confirmCard: { width: '100%', maxWidth: 370, maxHeight: '92%', padding: 18, borderRadius: 19, backgroundColor: colors.white, elevation: 12, shadowColor: '#000000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 7 } },
   confirmIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FCE3EB', marginBottom: 11 },
   confirmIconText: { color: colors.pink, fontFamily: font.semibold, fontSize: 22, lineHeight: 26 },
   confirmTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
@@ -6016,11 +5209,38 @@ function createStaffStyles(theme: AppTheme) {
   confirmSummaryText: { color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   confirmBalance: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, lineHeight: 14 },
   confirmActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 9, marginTop: 15 },
+  stockInConfirmActions: { gap: 8, marginTop: 15 },
+  stockInConfirmButton: { width: '100%', minHeight: 44 },
   confirmCancelButton: { minWidth: 82, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
   confirmCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   confirmButton: { minWidth: 104, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   confirmButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   confirmButtonDisabled: { opacity: 0.6 },
+  lowStockAlertBackdrop: {
+    flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 19,
+    paddingVertical: 26, backgroundColor: 'rgba(16, 16, 39, 0.58)',
+  },
+  lowStockAlertCard: {
+    width: '100%', maxWidth: 365, maxHeight: '90%', padding: 18, borderRadius: 19,
+    backgroundColor: colors.white, elevation: 16, shadowColor: '#000000',
+    shadowOpacity: 0.22, shadowRadius: 15, shadowOffset: { width: 0, height: 7 },
+  },
+  lowStockAlertTitle: { color: '#D29A00', fontFamily: font.semibold, fontSize: 14, lineHeight: 20 },
+  lowStockAlertDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 5 },
+  lowStockAlertSummary: {
+    padding: 12, borderRadius: 12, backgroundColor: '#FFF5CB', gap: 5, marginTop: 13, marginBottom: 14,
+  },
+  lowStockAlertSummaryText: { color: colors.navy, fontFamily: font.medium, fontSize: 9, lineHeight: 14 },
+  lowStockAlertPrimary: {
+    minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 11,
+    backgroundColor: colors.pink, marginBottom: 8,
+  },
+  lowStockAlertPrimaryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  lowStockAlertSecondary: {
+    minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 11,
+    backgroundColor: '#EEEEF0',
+  },
+  lowStockAlertSecondaryText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   dailyModalBackdrop: {
     flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 19,
     paddingVertical: 26, backgroundColor: 'rgba(16, 16, 39, 0.58)',

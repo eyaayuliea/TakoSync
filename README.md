@@ -23,7 +23,7 @@ The Staff interface currently includes:
 - Supabase email/password sign-in, session restoration, and logout.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
-- Stock-Out and usage entries, including cooking-batch and Fast-Log workflows.
+- Stock-Out and usage entries, including cooking-batch workflows.
 - Waste and spoilage recording with reasons and notes.
 - Low-stock and near-expiry alerts derived from branch inventory and active batches.
 - Transaction history with filters and transaction details.
@@ -225,7 +225,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 |---|---|
 | Staff authentication, session restoration, and logout | Implemented against Supabase Auth; requires project configuration and provisioned accounts |
 | Staff inventory, search, categories, ingredient details, and history | Implemented against Supabase |
-| Stock-In, Stock-Out/usage, waste/spoilage, Fast-Log | Implemented through the database transaction function |
+| Stock-In, Stock-Out/usage, waste/spoilage | Implemented through the database transaction function |
 | Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push notification delivery |
 | Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
 | Staff Menu / cart | Menu filters, selection, cart quantities, and preview totals are implemented with isolated UI-only sample data from the project brief; these are not live products or production prices |

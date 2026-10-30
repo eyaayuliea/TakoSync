@@ -20,10 +20,6 @@ export type StaffRoute =
   | 'stockOut'
   | 'usagePreview'
   | 'stockOutSuccess'
-  | 'fastLog'
-  | 'fastLogReview'
-  | 'fastLogPreview'
-  | 'fastLogSuccess'
   | 'waste'
   | 'wasteSuccess'
   | 'stockInSuccess'
@@ -121,10 +117,6 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
     route === 'stockOut' ||
     route === 'usagePreview' ||
     route === 'stockOutSuccess' ||
-    route === 'fastLog' ||
-    route === 'fastLogReview' ||
-    route === 'fastLogPreview' ||
-    route === 'fastLogSuccess' ||
     route === 'waste' ||
     route === 'wasteSuccess' ||
     route === 'stockInSuccess' ||
