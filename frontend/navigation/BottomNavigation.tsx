@@ -1,17 +1,17 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 
 const colors = {
   pink: '#F20D55',
   navy: '#101027',
   orange: '#FF9418',
-  blue: '#159BFF',
   white: '#FFFFFF',
 } as const;
 
 export type StaffRoute =
   | 'dashboard'
+  | 'sales'
   | 'inventory'
   | 'stocks'
   | 'stockIn'
@@ -37,12 +37,13 @@ export type StaffRoute =
   | 'notifications'
   | 'more';
 
-export type StaffTab = Extract<StaffRoute, 'dashboard' | 'inventory' | 'stocks' | 'notifications' | 'more'>;
+export type StaffTab = Extract<StaffRoute, 'dashboard' | 'sales' | 'inventory' | 'stocks' | 'notifications' | 'more'>;
 
-const destinations: { route: StaffTab; label: string; icon: 'home' | 'box' | 'stock' | 'bell' | 'more' }[] = [
+const destinations: { route: StaffTab; label: string; icon: 'home' | 'pos' | 'box' | 'stock' | 'bell' | 'more' }[] = [
   { route: 'dashboard', label: 'Dashboard', icon: 'home' },
+  { route: 'sales', label: 'POS / Sales', icon: 'pos' },
   { route: 'inventory', label: 'Inventory', icon: 'box' },
-  { route: 'stocks', label: 'Stocks', icon: 'stock' },
+  { route: 'stocks', label: 'Stock movement', icon: 'stock' },
   { route: 'notifications', label: 'Notifications', icon: 'bell' },
   { route: 'more', label: 'More', icon: 'more' },
 ];
@@ -56,6 +57,16 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
         <View style={[iconStyles.homeBody, { borderColor: color }]}>
           <View style={[iconStyles.homeDoor, { backgroundColor: color }]} />
         </View>
+      </View>
+    );
+  }
+
+  if (name === 'pos') {
+    return (
+      <View style={[iconStyles.pos, { borderColor: color }]}>
+        <View style={[iconStyles.posLine, { backgroundColor: color }]} />
+        <View style={[iconStyles.posLine, { backgroundColor: color }]} />
+        <View style={[iconStyles.posLineShort, { backgroundColor: color }]} />
       </View>
     );
   }
@@ -128,18 +139,23 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
 export default function BottomNavigation({
   active,
   onSelect,
+  showSales = true,
 }: {
   active: StaffRoute;
   onSelect: (route: StaffTab) => void;
+  showSales?: boolean;
 }) {
   const { colors: themeColors, isDark } = useTheme();
   const styles = useNavigationStyles();
   const selectedTab = activeStaffTab(active);
+  const visibleDestinations = showSales
+    ? destinations
+    : destinations.filter((destination) => destination.route !== 'sales');
 
   return (
     <View style={styles.outer}>
       <View style={styles.bar}>
-        {destinations.map((destination) => {
+        {visibleDestinations.map((destination) => {
           const selected = destination.route === selectedTab;
           const iconColor = selected
             ? isDark ? themeColors.text : colors.white
@@ -153,12 +169,12 @@ export default function BottomNavigation({
               onPress={() => onSelect(destination.route)}
               style={({ pressed }) => [
                 styles.item,
-                selected && styles.itemSelected,
                 pressed && styles.pressed,
               ]}
             >
-              <NavigationIcon name={destination.icon} color={iconColor} />
-              {selected ? <Text style={styles.activeLabel} numberOfLines={1}>{destination.label}</Text> : null}
+              <View style={[styles.iconWrap, selected && styles.iconWrapSelected]}>
+                <NavigationIcon name={destination.icon} color={iconColor} />
+              </View>
             </Pressable>
           );
         })}
@@ -171,49 +187,42 @@ function useNavigationStyles() {
   const theme = useTheme();
   return useMemo(() => StyleSheet.create(createThemedStyles({
   outer: {
-    paddingHorizontal: 13,
-    paddingTop: 4,
-    paddingBottom: 9,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 11,
+    backgroundColor: 'transparent',
   },
   bar: {
-    minHeight: 56,
+    minHeight: 60,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 5,
-    paddingVertical: 5,
+    justifyContent: 'space-evenly',
+    paddingHorizontal: 6,
+    paddingVertical: 6,
     borderRadius: 30,
-    borderWidth: 1.5,
-    borderColor: colors.blue,
     backgroundColor: colors.navy,
-    elevation: 8,
+    elevation: 10,
     shadowColor: colors.navy,
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   item: {
     flex: 1,
-    minWidth: 34,
-    height: 42,
-    flexDirection: 'row',
+    minWidth: 0,
+    height: 46,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderRadius: 23,
   },
-  itemSelected: {
-    flex: 0,
-    minWidth: 82,
-    paddingHorizontal: 11,
+  iconWrap: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+  },
+  iconWrapSelected: {
     backgroundColor: colors.pink,
-  },
-  activeLabel: {
-    flexShrink: 1,
-    color: colors.white,
-    fontFamily: 'Poppins_600SemiBold',
-    fontSize: 9,
   },
   pressed: { opacity: 0.76 },
   }, theme)), [theme]);
@@ -231,6 +240,9 @@ const iconStyles = StyleSheet.create({
   },
   homeBody: { width: 14, height: 11, borderWidth: 1.8, borderBottomWidth: 0, alignItems: 'center', justifyContent: 'flex-end' },
   homeDoor: { width: 4, height: 6, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  pos: { width: 16, height: 20, borderWidth: 1.8, borderRadius: 3, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  posLine: { width: 9, height: 1.5, borderRadius: 1 },
+  posLineShort: { width: 6, height: 1.5, alignSelf: 'flex-start', marginLeft: 3, borderRadius: 1 },
   box: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   boxTopLeft: { position: 'absolute', top: 3, left: 3, width: 8, height: 8, borderLeftWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '45deg' }] },
   boxTopRight: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRightWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '-45deg' }] },

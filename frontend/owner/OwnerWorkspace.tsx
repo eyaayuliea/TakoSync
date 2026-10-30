@@ -538,7 +538,7 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
         </ScrollView>
       )}
 
-      <BottomNavigation active={selectedTab} onSelect={navigateTab} />
+      <BottomNavigation active={selectedTab} onSelect={navigateTab} showSales={false} />
     </View>
   );
 }

@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -428,65 +429,38 @@ function StatusBadge({
   );
 }
 
-function IngredientCard({
+function InventoryIngredientCard({
   item,
   onPress,
-  compact = false,
-  cardWidth,
   statusOverride,
+  showExpiration = false,
 }: {
   item: Ingredient;
-  onPress?: () => void;
-  compact?: boolean;
-  cardWidth?: number;
+  onPress: () => void;
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
+  showExpiration?: boolean;
 }) {
   const styles = useStaffStyles();
-  const Wrapper = onPress ? Pressable : View;
   const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
 
   return (
-    <Wrapper
-      {...(onPress ? { onPress, accessibilityRole: 'button' as const } : {})}
-      style={[
-        styles.ingredientCard,
-        !compact && styles.listIngredientCard,
-        compact && cardWidth !== undefined ? { width: cardWidth } : null,
-      ]}
-    >
-      <IngredientThumbnail item={item} />
-      <View style={styles.ingredientCopy}>
-        <Text style={styles.ingredientName} numberOfLines={1}>{item.name}</Text>
-        <Text style={styles.ingredientCategory}>{item.category}</Text>
-        <Text style={styles.ingredientQuantity}>{item.quantity} {item.unit}</Text>
-        {item.expiration ? <Text style={styles.ingredientExpiration}>Exp. {item.expiration}</Text> : null}
-        <StatusBadge label={statusLabel} tone={statusTone} />
-      </View>
-      <Text style={styles.cardChevron}>›</Text>
-    </Wrapper>
-  );
-}
-
-function InventoryIngredientCard({ item, onPress }: { item: Ingredient; onPress: () => void }) {
-  const styles = useStaffStyles();
-  const statusLabel = item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock';
-  const statusTone = item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good';
-
-  return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}, ${statusLabel}`}
+      accessibilityLabel={`${item.name}, ${item.category}, ${item.quantity} ${item.unit}${showExpiration && item.expiration ? `, expires ${item.expiration}` : ''}, ${statusLabel}`}
       onPress={onPress}
       style={({ pressed }) => [styles.inventoryCard, pressed && styles.pressed]}
     >
       <IngredientThumbnail item={item} small />
       <View style={styles.inventoryCardCopy}>
-        <Text style={styles.inventoryIngredientName}>{item.name}</Text>
-        <Text style={styles.inventoryIngredientCategory}>{item.category}</Text>
+        <Text style={styles.inventoryIngredientName} numberOfLines={1}>{item.name}</Text>
+        <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{item.category}</Text>
       </View>
       <View style={styles.inventoryQuantityColumn}>
         <Text style={styles.inventoryQuantity}>{item.quantity} {item.unit}</Text>
+        {showExpiration && item.expiration ? (
+          <Text style={styles.dashboardExpiration}>Exp. {item.expiration}</Text>
+        ) : null}
         <StatusBadge label={statusLabel} tone={statusTone} alignRight />
       </View>
     </Pressable>
@@ -756,8 +730,9 @@ export default function StaffWorkspace({
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [backendLoading, setBackendLoading] = useState(true);
   const [backendError, setBackendError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
-  const [dailyCheckRemarks, setDailyCheckRemarks] = useState('Recounted; bag short by 2 kg');
+  const [dailyCheckRemarks, setDailyCheckRemarks] = useState('');
   const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);
   const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
   const [currentDailyCheck, setCurrentDailyCheck] = useState<DailyInventoryCheck | null>(null);
@@ -802,7 +777,6 @@ export default function StaffWorkspace({
   const [fastLogPopupVisible, setFastLogPopupVisible] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
-  const [dashboardCarouselWidth, setDashboardCarouselWidth] = useState(0);
   const [historySearch, setHistorySearch] = useState('');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('All types');
   const [historyFromDate, setHistoryFromDate] = useState<Date | null>(null);
@@ -859,7 +833,10 @@ export default function StaffWorkspace({
   }, [user?.branchId]);
 
   const refreshBackendData = async () => {
-    if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+    if (!user?.branchId) {
+      setBackendError('Your account does not have an assigned branch. Contact the owner.');
+      return;
+    }
     try {
       const [inventory, history] = await Promise.all([
         loadInventory(user.branchId),
@@ -870,6 +847,15 @@ export default function StaffWorkspace({
       setBackendError('');
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'The saved record could not be refreshed.');
+    }
+  };
+
+  const refreshDashboardData = async () => {
+    setRefreshing(true);
+    try {
+      await refreshBackendData();
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -1040,7 +1026,7 @@ export default function StaffWorkspace({
       }),
     [category, ingredients, normalizedSearch],
   );
-  const lowStockItems = ingredients.filter((item) => item.quantity <= 0 || item.quantity < item.minimumStock);
+  const lowStockItems = ingredients.filter((item) => item.lowStock);
   const expiringBatches = ingredients.flatMap((item) =>
     item.batches.flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDate);
@@ -1078,15 +1064,22 @@ export default function StaffWorkspace({
     (notificationFilter === 'all' || notificationFilter === item.kind),
   );
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
-  const dashboardCardWidth = Math.max(0, dashboardCarouselWidth - 12);
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
+  const visibleLowStockItems = lowStockItems.filter(dashboardMatches);
+  const visibleExpiringItems = expiringItems.filter(dashboardMatches);
 
   const navigate = (nextRoute: StaffTab) => {
     setDailyCheckModal(null);
     setLogoutConfirmationVisible(false);
     setRoute(nextRoute);
     setDashboardMessage('');
+  };
+
+  const openIngredientDetails = (item: Ingredient) => {
+    setSelectedIngredientId(item.id);
+    setIngredientDetailReturnRoute('inventory');
+    setRoute('ingredientDetails');
   };
 
   const startDailyInventoryCheck = () => {
@@ -1677,21 +1670,49 @@ export default function StaffWorkspace({
     </View>
   );
 
+  const renderSalesUnavailable = () => (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.pageContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {renderTopHeader('POS / Sales', 'Sales tools are not connected yet.')}
+      <View style={styles.salesUnavailableCard}>
+        <View style={styles.salesUnavailableIcon}>
+          <Text style={styles.salesUnavailableIconText}>▤</Text>
+        </View>
+        <Text style={styles.salesUnavailableTitle}>Point of sale unavailable</Text>
+        <Text style={styles.salesUnavailableMessage}>
+          This app has no product catalog, pricing, or sales-order service. No sales or inventory records have been created.
+        </Text>
+      </View>
+    </ScrollView>
+  );
+
   const renderDashboard = () => (
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={styles.dashboardContent}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => void refreshDashboardData()}
+          tintColor={colors.pink}
+          colors={[colors.pink]}
+        />
+      }
     >
+      <Text style={styles.dashboardPageTitle}>Dashboard</Text>
       <View style={styles.dashboardHeader}>
         <View style={styles.profileAvatar}>
           <View style={styles.profileHead} />
           <View style={styles.profileBody} />
         </View>
         <View style={styles.greetingCopy}>
-          <Text style={styles.greeting}>Hello, {staffName}!</Text>
-          <Text style={styles.branchName}>{assignedBranch}</Text>
+          <Text style={styles.greeting} numberOfLines={1}>Hello, {staffName}!</Text>
+          <Text style={styles.branchName} numberOfLines={1}>{assignedBranch}</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -1704,7 +1725,7 @@ export default function StaffWorkspace({
             <View style={styles.bellBase} />
             <View style={styles.bellClapper} />
           </View>
-          <View style={styles.notificationDot} />
+          {inventoryAlerts.length > 0 ? <View style={styles.notificationDot} /> : null}
         </Pressable>
       </View>
       <SearchBar value={dashboardSearch} onChangeText={setDashboardSearch} placeholder="Search inventory" />
@@ -1719,11 +1740,21 @@ export default function StaffWorkspace({
           <Text style={styles.summaryEyebrow}>INVENTORY SUMMARY</Text>
           <View style={styles.summaryTotalRow}>
             <Text style={styles.summaryTotal}>
-              {backendLoading ? '…' : ingredients.length.toString().padStart(2, '0')}
+              {backendLoading
+                ? '…'
+                : backendError !== '' && ingredients.length === 0
+                  ? '—'
+                  : ingredients.length.toString().padStart(2, '0')}
             </Text>
             <Text style={styles.summaryItems}>items tracked</Text>
           </View>
-          <Text style={styles.summaryAlerts}>{lowStockItems.length + expiringItems.length} stock alerts need attention</Text>
+          <Text style={styles.summaryAlerts}>
+            {backendLoading
+              ? 'Loading stock alerts…'
+              : backendError !== '' && ingredients.length === 0
+                ? 'Stock data unavailable'
+                : `${lowStockItems.length + expiringItems.length} stock alerts need attention`}
+          </Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => navigate('inventory')}
@@ -1751,7 +1782,7 @@ export default function StaffWorkspace({
         {[
           { title: 'Stock-In', icon: '+', onPress: () => openForm('stockIn', 'dashboard') },
           { title: 'Stock-Out', icon: '↗', onPress: () => openForm('stockOut', 'dashboard') },
-          { title: 'Waste', icon: '×', onPress: () => { openForm('stockOut', 'dashboard'); setReason('Spoilage'); } },
+          { title: 'Waste', icon: '×', onPress: () => openForm('waste', 'dashboard') },
           {
             title: 'Daily Check',
             icon: '✓',
@@ -1794,57 +1825,44 @@ export default function StaffWorkspace({
 
       <View style={styles.sectionHeadingRow}>
         <Text style={styles.sectionTitle}>Low-Stock Items</Text>
+        <Text style={styles.sectionHint}>{lowStockItems.length} items</Text>
       </View>
-      <ScrollView
-        style={styles.dashboardCarousel}
-        horizontal
-        nestedScrollEnabled
-        directionalLockEnabled
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.horizontalCards}
-        onLayout={(event) => setDashboardCarouselWidth(event.nativeEvent.layout.width)}
-      >
-        {lowStockItems.filter(dashboardMatches).map((item) => (
-          <IngredientCard
+      <View style={styles.dashboardIngredientList}>
+        {visibleLowStockItems.map((item) => (
+          <InventoryIngredientCard
             key={`low-${item.id}`}
             item={item}
-            compact
-            cardWidth={dashboardCardWidth}
-            onPress={() => openForm('stockOut', 'dashboard')}
+            statusOverride={{ label: 'Low stock', tone: 'low' }}
+            onPress={() => openIngredientDetails(item)}
           />
         ))}
-        {lowStockItems.filter(dashboardMatches).length === 0 && (
-          <Text style={styles.emptyState}>No low-stock items match your search.</Text>
+        {visibleLowStockItems.length === 0 && (
+          <Text style={styles.emptyState}>
+            {dashboardTerm ? 'No low-stock items match your search.' : 'No low-stock ingredients right now.'}
+          </Text>
         )}
-      </ScrollView>
+      </View>
 
       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
         <Text style={styles.sectionTitle}>Nearing Expiration</Text>
         <Text style={styles.sectionHint}>{expiringItems.length} items</Text>
       </View>
-      <ScrollView
-        style={styles.dashboardCarousel}
-        horizontal
-        nestedScrollEnabled
-        directionalLockEnabled
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.horizontalCards}
-        onLayout={(event) => setDashboardCarouselWidth(event.nativeEvent.layout.width)}
-      >
-        {expiringItems.filter(dashboardMatches).map((item) => (
-          <IngredientCard
+      <View style={styles.dashboardIngredientList}>
+        {visibleExpiringItems.map((item) => (
+          <InventoryIngredientCard
             key={`expiry-${item.id}`}
             item={item}
-            compact
-            cardWidth={dashboardCardWidth}
             statusOverride={{ label: 'Expiring soon', tone: 'warning' }}
-            onPress={() => openForm('stockOut', 'dashboard')}
+            showExpiration
+            onPress={() => openIngredientDetails(item)}
           />
         ))}
-        {expiringItems.filter(dashboardMatches).length === 0 && (
-          <Text style={styles.emptyState}>No items nearing expiration match your search.</Text>
+        {visibleExpiringItems.length === 0 && (
+          <Text style={styles.emptyState}>
+            {dashboardTerm ? 'No items nearing expiration match your search.' : 'No ingredients nearing expiration.'}
+          </Text>
         )}
-      </ScrollView>
+      </View>
     </ScrollView>
   );
 
@@ -4442,6 +4460,9 @@ export default function StaffWorkspace({
     case 'dashboard':
       screenContent = renderDashboard();
       break;
+    case 'sales':
+      screenContent = renderSalesUnavailable();
+      break;
     case 'inventory':
       screenContent = renderInventory();
       break;
@@ -5117,10 +5138,11 @@ function useStaffStyles() {
 
 function createStaffStyles(theme: AppTheme) {
   return StyleSheet.create(createThemedStyles({
-  workspace: { flex: 1, backgroundColor: colors.white },
+  workspace: { flex: 1, backgroundColor: '#F5F5F5' },
   screenArea: { flex: 1, minHeight: 0 },
   scroll: { flex: 1 },
-  dashboardContent: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 20 },
+  dashboardContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 20 },
+  dashboardPageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 21, lineHeight: 28, marginBottom: 9 },
   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },
   inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },
   inventoryPageHeader: { marginBottom: 14 },
@@ -5130,15 +5152,17 @@ function createStaffStyles(theme: AppTheme) {
   inventoryCount: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginBottom: 10 },
   inventoryCardSeparator: { height: 9 },
   inventoryCard: {
-    minHeight: 91, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
-    paddingVertical: 8, borderRadius: 16, backgroundColor: '#EEEEEF', elevation: 2,
-    shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+    minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1,
+    borderColor: colors.line, elevation: 1, shadowColor: colors.navy, shadowOpacity: 0.05,
+    shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
   },
-  inventoryCardCopy: { flex: 1, minWidth: 0, marginLeft: 12 },
+  inventoryCardCopy: { flex: 1, minWidth: 0, marginLeft: 11 },
   inventoryIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
   inventoryIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 3 },
-  inventoryQuantityColumn: { minWidth: 82, alignItems: 'flex-end', justifyContent: 'center', marginLeft: 8 },
+  inventoryQuantityColumn: { minWidth: 88, alignItems: 'flex-end', justifyContent: 'center', marginLeft: 8 },
   inventoryQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
+  dashboardExpiration: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   inventoryChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
   inventoryChipText: { color: colors.navy },
   inventoryChipTextSelected: { color: colors.white },
@@ -5263,7 +5287,7 @@ function createStaffStyles(theme: AppTheme) {
   historyUsageAmount: { color: colors.red, fontFamily: font.semibold, fontSize: 9, marginLeft: 7 },
   stockHistoryList: { gap: 9, marginTop: 10 },
   formContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 24 },
-  dashboardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 17 },
+  dashboardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   profileAvatar: {
     width: 43, height: 43, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#FCE3EB', marginRight: 10,
@@ -5281,7 +5305,7 @@ function createStaffStyles(theme: AppTheme) {
   notificationDot: { position: 'absolute', top: 8, right: 9, width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink },
   searchBar: {
     minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
-    borderRadius: 13, backgroundColor: colors.pale, marginBottom: 17,
+    borderRadius: 22, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 17,
   },
   searchGlyph: { color: colors.muted, fontSize: 25, lineHeight: 29, width: 24, textAlign: 'center', marginRight: 7 },
   searchInput: { flex: 1, minHeight: 42, paddingVertical: 0, color: colors.ink, fontFamily: font.regular, fontSize: 11 },
@@ -5290,11 +5314,11 @@ function createStaffStyles(theme: AppTheme) {
   infoBannerText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 10, lineHeight: 15 },
   bannerDismiss: { color: colors.muted, fontFamily: font.medium, fontSize: 19, paddingHorizontal: 4 },
   summaryCard: {
-    minHeight: 166, overflow: 'hidden', justifyContent: 'center', paddingHorizontal: 17,
-    borderRadius: 22, backgroundColor: colors.navy, marginBottom: 20, elevation: 5,
+    minHeight: 170, overflow: 'hidden', justifyContent: 'center', paddingHorizontal: 17,
+    borderRadius: 22, backgroundColor: colors.navy, marginBottom: 19, elevation: 5,
     shadowColor: colors.navy, shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 5 },
   },
-  summaryCopy: { width: '76%', zIndex: 2 },
+  summaryCopy: { width: '77%', zIndex: 2 },
   summaryEyebrow: { color: colors.white, fontFamily: font.semibold, fontSize: 9, letterSpacing: 1.1 },
   summaryTotalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 7, marginTop: 3 },
   summaryTotal: { color: colors.orange, fontFamily: font.bold, fontSize: 37, lineHeight: 45 },
@@ -5307,7 +5331,7 @@ function createStaffStyles(theme: AppTheme) {
   checkNowText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
   checkNowArrow: { color: colors.white, fontSize: 18, lineHeight: 20, marginLeft: 5 },
   summaryPhoto: {
-    position: 'absolute', right: -9, top: 25, width: 124, height: 124, overflow: 'hidden',
+    position: 'absolute', right: -9, top: 24, width: 126, height: 126, overflow: 'hidden',
     borderRadius: 64, backgroundColor: '#FFF4D6', borderWidth: 4, borderColor: '#333448',
   },
   summaryImage: { width: '100%', height: '100%' },
@@ -5316,14 +5340,14 @@ function createStaffStyles(theme: AppTheme) {
   sectionHint: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
   quickActions: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   quickAction: {
-    flex: 1, minWidth: 0, minHeight: 80, alignItems: 'center', justifyContent: 'center',
+    flex: 1, minWidth: 0, minHeight: 76, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 2, paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white,
     borderWidth: 1, borderColor: colors.line, elevation: 2, shadowColor: colors.navy,
     shadowOpacity: 0.05, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
   },
   quickActionIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginBottom: 4 },
   quickActionGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 21, lineHeight: 25 },
-  quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'center' },
+  quickActionTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'center' },
   dashboardFastLogCard: {
     minHeight: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
     paddingVertical: 7, borderRadius: 14, backgroundColor: '#F5F5F7',
@@ -5416,15 +5440,7 @@ function createStaffStyles(theme: AppTheme) {
     paddingHorizontal: 13, borderRadius: 11, backgroundColor: colors.pink,
   },
   fastLogPopupSaveText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  dashboardCarousel: { width: '100%', flexGrow: 0 },
-  horizontalCards: { gap: 9, paddingRight: 18, paddingBottom: 2 },
-  ingredientCard: {
-    minHeight: 116, flexShrink: 0, flexDirection: 'row', alignItems: 'center', padding: 9,
-    borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
-    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.05, shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  listIngredientCard: { width: '100%', minHeight: 108 },
+  dashboardIngredientList: { gap: 8 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
   thumbnailEmoji: { fontSize: 29 },
@@ -5432,10 +5448,6 @@ function createStaffStyles(theme: AppTheme) {
   largeThumbnail: { width: 70, height: 80 },
   largeThumbnailEmoji: { fontSize: 34 },
   ingredientCopy: { flex: 1, minWidth: 0, justifyContent: 'center', marginLeft: 9 },
-  ingredientName: { color: colors.ink, fontFamily: font.semibold, fontSize: 10 },
-  ingredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
-  ingredientQuantity: { color: colors.orange, fontFamily: font.semibold, fontSize: 10, marginTop: 3 },
-  ingredientExpiration: { color: colors.muted, fontFamily: font.medium, fontSize: 8, marginTop: 2 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 9, paddingHorizontal: 6, paddingVertical: 3, marginTop: 4 },
   statusBadgeRight: { alignSelf: 'flex-end' },
   statusBadgeText: { fontFamily: font.medium, fontSize: 7 },
@@ -5451,6 +5463,20 @@ function createStaffStyles(theme: AppTheme) {
   pageHeader: { marginBottom: 17 },
   pageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 22, lineHeight: 29 },
   pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 10, marginTop: 2 },
+  salesUnavailableCard: {
+    alignItems: 'center', paddingHorizontal: 22, paddingVertical: 26, borderRadius: 20,
+    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
+  },
+  salesUnavailableIcon: {
+    width: 54, height: 54, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 17, backgroundColor: '#FFF1E2', marginBottom: 14,
+  },
+  salesUnavailableIconText: { color: colors.orange, fontFamily: font.semibold, fontSize: 28 },
+  salesUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 14, textAlign: 'center' },
+  salesUnavailableMessage: {
+    maxWidth: 300, color: colors.muted, fontFamily: font.regular, fontSize: 10,
+    lineHeight: 16, textAlign: 'center', marginTop: 8,
+  },
   categoryScroll: { flexGrow: 0, marginBottom: 19 },
   categoryList: { gap: 8, paddingRight: 6 },
   categoryChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.pale },
