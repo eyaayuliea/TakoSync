@@ -31,9 +31,9 @@ type OwnerPage =
   | 'details'
   | 'itemManagement'
   | 'stocks'
-  | 'notifications'
+  | 'alerts'
   | 'settings';
-type BaseTab = Extract<OwnerPage, 'dashboard' | 'inventory' | 'stocks' | 'notifications'>;
+type BaseTab = Extract<OwnerPage, 'dashboard' | 'inventory' | 'stocks' | 'alerts'>;
 
 const FONT = {
   regular: 'Poppins_400Regular',
@@ -243,8 +243,8 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
       setPage('inventory');
     } else if (tab === 'stocks') {
       setPage('stocks');
-    } else if (tab === 'notifications') {
-      setPage('notifications');
+    } else if (tab === 'alerts') {
+      setPage('alerts');
     } else {
       setPage('settings');
     }
@@ -506,13 +506,13 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
         </ScrollView>
       )}
 
-      {page === 'notifications' && (
+      {page === 'alerts' && (
         <ScrollView style={styles.flex} contentContainerStyle={styles.pageContent}>
-          <PageHeader title="Notifications" subtitle="Owner access · all three branches" />
+          <PageHeader title="Alerts" subtitle="Owner access · all three branches" />
           <SectionTitle title="Stock alerts" />
           {[...lowStock, ...nearExpiry].map(({ branch, ingredient }) => (
             <IngredientCard
-              key={`${branch.id}-${ingredient.id}-notification`}
+              key={`${branch.id}-${ingredient.id}-alert`}
               branch={branch}
               ingredient={ingredient}
               onPress={() => {
@@ -521,7 +521,9 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
               }}
             />
           ))}
-          {totalAlerts === 0 && <Text style={styles.emptyText}>No sample alerts.</Text>}
+          {totalAlerts === 0 && (
+            <Text style={styles.emptyText}>No alerts at the moment. Low-stock and expiry alerts appear here.</Text>
+          )}
         </ScrollView>
       )}
 

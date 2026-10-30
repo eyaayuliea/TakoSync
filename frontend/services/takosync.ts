@@ -1,5 +1,5 @@
 import { requireSupabase } from './supabase';
-import type { Json } from '../../backend/types/database';
+import type { Database, Json } from '../../backend/types/database';
 
 export type AppUser = {
   id: string;
@@ -27,7 +27,13 @@ export type InventoryItem = {
   unitName: string;
   receivedBatch: string;
   batchReference?: string;
-  batches: { reference: string; receivedDate: string; expirationDate: string | null }[];
+  batches: {
+    reference: string;
+    receivedDate: string;
+    expirationDate: string | null;
+    expirationDateIso: string | null;
+    quantityRemaining: number;
+  }[];
   lastUpdated: string;
   emoji: string;
   tint: string;
@@ -64,6 +70,33 @@ export type TransactionHistoryItem = {
   beforeQuantity: number;
   afterQuantity: number;
   batchReference: string | null;
+};
+
+export type OwnerSale = {
+  id: string;
+  transaction_reference: string;
+  branch_id: string;
+  total_amount: number;
+  payment_method: string;
+  status: 'pending' | 'completed' | 'cancelled';
+  created_at: string;
+};
+
+export type OwnerSaleItem = {
+  id: string;
+  sale_id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+};
+
+export type OwnerSalesData = {
+  sales: OwnerSale[];
+  todaySales: OwnerSale[];
+  previousSales: OwnerSale[];
+  items: OwnerSaleItem[];
 };
 
 const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
@@ -188,6 +221,100 @@ export async function loadBranches() {
   return data ?? [];
 }
 
+export async function loadOwnerSalesData(input: {
+  start: Date;
+  end: Date;
+  branchId: string | null;
+  includePrevious?: boolean;
+}): Promise<OwnerSalesData> {
+  if (
+    !Number.isFinite(input.start.getTime()) ||
+    !Number.isFinite(input.end.getTime()) ||
+    input.start >= input.end
+  ) {
+    throw new Error('Choose a valid sales reporting date range.');
+  }
+
+  const client = requireSupabase();
+  const pageSize = 500;
+  const fetchSales = async (start: Date, end: Date): Promise<OwnerSale[]> => {
+    const sales: OwnerSale[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      let query = client.from('sales')
+        .select('id, transaction_reference, branch_id, total_amount, payment_method, status, created_at')
+        .eq('status', 'completed')
+        .gte('created_at', start.toISOString())
+        .lt('created_at', end.toISOString())
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+      if (input.branchId) query = query.eq('branch_id', input.branchId);
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      assertNoError(error);
+      sales.push(...(data ?? []));
+      if ((data?.length ?? 0) < pageSize) break;
+    }
+    return sales;
+  };
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const rangeIncludesToday = input.start <= todayStart && input.end >= tomorrowStart;
+  const durationDays = Math.max(1, Math.round((input.end.getTime() - input.start.getTime()) / 86_400_000));
+  const previousEnd = new Date(input.start);
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - durationDays);
+  const [sales, todaySales, previousSales] = await Promise.all([
+    fetchSales(input.start, input.end),
+    rangeIncludesToday ? Promise.resolve(null) : fetchSales(todayStart, tomorrowStart),
+    input.includePrevious ? fetchSales(previousStart, previousEnd) : Promise.resolve([]),
+  ]);
+  const currentDaySales = todaySales ?? sales.filter((sale) => {
+    const createdAt = new Date(sale.created_at).getTime();
+    return createdAt >= todayStart.getTime() && createdAt < tomorrowStart.getTime();
+  });
+
+  const saleItems: OwnerSalesData['items'] = [];
+  const productNames = new Map<string, string>();
+  const saleIds = sales.map((sale) => sale.id);
+  for (let saleOffset = 0; saleOffset < saleIds.length; saleOffset += pageSize) {
+    const saleIdBatch = saleIds.slice(saleOffset, saleOffset + pageSize);
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await client.from('sale_items')
+        .select('id, sale_id, product_id, quantity, unit_price, subtotal')
+        .in('sale_id', saleIdBatch)
+        .order('id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      assertNoError(error);
+      saleItems.push(...(data ?? []).map((item) => ({
+        ...item,
+        product_name: '',
+      })));
+      if ((data?.length ?? 0) < pageSize) break;
+    }
+  }
+
+  const productIds = [...new Set(saleItems.map((item) => item.product_id))];
+  for (let offset = 0; offset < productIds.length; offset += pageSize) {
+    const { data, error } = await client.from('products')
+      .select('id, product_name')
+      .in('id', productIds.slice(offset, offset + pageSize));
+    assertNoError(error);
+    for (const product of data ?? []) productNames.set(product.id, product.product_name);
+  }
+
+  return {
+    sales,
+    todaySales: currentDaySales,
+    previousSales,
+    items: saleItems.map((item) => ({
+      ...item,
+      product_name: productNames.get(item.product_id) ?? 'Product unavailable',
+    })),
+  };
+}
+
 export async function loadInventory(branchId: string): Promise<InventoryItem[]> {
   const client = requireSupabase();
   const [inventoryResult, ingredientsResult, categoriesResult, batchesResult] = await Promise.all([
@@ -258,6 +385,8 @@ export async function loadInventory(branchId: string): Promise<InventoryItem[]> 
         reference: batch.batch_reference,
         receivedDate: formatDate(batch.received_date) ?? '',
         expirationDate: formatDate(batch.expiration_date),
+        expirationDateIso: batch.expiration_date,
+        quantityRemaining: Number(batch.quantity_remaining),
       })),
       lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
       emoji: visual.emoji,
@@ -436,37 +565,162 @@ async function fetchTransactionPage(
 export async function loadOwnerInventory() {
   const branches = await loadBranches();
   const client = requireSupabase();
-  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult, transactionsResult, dailyChecksResult] = await Promise.all([
+  const pageSize = 500;
+  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult] = await Promise.all([
     client.from('inventory').select('branch_id, ingredient_id, quantity, minimum_stock, updated_at'),
-    client.from('ingredients').select('id, category_id, name, unit, active').eq('active', true).order('name'),
+    client.from('ingredients').select('id, category_id, name, unit, expiration_tracking, active').eq('active', true).order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
-      .select('branch_id, ingredient_id, expiration_date, quantity_remaining')
+      .select('id, branch_id, ingredient_id, batch_reference, expiration_date, quantity_remaining')
       .gt('quantity_remaining', 0)
       .not('expiration_date', 'is', null)
-      .order('expiration_date'),
-    client.from('inventory_transactions')
-      .select('id, reference, branch_id, ingredient_id, type, quantity, unit, transaction_date, reason')
-      .order('transaction_date', { ascending: false })
-      .limit(25),
-    client.from('daily_stock_checks')
-      .select('id, reference, branch_id, check_date, status, remarks')
-      .order('created_at', { ascending: false })
-      .limit(25),
+      .order('expiration_date')
+      .order('id', { ascending: false })
+      .range(0, pageSize - 1),
   ]);
   assertNoError(inventoryResult.error);
   assertNoError(ingredientsResult.error);
   assertNoError(categoriesResult.error);
   assertNoError(batchesResult.error);
-  assertNoError(transactionsResult.error);
-  assertNoError(dailyChecksResult.error);
+
+  const batches = [...(batchesResult.data ?? [])];
+  for (let offset = pageSize; (batchesResult.data?.length ?? 0) === pageSize; offset += pageSize) {
+    const { data, error } = await client.from('ingredient_batches')
+      .select('id, branch_id, ingredient_id, batch_reference, expiration_date, quantity_remaining')
+      .gt('quantity_remaining', 0)
+      .not('expiration_date', 'is', null)
+      .order('expiration_date')
+      .order('id', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    assertNoError(error);
+    batches.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+
   return {
     branches,
     inventory: inventoryResult.data ?? [],
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
-    batches: batchesResult.data ?? [],
-    transactions: transactionsResult.data ?? [],
-    dailyChecks: dailyChecksResult.data ?? [],
+    batches,
   };
+}
+
+export async function loadOwnerActivityData(input: {
+  start: Date;
+  end: Date;
+  branchId: string | null;
+}) {
+  if (
+    !Number.isFinite(input.start.getTime()) ||
+    !Number.isFinite(input.end.getTime()) ||
+    input.start >= input.end
+  ) {
+    throw new Error('Choose a valid activity reporting date range.');
+  }
+
+  const client = requireSupabase();
+  const pageSize = 500;
+  const transactionQuery = (offset: number) => {
+    let query = client.from('inventory_transactions')
+      .select('id, reference, branch_id, ingredient_id, type, quantity, unit, transaction_date')
+      .gte('transaction_date', input.start.toISOString())
+      .lt('transaction_date', input.end.toISOString())
+      .order('transaction_date', { ascending: false })
+      .order('id', { ascending: false });
+    if (input.branchId) query = query.eq('branch_id', input.branchId);
+    return query.range(offset, offset + pageSize - 1);
+  };
+  const transactions: {
+    id: string;
+    reference: string;
+    branch_id: string;
+    ingredient_id: string;
+    type: Database['public']['Enums']['inventory_transaction_type'];
+    quantity: number;
+    unit: string;
+    transaction_date: string;
+  }[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await transactionQuery(offset);
+    assertNoError(error);
+    transactions.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+
+  const auditLogs: Database['public']['Tables']['audit_logs']['Row'][] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    let query = client.from('audit_logs')
+      .select('id, user_id, branch_id, action, description, created_at')
+      .gte('created_at', input.start.toISOString())
+      .lt('created_at', input.end.toISOString())
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (input.branchId) query = query.eq('branch_id', input.branchId);
+    const { data, error } = await query.range(offset, offset + pageSize - 1);
+    assertNoError(error);
+    auditLogs.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+
+  type OwnerDailyCheck = {
+    id: string;
+    reference: string;
+    branch_id: string;
+    check_date: string;
+    status: string;
+    remarks: string;
+    created_at: string;
+  };
+  const loadCheckPage = async (offset: number, pendingOnly: boolean) => {
+    let query = client.from('daily_stock_checks')
+      .select('id, reference, branch_id, check_date, status, remarks, created_at')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (pendingOnly) query = query.eq('status', 'pending_owner_review');
+    else query = query.gte('created_at', input.start.toISOString()).lt('created_at', input.end.toISOString());
+    if (input.branchId) query = query.eq('branch_id', input.branchId);
+    const result = await query.range(offset, offset + pageSize - 1);
+    assertNoError(result.error);
+    return result.data ?? [];
+  };
+  const [recentFirstPage, pendingFirstPage] = await Promise.all([
+    loadCheckPage(0, false),
+    loadCheckPage(0, true),
+  ]);
+  const recentChecks: OwnerDailyCheck[] = [...recentFirstPage];
+  const pendingChecks: OwnerDailyCheck[] = [...pendingFirstPage];
+  if (recentFirstPage.length === pageSize) {
+    for (let offset = pageSize; ; offset += pageSize) {
+      const page = await loadCheckPage(offset, false);
+      recentChecks.push(...page);
+      if (page.length < pageSize) break;
+    }
+  }
+  if (pendingFirstPage.length === pageSize) {
+    for (let offset = pageSize; ; offset += pageSize) {
+      const page = await loadCheckPage(offset, true);
+      pendingChecks.push(...page);
+      if (page.length < pageSize) break;
+    }
+  }
+  const checksById = new Map([...recentChecks, ...pendingChecks].map((check) => [check.id, check]));
+  const dailyChecks = [...checksById.values()];
+  const countLines: {
+    daily_stock_check_id: string;
+    ingredient_id: string;
+    recorded_quantity: number;
+    physical_quantity: number;
+    difference: number;
+    unit: string;
+  }[] = [];
+  for (let index = 0; index < dailyChecks.length; index += 10) {
+    const { data, error } = await client.from('daily_stock_count_lines')
+      .select('daily_stock_check_id, ingredient_id, recorded_quantity, physical_quantity, difference, unit')
+      .in('daily_stock_check_id', dailyChecks.slice(index, index + 10).map((check) => check.id));
+    assertNoError(error);
+    countLines.push(...(data ?? []));
+  }
+
+  return { transactions, dailyChecks, countLines, auditLogs };
 }

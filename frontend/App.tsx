@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Image,
   ImageBackground,
+  Platform,
   Pressable,
   ScrollView,
   SafeAreaView,
@@ -21,14 +22,19 @@ import {
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
+import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
+import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
 import {
   getCurrentUser,
+  loadOwnerActivityData,
   loadOwnerInventory,
+  loadOwnerSalesData,
   signIn,
   signOut,
   type AppUser,
+  type OwnerSalesData,
 } from './services/takosync';
 
 const PINK = '#F20D55';
@@ -48,17 +54,76 @@ const DASHBOARD_COLORS = {
   neutral: '#B7B7BE',
   butterCream: '#FFF4D6',
 } as const;
+const hasStaffDashboard = (role: AppUser['role'] | null): boolean => role === 'Staff';
 type PreviewInventoryItem = {
+  id: string;
+  branchId: string;
   name: string;
   category: string;
   quantity: string;
+  unit: string;
+  minimumStock: number;
   lowStock: boolean;
-  expiration: string | null;
   branch?: string;
 };
 type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace';
 type AuthenticatedUser = AppUser;
-type DashboardTab = 'Dashboard' | 'History' | 'Alerts';
+type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
+type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
+
+function dateInputValue(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parseLocalDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    ? date
+    : null;
+}
+
+function periodStart(period: ReportingPeriod, now = new Date()): Date {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (period === 'Custom') return start;
+  if (period === 'This Month') {
+    start.setDate(1);
+  } else if (period === 'This Week') {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  }
+  return start;
+}
+
+function periodRange(
+  period: ReportingPeriod,
+  now = new Date(),
+  customStart?: string,
+  customEnd?: string,
+): { start: Date; end: Date } | null {
+  if (period === 'Custom') {
+    const start = customStart ? parseLocalDate(customStart) : null;
+    const end = customEnd ? parseLocalDate(customEnd) : null;
+    if (!start || !end || start > end) return null;
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+  const start = periodStart(period, now);
+  const end = new Date(start);
+  if (period === 'Today') end.setDate(end.getDate() + 1);
+  else if (period === 'This Week') end.setDate(end.getDate() + 7);
+  else end.setMonth(end.getMonth() + 1);
+  return { start, end };
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
 
 export default function App() {
   return (
@@ -83,8 +148,26 @@ function AppContent() {
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
+  const [ownerLoadError, setOwnerLoadError] = useState('');
+  const [salesLoadError, setSalesLoadError] = useState('');
+  const [activityLoadError, setActivityLoadError] = useState('');
+  const [branchFilter, setBranchFilter] = useState<string | null>(null);
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>('This Month');
+  const [requestedCustomStart, setRequestedCustomStart] = useState(() => {
+    const date = new Date();
+    date.setDate(1);
+    date.setHours(0, 0, 0, 0);
+    return dateInputValue(date);
+  });
+  const [requestedCustomEnd, setRequestedCustomEnd] = useState(() => dateInputValue(new Date()));
+  const [customStart, setCustomStart] = useState(requestedCustomStart);
+  const [customEnd, setCustomEnd] = useState(requestedCustomEnd);
   const [ownerData, setOwnerData] = useState<Awaited<ReturnType<typeof loadOwnerInventory>> | null>(null);
+  const [ownerSalesData, setOwnerSalesData] = useState<OwnerSalesData | null>(null);
+  const [ownerActivityData, setOwnerActivityData] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
   const [ownerLoading, setOwnerLoading] = useState(false);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [fontsLoaded] = useFonts({
     Poppins_400Regular,
     Poppins_500Medium,
@@ -93,9 +176,18 @@ function AppContent() {
   });
   const { width, height } = useWindowDimensions();
   const isWideScreen = width > 600 && height > 500;
-  const frameWidth = isWideScreen ? Math.min(430, height * 0.5) : width;
-  const frameHeight = isWideScreen ? Math.min(height, frameWidth * 2) : height;
-  const itemCarouselCardWidth = Math.max(0, frameWidth - 36);
+  const isOwnerDashboard = screen === 'dashboard' && authenticatedUser?.role === 'Owner';
+  const isSalesPage = dashboardTab === 'Sales' || dashboardTab === 'Reports';
+  const frameWidth = isWideScreen
+    ? isOwnerDashboard && Platform.OS === 'web'
+      ? Math.min(width - 32, 1320)
+      : Math.min(430, height * 0.5)
+    : width;
+  const frameHeight = isWideScreen
+    ? isOwnerDashboard && Platform.OS === 'web'
+      ? Math.min(height - 32, 900)
+      : Math.min(height, frameWidth * 2)
+    : height;
   const visibleScreen =
     (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
       ? 'login'
@@ -130,6 +222,10 @@ function AppContent() {
   useEffect(() => {
     if (authenticatedUser?.role !== 'Owner') {
       setOwnerData(null);
+      setOwnerActivityData(null);
+      setOwnerLoading(false);
+      setOwnerLoadError('');
+      setActivityLoadError('');
       return;
     }
     let active = true;
@@ -138,11 +234,13 @@ function AppContent() {
       .then((data) => {
         if (active) {
           setOwnerData(data);
-          setDashboardMessage('');
+          setOwnerLoadError('');
         }
       })
       .catch((error: unknown) => {
-        if (active) setDashboardMessage(error instanceof Error ? error.message : 'Unable to load branch inventory.');
+        if (active) {
+          setOwnerLoadError(error instanceof Error ? error.message : 'Unable to load owner dashboard data.');
+        }
       })
       .finally(() => {
         if (active) setOwnerLoading(false);
@@ -152,47 +250,289 @@ function AppContent() {
     };
   }, [authenticatedUser]);
 
+  useEffect(() => {
+    if (authenticatedUser?.role !== 'Owner') {
+      setOwnerSalesData(null);
+      setSalesLoading(false);
+      setSalesLoadError('');
+      return;
+    }
+    let active = true;
+    setSalesLoading(true);
+    setOwnerSalesData(null);
+    setSalesLoadError('');
+    const range = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    if (!range) {
+      setSalesLoading(false);
+      setSalesLoadError('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.');
+      return () => {
+        active = false;
+      };
+    }
+    loadOwnerSalesData({ ...range, branchId: branchFilter, includePrevious: true })
+      .then((data) => {
+        if (active) {
+          setOwnerSalesData(data);
+          setSalesLoadError('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setSalesLoadError(error instanceof Error ? error.message : 'Unable to load sales data.');
+        }
+      })
+      .finally(() => {
+        if (active) setSalesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authenticatedUser, branchFilter, reportingPeriod, requestedCustomStart, requestedCustomEnd]);
+
+  useEffect(() => {
+    if (authenticatedUser?.role !== 'Owner') {
+      setOwnerActivityData(null);
+      setActivityLoading(false);
+      setActivityLoadError('');
+      return;
+    }
+    let active = true;
+    const range = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    if (!range) {
+      setOwnerActivityData(null);
+      setActivityLoading(false);
+      setActivityLoadError('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.');
+      return () => {
+        active = false;
+      };
+    }
+    setActivityLoading(true);
+    setOwnerActivityData(null);
+    setActivityLoadError('');
+    loadOwnerActivityData({ ...range, branchId: branchFilter })
+      .then((data) => {
+        if (active) {
+          setOwnerActivityData(data);
+          setActivityLoadError('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setActivityLoadError(error instanceof Error ? error.message : 'Unable to load business activity.');
+        }
+      })
+      .finally(() => {
+        if (active) setActivityLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authenticatedUser, branchFilter, reportingPeriod, requestedCustomStart, requestedCustomEnd]);
+
   const logoWidth = Math.min(frameWidth * 0.48, 230);
   const foodSize = Math.min(frameWidth * 0.57, 250, frameHeight * 0.3);
-  const branchNames = new Map((ownerData?.branches ?? []).map((branch) => [
-    branch.id,
-    `${branch.city ? `${branch.city} · ` : ''}Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`,
-  ]));
+  const branchNames = new Map((ownerData?.branches ?? []).map((branch) => [branch.id, branch.name]));
   const ownerIngredients = new Map((ownerData?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient]));
   const ownerCategories = new Map((ownerData?.categories ?? []).map((category) => [category.id, category.name]));
-  const ownerBatches = new Map<string, NonNullable<typeof ownerData>['batches'][number][]>();
-  for (const batch of ownerData?.batches ?? []) {
-    const key = `${batch.branch_id}:${batch.ingredient_id}`;
-    ownerBatches.set(key, [...(ownerBatches.get(key) ?? []), batch]);
-  }
   const branchInventory: PreviewInventoryItem[] = (ownerData?.inventory ?? []).flatMap((record) => {
     const ingredient = ownerIngredients.get(record.ingredient_id);
     if (!ingredient) return [];
-    const expiration = ownerBatches.get(`${record.branch_id}:${record.ingredient_id}`)?.[0]?.expiration_date ?? null;
-    const expirationTime = expiration ? new Date(`${expiration}T00:00:00`).getTime() : null;
-    const isNearExpiry = expirationTime !== null &&
-      expirationTime <= new Date().setHours(0, 0, 0, 0) + 7 * 86_400_000;
+    const quantity = Number(record.quantity);
+    const minimumStock = Number(record.minimum_stock);
     return [{
+      id: record.ingredient_id,
+      branchId: record.branch_id,
       name: ingredient.name,
       category: ownerCategories.get(ingredient.category_id) ?? 'Other',
-      quantity: `${Number(record.quantity)} ${ingredient.unit}`,
-      lowStock: Number(record.quantity) <= Number(record.minimum_stock),
-      expiration: isNearExpiry ? new Date(`${expiration}T00:00:00`).toLocaleDateString('en-GB') : null,
+      quantity: `${quantity} ${ingredient.unit}`,
+      unit: ingredient.unit,
+      minimumStock,
+      lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
       branch: branchNames.get(record.branch_id) ?? 'Branch',
     }];
   });
-  const lowStockItems = branchInventory.filter((item) => item.lowStock);
-  const expiringItems = branchInventory.filter((item) => item.expiration !== null);
-  const pendingDailyChecks = (ownerData?.dailyChecks ?? []).filter((check) => check.status === 'pending_owner_review');
-  const trackedItemCount = branchInventory.length;
-  const stockAlertCount = lowStockItems.length + expiringItems.length;
+  const now = new Date();
+  const selectedDateRange = periodRange(reportingPeriod, now, requestedCustomStart, requestedCustomEnd);
+  const selectedBranchInventory = branchFilter
+    ? branchInventory.filter((item) => item.branchId === branchFilter)
+    : branchInventory;
+  const lowStockItems = selectedBranchInventory.filter((item) => item.lowStock);
+  const expirationItems = (ownerData?.batches ?? []).flatMap((batch) => {
+    if (!batch.expiration_date || Number(batch.quantity_remaining) <= 0) return [];
+    const ingredient = ownerIngredients.get(batch.ingredient_id);
+    const branch = branchNames.get(batch.branch_id);
+    if (!ingredient?.expiration_tracking || !branch || (branchFilter && branchFilter !== batch.branch_id)) return [];
+    const expiration = new Date(`${batch.expiration_date}T00:00:00`);
+    const daysRemaining = Math.ceil((expiration.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
+    return daysRemaining <= 7
+      ? [{
+          id: batch.id,
+          name: ingredient.name,
+          branch,
+          branchId: batch.branch_id,
+          quantity: Number(batch.quantity_remaining),
+          unit: ingredient.unit,
+          batchReference: batch.batch_reference,
+          expirationDate: batch.expiration_date,
+          daysRemaining,
+        }]
+      : [];
+  });
+  const selectedSales = ownerSalesData?.sales ?? [];
+  const salesToday = ownerSalesData?.todaySales ?? [];
+  const pendingDailyChecks = (ownerActivityData?.dailyChecks ?? []).filter((check) =>
+    check.status === 'pending_owner_review' && (!branchFilter || check.branch_id === branchFilter),
+  );
+  const selectedActivities = [
+    ...(ownerActivityData?.transactions ?? []).map((activity) => ({
+      id: activity.id,
+      type: activity.type,
+      title: ({
+        stock_in: 'Stock-In',
+        stock_out: 'Stock-Out',
+        usage: 'Usage',
+        waste: 'Waste',
+        spoilage: 'Spoilage',
+        sales_consumption: 'Sales Consumption',
+        transfer_in: 'Branch Transfer In',
+        transfer_out: 'Branch Transfer Out',
+        adjustment: 'Authorized Inventory Adjustment',
+      } as Record<string, string>)[activity.type] ?? activity.type,
+      detail: `${ownerIngredients.get(activity.ingredient_id)?.name ?? activity.ingredient_id} · ${Number(activity.quantity)} ${activity.unit}`,
+      reference: activity.reference,
+      branchId: activity.branch_id,
+      createdAt: activity.transaction_date,
+      amount: null as number | null,
+    })),
+    ...(ownerSalesData?.sales ?? []).map((sale) => ({
+      id: sale.id,
+      type: 'sale',
+      title: 'Completed Sale',
+      detail: formatCurrency(Number(sale.total_amount)),
+      reference: sale.transaction_reference,
+      branchId: sale.branch_id,
+      createdAt: sale.created_at,
+      amount: Number(sale.total_amount),
+    })),
+    ...(ownerActivityData?.dailyChecks ?? []).map((check) => ({
+      id: check.id,
+      type: 'physical_count',
+      title: 'Physical Inventory Count',
+      detail: `Submitted for review · ${check.check_date}`,
+      reference: check.reference,
+      branchId: check.branch_id,
+      createdAt: check.created_at,
+      amount: null as number | null,
+    })),
+    ...(ownerActivityData?.countLines ?? []).flatMap((line) => {
+      if (Number(line.difference) === 0) return [];
+      const check = (ownerActivityData?.dailyChecks ?? []).find((item) => item.id === line.daily_stock_check_id);
+      if (!check) return [];
+      return [{
+        id: `${check.id}:${line.ingredient_id}`,
+        type: 'discrepancy',
+        title: 'Inventory Discrepancy',
+        detail: `${ownerIngredients.get(line.ingredient_id)?.name ?? line.ingredient_id} · Expected ${Number(line.recorded_quantity)} ${line.unit} · Counted ${Number(line.physical_quantity)} ${line.unit}`,
+        reference: check.reference,
+        branchId: check.branch_id,
+        createdAt: check.created_at,
+        amount: null as number | null,
+      }];
+    }),
+  ].filter((activity) =>
+    (!branchFilter || activity.branchId === branchFilter) &&
+    selectedDateRange !== null &&
+    new Date(activity.createdAt).getTime() >= selectedDateRange.start.getTime() &&
+    new Date(activity.createdAt).getTime() < selectedDateRange.end.getTime(),
+  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const discrepancies = (ownerActivityData?.countLines ?? []).flatMap((line) => {
+    if (Number(line.difference) === 0) return [];
+    const check = pendingDailyChecks.find((item) => item.id === line.daily_stock_check_id);
+    if (!check) return [];
+    return [{
+      id: `${check.id}:${line.ingredient_id}`,
+      ingredient: ownerIngredients.get(line.ingredient_id)?.name ?? line.ingredient_id,
+      branch: branchNames.get(check.branch_id) ?? 'Branch',
+      expected: Number(line.recorded_quantity),
+      actual: Number(line.physical_quantity),
+      difference: Number(line.difference),
+      unit: line.unit,
+      submittedAt: check.created_at,
+      reference: check.reference,
+    }];
+  });
+  const trackedItemCount = selectedBranchInventory.length;
+  const expiringItems = expirationItems;
+  const totalSales = selectedSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+  const averageSale = selectedSales.length > 0 ? totalSales / selectedSales.length : 0;
+  const branchSales = (ownerData?.branches ?? [])
+    .filter((branch) => !branchFilter || branch.id === branchFilter)
+    .map((branch) => {
+      const sales = selectedSales.filter((sale) => sale.branch_id === branch.id);
+      return {
+        id: branch.id,
+        name: branch.name,
+        total: sales.reduce((sum, sale) => sum + Number(sale.total_amount), 0),
+        transactions: sales.length,
+      };
+    });
+  const highestBranchSales = Math.max(...branchSales.map((branch) => branch.total), 0);
+  const chartStart = selectedDateRange?.start ?? periodStart(reportingPeriod, now);
+  const chartDayCount = selectedDateRange
+    ? Math.max(0, Math.ceil((selectedDateRange.end.getTime() - selectedDateRange.start.getTime()) / 86_400_000))
+    : 0;
+  const chartIntervalDays = reportingPeriod === 'Custom' ? Math.max(1, Math.ceil(chartDayCount / 60)) : 1;
+  const chartBucketCount = reportingPeriod === 'This Week'
+    ? 7
+    : reportingPeriod === 'This Month'
+      ? now.getDate()
+      : reportingPeriod === 'Custom'
+        ? Math.ceil(chartDayCount / chartIntervalDays)
+        : 0;
+  const chartBuckets = reportingPeriod === 'Today'
+    ? Array.from({ length: 8 }, (_, index) => {
+        const hour = index * 3;
+        return { label: `${String(hour).padStart(2, '0')}:00`, start: hour, end: hour + 3 };
+      }).map((bucket) => ({
+        label: bucket.label,
+        total: selectedSales.reduce((sum, sale) => {
+          const date = new Date(sale.created_at);
+          return date.getHours() >= bucket.start && date.getHours() < bucket.end
+            ? sum + Number(sale.total_amount)
+            : sum;
+        }, 0),
+      }))
+    : Array.from({ length: chartBucketCount }, (_, index) => {
+          const date = new Date(chartStart);
+          date.setDate(date.getDate() + index * chartIntervalDays);
+          const dayStart = date.getTime();
+          const endDate = new Date(date);
+          endDate.setDate(endDate.getDate() + chartIntervalDays);
+          const dayEnd = endDate.getTime();
+          return {
+            label: reportingPeriod === 'This Week'
+              ? date.toLocaleDateString('en', { weekday: 'short' })
+              : reportingPeriod === 'Custom'
+                ? date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
+                : String(date.getDate()),
+            total: selectedSales.reduce((sum, sale) => {
+              const time = new Date(sale.created_at).getTime();
+              return time >= dayStart && time < dayEnd ? sum + Number(sale.total_amount) : sum;
+            }, 0),
+          };
+        });
+  const highestChartSales = Math.max(...chartBuckets.map((point) => point.total), 0);
+  const loadErrorMessage = ownerLoadError || salesLoadError || activityLoadError;
+  const bannerMessage = loadErrorMessage || dashboardMessage;
   const searchTerm = dashboardSearch.trim().toLowerCase();
   const filterItems = (items: PreviewInventoryItem[]) =>
     items.filter((item) =>
       `${item.name} ${item.category}`.toLowerCase().includes(searchTerm),
     );
   const visibleLowStockItems = filterItems(lowStockItems);
-  const visibleExpiringItems = filterItems(expiringItems);
+  const visibleExpiringItems = expirationItems.filter((item) =>
+    `${item.name} ${item.branch}`.toLowerCase().includes(searchTerm),
+  );
   const handleLogin = async () => {
     if (authLock.current) return;
     if (!loginEmail.trim() || !password) {
@@ -223,9 +563,20 @@ function AppContent() {
   const clearSignedInState = () => {
     setAuthenticatedUser(null);
     setOwnerData(null);
+    setOwnerSalesData(null);
+    setOwnerActivityData(null);
+    setOwnerLoading(false);
+    setSalesLoading(false);
+    setActivityLoading(false);
     setLoginEmail('');
     setPassword('');
     setDashboardTab('Dashboard');
+    setBranchFilter(null);
+    setReportingPeriod('This Month');
+    setOwnerLoadError('');
+    setSalesLoadError('');
+    setActivityLoadError('');
+    setDashboardMessage('');
   };
 
   const handleLogout = async () => {
@@ -236,13 +587,44 @@ function AppContent() {
       await signOut();
       clearSignedInState();
       setLoginError('');
-      setScreen('welcome');
+      setScreen(authenticatedUser?.role === 'Owner' ? 'ownerLogin' : 'welcome');
     } catch (error) {
       setDashboardMessage(error instanceof Error ? error.message : 'Unable to end the session. Please try again.');
     } finally {
       logoutLock.current = false;
       setLoggingOut(false);
     }
+  };
+
+  const refreshOwnerDashboard = async () => {
+    if (ownerLoading || salesLoading || activityLoading) return;
+    setOwnerLoading(true);
+    setSalesLoading(true);
+    setActivityLoading(true);
+    setDashboardMessage('');
+    setOwnerLoadError('');
+    setSalesLoadError('');
+    setActivityLoadError('');
+    const salesRange = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const activityRange = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const [inventoryResult, salesResult, activityResult] = await Promise.allSettled([
+      loadOwnerInventory(),
+      salesRange
+        ? loadOwnerSalesData({ ...salesRange, branchId: branchFilter, includePrevious: true })
+        : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
+      activityRange
+        ? loadOwnerActivityData({ ...activityRange, branchId: branchFilter })
+        : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
+    ]);
+    if (inventoryResult.status === 'fulfilled') setOwnerData(inventoryResult.value);
+    else setOwnerLoadError(inventoryResult.reason instanceof Error ? inventoryResult.reason.message : 'Unable to refresh inventory data.');
+    if (salesResult.status === 'fulfilled') setOwnerSalesData(salesResult.value);
+    else setSalesLoadError(salesResult.reason instanceof Error ? salesResult.reason.message : 'Unable to refresh sales data.');
+    if (activityResult.status === 'fulfilled') setOwnerActivityData(activityResult.value);
+    else setActivityLoadError(activityResult.reason instanceof Error ? activityResult.reason.message : 'Unable to refresh business activity.');
+    setOwnerLoading(false);
+    setSalesLoading(false);
+    setActivityLoading(false);
   };
 
   const handleStaffLogout = async () => {
@@ -418,7 +800,39 @@ function AppContent() {
               </View>
             )}
 
-            {visibleScreen === 'dashboard' && authenticatedUser !== null && (
+            {visibleScreen === 'dashboard' && authenticatedUser?.role === 'Owner' && (
+              <OwnerMobileWorkspace
+                user={authenticatedUser}
+                availableWidth={frameWidth}
+                onLogout={handleLogout}
+                data={ownerData}
+                inventoryLoading={ownerLoading}
+                inventoryError={ownerLoadError}
+                salesData={ownerSalesData}
+                salesLoading={salesLoading}
+                salesError={salesLoadError}
+                activityData={ownerActivityData}
+                activityLoading={activityLoading}
+                activityError={activityLoadError}
+                branchId={branchFilter}
+                onBranchChange={setBranchFilter}
+                period={reportingPeriod}
+                onPeriodChange={setReportingPeriod}
+                customStart={customStart}
+                customEnd={customEnd}
+                onCustomStartChange={setCustomStart}
+                onCustomEndChange={setCustomEnd}
+                onApplyCustomRange={() => {
+                  setRequestedCustomStart(customStart);
+                  setRequestedCustomEnd(customEnd);
+                }}
+                onRefresh={refreshOwnerDashboard}
+                refreshing={ownerLoading || salesLoading || activityLoading}
+                loggingOut={loggingOut}
+              />
+            )}
+
+            {visibleScreen === 'dashboard' && authenticatedUser !== null && hasStaffDashboard(authenticatedUser.role) && (
               <View style={styles.dashboardScreen}>
                 <ScrollView
                   style={styles.dashboardScroll}
@@ -433,19 +847,37 @@ function AppContent() {
                         <View style={styles.profileBody} />
                       </View>
                       <View style={styles.greetingGroup}>
-                        <Text style={styles.dashboardGreeting}>Hello, {authenticatedUser.branch}!</Text>
-                        <Text style={styles.dashboardSubheading}>{authenticatedUser.role} dashboard</Text>
+                        <Text style={styles.dashboardGreeting}>Hello, {authenticatedUser.displayName}!</Text>
+                        <Text style={styles.dashboardSubheading}>
+                          Owner dashboard · {now.toLocaleDateString('en-PH', { dateStyle: 'full' })}
+                        </Text>
                       </View>
                     </View>
                     <View style={styles.headerActions}>
+                      {authenticatedUser.role === 'Owner' && !isSalesPage && (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Refresh dashboard data"
+                          disabled={ownerLoading || salesLoading || activityLoading}
+                          onPress={refreshOwnerDashboard}
+                          style={({ pressed }) => [styles.refreshButton, pressed && styles.buttonPressed, (ownerLoading || salesLoading || activityLoading) && { opacity: 0.6 }]}
+                        >
+                          {ownerLoading || salesLoading || activityLoading
+                            ? <ActivityIndicator size="small" color={DASHBOARD_COLORS.navy} />
+                            : <Text style={styles.refreshButtonText}>↻</Text>}
+                        </Pressable>
+                      )}
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Notifications"
-                        onPress={() => setDashboardMessage('Owner notifications are not configured in this screen.')}
-                        style={({ pressed }) => [styles.notificationButton, pressed && styles.buttonPressed]}
+                        accessibilityLabel="Alerts"
+                        onPress={() => {
+                          setDashboardMessage('');
+                          setDashboardTab('Alerts');
+                        }}
+                        style={({ pressed }) => [styles.alertButton, pressed && styles.buttonPressed]}
                       >
-                        <Text style={styles.notificationIcon}>🔔</Text>
-                        <View style={styles.notificationDot} />
+                        <Text style={styles.alertIcon}>🔔</Text>
+                        <View style={styles.alertDot} />
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
@@ -468,7 +900,90 @@ function AppContent() {
                     </View>
                   </View>
 
-                  <View style={styles.searchBar}>
+                  {authenticatedUser.role === 'Owner' && !isSalesPage && (
+                    <View style={styles.filtersCard}>
+                      <Text style={styles.filterLabel}>Branch</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterOptions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: branchFilter === null }}
+                          onPress={() => setBranchFilter(null)}
+                          style={[styles.filterChip, branchFilter === null && styles.filterChipActive]}
+                        >
+                          <Text style={[styles.filterChipText, branchFilter === null && styles.filterChipTextActive]}>All Branches</Text>
+                        </Pressable>
+                        {(ownerData?.branches ?? []).map((branch) => {
+                          const active = branchFilter === branch.id;
+                          return (
+                            <Pressable
+                              key={branch.id}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: active }}
+                              onPress={() => setBranchFilter(branch.id)}
+                              style={[styles.filterChip, active && styles.filterChipActive]}
+                            >
+                              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{branch.name}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                      <Text style={[styles.filterLabel, styles.periodFilterLabel]}>Reporting period</Text>
+                      <View style={styles.filterOptions}>
+                        {(['Today', 'This Week', 'This Month', 'Custom'] as const).map((period) => {
+                          const active = reportingPeriod === period;
+                          return (
+                            <Pressable
+                              key={period}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: active }}
+                              onPress={() => setReportingPeriod(period)}
+                              style={[styles.filterChip, active && styles.filterChipActive]}
+                            >
+                              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{period}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      {reportingPeriod === 'Custom' && (
+                        <View style={styles.customRangeRow}>
+                          <View style={styles.customDateField}>
+                            <Text style={styles.filterLabel}>From</Text>
+                            <TextInput
+                              accessibilityLabel="Custom period start date"
+                              value={customStart}
+                              onChangeText={setCustomStart}
+                              placeholder="YYYY-MM-DD"
+                              style={styles.customDateInput}
+                              autoCapitalize="none"
+                            />
+                          </View>
+                          <View style={styles.customDateField}>
+                            <Text style={styles.filterLabel}>Through</Text>
+                            <TextInput
+                              accessibilityLabel="Custom period end date"
+                              value={customEnd}
+                              onChangeText={setCustomEnd}
+                              placeholder="YYYY-MM-DD"
+                              style={styles.customDateInput}
+                              autoCapitalize="none"
+                            />
+                          </View>
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={() => {
+                              setRequestedCustomStart(customStart);
+                              setRequestedCustomEnd(customEnd);
+                            }}
+                            style={styles.applyRangeButton}
+                          >
+                            <Text style={styles.applyRangeText}>Apply</Text>
+                          </Pressable>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  {!isSalesPage && <View style={styles.searchBar}>
                     <View style={styles.searchIcon}>
                       <View style={styles.searchIconHandle} />
                     </View>
@@ -491,123 +1006,315 @@ function AppContent() {
                         <Text style={styles.clearSearchText}>×</Text>
                       </Pressable>
                     )}
-                  </View>
+                  </View>}
 
-                  {dashboardMessage !== '' && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Dismiss message"
-                      onPress={() => setDashboardMessage('')}
-                      style={styles.dashboardMessage}
-                    >
-                      <Text style={styles.dashboardMessageText}>{dashboardMessage}</Text>
-                      <Text style={styles.dismissMessage}>×</Text>
-                    </Pressable>
+                  {!isSalesPage && bannerMessage !== '' && (
+                    <View style={styles.dashboardMessage} accessibilityRole={loadErrorMessage ? 'alert' : undefined}>
+                      <Text style={styles.dashboardMessageText}>{bannerMessage}</Text>
+                      {loadErrorMessage !== '' && (
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={ownerLoading || salesLoading || activityLoading}
+                          onPress={refreshOwnerDashboard}
+                          style={styles.retryButton}
+                        >
+                          <Text style={styles.retryButtonText}>{ownerLoading || salesLoading || activityLoading ? 'Retrying…' : 'Retry'}</Text>
+                        </Pressable>
+                      )}
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Dismiss message"
+                        onPress={() => {
+                          setDashboardMessage('');
+                          setOwnerLoadError('');
+                          setSalesLoadError('');
+                        }}
+                      >
+                        <Text style={styles.dismissMessage}>×</Text>
+                      </Pressable>
+                    </View>
+                  )}
+
+                  {authenticatedUser.role === 'Owner' && isSalesPage && (
+                    <OwnerSalesWorkspace
+                      mode={dashboardTab === 'Sales' ? 'monitoring' : 'reports'}
+                      branches={ownerData?.branches ?? []}
+                      initialData={salesLoadError || reportingPeriod === 'Custom' ? null : ownerSalesData}
+                      initialLoading={salesLoading}
+                      initialPeriod={reportingPeriod === 'Today'
+                        ? 'Daily'
+                        : reportingPeriod === 'This Week' ? 'Weekly' : 'Monthly'}
+                      initialBranchId={branchFilter}
+                      availableWidth={Math.min(frameWidth, 1180) - 44}
+                    />
                   )}
 
                   {dashboardTab === 'Dashboard' && (
                     <>
-                      <View style={styles.summaryCard}>
-                        <View style={styles.summaryCopy}>
-                          <Text style={styles.summaryEyebrow}>INVENTORY SUMMARY</Text>
-                          <View style={styles.summaryCountRow}>
-                            <Text style={styles.summaryCount}>{trackedItemCount}</Text>
-                            <Text style={styles.summaryCountLabel}>items tracked</Text>
-                          </View>
-                          <View style={styles.alertCountRow}>
-                            <View style={styles.alertCountDot} />
-                            <Text style={styles.alertCountText}>{stockAlertCount} stock alerts need attention</Text>
-                          </View>
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Check stock alerts"
-                            onPress={() => setDashboardTab('Alerts')}
-                            style={({ pressed }) => [styles.checkNowButton, pressed && styles.buttonPressed]}
-                          >
-                            <Text style={styles.checkNowText}>Check now</Text>
-                            <Text style={styles.checkNowArrow}>›</Text>
-                          </Pressable>
+                      {!ownerData ? (
+                        <View style={styles.loadingPanel}>
+                          {ownerLoading
+                            ? <ActivityIndicator size="small" color={DASHBOARD_COLORS.pink} />
+                            : <Text style={styles.emptySearchText}>Dashboard data is unavailable. Use Retry to load it again.</Text>}
+                          <Text style={styles.loadingPanelText}>{ownerLoading ? 'Loading owner dashboard…' : 'No unverified figures are shown.'}</Text>
                         </View>
-                        <View style={styles.summaryFoodCircle}>
-                          <Image
-                            source={require('../assets/takoyaki-plate.png')}
-                            style={styles.summaryFoodImage}
-                            resizeMode="cover"
-                            accessibilityLabel="Takoyaki"
-                          />
-                        </View>
-                        <Text style={styles.summaryDemoLabel}>{ownerLoading ? 'LOADING' : 'LIVE DATA'}</Text>
-                      </View>
-
-                      {pendingDailyChecks.length > 0 && (
-                        <View style={styles.alertsNote}>
-                          <Text style={styles.alertsNoteTitle}>
-                            {pendingDailyChecks.length} daily {pendingDailyChecks.length === 1 ? 'check' : 'checks'} awaiting review
-                          </Text>
-                          {pendingDailyChecks.map((check) => (
-                            <Text key={check.id} style={styles.alertsNoteText}>
-                              {branchNames.get(check.branch_id) ?? 'Branch'} · {check.reference} · {check.check_date}
+                      ) : (
+                        <>
+                          <View style={styles.dashboardIntro}>
+                            <Text style={styles.dashboardTitle}>Business overview</Text>
+                            <Text style={styles.dashboardIntroText}>
+                              {branchFilter ? branchNames.get(branchFilter) : 'All active branches'} · {reportingPeriod === 'Custom'
+                                ? `${requestedCustomStart} – ${requestedCustomEnd}`
+                                : reportingPeriod}
                             </Text>
-                          ))}
-                          <Text style={styles.alertsNoteText}>
-                            Daily check approval is not available in this Owner screen yet.
-                          </Text>
-                        </View>
-                      )}
+                          </View>
 
-                      <View style={styles.sectionHeadingRow}>
-                        <Text style={styles.sectionHeading}>Quick Actions</Text>
-                        <Text style={styles.sectionCaption}>At a glance</Text>
-                      </View>
-                      <View style={styles.quickActions}>
-                        {[
-                          { label: 'Stock-In', icon: '＋', color: DASHBOARD_COLORS.information },
-                          { label: 'Stock-Out', icon: '↗', color: isDark ? colors.accent : DASHBOARD_COLORS.pink },
-                          { label: 'Waste', icon: '⌫', color: isDark ? colors.error : DASHBOARD_COLORS.discrepancy },
-                          { label: 'Daily Check', icon: '✓', color: DASHBOARD_COLORS.success },
-                        ].map((action) => (
-                          <Pressable
-                            key={action.label}
-                            accessibilityRole="button"
-                            accessibilityLabel={`${action.label} action`}
-                            onPress={() => setDashboardMessage(`${action.label} is not available from this read-only dashboard.`)}
-                            style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}
-                          >
-                            <View style={[styles.quickActionIcon, { backgroundColor: `${action.color}14` }]}>
-                              <Text style={[styles.quickActionGlyph, { color: action.color }]}>{action.icon}</Text>
+                          <View style={styles.sectionHeadingRow}>
+                            <Text style={styles.sectionHeading}>Sales Overview</Text>
+                            <Text style={styles.sectionCaption}>Completed sales only</Text>
+                          </View>
+                          <View style={styles.metricGrid}>
+                            {[
+                              { label: `Total Sales · ${reportingPeriod}`, value: salesLoading || salesLoadError ? '—' : formatCurrency(totalSales), hint: 'Recorded completed sales' },
+                              { label: 'Sales Today', value: salesLoading || salesLoadError ? '—' : formatCurrency(salesToday.reduce((sum, sale) => sum + Number(sale.total_amount), 0)), hint: 'Current business day' },
+                              { label: 'Transactions', value: salesLoading || salesLoadError ? '—' : String(selectedSales.length), hint: 'Completed transactions' },
+                              { label: 'Average Transaction', value: salesLoading || salesLoadError || !selectedSales.length ? '—' : formatCurrency(averageSale), hint: 'Selected reporting period' },
+                            ].map((metric) => (
+                              <View key={metric.label} style={[styles.metricCard, isWideScreen && styles.metricCardWide]}>
+                                <Text style={styles.metricLabel}>{metric.label}</Text>
+                                <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{metric.value}</Text>
+                                <Text style={styles.metricHint}>{metric.hint}</Text>
+                              </View>
+                            ))}
+                          </View>
+
+                          <View style={[styles.analyticsGrid, isWideScreen && styles.analyticsGridWide]}>
+                            <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
+                              <Text style={styles.panelTitle}>Sales Performance</Text>
+                              <Text style={styles.panelCaption}>Daily recorded sales · {reportingPeriod.toLowerCase()}</Text>
+                              {salesLoading ? (
+                                <Text style={styles.panelEmpty}>Loading recorded sales…</Text>
+                              ) : salesLoadError ? (
+                                <Text style={styles.panelEmpty}>Sales data is unavailable. Use Retry to load it again.</Text>
+                              ) : selectedSales.length === 0 ? (
+                                <Text style={styles.panelEmpty}>No completed sales in this period.</Text>
+                              ) : (
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                  <View style={styles.chartContent}>
+                                    {chartBuckets.map((point) => (
+                                      <Pressable
+                                        key={point.label}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${point.label}: ${formatCurrency(point.total)}`}
+                                        onPress={() => {
+                                          setDashboardMessage(`${point.label}: ${formatCurrency(point.total)}`);
+                                        }}
+                                        style={styles.chartPoint}
+                                      >
+                                        <Text style={styles.chartValue} numberOfLines={1}>
+                                          {point.total > 0 ? formatCurrency(point.total) : ''}
+                                        </Text>
+                                        <View style={styles.chartBarTrack}>
+                                          <View
+                                            style={[
+                                              styles.chartBarFill,
+                                              { height: `${highestChartSales > 0 ? Math.max(4, point.total / highestChartSales * 100) : 0}%` },
+                                            ]}
+                                          />
+                                        </View>
+                                        <Text style={styles.chartLabel}>{point.label}</Text>
+                                      </Pressable>
+                                    ))}
+                                  </View>
+                                </ScrollView>
+                              )}
                             </View>
-                            <Text style={styles.quickActionLabel}>{action.label}</Text>
-                          </Pressable>
-                        ))}
-                      </View>
+                            <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
+                              <Text style={styles.panelTitle}>Branch Sales Comparison</Text>
+                              <Text style={styles.panelCaption}>Same reporting period · actual branch records</Text>
+                              {salesLoading ? (
+                                <Text style={styles.panelEmpty}>Loading branch sales…</Text>
+                              ) : salesLoadError ? (
+                                <Text style={styles.panelEmpty}>Branch sales comparison is unavailable.</Text>
+                              ) : branchSales.length === 0 ? (
+                                <Text style={styles.panelEmpty}>No branches are available.</Text>
+                              ) : branchSales.map((branch) => (
+                                <View key={branch.id} style={styles.branchSalesRow}>
+                                  <View style={styles.branchSalesCopy}>
+                                    <Text style={styles.branchSalesName} numberOfLines={1}>{branch.name}</Text>
+                                    <Text style={styles.branchSalesMeta}>
+                                      {branch.transactions} transactions · {formatCurrency(branch.total)}
+                                    </Text>
+                                    <View style={styles.branchBarTrack}>
+                                      <View style={[styles.branchBarFill, { width: `${highestBranchSales ? branch.total / highestBranchSales * 100 : 0}%` }]} />
+                                    </View>
+                                  </View>
+                                </View>
+                              ))}
+                            </View>
+                          </View>
+
+                          <View style={styles.sectionHeadingRow}>
+                            <Text style={styles.sectionHeading}>Expected Inventory Overview</Text>
+                            <Text style={styles.sectionCaption}>Recorded quantities, not physical counts</Text>
+                          </View>
+                          <View style={styles.inventorySummaryPanel}>
+                            {[
+                              { label: 'Tracked ingredient records', value: trackedItemCount },
+                              { label: 'Sufficient expected stock', value: trackedItemCount - lowStockItems.length },
+                              { label: 'Low stock', value: lowStockItems.length },
+                              { label: 'Expiration attention', value: expirationItems.length },
+                            ].map((item) => (
+                              <View key={item.label} style={[styles.inventorySummaryItem, isWideScreen && styles.inventorySummaryItemWide]}>
+                                <Text style={styles.inventorySummaryValue}>{ownerLoading ? '—' : item.value}</Text>
+                                <Text style={styles.inventorySummaryLabel}>{item.label}</Text>
+                              </View>
+                            ))}
+                          </View>
+
+                          <View style={styles.sectionHeadingRow}>
+                            <Text style={styles.sectionHeading}>Low-Stock Ingredients</Text>
+                            <Pressable
+                              accessibilityRole="button"
+                              onPress={() => setDashboardTab('Alerts')}
+                              style={styles.sectionLink}
+                            >
+                              <Text style={styles.viewAllText}>{lowStockItems.length ? 'View all' : 'Alerts'} ›</Text>
+                            </Pressable>
+                          </View>
+                          {visibleLowStockItems.length ? visibleLowStockItems.slice(0, 4).map((item) => (
+                            <View key={`${item.branchId}:${item.id}`} style={styles.dataListRow}>
+                              <View style={[styles.listStatusMark, styles.lowStatusMark]}><Text style={styles.listStatusGlyph}>!</Text></View>
+                              <View style={styles.dataListCopy}>
+                                <Text style={styles.dataListTitle}>{item.name}</Text>
+                                <Text style={styles.dataListMeta}>{item.branch} · Expected {item.quantity} · Minimum {item.minimumStock} {item.unit}</Text>
+                              </View>
+                              <Text style={[styles.dataListStatus, styles.lowStatusText]}>Low stock</Text>
+                            </View>
+                          )) : (
+                            <Text style={styles.panelEmpty}>
+                              {ownerLoading ? 'Loading expected inventory…' : 'No low-stock ingredients match this branch and search.'}
+                            </Text>
+                          )}
+
+                          <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
+                            <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
+                            <Pressable
+                              accessibilityRole="button"
+                              onPress={() => setDashboardTab('Alerts')}
+                              style={styles.sectionLink}
+                            >
+                              <Text style={styles.viewAllText}>{expirationItems.length ? 'View all' : 'Alerts'} ›</Text>
+                            </Pressable>
+                          </View>
+                          {visibleExpiringItems.length ? visibleExpiringItems.slice(0, 4).map((item) => (
+                            <View key={item.id} style={styles.dataListRow}>
+                              <View style={[styles.listStatusMark, item.daysRemaining < 0 ? styles.expiredStatusMark : styles.expiringStatusMark]}>
+                                <Text style={styles.listStatusGlyph}>!</Text>
+                              </View>
+                              <View style={styles.dataListCopy}>
+                                <Text style={styles.dataListTitle}>{item.name}</Text>
+                                <Text style={styles.dataListMeta}>
+                                  {item.branch} · Batch {item.batchReference} · {item.quantity} {item.unit} remaining · Expires {new Date(`${item.expirationDate}T00:00:00`).toLocaleDateString('en-PH')}
+                                </Text>
+                              </View>
+                              <Text style={[styles.dataListStatus, item.daysRemaining < 0 ? styles.expiredStatusText : styles.expiringStatusText]}>
+                                {item.daysRemaining < 0 ? 'Expired' : item.daysRemaining === 0 ? 'Expires today' : `${item.daysRemaining}d left`}
+                              </Text>
+                            </View>
+                          )) : (
+                            <Text style={styles.panelEmpty}>
+                              {ownerLoading ? 'Loading batch expiration records…' : 'No expiring or expired tracked batches match this branch and search.'}
+                            </Text>
+                          )}
+
+                          {dashboardTab === 'Dashboard' && (
+                            <>
+                              <View style={styles.sectionHeadingRow}>
+                                <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                                <Pressable accessibilityRole="button" onPress={() => setDashboardTab('History')} style={styles.sectionLink}>
+                                  <Text style={styles.viewAllText}>View all ›</Text>
+                                </Pressable>
+                              </View>
+                              {selectedActivities.slice(0, 5).map((activity) => (
+                                <View key={`${activity.type}:${activity.id}`} style={styles.activityCard}>
+                                  <View style={styles.activityIcon}><Text style={styles.activityIconText}>•</Text></View>
+                                  <View style={styles.activityCopy}>
+                                    <Text style={styles.activityTitle}>{activity.title}</Text>
+                                    <Text style={styles.activityDetail}>
+                                      {activity.detail} · {branchNames.get(activity.branchId) ?? 'Branch'}
+                                    </Text>
+                                    <Text style={styles.activityDetail}>
+                                      {new Date(activity.createdAt).toLocaleString('en-PH')} · Ref {activity.reference}
+                                    </Text>
+                                  </View>
+                                </View>
+                              ))}
+                              {selectedActivities.length === 0 && (
+                                <Text style={styles.panelEmpty}>
+                                  {activityLoading ? 'Loading business activity…' : activityLoadError ? 'Business activity is unavailable.' : 'No recorded business activity in this period.'}
+                                </Text>
+                              )}
+
+                              <View style={styles.sectionHeadingRow}>
+                                <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                                <Pressable accessibilityRole="button" onPress={() => setDashboardTab('Alerts')} style={styles.sectionLink}>
+                                  <Text style={styles.viewAllText}>View all ›</Text>
+                                </Pressable>
+                              </View>
+                              {discrepancies.slice(0, 4).map((item) => (
+                                <View key={item.id} style={styles.discrepancyRow}>
+                                  <View style={styles.dataListCopy}>
+                                    <Text style={styles.dataListTitle}>{item.ingredient} · {item.branch}</Text>
+                                    <Text style={styles.dataListMeta}>
+                                      Expected {item.expected} {item.unit} · Counted {item.actual} {item.unit} · Difference {item.difference > 0 ? '+' : ''}{item.difference} {item.unit}
+                                    </Text>
+                                    <Text style={styles.dataListMeta}>Submitted {new Date(item.submittedAt).toLocaleString('en-PH')} · Ref {item.reference}</Text>
+                                  </View>
+                                  <Text style={[styles.dataListStatus, styles.pendingStatusText]}>Pending</Text>
+                                </View>
+                              ))}
+                              {discrepancies.length === 0 && (
+                                <Text style={styles.panelEmpty}>
+                                  {activityLoading ? 'Loading count review records…' : activityLoadError ? 'Discrepancy summary is unavailable.' : 'No pending count discrepancies require attention.'}
+                                </Text>
+                              )}
+                              {discrepancies.length > 0 && (
+                                <Text style={styles.discrepancyNote}>
+                                  Counts do not update expected inventory. Approval and rejection are not available in this dashboard.
+                                </Text>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
                     </>
                   )}
 
                   {dashboardTab === 'History' && (
                     <View style={styles.historyView}>
-                      <Text style={styles.sectionHeading}>Recent Activity</Text>
-                      <Text style={styles.historyCaption}>Latest inventory activity across accessible branches</Text>
-                      {(ownerData?.transactions ?? []).map((activity) => {
-                      const ingredient = ownerIngredients.get(activity.ingredient_id);
-                      return (
-                      <View key={activity.id} style={styles.activityCard}>
-                        <View style={styles.activityIcon}>
-                          <Text style={styles.activityIconText}>↗</Text>
+                      <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                      <Text style={styles.historyCaption}>Recorded sales, inventory movements, and physical counts</Text>
+                      {selectedActivities.map((activity) => (
+                        <View key={`${activity.type}:${activity.id}`} style={styles.activityCard}>
+                          <View style={styles.activityIcon}><Text style={styles.activityIconText}>•</Text></View>
+                          <View style={styles.activityCopy}>
+                            <Text style={styles.activityTitle}>{activity.title}</Text>
+                            <Text style={styles.activityDetail}>
+                              {activity.detail} · {branchNames.get(activity.branchId) ?? 'Branch'}
+                            </Text>
+                            <Text style={styles.activityDetail}>
+                              {new Date(activity.createdAt).toLocaleString('en-PH')} · Ref {activity.reference}
+                            </Text>
+                          </View>
                         </View>
-                        <View style={styles.activityCopy}>
-                          <Text style={styles.activityTitle}>{activity.type.replace('_', ' ')} · {ingredient?.name ?? activity.ingredient_id}</Text>
-                          <Text style={styles.activityDetail}>
-                            {branchNames.get(activity.branch_id) ?? 'Branch'} · {Number(activity.quantity)} {activity.unit} · {new Date(activity.transaction_date).toLocaleString()}
-                          </Text>
-                        </View>
-                      </View>
-                      )})}
-                      {(ownerData?.transactions.length ?? 0) === 0 && (
-                      <Text style={styles.emptySearchText}>{ownerLoading ? 'Loading activity…' : 'No inventory transactions recorded yet.'}</Text>
+                      ))}
+                      {selectedActivities.length === 0 && (
+                        <Text style={styles.emptySearchText}>{ownerLoading ? 'Loading business activity…' : 'No recorded business activity matches these filters.'}</Text>
                       )}
                     </View>
                   )}
-                  {(dashboardTab === 'Dashboard' || dashboardTab === 'Alerts') && (
+                  {dashboardTab === 'Alerts' && (
                     <>
                       <View style={styles.sectionHeadingRow}>
                         <Text style={styles.sectionHeading}>Low-Stock Items</Text>
@@ -620,103 +1327,95 @@ function AppContent() {
                         </Pressable>
                       </View>
                       {visibleLowStockItems.length > 0 ? (
-                        <ScrollView
-                          horizontal
-                          nestedScrollEnabled
-                          directionalLockEnabled
-                          showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.itemCarousel}
-                        >
-                          {visibleLowStockItems.map((item) => (
-                            <View key={`${item.branch ?? ''}-${item.name}`} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
-                              <View style={styles.itemImageContainer}>
-                                <Image
-                                  source={require('../assets/takoyaki-plate.png')}
-                                  style={styles.itemImage}
-                                  resizeMode="cover"
-                                  accessibilityLabel={`${item.name} image`}
-                                />
-                              </View>
-                              <View style={styles.itemDetails}>
-                                <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                                <Text style={styles.itemCategory} numberOfLines={1}>{item.category}</Text>
-                              </View>
-                              <View style={styles.itemStatusColumn}>
-                                <Text style={styles.itemQuantity}>{item.quantity}</Text>
-                                <View style={styles.warningBadge}>
-                                  <Text style={styles.warningBadgeIcon}>⚠</Text>
-                                  <Text style={styles.warningBadgeText} numberOfLines={1}>Low Stock</Text>
-                                </View>
-                              </View>
+                        visibleLowStockItems.map((item) => (
+                          <View key={`${item.branchId}:${item.id}`} style={styles.dataListRow}>
+                            <View style={[styles.listStatusMark, styles.lowStatusMark]}><Text style={styles.listStatusGlyph}>!</Text></View>
+                            <View style={styles.dataListCopy}>
+                              <Text style={styles.dataListTitle}>{item.name}</Text>
+                              <Text style={styles.dataListMeta}>{item.branch} · Expected {item.quantity} · Minimum {item.minimumStock} {item.unit}</Text>
                             </View>
-                          ))}
-                        </ScrollView>
+                            <Text style={[styles.dataListStatus, styles.lowStatusText]}>Low stock</Text>
+                          </View>
+                        ))
                       ) : (
                         <Text style={styles.emptySearchText}>
-                          {ownerLoading ? 'Loading branch inventory…' : 'No low-stock items match your search.'}
+                          {ownerLoading ? 'Loading expected inventory…' : 'No low-stock items match your search.'}
                         </Text>
                       )}
 
                       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-                        <Text style={styles.sectionHeading}>Nearing Expiration</Text>
+                        <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
                         <Text style={styles.expirationCount}>{expiringItems.length} items</Text>
                       </View>
                       {visibleExpiringItems.length > 0 ? (
-                        <ScrollView
-                          horizontal
-                          nestedScrollEnabled
-                          directionalLockEnabled
-                          showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.itemCarousel}
-                        >
-                          {visibleExpiringItems.map((item) => (
-                            <View key={`${item.branch ?? ''}-${item.name}`} style={[styles.itemCard, { width: itemCarouselCardWidth }]}>
-                              <View style={styles.itemImageContainer}>
-                                <Image
-                                  source={require('../assets/takoyaki-plate.png')}
-                                  style={styles.itemImage}
-                                  resizeMode="cover"
-                                  accessibilityLabel={`${item.name} image`}
-                                />
-                              </View>
-                              <View style={styles.itemDetails}>
-                                <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                                <Text style={styles.itemCategory} numberOfLines={3}>
-                                  {item.category} · Exp. {item.expiration}
-                                </Text>
-                              </View>
-                              <View style={styles.itemStatusColumn}>
-                                <Text style={styles.itemQuantity}>{item.quantity}</Text>
-                                <View style={styles.expirationBadge}>
-                                  <Text style={styles.expirationBadgeIcon}>▦</Text>
-                                  <Text style={styles.expirationBadgeText} numberOfLines={1}>Near Expiry</Text>
-                                </View>
-                              </View>
+                        visibleExpiringItems.map((item) => (
+                          <View key={item.id} style={styles.dataListRow}>
+                            <View style={[styles.listStatusMark, item.daysRemaining < 0 ? styles.expiredStatusMark : styles.expiringStatusMark]}>
+                              <Text style={styles.listStatusGlyph}>!</Text>
                             </View>
-                          ))}
-                        </ScrollView>
+                            <View style={styles.dataListCopy}>
+                              <Text style={styles.dataListTitle}>{item.name}</Text>
+                              <Text style={styles.dataListMeta}>
+                                {item.branch} · Batch {item.batchReference} · {item.quantity} {item.unit} · Exp. {new Date(`${item.expirationDate}T00:00:00`).toLocaleDateString('en-PH')}
+                              </Text>
+                            </View>
+                            <Text style={[styles.dataListStatus, item.daysRemaining < 0 ? styles.expiredStatusText : styles.expiringStatusText]}>
+                              {item.daysRemaining < 0 ? 'Expired' : item.daysRemaining === 0 ? 'Today' : `${item.daysRemaining}d`}
+                            </Text>
+                          </View>
+                        ))
                       ) : (
-                        <Text style={styles.emptySearchText}>No near-expiry items match your search.</Text>
+                        <Text style={styles.emptySearchText}>No expiring or expired tracked batches match your search.</Text>
                       )}
                     </>
                   )}
 
                   {dashboardTab === 'Alerts' && (
-                    <View style={styles.alertsNote}>
-                      <Text style={styles.alertsNoteTitle}>Branch inventory alerts</Text>
-                      <Text style={styles.alertsNoteText}>
-                        Alerts are based on saved branch quantities and active batches. Contact the owner for inventory changes.
-                      </Text>
-                    </View>
+                    <>
+                      <View style={styles.sectionHeadingRow}>
+                        <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                      </View>
+                      {discrepancies.map((item) => (
+                        <View key={item.id} style={styles.discrepancyRow}>
+                          <View style={styles.dataListCopy}>
+                            <Text style={styles.dataListTitle}>{item.ingredient} · {item.branch}</Text>
+                            <Text style={styles.dataListMeta}>
+                              Expected {item.expected} {item.unit} · Counted {item.actual} {item.unit} · Difference {item.difference > 0 ? '+' : ''}{item.difference} {item.unit}
+                            </Text>
+                            <Text style={styles.dataListMeta}>Submitted {new Date(item.submittedAt).toLocaleString('en-PH')} · Ref {item.reference}</Text>
+                          </View>
+                          <Text style={[styles.dataListStatus, styles.pendingStatusText]}>Pending</Text>
+                        </View>
+                      ))}
+                      {discrepancies.length === 0 && (
+                        <Text style={styles.panelEmpty}>
+                          {activityLoading ? 'Loading count review records…' : activityLoadError ? 'Discrepancy summary is unavailable.' : 'No pending count discrepancies require attention.'}
+                        </Text>
+                      )}
+                      {discrepancies.length > 0 && (
+                        <Text style={styles.discrepancyNote}>
+                          Review decisions are not available here. These physical counts do not modify expected inventory.
+                        </Text>
+                      )}
+                    </>
                   )}
                 </ScrollView>
 
                 <View style={styles.bottomNavigation}>
-                  {([
-                    { label: 'Dashboard', icon: '⌂' },
-                    { label: 'History', icon: '↻' },
-                    { label: 'Alerts', icon: '!' },
-                  ] as const).map((tab) => {
+                  {(authenticatedUser.role === 'Owner'
+                    ? [
+                        { label: 'Dashboard', icon: '⌂' },
+                        { label: 'Sales', icon: '$' },
+                        { label: 'Reports', icon: '▤' },
+                        { label: 'History', icon: '↻' },
+                        { label: 'Alerts', icon: '!' },
+                      ] as const
+                    : [
+                        { label: 'Dashboard', icon: '⌂' },
+                        { label: 'History', icon: '↻' },
+                        { label: 'Alerts', icon: '!' },
+                      ] as const
+                  ).map((tab) => {
                     const active = dashboardTab === tab.label;
                     return (
                       <Pressable
@@ -855,7 +1554,7 @@ function useAppStyles() {
   errorText: { flex: 1, color: '#711433', fontSize: 12, lineHeight: 17 },
   dashboardScreen: { flex: 1, backgroundColor: DASHBOARD_COLORS.white },
   dashboardScroll: { flex: 1 },
-  dashboardContent: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 },
+  dashboardContent: { width: '100%', maxWidth: 1180, alignSelf: 'center', paddingHorizontal: 22, paddingTop: 18, paddingBottom: 28 },
   dashboardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
   dashboardIdentity: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, marginRight: 8 },
   profileAvatar: {
@@ -868,7 +1567,24 @@ function useAppStyles() {
   dashboardGreeting: { color: DASHBOARD_COLORS.black, fontFamily: 'Poppins_600SemiBold', fontSize: 15, lineHeight: 21 },
   dashboardSubheading: { color: DASHBOARD_COLORS.secondaryText, fontFamily: 'Poppins_400Regular', fontSize: 11, marginTop: 1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  notificationButton: {
+  refreshButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F5F7' },
+  refreshButtonText: { color: NAVY, fontFamily: 'Poppins_600SemiBold', fontSize: 22, lineHeight: 26 },
+  filtersCard: { padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#ECECF0', backgroundColor: '#FFFFFF', marginBottom: 14 },
+  filterLabel: { color: '#555563', fontFamily: 'Poppins_600SemiBold', fontSize: 10, marginBottom: 7 },
+  periodFilterLabel: { marginTop: 12 },
+  filterOptions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  filterChip: { minHeight: 31, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 16, backgroundColor: '#F4F4F6', borderWidth: 1, borderColor: '#E8E8EC' },
+  filterChipActive: { backgroundColor: '#FCE3EB', borderColor: '#F4B6C8' },
+  filterChipText: { color: '#626270', fontFamily: 'Poppins_500Medium', fontSize: 9 },
+  filterChipTextActive: { color: DASHBOARD_COLORS.pink, fontFamily: 'Poppins_600SemiBold' },
+  customRangeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 9, marginTop: 12 },
+  customDateField: { flex: 1, minWidth: 130 },
+  customDateInput: { height: 36, paddingHorizontal: 10, borderWidth: 1, borderColor: '#E8E8EC', borderRadius: 9, color: NAVY, fontFamily: 'Poppins_400Regular', fontSize: 10 },
+  applyRangeButton: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 9, backgroundColor: DASHBOARD_COLORS.pink },
+  applyRangeText: { color: '#FFFFFF', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+  retryButton: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: '#FFFFFF', marginLeft: 8 },
+  retryButtonText: { color: DASHBOARD_COLORS.information, fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+  alertButton: {
     width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#F5F5F7',
   },
@@ -877,8 +1593,8 @@ function useAppStyles() {
     borderRadius: 17, backgroundColor: '#F5F5F7',
   },
   themeToggleText: { color: NAVY, fontSize: 17, lineHeight: 21 },
-  notificationIcon: { fontSize: 18, lineHeight: 24 },
-  notificationDot: {
+  alertIcon: { fontSize: 18, lineHeight: 24 },
+  alertDot: {
     position: 'absolute', top: 8, right: 8, width: 7, height: 7, borderRadius: 4,
     backgroundColor: DASHBOARD_COLORS.pink, borderWidth: 1, borderColor: DASHBOARD_COLORS.white,
   },
@@ -897,6 +1613,58 @@ function useAppStyles() {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 13, paddingVertical: 10, borderRadius: 12, backgroundColor: '#EFEEFA', marginBottom: 14,
   },
+  dashboardIntro: { marginTop: 1, marginBottom: 17 },
+  dashboardTitle: { color: NAVY, fontFamily: 'Poppins_700Bold', fontSize: 23, lineHeight: 30 },
+  dashboardIntroText: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 11, marginTop: 2 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, marginBottom: 22 },
+  metricCard: { width: '48%', minHeight: 100, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#ECECF0', backgroundColor: '#FFFFFF' },
+  metricCardWide: { width: '23%' },
+  metricLabel: { color: '#777783', fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 14 },
+  metricValue: { color: NAVY, fontFamily: 'Poppins_700Bold', fontSize: 21, lineHeight: 27, marginTop: 5 },
+  metricHint: { color: '#9797A2', fontFamily: 'Poppins_400Regular', fontSize: 8, marginTop: 4 },
+  analyticsGrid: { width: '100%' },
+  analyticsGridWide: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
+  dataPanel: { width: '100%', minHeight: 175, borderRadius: 16, padding: 15, marginBottom: 15, borderWidth: 1, borderColor: '#ECECF0', backgroundColor: '#FFFFFF' },
+  analyticsPanelWide: { width: '49%', flex: 1 },
+  panelTitle: { color: NAVY, fontFamily: 'Poppins_600SemiBold', fontSize: 13 },
+  panelCaption: { color: '#8D8D98', fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 2 },
+  panelEmpty: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 10, paddingVertical: 14 },
+  chartContent: { height: 133, flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingTop: 8, paddingHorizontal: 2 },
+  chartPoint: { width: 42, height: 125, alignItems: 'center', justifyContent: 'flex-end' },
+  chartValue: { width: 48, height: 15, textAlign: 'center', color: '#8A8A96', fontFamily: 'Poppins_400Regular', fontSize: 7 },
+  chartBarTrack: { width: 21, height: 86, borderRadius: 7, justifyContent: 'flex-end', overflow: 'hidden', backgroundColor: '#F4F4F6', marginTop: 4 },
+  chartBarFill: { width: '100%', minHeight: 0, borderTopLeftRadius: 7, borderTopRightRadius: 7, backgroundColor: DASHBOARD_COLORS.pink },
+  chartLabel: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 8, marginTop: 5 },
+  branchSalesRow: { flexDirection: 'row', alignItems: 'center', marginTop: 13 },
+  branchSalesCopy: { flex: 1 },
+  branchSalesName: { color: '#343440', fontFamily: 'Poppins_500Medium', fontSize: 9 },
+  branchSalesMeta: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 8, marginTop: 2 },
+  branchBarTrack: { height: 6, overflow: 'hidden', borderRadius: 4, backgroundColor: '#F0F0F3', marginTop: 6 },
+  branchBarFill: { height: '100%', borderRadius: 4, backgroundColor: DASHBOARD_COLORS.orange },
+  inventorySummaryPanel: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, padding: 14, marginBottom: 21, borderRadius: 16, backgroundColor: '#F7F7F9' },
+  inventorySummaryItem: { width: '48%', minHeight: 59, justifyContent: 'center', paddingHorizontal: 9 },
+  inventorySummaryItemWide: { width: '24%' },
+  inventorySummaryValue: { color: NAVY, fontFamily: 'Poppins_700Bold', fontSize: 18 },
+  inventorySummaryLabel: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 12 },
+  dataListRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8, borderRadius: 13, borderWidth: 1, borderColor: '#EFEFF2', backgroundColor: '#FFFFFF' },
+  sectionLink: { paddingVertical: 4, paddingLeft: 8 },
+  listStatusMark: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 10, marginRight: 10 },
+  listStatusGlyph: { fontFamily: 'Poppins_700Bold', fontSize: 13 },
+  lowStatusMark: { backgroundColor: '#FCE9EB' },
+  expiringStatusMark: { backgroundColor: '#FFF2C4' },
+  expiredStatusMark: { backgroundColor: '#FCE9EB' },
+  dataListCopy: { flex: 1, minWidth: 0 },
+  dataListTitle: { color: '#30303B', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+  dataListMeta: { color: '#81818D', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 13, marginTop: 2 },
+  dataListStatus: { maxWidth: 86, textAlign: 'right', fontFamily: 'Poppins_600SemiBold', fontSize: 8, marginLeft: 8 },
+  lowStatusText: { color: '#C92F3C' },
+  expiringStatusText: { color: '#8D6414' },
+  expiredStatusText: { color: '#C92F3C' },
+  pendingStatusText: { color: '#B9244C' },
+  discrepancyRow: { flexDirection: 'row', alignItems: 'center', padding: 12, marginBottom: 8, borderRadius: 12, backgroundColor: '#FFF8F0', borderWidth: 1, borderColor: '#F6E5D2' },
+  discrepancyNote: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 9, lineHeight: 14, marginBottom: 17 },
+  loadingPanel: { minHeight: 150, alignItems: 'center', justifyContent: 'center', padding: 20, borderWidth: 1, borderColor: '#ECECF0', borderRadius: 16, backgroundColor: '#FFFFFF' },
+  loadingPanelText: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 10, marginTop: 8 },
   dashboardMessageText: { flex: 1, color: DASHBOARD_COLORS.information, fontFamily: 'Poppins_500Medium', fontSize: 11, lineHeight: 16 },
   dismissMessage: { color: DASHBOARD_COLORS.information, fontSize: 18, marginLeft: 8 },
   summaryCard: {

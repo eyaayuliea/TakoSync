@@ -28,21 +28,21 @@ export type StaffRoute =
   | 'transactionDetails'
   | 'ingredientDetails'
   | 'inventoryHistory'
-  | 'notificationAlertDetails'
+  | 'alertDetails'
   | 'dailyInventoryCheck'
   | 'dailyCheckSuccess'
   | 'profileSettings'
-  | 'notifications'
+  | 'alerts'
   | 'more';
 
-export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'notifications' | 'more'>;
+export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'alerts' | 'more'>;
 
 const destinations: { route: StaffTab; label: string; icon: 'home' | 'menu' | 'box' | 'stock' | 'bell' | 'more' }[] = [
   { route: 'dashboard', label: 'Dashboard', icon: 'home' },
   { route: 'menu', label: 'Menu', icon: 'menu' },
   { route: 'inventory', label: 'Inventory', icon: 'box' },
   { route: 'stocks', label: 'Stock movement', icon: 'stock' },
-  { route: 'notifications', label: 'Notifications', icon: 'bell' },
+  { route: 'alerts', label: 'Alerts', icon: 'bell' },
   { route: 'more', label: 'More', icon: 'more' },
 ];
 
@@ -127,7 +127,7 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
   if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
   if (route === 'dailyInventoryCheck' || route === 'dailyCheckSuccess') return 'more';
   if (route === 'profileSettings') return 'more';
-  if (route === 'notificationAlertDetails') return 'notifications';
+  if (route === 'alertDetails') return 'alerts';
   return route;
 }
 
@@ -140,7 +140,7 @@ export default function BottomNavigation({
   onSelect: (route: StaffTab) => void;
   showMenu?: boolean;
 }) {
-  const { colors: themeColors, isDark } = useTheme();
+  const { colors: themeColors } = useTheme();
   const styles = useNavigationStyles();
   const selectedTab = activeStaffTab(active);
   const visibleDestinations = showMenu
@@ -153,7 +153,7 @@ export default function BottomNavigation({
         {visibleDestinations.map((destination) => {
           const selected = destination.route === selectedTab;
           const iconColor = selected
-            ? isDark ? themeColors.text : colors.white
+            ? colors.white
             : themeColors.action;
           return (
             <Pressable

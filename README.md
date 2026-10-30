@@ -24,17 +24,19 @@ The Staff interface currently includes:
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
 - Stock-Out and usage entries, including cooking-batch workflows.
-- Waste and spoilage recording with reasons and notes.
+- Waste and spoilage recording with spoiled, expired, spilled/damaged, and other reasons, plus optional notes.
 - Low-stock and near-expiry alerts derived from branch inventory and active batches.
 - Transaction history with filters and transaction details.
 - Daily physical inventory checks that record observed quantities and discrepancies for Owner review.
-- Bottom navigation for Dashboard, Inventory, Stocks, Notifications, and More; theme preference is stored on the device.
+- Bottom navigation for Dashboard, Inventory, Stocks, Alerts, and More; theme preference is stored on the device.
 
-Inventory changes and daily checks are submitted to Supabase. Notification category toggles are UI state only: push delivery and persistent notification preferences are not implemented.
+Inventory changes and daily checks are submitted to Supabase. Alert category toggles are UI state only: push delivery and persistent alert preferences are not implemented.
 
 ### Owner Module
 
 The current Owner dashboard reads inventory, low-stock and near-expiry items, recent transactions, and daily checks awaiting review across accessible branches. The dashboard is read-only: its Stock-In, Stock-Out, Waste, and Daily Check quick actions explicitly report that those actions are unavailable there.
+
+Owner Sales Monitoring and Sales Reports read completed records from the existing `sales`, `sale_items`, and `products` tables. Owners can filter by active branch and today, daily, weekly, monthly, or custom dates; reports include transaction, branch, product, and payment summaries. Reports export as CSV in the browser or as a shareable CSV file on iOS/Android. Cancelled and pending sales are excluded. This frontend does not write sales or change inventory; it reports only data already recorded by the backend. Product summaries require matching sale-item and product records and are omitted when that data is unavailable. The current client has read-only access to sales records, so the backend partner must populate `sales` and `sale_items` through the authorized checkout workflow before these views contain sales; no sales-writing endpoint or checkout integration was added in this phase.
 
 Owner and Staff sign in with their registered Supabase Auth email and password. The app loads each user's active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the live cross-branch monitoring dashboard. There is no demo login or authentication bypass.
 
@@ -79,6 +81,7 @@ The app calls Supabase directly through the Supabase JavaScript client. Database
 ├── frontend/
 │   ├── App.tsx                     # Loading, welcome, login, and Owner routing/UI
 │   ├── navigation/                 # Staff bottom navigation
+│   ├── owner/                      # Owner login and sales monitoring/reporting
 │   ├── services/                   # Supabase client and application data operations
 │   ├── staff/                      # Staff workspace and inventory workflows
 │   │   ├── MenuWorkspace.tsx        # Staff menu, cart, and unavailable checkout state
@@ -226,7 +229,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Staff authentication, session restoration, and logout | Implemented against Supabase Auth; requires project configuration and provisioned accounts |
 | Staff inventory, search, categories, ingredient details, and history | Implemented against Supabase |
 | Stock-In, Stock-Out/usage, waste/spoilage | Implemented through the database transaction function |
-| Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push notification delivery |
+| Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push alert delivery |
 | Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
 | Staff Menu / cart | Menu filters, selection, cart quantities, and preview totals are implemented with isolated UI-only sample data from the project brief; these are not live products or production prices |
 | Staff checkout / sales submission | Not connected; checkout explicitly reports that no order was submitted and inventory was unchanged |
@@ -238,7 +241,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Separate Owner web application | Not present; the Expo app has a web target |
 | Live backend integration | Requires a configured Supabase project; live Auth, RLS, and database behavior cannot be verified from this repository alone |
 
-The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Notification preferences are not persisted or connected to a push service.
+The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Alert preferences are not persisted or connected to a push service.
 
 To replace the UI preview and implement POS safely, the frontend needs a branch-scoped product/menu catalog contract (including prices, availability, and categories), an order creation/read contract with line-item and total semantics, idempotent submission behavior, and a defined cancellation/refund flow. If sales should consume ingredient inventory, the backend must also define how recipes map to ingredients and provide an atomic order-and-inventory operation. Transfers similarly require a backend contract that records both branch sides atomically; the existing inventory transaction operation is branch-scoped and must not be used to simulate a transfer.
 

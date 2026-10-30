@@ -1,0 +1,1979 @@
+[1mdiff --git a/frontend/staff/StaffWorkspace.tsx b/frontend/staff/StaffWorkspace.tsx[m
+[1mindex f6d17ce..c4a89b1 100644[m
+[1m--- a/frontend/staff/StaffWorkspace.tsx[m
+[1m+++ b/frontend/staff/StaffWorkspace.tsx[m
+[36m@@ -1,5 +1,6 @@[m
+ import React, { useEffect, useMemo, useRef, useState } from 'react';[m
+ import {[m
+[32m+[m[32m  ActivityIndicator,[m
+   Image,[m
+   FlatList,[m
+   KeyboardAvoidingView,[m
+[36m@@ -13,6 +14,7 @@[m [mimport {[m
+   Text,[m
+   TextInput,[m
+   View,[m
+[32m+[m[32m  useWindowDimensions,[m
+ } from 'react-native';[m
+ import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';[m
+ import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';[m
+[36m@@ -53,6 +55,8 @@[m [mtype IngredientBatch = {[m
+   reference: string;[m
+   receivedDate: string;[m
+   expirationDate: string | null;[m
+[32m+[m[32m  expirationDateIso: string | null;[m
+[32m+[m[32m  quantityRemaining: number;[m
+ };[m
+ [m
+ type Ingredient = {[m
+[36m@@ -166,7 +170,7 @@[m [mtype DailyInventoryCheck = {[m
+   status: 'pendingOwnerReview' | 'submitted';[m
+ };[m
+ [m
+[31m-type WasteReason = 'Waste / Other' | 'Damaged' | 'Spoiled' | 'Expired';[m
+[32m+[m[32mtype WasteReason = 'Spoiled' | 'Expired' | 'Spilled/Damaged' | 'Other';[m
+ [m
+ type WasteReceipt = {[m
+   reference: string;[m
+[36m@@ -176,7 +180,6 @@[m [mtype WasteReceipt = {[m
+   newQuantity: number;[m
+   transactionDate: Date;[m
+   reason: WasteReason;[m
+[31m-  description: string;[m
+   notes: string;[m
+ };[m
+ [m
+[36m@@ -218,7 +221,7 @@[m [mfunction formatHistoryDateTime(date: Date) {[m
+   return `${formatDate(date)} · ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;[m
+ }[m
+ [m
+[31m-const wasteReasons: WasteReason[] = ['Waste / Other', 'Damaged', 'Spoiled', 'Expired'];[m
+[32m+[m[32mconst wasteReasons: WasteReason[] = ['Spoiled', 'Expired', 'Spilled/Damaged', 'Other'];[m
+ [m
+ const stockOutBatchPresets = [[m
+   {[m
+[36m@@ -230,11 +233,9 @@[m [mconst stockOutBatchPresets = [[m
+   },[m
+ ] as const;[m
+ [m
+[31m-const openingDate = new Date();[m
+ const nearExpiryWindowDays = 3;[m
+ [m
+ type InventoryAlertKind = 'lowStock' | 'expiration';[m
+[31m-type InventoryAlertFilter = 'all' | InventoryAlertKind;[m
+ [m
+ type InventoryAlert = {[m
+   id: string;[m
+[36m@@ -243,10 +244,20 @@[m [mtype InventoryAlert = {[m
+   batch: IngredientBatch | null;[m
+   title: string;[m
+   detail: string;[m
+[32m+[m[32m  stockProgress?: number;[m
+ };[m
+ [m
+ function parseInventoryDate(value: string | null) {[m
+   if (!value) return null;[m
+[32m+[m[32m  const isoMatch = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);[m
+[32m+[m[32m  if (isoMatch) {[m
+[32m+[m[32m    const date = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));[m
+[32m+[m[32m    return date.getFullYear() === Number(isoMatch[1]) &&[m
+[32m+[m[32m      date.getMonth() === Number(isoMatch[2]) - 1 &&[m
+[32m+[m[32m      date.getDate() === Number(isoMatch[3])[m
+[32m+[m[32m      ? date[m
+[32m+[m[32m      : null;[m
+[32m+[m[32m  }[m
+   const match = value.trim().match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);[m
+   if (!match) return null;[m
+   const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'][m
+[36m@@ -291,6 +302,14 @@[m [mfunction isValidDailyQuantity(value: string, unit: string) {[m
+   return Number.isFinite(quantity) && quantity >= 0;[m
+ }[m
+ [m
+[32m+[m[32mfunction isValidWasteQuantity(value: string, ingredient: Ingredient) {[m
+[32m+[m[32m  const precision = ingredient.quantityPrecision;[m
+[32m+[m[32m  const pattern = precision === 0[m
+[32m+[m[32m    ? /^\d+$/[m
+[32m+[m[32m    : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`);[m
+[32m+[m[32m  return pattern.test(value.trim()) && Number.isFinite(Number(value));[m
+[32m+[m[32m}[m
+[32m+[m
+ function formatDailyDifference(difference: number, unit: string) {[m
+   const value = formatQuantity(difference);[m
+   return `${difference > 0 ? '+' : ''}${value} ${unit}`;[m
+[36m@@ -304,15 +323,17 @@[m [mfunction SearchBar({[m
+   value,[m
+   onChangeText,[m
+   placeholder = 'Search ingredients',[m
+[32m+[m[32m  variant = 'default',[m
+ }: {[m
+   value: string;[m
+   onChangeText: (value: string) => void;[m
+   placeholder?: string;[m
+[32m+[m[32m  variant?: 'default' | 'alerts';[m
+ }) {[m
+   const styles = useStaffStyles();[m
+   const { colors: themeColors } = useTheme();[m
+   return ([m
+[31m-    <View style={styles.searchBar}>[m
+[32m+[m[32m    <View style={[styles.searchBar, variant === 'alerts' && styles.alertSearchBar]}>[m
+       <Text style={styles.searchGlyph}>⌕</Text>[m
+       <TextInput[m
+         value={value}[m
+[36m@@ -376,11 +397,13 @@[m [mfunction InventoryIngredientCard({[m
+   onPress,[m
+   statusOverride,[m
+   showExpiration = false,[m
+[32m+[m[32m  cardWidth,[m
+ }: {[m
+   item: Ingredient;[m
+   onPress: () => void;[m
+   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };[m
+   showExpiration?: boolean;[m
+[32m+[m[32m  cardWidth?: number;[m
+ }) {[m
+   const styles = useStaffStyles();[m
+   const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');[m
+[36m@@ -391,7 +414,11 @@[m [mfunction InventoryIngredientCard({[m
+       accessibilityRole="button"[m
+       accessibilityLabel={`${item.name}, ${item.category}, ${item.quantity} ${item.unit}${showExpiration && item.expiration ? `, expires ${item.expiration}` : ''}, ${statusLabel}`}[m
+       onPress={onPress}[m
+[31m-      style={({ pressed }) => [styles.inventoryCard, pressed && styles.pressed]}[m
+[32m+[m[32m      style={({ pressed }) => [[m
+[32m+[m[32m        styles.inventoryCard,[m
+[32m+[m[32m        cardWidth !== undefined && { width: cardWidth },[m
+[32m+[m[32m        pressed && styles.pressed,[m
+[32m+[m[32m      ]}[m
+     >[m
+       <IngredientThumbnail item={item} small />[m
+       <View style={styles.inventoryCardCopy}>[m
+[36m@@ -445,15 +472,15 @@[m [mfunction DetailRow({ label, value }: { label: string; value: string }) {[m
+   );[m
+ }[m
+ [m
+[31m-function WasteTrashIcon() {[m
+[32m+[m[32mfunction WasteTrashIcon({ color = colors.pink }: { color?: string }) {[m
+   const styles = useStaffStyles();[m
+   return ([m
+     <View style={styles.wasteTrashIcon} accessibilityLabel="Waste confirmation">[m
+[31m-      <View style={styles.wasteTrashHandle} />[m
+[31m-      <View style={styles.wasteTrashLid} />[m
+[31m-      <View style={styles.wasteTrashBody}>[m
+[31m-        <View style={styles.wasteTrashLine} />[m
+[31m-        <View style={styles.wasteTrashLine} />[m
+[32m+[m[32m      <View style={[styles.wasteTrashHandle, { backgroundColor: color }]} />[m
+[32m+[m[32m      <View style={[styles.wasteTrashLid, { backgroundColor: color }]} />[m
+[32m+[m[32m      <View style={[styles.wasteTrashBody, { borderColor: color }]}>[m
+[32m+[m[32m        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />[m
+[32m+[m[32m        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />[m
+       </View>[m
+     </View>[m
+   );[m
+[36m@@ -467,7 +494,7 @@[m [mfunction ActionCard({[m
+ }: {[m
+   title: string;[m
+   description: string;[m
+[31m-  icon: string;[m
+[32m+[m[32m  icon: string | React.ReactNode;[m
+   onPress: () => void;[m
+ }) {[m
+   const styles = useStaffStyles();[m
+[36m@@ -479,7 +506,7 @@[m [mfunction ActionCard({[m
+       style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}[m
+     >[m
+       <View style={styles.actionIconBox}>[m
+[31m-        <Text style={styles.actionIcon}>{icon}</Text>[m
+[32m+[m[32m        {typeof icon === 'string' ? <Text style={styles.actionIcon}>{icon}</Text> : icon}[m
+       </View>[m
+       <View style={styles.actionCopy}>[m
+         <Text style={styles.actionTitle}>{title}</Text>[m
+[36m@@ -581,23 +608,26 @@[m [mfunction DatePickerField({[m
+   const changeMonth = (amount: number) => {[m
+     setMonth((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1));[m
+   };[m
+[32m+[m[32m  const openDatePicker = () => {[m
+[32m+[m[32m    setMonth(value ?? new Date());[m
+[32m+[m[32m    setVisible(true);[m
+[32m+[m[32m  };[m
+ [m
+   return ([m
+     <>[m
+       <View style={styles.fieldGroup}>[m
+         <Text style={styles.fieldLabel}>{label}</Text>[m
+[31m-        <Pressable[m
+[31m-          accessibilityRole="button"[m
+[31m-          accessibilityLabel={`${label}, ${value ? formatDate(value) : 'choose date'}`}[m
+[31m-          onPress={() => {[m
+[31m-            setMonth(value ?? new Date());[m
+[31m-            setVisible(true);[m
+[31m-          }}[m
+[31m-          style={[styles.dateInput, error ? styles.textInputError : undefined]}[m
+[31m-        >[m
+[31m-          <Text style={[styles.dateInputText, !value && styles.placeholderText]}>[m
+[31m-            {value ? formatDate(value) : 'Select a date'}[m
+[31m-          </Text>[m
+[32m+[m[32m        <View style={[styles.dateInput, error ? styles.textInputError : undefined]}>[m
+[32m+[m[32m          <Pressable[m
+[32m+[m[32m            accessibilityRole="button"[m
+[32m+[m[32m            accessibilityLabel={`${label}, ${value ? formatDate(value) : 'choose date'}`}[m
+[32m+[m[32m            onPress={openDatePicker}[m
+[32m+[m[32m            style={styles.dateInputAction}[m
+[32m+[m[32m          >[m
+[32m+[m[32m            <Text style={[styles.dateInputText, !value && styles.placeholderText]}>[m
+[32m+[m[32m              {value ? formatDate(value) : 'Select a date'}[m
+[32m+[m[32m            </Text>[m
+[32m+[m[32m          </Pressable>[m
+           {allowClear && value ? ([m
+             <Pressable[m
+               accessibilityRole="button"[m
+[36m@@ -608,8 +638,15 @@[m [mfunction DatePickerField({[m
+               <Text style={styles.clearDateText}>×</Text>[m
+             </Pressable>[m
+           ) : null}[m
+[31m-          <Text style={styles.calendarGlyph}>▦</Text>[m
+[31m-        </Pressable>[m
+[32m+[m[32m          <Pressable[m
+[32m+[m[32m            accessibilityRole="button"[m
+[32m+[m[32m            accessibilityLabel={`Choose ${label.toLowerCase()}`}[m
+[32m+[m[32m            onPress={openDatePicker}[m
+[32m+[m[32m            style={styles.calendarButton}[m
+[32m+[m[32m          >[m
+[32m+[m[32m            <Text style={styles.calendarGlyph}>▦</Text>[m
+[32m+[m[32m          </Pressable>[m
+[32m+[m[32m        </View>[m
+         {error ? <InlineFieldError message={error} /> : null}[m
+       </View>[m
+       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>[m
+[36m@@ -675,6 +712,9 @@[m [mexport default function StaffWorkspace({[m
+ }) {[m
+   const theme = useTheme();[m
+   const styles = useStaffStyles();[m
+[32m+[m[32m  const { width: windowWidth } = useWindowDimensions();[m
+[32m+[m[32m  const lowStockCardWidth = Math.min(292, (windowWidth - 36) * 0.88);[m
+[32m+[m[32m  const wasteReviewGeneration = useRef(0);[m
+   const colors = {[m
+     ...theme.colors,[m
+     pink: theme.colors.accent,[m
+[36m@@ -692,6 +732,8 @@[m [mexport default function StaffWorkspace({[m
+     yellow: theme.isDark ? theme.colors.warning : '#FFF2C4',[m
+   };[m
+   const [route, setRoute] = useState<StaffRoute>('dashboard');[m
+[32m+[m[32m  const routeRef = useRef(route);[m
+[32m+[m[32m  routeRef.current = route;[m
+   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');[m
+   const [menuCart, setMenuCart] = useState<MenuCartLine[]>([]);[m
+   const [ingredients, setIngredients] = useState<Ingredient[]>([]);[m
+[36m@@ -699,6 +741,7 @@[m [mexport default function StaffWorkspace({[m
+   const [backendLoading, setBackendLoading] = useState(true);[m
+   const [backendError, setBackendError] = useState('');[m
+   const [refreshing, setRefreshing] = useState(false);[m
+[32m+[m[32m  const alertRefreshLock = useRef(false);[m
+   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);[m
+   const [dailyCheckRemarks, setDailyCheckRemarks] = useState('');[m
+   const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);[m
+[36m@@ -724,7 +767,6 @@[m [mexport default function StaffWorkspace({[m
+   const [reason, setReason] = useState('Cooking usage');[m
+   const [reasonListOpen, setReasonListOpen] = useState(false);[m
+   const [notes, setNotes] = useState('');[m
+[31m-  const [wasteDescription, setWasteDescription] = useState('');[m
+   const [wasteFieldErrors, setWasteFieldErrors] = useState<Record<string, string>>({});[m
+   const [wasteValidationAttempted, setWasteValidationAttempted] = useState(false);[m
+   const [successMessage, setSuccessMessage] = useState('');[m
+[36m@@ -756,19 +798,18 @@[m [mexport default function StaffWorkspace({[m
+   const [historyStaffPickerOpen, setHistoryStaffPickerOpen] = useState(false);[m
+   const [historyDateError, setHistoryDateError] = useState('');[m
+   const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] = useState('');[m
+[31m-  const [notificationFilter, setNotificationFilter] = useState<InventoryAlertFilter>('all');[m
+[32m+[m[32m  const [alertSearch, setAlertSearch] = useState('');[m
+   const [selectedAlertIngredientId, setSelectedAlertIngredientId] = useState('');[m
+   const [selectedAlertBatchReference, setSelectedAlertBatchReference] = useState('');[m
+   const [selectedAlertKind, setSelectedAlertKind] = useState<InventoryAlertKind>('lowStock');[m
+[31m-  const [ingredientDetailReturnRoute, setIngredientDetailReturnRoute] = useState<'inventory' | 'notifications'>('inventory');[m
+[32m+[m[32m  const [ingredientDetailReturnRoute, setIngredientDetailReturnRoute] = useState<'inventory' | 'alerts'>('inventory');[m
+   const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);[m
+   const [logoutError, setLogoutError] = useState('');[m
+   const [logoutPending, setLogoutPending] = useState(false);[m
+   const logoutSubmissionLock = useRef(false);[m
+[31m-  const [notificationPreferences, setNotificationPreferences] = useState({[m
+[32m+[m[32m  const [alertPreferences, setAlertPreferences] = useState({[m
+     lowStock: true,[m
+     expiration: true,[m
+[31m-    activity: true,[m
+   });[m
+ [m
+   useEffect(() => {[m
+[36m@@ -826,6 +867,26 @@[m [mexport default function StaffWorkspace({[m
+     }[m
+   };[m
+ [m
+[32m+[m[32m  const refreshAlertsData = async () => {[m
+[32m+[m[32m    if (alertRefreshLock.current) return;[m
+[32m+[m[32m    alertRefreshLock.current = true;[m
+[32m+[m[32m    setRefreshing(true);[m
+[32m+[m[32m    setBackendLoading(true);[m
+[32m+[m[32m    try {[m
+[32m+[m[32m      await refreshBackendData();[m
+[32m+[m[32m    } finally {[m
+[32m+[m[32m      setBackendLoading(false);[m
+[32m+[m[32m      setRefreshing(false);[m
+[32m+[m[32m      alertRefreshLock.current = false;[m
+[32m+[m[32m    }[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    if (route === 'alerts' && !backendLoading) {[m
+[32m+[m[32m      void refreshAlertsData();[m
+[32m+[m[32m    }[m
+[32m+[m[32m  }, [route]);[m
+[32m+[m
+   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);[m
+   const validateStockInValues = ({[m
+     ingredientId = selectedIngredientId,[m
+[36m@@ -854,7 +915,7 @@[m [mexport default function StaffWorkspace({[m
+         const precision = ingredient?.quantityPrecision ?? 2;[m
+         const validFormat = precision === 0[m
+           ? /^\d+$/.test(quantityValue.trim())[m
+[31m-          : new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`).test(quantityValue.trim());[m
+[32m+[m[32m          : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`).test(quantityValue.trim());[m
+         if (!Number.isFinite(parsedQuantity) || !validFormat) {[m
+           errors.quantity = precision === 0[m
+             ? `Enter a whole number of ${ingredient?.unit ?? 'units'}.`[m
+[36m@@ -863,10 +924,15 @@[m [mexport default function StaffWorkspace({[m
+       }[m
+     }[m
+ [m
+[31m-    if (!transactionDateValue) {[m
+[32m+[m[32m    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {[m
+       errors.transactionDate = 'Transaction date is required.';[m
+     }[m
+[31m-    if (ingredient?.expirationTracking && !expirationDateValue) {[m
+[32m+[m[32m    if ([m
+[32m+[m[32m      expirationDateValue &&[m
+[32m+[m[32m      !Number.isFinite(expirationDateValue.getTime())[m
+[32m+[m[32m    ) {[m
+[32m+[m[32m      errors.expirationDate = 'Enter a valid expiration date.';[m
+[32m+[m[32m    } else if (ingredient?.expirationTracking && !expirationDateValue) {[m
+       errors.expirationDate = 'Expiration date is required for this ingredient.';[m
+     } else if ([m
+       transactionDateValue &&[m
+[36m@@ -1091,17 +1157,19 @@[m [mexport default function StaffWorkspace({[m
+       }),[m
+     [category, ingredients, normalizedSearch],[m
+   );[m
+[32m+[m[32m  const alertDate = manilaBusinessDate();[m
+   const lowStockItems = ingredients.filter((item) => item.lowStock);[m
+[31m-  const expiringBatches = ingredients.flatMap((item) =>[m
+[31m-    item.batches.flatMap((batch) => {[m
+[31m-      const expirationDateValue = parseInventoryDate(batch.expirationDate);[m
+[32m+[m[32m  const expiringBatches = ingredients.flatMap((item) => {[m
+[32m+[m[32m    if (!item.expirationTracking) return [];[m
+[32m+[m[32m    return item.batches.flatMap((batch) => {[m
+[32m+[m[32m      const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);[m
+       if (!expirationDateValue) return [];[m
+[31m-      const daysRemaining = daysBetweenDates(openingDate, expirationDateValue);[m
+[31m-      return daysRemaining <= nearExpiryWindowDays[m
+[32m+[m[32m      const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);[m
+[32m+[m[32m      return daysRemaining >= 0 && daysRemaining <= nearExpiryWindowDays[m
+         ? [{ item, batch, daysRemaining }][m
+         : [];[m
+[31m-    }),[m
+[31m-  );[m
+[32m+[m[32m    });[m
+[32m+[m[32m  });[m
+   const expiringItems = [...new Map(expiringBatches.map(({ item }) => [item.id, item])).values()];[m
+   const inventoryAlerts: InventoryAlert[] = [[m
+     ...lowStockItems.map((item) => ({[m
+[36m@@ -1110,23 +1178,33 @@[m [mexport default function StaffWorkspace({[m
+       ingredientId: item.id,[m
+       batch: item.batches[0] ?? null,[m
+       title: item.name,[m
+[31m-      detail: `${assignedBranch} · Current ${formatUnitQuantity(item.quantity, item.unit)} / Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,[m
+[32m+[m[32m      detail: `${formatUnitQuantity(item.quantity, item.unit)} available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)} · ${formatUnitQuantity(Math.max(0, item.minimumStock - item.quantity), item.unit)} below threshold`,[m
+[32m+[m[32m      stockProgress: item.minimumStock > 0[m
+[32m+[m[32m        ? Math.max(0, Math.min(1, item.quantity / item.minimumStock))[m
+[32m+[m[32m        : 0,[m
+     })),[m
+     ...expiringBatches.map(({ item, batch, daysRemaining }) => {[m
+[31m-      const expiryText = daysRemaining === 0 ? 'today' : `in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;[m
+[32m+[m[32m      const expiryText = daysRemaining === 0[m
+[32m+[m[32m        ? 'Expires today'[m
+[32m+[m[32m        : daysRemaining === 1[m
+[32m+[m[32m          ? 'Expires tomorrow'[m
+[32m+[m[32m          : `In ${daysRemaining} days`;[m
+       return {[m
+         id: `expiry-${item.id}-${batch.reference}`,[m
+         kind: 'expiration' as const,[m
+         ingredientId: item.id,[m
+         batch,[m
+         title: item.name,[m
+[31m-        detail: `${assignedBranch} · ${formatUnitQuantity(item.quantity, item.unit)} · Expires ${batch.expirationDate} (${expiryText})`,[m
+[32m+[m[32m        detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expires ${batch.expirationDate} · ${expiryText}`,[m
+       };[m
+     }),[m
+   ];[m
+[31m-  const visibleNotifications = inventoryAlerts.filter((item) =>[m
+[31m-    notificationPreferences[item.kind] &&[m
+[31m-    (notificationFilter === 'all' || notificationFilter === item.kind),[m
+[32m+[m[32m  const alertTerm = alertSearch.trim().toLowerCase();[m
+[32m+[m[32m  const visibleAlerts = inventoryAlerts.filter((item) =>[m
+[32m+[m[32m    alertPreferences[item.kind] &&[m
+[32m+[m[32m    `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${item.kind === 'lowStock' ? 'low stock' : 'nearing expiration near expiry'} ${item.detail}`[m
+[32m+[m[32m      .toLowerCase()[m
+[32m+[m[32m      .includes(alertTerm),[m
+   );[m
+   const dashboardTerm = dashboardSearch.trim().toLowerCase();[m
+   const dashboardMatches = (item: Ingredient) =>[m
+[36m@@ -1257,6 +1335,7 @@[m [mexport default function StaffWorkspace({[m
+     formRoute: 'stockIn' | 'stockOut' | 'waste',[m
+     source: StaffTab,[m
+   ) => {[m
+[32m+[m[32m    wasteReviewGeneration.current += 1;[m
+     setReturnRoute(source);[m
+     setSelectedIngredientId('');[m
+     setIngredientListOpen(false);[m
+[36m@@ -1268,12 +1347,11 @@[m [mexport default function StaffWorkspace({[m
+     setUsageMode('manual');[m
+     setBatchPresetOpen(false);[m
+     setBatchCount('1');[m
+[31m-    setTransactionDate(formRoute === 'stockOut' ? manilaBusinessDate() : new Date());[m
+[32m+[m[32m    setTransactionDate(formRoute === 'stockOut' || formRoute === 'waste' ? manilaBusinessDate() : new Date());[m
+     setExpirationDate(null);[m
+[31m-    setReason(formRoute === 'waste' ? 'Waste / Other' : formRoute === 'stockOut' ? '' : 'Cooking usage');[m
+[32m+[m[32m    setReason(formRoute === 'waste' || formRoute === 'stockOut' ? '' : 'Cooking usage');[m
+     setReasonListOpen(false);[m
+     setNotes('');[m
+[31m-    setWasteDescription('');[m
+     setWasteFieldErrors({});[m
+     setWasteValidationAttempted(false);[m
+     setSuccessMessage('');[m
+[36m@@ -1287,6 +1365,7 @@[m [mexport default function StaffWorkspace({[m
+   };[m
+ [m
+   const returnFromForm = () => {[m
+[32m+[m[32m    wasteReviewGeneration.current += 1;[m
+     setIngredientListOpen(false);[m
+     setConfirmationVisible(false);[m
+     setRoute(returnRoute);[m
+[36m@@ -1320,39 +1399,72 @@[m [mexport default function StaffWorkspace({[m
+     }[m
+   };[m
+ [m
+[31m-  const validateWasteForm = () => {[m
+[32m+[m[32m  const getWasteFieldErrors = ({[m
+[32m+[m[32m    inventory = ingredients,[m
+[32m+[m[32m    ingredientId = selectedIngredientId,[m
+[32m+[m[32m    quantityValue = quantity,[m
+[32m+[m[32m    dateValue = transactionDate,[m
+[32m+[m[32m    reasonValue = reason,[m
+[32m+[m[32m    checkAvailableStock = true,[m
+[32m+[m[32m  }: {[m
+[32m+[m[32m    inventory?: Ingredient[];[m
+[32m+[m[32m    ingredientId?: string;[m
+[32m+[m[32m    quantityValue?: string;[m
+[32m+[m[32m    dateValue?: Date | null;[m
+[32m+[m[32m    reasonValue?: string;[m
+[32m+[m[32m    checkAvailableStock?: boolean;[m
+[32m+[m[32m  } = {}) => {[m
+     const errors: Record<string, string> = {};[m
+[31m-    const parsedQuantity = Number(quantity);[m
+[32m+[m[32m    const ingredient = inventory.find((item) => item.id === ingredientId);[m
+[32m+[m[32m    const parsedQuantity = Number(quantityValue);[m
+ [m
+[31m-    if (!selectedIngredient) {[m
+[31m-      errors.item = 'Choose an item to continue.';[m
+[32m+[m[32m    if (!ingredient) {[m
+[32m+[m[32m      errors.item = 'Ingredient is required.';[m
+     }[m
+[31m-    if (!quantity.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {[m
+[31m-      errors.quantity = 'Enter a quantity greater than 0.';[m
+[31m-    } else if (selectedIngredient && !isValidDailyQuantity(quantity, selectedIngredient.unit)) {[m
+[31m-      errors.quantity = selectedIngredient.unit === 'pcs'[m
+[32m+[m[32m    if (!quantityValue.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {[m
+[32m+[m[32m      errors.quantity = quantityValue.trim() ? 'Enter a quantity greater than 0.' : 'Quantity Wasted is required.';[m
+[32m+[m[32m    } else if (ingredient && !isValidWasteQuantity(quantityValue, ingredient)) {[m
+[32m+[m[32m      errors.quantity = ingredient.quantityPrecision === 0[m
+         ? 'Enter a whole number of pieces.'[m
+[31m-        : 'Enter a quantity with up to 2 decimal places.';[m
+[31m-    } else if (selectedIngredient && parsedQuantity > selectedIngredient.quantity) {[m
+[31m-      errors.quantity = `Only ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available.`;[m
+[32m+[m[32m        : `Enter a quantity with up to ${ingredient.quantityPrecision} decimal places.`;[m
+[32m+[m[32m    } else if (ingredient && checkAvailableStock && parsedQuantity > ingredient.quantity) {[m
+[32m+[m[32m      errors.quantity = 'Exceeds available stock.';[m
+     }[m
+[31m-    if (!transactionDate) {[m
+[31m-      errors.date = 'Choose a transaction date.';[m
+[32m+[m[32m    if (!dateValue || !Number.isFinite(dateValue.getTime())) {[m
+[32m+[m[32m      errors.date = 'Transaction date is required.';[m
+     }[m
+[31m-    if (reason === 'Waste / Other' && !wasteDescription.trim()) {[m
+[31m-      errors.description = 'Describe the cause when Other is selected.';[m
+[32m+[m[32m    if (!wasteReasons.some((option) => option === reasonValue)) {[m
+[32m+[m[32m      errors.reason = 'Reason is required.';[m
+     }[m
+ [m
+[32m+[m[32m    return errors;[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const validateWasteForm = (inventory = ingredients) => {[m
+[32m+[m[32m    const errors = getWasteFieldErrors({ inventory });[m
+     setWasteValidationAttempted(true);[m
+     setWasteFieldErrors(errors);[m
+[32m+[m[32m    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');[m
+     return Object.keys(errors).length === 0;[m
+   };[m
+ [m
+[31m-  const updateWasteDescription = (value: string) => {[m
+[31m-    setWasteDescription(value);[m
+[31m-    if (wasteValidationAttempted && value.trim()) {[m
+[31m-      setWasteFieldErrors((current) => ({ ...current, description: '' }));[m
+[31m-    }[m
+[32m+[m[32m  const updateWasteValidation = (values: Parameters<typeof getWasteFieldErrors>[0]) => {[m
+[32m+[m[32m    if (!wasteValidationAttempted) return;[m
+[32m+[m[32m    const errors = getWasteFieldErrors(values);[m
+[32m+[m[32m    setWasteFieldErrors(errors);[m
+[32m+[m[32m    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const changeWasteQuantity = (value: string) => {[m
+[32m+[m[32m    const precision = selectedIngredient?.quantityPrecision ?? 3;[m
+[32m+[m[32m    if (value && !/^\d*\.?\d*$/.test(value)) return;[m
+[32m+[m[32m    if (precision === 0 && value.includes('.')) return;[m
+[32m+[m[32m    const fraction = value.split('.')[1];[m
+[32m+[m[32m    if (fraction && fraction.length > precision) return;[m
+[32m+[m[32m    wasteReviewGeneration.current += 1;[m
+[32m+[m[32m    setQuantity(value);[m
+[32m+[m[32m    setSuccessMessage('');[m
+[32m+[m[32m    if (wasteValidationAttempted) updateWasteValidation({ quantityValue: value });[m
+   };[m
+ [m
+   const validateTransaction = () => {[m
+[36m@@ -1422,9 +1534,32 @@[m [mexport default function StaffWorkspace({[m
+     return true;[m
+   };[m
+ [m
+[31m-  const reviewTransaction = () => {[m
+[32m+[m[32m  const reviewTransaction = async () => {[m
+[32m+[m[32m    setSuccessMessage('');[m
+     if (route === 'waste') {[m
+[31m-      if (!validateWasteForm()) return;[m
+[32m+[m[32m      if (!user?.branchId) {[m
+[32m+[m[32m        setFormError('Your account does not have an assigned branch. Contact the owner.');[m
+[32m+[m[32m        return;[m
+[32m+[m[32m      }[m
+[32m+[m[32m      const requiredFieldErrors = getWasteFieldErrors({ checkAvailableStock: false });[m
+[32m+[m[32m      setWasteValidationAttempted(true);[m
+[32m+[m[32m      setWasteFieldErrors(requiredFieldErrors);[m
+[32m+[m[32m      if (Object.keys(requiredFieldErrors).length > 0) {[m
+[32m+[m[32m        setFormError('Check the required fields to continue.');[m
+[32m+[m[32m        return;[m
+[32m+[m[32m      }[m
+[32m+[m[32m      setFormError('');[m
+[32m+[m[32m      const requestGeneration = ++wasteReviewGeneration.current;[m
+[32m+[m[32m      try {[m
+[32m+[m[32m        const latestInventory = await loadInventory(user.branchId);[m
+[32m+[m[32m        if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;[m
+[32m+[m[32m        setIngredients(latestInventory);[m
+[32m+[m[32m        if (!validateWasteForm(latestInventory)) return;[m
+[32m+[m[32m      } catch (error) {[m
+[32m+[m[32m        if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;[m
+[32m+[m[32m        setFormError(error instanceof Error ? error.message : 'Unable to refresh available stock.');[m
+[32m+[m[32m        return;[m
+[32m+[m[32m      }[m
+       setConfirmationVisible(true);[m
+       return;[m
+     }[m
+[36m@@ -1443,7 +1578,7 @@[m [mexport default function StaffWorkspace({[m
+       if (!validateWasteForm() || !selectedIngredient || !transactionDate) return;[m
+       const wasteReason = wasteReasons.find((option) => option === reason);[m
+       if (!wasteReason) {[m
+[31m-        setWasteFieldErrors((current) => ({ ...current, reason: 'Choose a waste reason.' }));[m
+[32m+[m[32m        setWasteFieldErrors((current) => ({ ...current, reason: 'Reason is required.' }));[m
+         return;[m
+       }[m
+ [m
+[36m@@ -1457,9 +1592,9 @@[m [mexport default function StaffWorkspace({[m
+           ingredientId: selectedIngredient.id,[m
+           type: wasteReason === 'Spoiled' || wasteReason === 'Expired' ? 'spoilage' : 'waste',[m
+           quantity: wasteQuantity,[m
+[31m-          transactionDate: receiptDate.toISOString(),[m
+[32m+[m[32m          transactionDate: manilaMidnightTimestamp(receiptDate),[m
+           reason: wasteReason,[m
+[31m-          notes: [wasteDescription.trim(), notes.trim()].filter(Boolean).join(' · '),[m
+[32m+[m[32m          notes: notes.trim(),[m
+         }]);[m
+         const reference = saved[0]?.reference;[m
+         if (!reference) throw new Error('The saved waste record did not return a transaction reference.');[m
+[36m@@ -1473,16 +1608,31 @@[m [mexport default function StaffWorkspace({[m
+           newQuantity,[m
+           transactionDate: receiptDate,[m
+           reason: wasteReason,[m
+[31m-          description: wasteDescription.trim(),[m
+           notes: notes.trim(),[m
+         };[m
+         await refreshBackendData();[m
+         setCurrentWasteReceipt(receipt);[m
+         setConfirmationVisible(false);[m
+[31m-        setRoute('wasteSuccess');[m
+[32m+[m[32m        setQuantity('');[m
+[32m+[m[32m        setTransactionDate(manilaBusinessDate());[m
+[32m+[m[32m        setReason('');[m
+[32m+[m[32m        setNotes('');[m
+[32m+[m[32m        setWasteFieldErrors({});[m
+[32m+[m[32m        setWasteValidationAttempted(false);[m
+[32m+[m[32m        setFormError('');[m
+[32m+[m[32m        setSuccessMessage('Waste record saved successfully.');[m
+[32m+[m[32m        setRoute('waste');[m
+       } catch (error) {[m
+         setConfirmationVisible(false);[m
+[31m-        setFormError(error instanceof Error ? error.message : 'Unable to save the waste record.');[m
+[32m+[m[32m        const message = error instanceof Error ? error.message : 'Unable to save the waste record.';[m
+[32m+[m[32m        if (message.toLowerCase().includes('exceeds available stock')) {[m
+[32m+[m[32m          setWasteFieldErrors((current) => ({ ...current, quantity: 'Exceeds available stock.' }));[m
+[32m+[m[32m          setWasteValidationAttempted(true);[m
+[32m+[m[32m          setFormError('Check the required fields to continue.');[m
+[32m+[m[32m          await refreshBackendData();[m
+[32m+[m[32m        } else {[m
+[32m+[m[32m          setFormError(message);[m
+[32m+[m[32m        }[m
+       } finally {[m
+         setConfirming(false);[m
+         wasteSubmissionLock.current = false;[m
+[36m@@ -1650,16 +1800,16 @@[m [mexport default function StaffWorkspace({[m
+         </View>[m
+         <Pressable[m
+           accessibilityRole="button"[m
+[31m-          accessibilityLabel="Notifications"[m
+[31m-          onPress={() => navigate('notifications')}[m
+[31m-          style={styles.notificationButton}[m
+[32m+[m[32m          accessibilityLabel="Alerts"[m
+[32m+[m[32m          onPress={() => navigate('alerts')}[m
+[32m+[m[32m          style={styles.alertButton}[m
+         >[m
+           <View style={styles.bellIcon}>[m
+             <View style={styles.bellBody} />[m
+             <View style={styles.bellBase} />[m
+             <View style={styles.bellClapper} />[m
+           </View>[m
+[31m-          {inventoryAlerts.length > 0 ? <View style={styles.notificationDot} /> : null}[m
+[32m+[m[32m          {inventoryAlerts.length > 0 ? <View style={styles.alertDot} /> : null}[m
+         </Pressable>[m
+       </View>[m
+       <SearchBar value={dashboardSearch} onChangeText={setDashboardSearch} placeholder="Search inventory" />[m
+[36m@@ -1740,13 +1890,20 @@[m [mexport default function StaffWorkspace({[m
+         <Text style={styles.sectionTitle}>Low-Stock Items</Text>[m
+         <Text style={styles.sectionHint}>{lowStockItems.length} items</Text>[m
+       </View>[m
+[31m-      <View style={styles.dashboardIngredientList}>[m
+[32m+[m[32m      <ScrollView[m
+[32m+[m[32m        horizontal[m
+[32m+[m[32m        nestedScrollEnabled[m
+[32m+[m[32m        showsHorizontalScrollIndicator={false}[m
+[32m+[m[32m        style={styles.dashboardLowStockScroll}[m
+[32m+[m[32m        contentContainerStyle={styles.dashboardLowStockList}[m
+[32m+[m[32m      >[m
+         {visibleLowStockItems.map((item) => ([m
+           <InventoryIngredientCard[m
+             key={`low-${item.id}`}[m
+             item={item}[m
+             statusOverride={{ label: 'Low stock', tone: 'low' }}[m
+             onPress={() => openIngredientDetails(item)}[m
+[32m+[m[32m            cardWidth={lowStockCardWidth}[m
+           />[m
+         ))}[m
+         {visibleLowStockItems.length === 0 && ([m
+[36m@@ -1754,7 +1911,7 @@[m [mexport default function StaffWorkspace({[m
+             {dashboardTerm ? 'No low-stock items match your search.' : 'No low-stock ingredients right now.'}[m
+           </Text>[m
+         )}[m
+[31m-      </View>[m
+[32m+[m[32m      </ScrollView>[m
+ [m
+       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>[m
+         <Text style={styles.sectionTitle}>Nearing Expiration</Text>[m
+[36m@@ -1894,7 +2051,7 @@[m [mexport default function StaffWorkspace({[m
+         <View style={styles.detailHeader}>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+[31m-            accessibilityLabel={ingredientDetailReturnRoute === 'notifications' ? 'Back to Notifications' : 'Back to inventory'}[m
+[32m+[m[32m            accessibilityLabel={ingredientDetailReturnRoute === 'alerts' ? 'Back to Alerts' : 'Back to inventory'}[m
+             onPress={() => setRoute(ingredientDetailReturnRoute)}[m
+             style={styles.detailBackButton}[m
+           >[m
+[36m@@ -2022,6 +2179,12 @@[m [mexport default function StaffWorkspace({[m
+           icon="↑"[m
+           onPress={() => openForm('stockOut', 'stocks')}[m
+         />[m
+[32m+[m[32m        <ActionCard[m
+[32m+[m[32m          title="Waste / Spoilage"[m
+[32m+[m[32m          description="Record expired, spoiled, or discarded ingredients"[m
+[32m+[m[32m          icon={<WasteTrashIcon color={colors.orange} />}[m
+[32m+[m[32m          onPress={() => openForm('waste', 'stocks')}[m
+[32m+[m[32m        />[m
+       </View>[m
+       <View style={styles.stockTip}>[m
+         <Text style={styles.stockTipIcon}>i</Text>[m
+[36m@@ -2032,14 +2195,14 @@[m [mexport default function StaffWorkspace({[m
+     </ScrollView>[m
+   );[m
+ [m
+[31m-  const renderNotificationAlertDetails = () => {[m
+[32m+[m[32m  const renderAlertDetails = () => {[m
+     const item = ingredients.find((ingredient) => ingredient.id === selectedAlertIngredientId);[m
+     if (!item) {[m
+       return ([m
+         <View style={styles.inventoryFallback}>[m
+           <Text style={styles.inventoryEmptyTitle}>Alert item not found</Text>[m
+[31m-          <Pressable onPress={() => setRoute('notifications')} style={styles.detailBackFallback}>[m
+[31m-            <Text style={styles.detailBackLabel}>Back to Notifications</Text>[m
+[32m+[m[32m          <Pressable onPress={() => setRoute('alerts')} style={styles.detailBackFallback}>[m
+[32m+[m[32m            <Text style={styles.detailBackLabel}>Back to Alerts</Text>[m
+           </Pressable>[m
+         </View>[m
+       );[m
+[36m@@ -2047,8 +2210,9 @@[m [mexport default function StaffWorkspace({[m
+ [m
+     const isLowStock = selectedAlertKind === 'lowStock';[m
+     const batch = item.batches.find((candidate) => candidate.reference === selectedAlertBatchReference) ?? item.batches[0] ?? null;[m
+[31m-    const expirationDateValue = parseInventoryDate(batch?.expirationDate ?? null);[m
+[31m-    const daysRemaining = expirationDateValue ? daysBetweenDates(openingDate, expirationDateValue) : null;[m
+[32m+[m[32m    const expirationDateValue = parseInventoryDate(batch?.expirationDateIso ?? batch?.expirationDate ?? null);[m
+[32m+[m[32m    const alertDate = manilaBusinessDate();[m
+[32m+[m[32m    const daysRemaining = expirationDateValue ? daysBetweenDates(alertDate, expirationDateValue) : null;[m
+     const expirationStatus = daysRemaining === null[m
+       ? 'No valid expiration date'[m
+       : daysRemaining < 0[m
+[36m@@ -2064,8 +2228,8 @@[m [mexport default function StaffWorkspace({[m
+         <View style={styles.formHeader}>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+[31m-            accessibilityLabel="Back to Notifications"[m
+[31m-            onPress={() => setRoute('notifications')}[m
+[32m+[m[32m            accessibilityLabel="Back to Alerts"[m
+[32m+[m[32m            onPress={() => setRoute('alerts')}[m
+             style={styles.backButton}[m
+           >[m
+             <Text style={styles.backGlyph}>‹</Text>[m
+[36m@@ -2107,7 +2271,8 @@[m [mexport default function StaffWorkspace({[m
+                 <DetailRow label="Batch reference" value={batch?.reference ?? item.batchReference ?? item.receivedBatch.split('·')[0].trim()} />[m
+                 <DetailRow label="Received date" value={receivedDate} />[m
+                 <DetailRow label="Expiration date" value={batch?.expirationDate ?? 'Not recorded'} />[m
+[31m-                <DetailRow label="As of" value={formatDate(openingDate)} />[m
+[32m+[m[32m                <DetailRow label="As of" value={formatDate(alertDate)} />[m
+[32m+[m[32m                <DetailRow label="Batch quantity remaining" value={formatUnitQuantity(batch?.quantityRemaining ?? item.quantity, item.unit)} />[m
+                 <DetailRow label="Status" value={expirationStatus} />[m
+                 <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />[m
+                 <DetailRow label="Available stock" value={formatUnitQuantity(item.quantity, item.unit)} />[m
+[36m@@ -2130,7 +2295,7 @@[m [mexport default function StaffWorkspace({[m
+                 accessibilityRole="button"[m
+                 onPress={() => {[m
+                   setSelectedIngredientId(item.id);[m
+[31m-                  openForm('stockIn', 'notifications');[m
+[32m+[m[32m                  openForm('stockIn', 'alerts');[m
+                 }}[m
+                 style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}[m
+               >[m
+[36m@@ -2141,7 +2306,7 @@[m [mexport default function StaffWorkspace({[m
+                 accessibilityRole="button"[m
+                 onPress={() => {[m
+                   setSelectedIngredientId(item.id);[m
+[31m-                  setIngredientDetailReturnRoute('notifications');[m
+[32m+[m[32m                  setIngredientDetailReturnRoute('alerts');[m
+                   setRoute('ingredientDetails');[m
+                 }}[m
+                 style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}[m
+[36m@@ -2151,10 +2316,10 @@[m [mexport default function StaffWorkspace({[m
+             )}[m
+             <Pressable[m
+               accessibilityRole="button"[m
+[31m-              onPress={() => setRoute('notifications')}[m
+[32m+[m[32m              onPress={() => setRoute('alerts')}[m
+               style={({ pressed }) => [styles.alertDetailSecondary, pressed && styles.pressed]}[m
+             >[m
+[31m-              <Text style={styles.alertDetailSecondaryText}>Back to Notifications</Text>[m
+[32m+[m[32m              <Text style={styles.alertDetailSecondaryText}>Back to Alerts</Text>[m
+             </Pressable>[m
+           </View>[m
+         </ScrollView>[m
+[36m@@ -2162,90 +2327,129 @@[m [mexport default function StaffWorkspace({[m
+     );[m
+   };[m
+ [m
+[31m-  const renderNotifications = () => ([m
+[31m-    <ScrollView style={styles.scroll} contentContainerStyle={styles.notificationPageContent} showsVerticalScrollIndicator={false}>[m
+[31m-      {renderTopHeader('Notifications', `${assignedBranch} / Staff`)}[m
+[32m+[m[32m  const renderAlertCard = (alert: InventoryAlert) => {[m
+[32m+[m[32m    const isLowStock = alert.kind === 'lowStock';[m
+[32m+[m[32m    return ([m
+[32m+[m[32m      <Pressable[m
+[32m+[m[32m        key={alert.id}[m
+[32m+[m[32m        accessibilityRole="button"[m
+[32m+[m[32m        accessibilityLabel={`${alert.title}, ${isLowStock ? 'Low Stock' : 'Near Expiry'}. ${alert.detail}`}[m
+[32m+[m[32m        onPress={() => {[m
+[32m+[m[32m          setSelectedAlertIngredientId(alert.ingredientId);[m
+[32m+[m[32m          setSelectedAlertBatchReference(alert.batch?.reference ?? '');[m
+[32m+[m[32m          setSelectedAlertKind(alert.kind);[m
+[32m+[m[32m          setRoute('alertDetails');[m
+[32m+[m[32m        }}[m
+[32m+[m[32m        style={({ pressed }) => [styles.inventoryAlertCard, pressed && styles.pressed]}[m
+[32m+[m[32m      >[m
+[32m+[m[32m        <View style={styles.inventoryAlertTopline}>[m
+[32m+[m[32m          <Text style={styles.inventoryAlertName}>{alert.title}</Text>[m
+[32m+[m[32m          <View style={[styles.inventoryAlertBadge, !isLowStock && styles.inventoryExpiryBadge]}>[m
+[32m+[m[32m            {!isLowStock ? <Text style={styles.inventoryAlertBadgeIcon}>!</Text> : null}[m
+[32m+[m[32m            <Text style={[styles.inventoryAlertBadgeText, !isLowStock && styles.inventoryExpiryBadgeText]}>[m
+[32m+[m[32m              {isLowStock ? 'Low Stock' : 'Near Expiry'}[m
+[32m+[m[32m            </Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        </View>[m
+[32m+[m[32m        <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>[m
+[32m+[m[32m        {isLowStock ? ([m
+[32m+[m[32m          <View[m
+[32m+[m[32m            style={styles.stockLevelTrack}[m
+[32m+[m[32m            accessibilityRole="progressbar"[m
+[32m+[m[32m            accessibilityLabel={`${alert.title} stock compared with minimum threshold`}[m
+[32m+[m[32m            accessibilityValue={{ min: 0, max: 100, now: Math.round((alert.stockProgress ?? 0) * 100) }}[m
+[32m+[m[32m          >[m
+[32m+[m[32m            <View style={[styles.stockLevelFill, { width: `${Math.round((alert.stockProgress ?? 0) * 100)}%` }]} />[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : null}[m
+[32m+[m[32m      </Pressable>[m
+[32m+[m[32m    );[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const renderAlerts = () => {[m
+[32m+[m[32m    const lowStockAlerts = visibleAlerts.filter((alert) => alert.kind === 'lowStock');[m
+[32m+[m[32m    const expirationAlerts = visibleAlerts.filter((alert) => alert.kind === 'expiration');[m
+[32m+[m
+[32m+[m[32m    return ([m
+       <ScrollView[m
+[31m-        horizontal[m
+[31m-        nestedScrollEnabled[m
+[31m-        showsHorizontalScrollIndicator={false}[m
+[31m-        style={styles.alertFilterScroll}[m
+[31m-        contentContainerStyle={styles.alertFilterRow}[m
+[32m+[m[32m        style={[styles.scroll, styles.alertsScreen]}[m
+[32m+[m[32m        contentContainerStyle={styles.alertsPageContent}[m
+[32m+[m[32m        keyboardShouldPersistTaps="handled"[m
+[32m+[m[32m        showsVerticalScrollIndicator={false}[m
+[32m+[m[32m        refreshControl={[m
+[32m+[m[32m          <RefreshControl[m
+[32m+[m[32m            refreshing={refreshing}[m
+[32m+[m[32m            onRefresh={() => void refreshAlertsData()}[m
+[32m+[m[32m            tintColor={colors.pink}[m
+[32m+[m[32m            colors={[colors.pink]}[m
+[32m+[m[32m          />[m
+[32m+[m[32m        }[m
+       >[m
+[31m-        {([[m
+[31m-          { key: 'all', label: 'All alerts' },[m
+[31m-          { key: 'lowStock', label: 'Low stock' },[m
+[31m-          { key: 'expiration', label: 'Near expiry' },[m
+[31m-        ] as const).map((filter) => {[m
+[31m-          const selected = notificationFilter === filter.key;[m
+[31m-          return ([m
+[32m+[m[32m        <View style={styles.pageHeader}>[m
+[32m+[m[32m          <Text style={styles.alertPageTitle}>Alerts</Text>[m
+[32m+[m[32m        </View>[m
+[32m+[m[32m        <SearchBar[m
+[32m+[m[32m          value={alertSearch}[m
+[32m+[m[32m          onChangeText={setAlertSearch}[m
+[32m+[m[32m          placeholder="Searching for something?"[m
+[32m+[m[32m          variant="alerts"[m
+[32m+[m[32m        />[m
+[32m+[m[32m        {backendLoading ? ([m
+[32m+[m[32m          <View style={styles.alertState}>[m
+[32m+[m[32m            <ActivityIndicator size="small" color={colors.pink} />[m
+[32m+[m[32m            <Text style={styles.alertStateText}>Loading alerts…</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : backendError !== '' ? ([m
+[32m+[m[32m          <View style={styles.alertState}>[m
+[32m+[m[32m            <Text style={styles.alertStateTitle}>Unable to load alerts</Text>[m
+[32m+[m[32m            <Text style={styles.alertStateText}>{backendError}</Text>[m
+             <Pressable[m
+[31m-              key={filter.key}[m
+               accessibilityRole="button"[m
+[31m-              accessibilityState={{ selected }}[m
+[31m-              onPress={() => setNotificationFilter(filter.key)}[m
+[31m-              style={[styles.alertFilterChip, selected && styles.alertFilterChipSelected]}[m
+[32m+[m[32m              onPress={() => void refreshAlertsData()}[m
+[32m+[m[32m              style={({ pressed }) => [styles.alertRetryButton, pressed && styles.pressed]}[m
+             >[m
+[31m-              <Text style={[styles.alertFilterChipText, selected && styles.alertFilterChipTextSelected]}>[m
+[31m-                {filter.label}[m
+[31m-              </Text>[m
+[32m+[m[32m              <Text style={styles.alertRetryText}>Retry</Text>[m
+             </Pressable>[m
+[31m-          );[m
+[31m-        })}[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : alertTerm !== '' && visibleAlerts.length === 0 ? ([m
+[32m+[m[32m          <View style={styles.alertState}>[m
+[32m+[m[32m            <Text style={styles.alertStateTitle}>No matching alerts</Text>[m
+[32m+[m[32m            <Text style={styles.alertStateText}>Try another ingredient, alert type, or detail.</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : inventoryAlerts.length === 0 ? ([m
+[32m+[m[32m          <View style={styles.alertEmptyCard}>[m
+[32m+[m[32m            <View style={styles.alertEmptyIconCircle}>[m
+[32m+[m[32m              <View style={styles.alertEmptyBellBody} />[m
+[32m+[m[32m              <View style={styles.alertEmptyBellBase} />[m
+[32m+[m[32m              <View style={styles.alertEmptyBellClapper} />[m
+[32m+[m[32m            </View>[m
+[32m+[m[32m            <Text style={styles.alertEmptyTitle}>No alerts at the moment.</Text>[m
+[32m+[m[32m            <Text style={styles.alertEmptyText}>Low-stock and expiry alerts appear here.</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : visibleAlerts.length === 0 ? ([m
+[32m+[m[32m          <View style={styles.alertState}>[m
+[32m+[m[32m            <Text style={styles.alertStateTitle}>No active alerts are visible</Text>[m
+[32m+[m[32m            <Text style={styles.alertStateText}>Check alert visibility in Profile &amp; settings.</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : ([m
+[32m+[m[32m          <View style={styles.alertSections}>[m
+[32m+[m[32m            {lowStockAlerts.length > 0 ? ([m
+[32m+[m[32m              <View style={styles.alertSection}>[m
+[32m+[m[32m                <Text style={styles.alertSectionTitle}>Low-Stock Items</Text>[m
+[32m+[m[32m                <View style={styles.alertCardList}>{lowStockAlerts.map(renderAlertCard)}</View>[m
+[32m+[m[32m              </View>[m
+[32m+[m[32m            ) : null}[m
+[32m+[m[32m            {expirationAlerts.length > 0 ? ([m
+[32m+[m[32m              <View style={styles.alertSection}>[m
+[32m+[m[32m                <Text style={styles.alertSectionTitle}>Nearing Expiration</Text>[m
+[32m+[m[32m                <View style={styles.alertCardList}>{expirationAlerts.map(renderAlertCard)}</View>[m
+[32m+[m[32m              </View>[m
+[32m+[m[32m            ) : null}[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        )}[m
+       </ScrollView>[m
+[31m-      <Text style={styles.alertMetadata}>[m
+[31m-        {visibleNotifications.length} {visibleNotifications.length === 1 ? 'alert' : 'alerts'} · Your assigned branch only · {formatDate(openingDate)}[m
+[31m-      </Text>[m
+[31m-      {visibleNotifications.length > 0 ? ([m
+[31m-        <View style={styles.notificationList}>[m
+[31m-          {visibleNotifications.map((alert) => {[m
+[31m-            const isLowStock = alert.kind === 'lowStock';[m
+[31m-            return ([m
+[31m-              <Pressable[m
+[31m-                key={alert.id}[m
+[31m-                accessibilityRole="button"[m
+[31m-                accessibilityLabel={`${alert.title}, ${isLowStock ? 'Low Stock' : 'Near Expiry'}. ${alert.detail}`}[m
+[31m-                onPress={() => {[m
+[31m-                  setSelectedAlertIngredientId(alert.ingredientId);[m
+[31m-                  setSelectedAlertBatchReference(alert.batch?.reference ?? '');[m
+[31m-                  setSelectedAlertKind(alert.kind);[m
+[31m-                  setRoute('notificationAlertDetails');[m
+[31m-                }}[m
+[31m-                style={({ pressed }) => [[m
+[31m-                  styles.inventoryAlertCard,[m
+[31m-                  pressed && styles.pressed,[m
+[31m-                ]}[m
+[31m-              >[m
+[31m-                <View style={styles.inventoryAlertTopline}>[m
+[31m-                  <Text style={styles.inventoryAlertName}>{alert.title}</Text>[m
+[31m-                  <View style={[styles.inventoryAlertBadge, !isLowStock && styles.inventoryExpiryBadge]}>[m
+[31m-                    <Text style={styles.inventoryAlertBadgeIcon}>{isLowStock ? '!' : '▦'}</Text>[m
+[31m-                    <Text style={styles.inventoryAlertBadgeText}>{isLowStock ? 'Low Stock' : 'Near Expiry'}</Text>[m
+[31m-                  </View>[m
+[31m-                </View>[m
+[31m-                <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>[m
+[31m-              </Pressable>[m
+[31m-            );[m
+[31m-          })}[m
+[31m-        </View>[m
+[31m-      ) : ([m
+[31m-        <View style={styles.alertEmptyCard}>[m
+[31m-          <Text style={styles.alertEmptyTitle}>No alerts to show</Text>[m
+[31m-          <Text style={styles.alertEmptyText}>[m
+[31m-            {inventoryAlerts.length === 0[m
+[31m-              ? `There are no current stock or near-expiry alerts for ${assignedBranch}.`[m
+[31m-              : 'No alerts match this filter. Choose another alert type to see current items.'}[m
+[31m-          </Text>[m
+[31m-        </View>[m
+[31m-      )}[m
+[31m-      <View style={styles.alertListInfoBanner}>[m
+[31m-        <Text style={styles.alertDetailInfoIcon}>i</Text>[m
+[31m-        <Text style={styles.alertDetailInfoText}>[m
+[31m-          Stock and expiry alerts show {assignedBranch} records only. Tap an item to review its threshold or batch dates.[m
+[31m-        </Text>[m
+[31m-      </View>[m
+[31m-    </ScrollView>[m
+[31m-  );[m
+[32m+[m[32m    );[m
+[32m+[m[32m  };[m
+ [m
+   const renderDailyInventoryCheck = () => {[m
+     const discrepancyMessage = dailyDiscrepancies.length === 1[m
+[36m@@ -2583,7 +2787,7 @@[m [mexport default function StaffWorkspace({[m
+   );[m
+ [m
+   const renderProfileSettings = () => {[m
+[31m-    const appNotificationsEnabled = notificationPreferences.lowStock && notificationPreferences.expiration;[m
+[32m+[m[32m    const appAlertsEnabled = alertPreferences.lowStock && alertPreferences.expiration;[m
+     return ([m
+       <>[m
+         <View style={styles.formHeader}>[m
+[36m@@ -2637,36 +2841,36 @@[m [mexport default function StaffWorkspace({[m
+ [m
+           <View style={styles.profileSettingsCard}>[m
+             <View style={styles.profileSettingsHeading}>[m
+[31m-              <Text style={styles.profileSectionTitle}>App notifications</Text>[m
+[32m+[m[32m              <Text style={styles.profileSectionTitle}>Alert visibility</Text>[m
+               <Text style={styles.profileSettingsValue}>[m
+[31m-                {appNotificationsEnabled ? 'Enabled for stock and expiry (in-app)' : 'Some in-app alerts are off'}[m
+[32m+[m[32m                {appAlertsEnabled ? 'Enabled for stock and expiry' : 'Some in-app alerts are off'}[m
+               </Text>[m
+             </View>[m
+             <View style={styles.profilePreferenceRow}>[m
+               <Text style={styles.profilePreferenceLabel}>Low-stock alerts</Text>[m
+               <Switch[m
+                 accessibilityLabel="Low-stock alerts"[m
+[31m-                value={notificationPreferences.lowStock}[m
+[32m+[m[32m                value={alertPreferences.lowStock}[m
+                 onValueChange={(value) =>[m
+[31m-                  setNotificationPreferences((current) => ({ ...current, lowStock: value }))[m
+[32m+[m[32m                  setAlertPreferences((current) => ({ ...current, lowStock: value }))[m
+                 }[m
+                 trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}[m
+[31m-                thumbColor={notificationPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}[m
+[32m+[m[32m                thumbColor={alertPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}[m
+               />[m
+             </View>[m
+             <View style={styles.profilePreferenceRow}>[m
+               <Text style={styles.profilePreferenceLabel}>Expiry alerts</Text>[m
+               <Switch[m
+                 accessibilityLabel="Expiry alerts"[m
+[31m-                value={notificationPreferences.expiration}[m
+[32m+[m[32m                value={alertPreferences.expiration}[m
+                 onValueChange={(value) =>[m
+[31m-                  setNotificationPreferences((current) => ({ ...current, expiration: value }))[m
+[32m+[m[32m                  setAlertPreferences((current) => ({ ...current, expiration: value }))[m
+                 }[m
+                 trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}[m
+[31m-                thumbColor={notificationPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}[m
+[32m+[m[32m                thumbColor={alertPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}[m
+               />[m
+             </View>[m
+[31m-            <Text style={styles.profileNotificationNote}>These preferences control in-app alert visibility only; push notifications are not configured.</Text>[m
+[32m+[m[32m            <Text style={styles.profileAlertNote}>These preferences control in-app alert visibility only; push delivery is not configured.</Text>[m
+           </View>[m
+ [m
+           <View style={styles.profileVersionRow}>[m
+[36m@@ -2769,6 +2973,7 @@[m [mexport default function StaffWorkspace({[m
+                     accessibilityRole="button"[m
+                     accessibilityState={{ selected: item.id === selectedIngredientId }}[m
+                     onPress={() => {[m
+[32m+[m[32m                      wasteReviewGeneration.current += 1;[m
+                       setSelectedIngredientId(item.id);[m
+                       setIngredientListOpen(false);[m
+                       setSuccessMessage('');[m
+[36m@@ -2778,10 +2983,9 @@[m [mexport default function StaffWorkspace({[m
+                     }}[m
+                     style={styles.dropdownOption}[m
+                   >[m
+[31m-                    <IngredientThumbnail item={item} />[m
+[31m-                    <View style={styles.dropdownCopy}>[m
+[32m+[m[32m                    <View style={[styles.dropdownCopy, styles.stockInDropdownCopy]}>[m
+                       <Text style={styles.dropdownName}>{item.name}</Text>[m
+[31m-                      <Text style={styles.dropdownQuantity}>{item.unit} · {item.quantity} available</Text>[m
+[32m+[m[32m                      <Text style={styles.dropdownQuantity}>{item.unit}</Text>[m
+                     </View>[m
+                   </Pressable>[m
+                 ))}[m
+[36m@@ -2789,6 +2993,9 @@[m [mexport default function StaffWorkspace({[m
+           )) : ingredients.map((item) => ([m
+             <Pressable[m
+               key={item.id}[m
+[32m+[m[32m              accessibilityRole="button"[m
+[32m+[m[32m              accessibilityLabel={`${item.name}, ${formatUnitQuantity(item.quantity, item.unit)} available`}[m
+[32m+[m[32m              accessibilityState={{ selected: item.id === selectedIngredientId }}[m
+               onPress={() => {[m
+                 setSelectedIngredientId(item.id);[m
+                 setIngredientListOpen(false);[m
+[36m@@ -2800,10 +3007,15 @@[m [mexport default function StaffWorkspace({[m
+               }}[m
+               style={styles.dropdownOption}[m
+             >[m
+[31m-              <IngredientThumbnail item={item} />[m
+[31m-              <View style={styles.dropdownCopy}>[m
+[32m+[m[32m              {route !== 'stockOut' ? <IngredientThumbnail item={item} /> : null}[m
+[32m+[m[32m              <View style={[[m
+[32m+[m[32m                styles.dropdownCopy,[m
+[32m+[m[32m                route === 'stockOut' ? styles.stockOutDropdownCopy : undefined,[m
+[32m+[m[32m              ]}>[m
+                 <Text style={styles.dropdownName}>{item.name}</Text>[m
+[31m-                <Text style={styles.dropdownQuantity}>{item.quantity} {item.unit} available</Text>[m
+[32m+[m[32m                <Text style={styles.dropdownQuantity}>[m
+[32m+[m[32m                  {formatUnitQuantity(item.quantity, item.unit)} available[m
+[32m+[m[32m                </Text>[m
+               </View>[m
+             </Pressable>[m
+           ))}[m
+[36m@@ -2813,14 +3025,13 @@[m [mexport default function StaffWorkspace({[m
+   );[m
+ [m
+   const renderStockInForm = () => ([m
+[31m-    <>[m
+[32m+[m[32m    <View style={styles.wasteFormSurface}>[m
+       <View style={styles.formHeader}>[m
+         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>[m
+           <Text style={styles.backGlyph}>‹</Text>[m
+         </Pressable>[m
+         <View style={styles.formHeaderCopy}>[m
+           <Text style={styles.formTitle}>Stock-In</Text>[m
+[31m-          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>[m
+         </View>[m
+       </View>[m
+       <ScrollView[m
+[36m@@ -2842,26 +3053,32 @@[m [mexport default function StaffWorkspace({[m
+           </View>[m
+         ) : null}[m
+         {renderIngredientSelector()}[m
+[31m-        <TextField[m
+[31m-          label="Quantity Received *"[m
+[31m-          value={quantity}[m
+[31m-          onChangeText={changeQuantity}[m
+[31m-          placeholder="Enter quantity"[m
+[31m-          keyboardType="decimal-pad"[m
+[31m-          error={stockInFieldErrors.quantity}[m
+[31m-          suffix={selectedIngredient?.unit}[m
+[31m-        />[m
+[31m-        <DatePickerField[m
+[31m-          label={route === 'stockOut' ? 'Transaction Date *' : 'Transaction date *'}[m
+[31m-          value={transactionDate}[m
+[31m-          error={stockInFieldErrors.transactionDate}[m
+[31m-          onChange={(date) => {[m
+[31m-            setTransactionDate(date);[m
+[31m-            setSuccessMessage('');[m
+[31m-            setFormError('');[m
+[31m-            if (stockInValidationAttempted) updateStockInValidation({ transactionDateValue: date });[m
+[31m-          }}[m
+[31m-        />[m
+[32m+[m[32m        <View style={windowWidth >= 600 ? styles.formRowWide : styles.formRow}>[m
+[32m+[m[32m          <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m            <TextField[m
+[32m+[m[32m              label="Quantity Received *"[m
+[32m+[m[32m              value={quantity}[m
+[32m+[m[32m              onChangeText={changeQuantity}[m
+[32m+[m[32m              placeholder="Enter quantity"[m
+[32m+[m[32m              keyboardType="decimal-pad"[m
+[32m+[m[32m              error={stockInFieldErrors.quantity}[m
+[32m+[m[32m              suffix={selectedIngredient?.unit}[m
+[32m+[m[32m            />[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m          <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m            <DatePickerField[m
+[32m+[m[32m              label="Transaction Date *"[m
+[32m+[m[32m              value={transactionDate}[m
+[32m+[m[32m              error={stockInFieldErrors.transactionDate}[m
+[32m+[m[32m              onChange={(date) => {[m
+[32m+[m[32m                setTransactionDate(date);[m
+[32m+[m[32m                setSuccessMessage('');[m
+[32m+[m[32m                setFormError('');[m
+[32m+[m[32m                if (stockInValidationAttempted) updateStockInValidation({ transactionDateValue: date });[m
+[32m+[m[32m              }}[m
+[32m+[m[32m            />[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        </View>[m
+         <DatePickerField[m
+           label="Expiration Date"[m
+           value={expirationDate}[m
+[36m@@ -2885,26 +3102,32 @@[m [mexport default function StaffWorkspace({[m
+           placeholder="Delivered by Supplier"[m
+           multiline[m
+         />[m
+[31m-        <View style={styles.formButtons}>[m
+[31m-          <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>[m
+[32m+[m[32m        <View style={styles.wasteFormActions}>[m
+[32m+[m[32m          <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, styles.wasteFormActionButton, pressed && styles.pressed]}>[m
+             <Text style={styles.saveButtonText}>Save</Text>[m
+           </Pressable>[m
+[31m-          <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>[m
+[32m+[m[32m          <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, styles.wasteFormActionButton, pressed && styles.pressed]}>[m
+             <Text style={styles.cancelButtonText}>Cancel</Text>[m
+           </Pressable>[m
+         </View>[m
+[31m-        <Text style={styles.formDemoNote}>Confirmed Stock-In records are saved to the assigned branch.</Text>[m
+       </ScrollView>[m
+[31m-    </>[m
+[32m+[m[32m    </View>[m
+   );[m
+ [m
+   const renderWasteForm = () => ([m
+[31m-    <>[m
+[32m+[m[32m    <View style={styles.wasteFormSurface}>[m
+       <View style={styles.formHeader}>[m
+         <Pressable[m
+           accessibilityRole="button"[m
+           accessibilityLabel="Back to Stocks"[m
+[31m-          onPress={returnFromForm}[m
+[32m+[m[32m          onPress={() => {[m
+[32m+[m[32m            wasteReviewGeneration.current += 1;[m
+[32m+[m[32m            setIngredientListOpen(false);[m
+[32m+[m[32m            setConfirmationVisible(false);[m
+[32m+[m[32m            setRoute('stocks');[m
+[32m+[m[32m            setSuccessMessage('');[m
+[32m+[m[32m            setFormError('');[m
+[32m+[m[32m          }}[m
+           style={styles.backButton}[m
+         >[m
+           <Text style={styles.backGlyph}>‹</Text>[m
+[36m@@ -2920,29 +3143,46 @@[m [mexport default function StaffWorkspace({[m
+         keyboardShouldPersistTaps="handled"[m
+         showsVerticalScrollIndicator={false}[m
+       >[m
+[32m+[m[32m        {successMessage !== '' ? ([m
+[32m+[m[32m          <View style={styles.successBanner} accessibilityRole="alert">[m
+[32m+[m[32m            <Text style={styles.successIcon}>✓</Text>[m
+[32m+[m[32m            <Text style={styles.successText}>{successMessage}</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : null}[m
+[32m+[m[32m        {formError !== '' ? ([m
+[32m+[m[32m          <View style={styles.stockInErrorBanner} accessibilityRole="alert">[m
+[32m+[m[32m            <Text style={styles.stockInErrorIcon}>!</Text>[m
+[32m+[m[32m            <Text style={styles.stockInErrorText}>{formError}</Text>[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m        ) : null}[m
+         <View style={styles.fieldGroup}>[m
+[31m-          <Text style={styles.fieldLabel}>Item *</Text>[m
+[32m+[m[32m          <Text style={styles.fieldLabel}>Ingredient *</Text>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+[31m-            accessibilityLabel={`Item, ${selectedIngredient ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} before this event` : 'choose an item'}`}[m
+[32m+[m[32m            accessibilityState={{ expanded: ingredientListOpen }}[m
+[32m+[m[32m            accessibilityLabel={`Ingredient, ${selectedIngredient ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available` : 'choose an ingredient'}`}[m
+             onPress={() => setIngredientListOpen((open) => !open)}[m
+             style={[styles.selectInput, wasteFieldErrors.item ? styles.textInputError : undefined]}[m
+           >[m
+             <Text style={styles.selectText} numberOfLines={1}>[m
+               {selectedIngredient[m
+[31m-                ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} before this event`[m
+[31m-                : 'Select an item'}[m
+[32m+[m[32m                ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available`[m
+[32m+[m[32m                : 'Select an ingredient'}[m
+             </Text>[m
+             <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>[m
+           </Pressable>[m
+[31m-          {wasteFieldErrors.item ? <Text style={styles.fieldError}>{wasteFieldErrors.item}</Text> : null}[m
+[32m+[m[32m          {wasteFieldErrors.item ? <InlineFieldError message={wasteFieldErrors.item} /> : null}[m
+           {ingredientListOpen ? ([m
+[31m-            <View style={styles.reasonDropdown}>[m
+[32m+[m[32m            <ScrollView[m
+[32m+[m[32m              style={styles.reasonDropdown}[m
+[32m+[m[32m              nestedScrollEnabled[m
+[32m+[m[32m              keyboardShouldPersistTaps="handled"[m
+[32m+[m[32m            >[m
+               {ingredients.length === 0 ? ([m
+                 <Text style={styles.ingredientPickerEmpty}>[m
+                   {backendLoading[m
+                     ? 'Loading branch ingredients…'[m
+[31m-                    : 'No ingredients are configured for this branch yet. Apply the latest Supabase migration, then tap to retry.'}[m
+[32m+[m[32m                    : 'No ingredients are configured for this branch.'}[m
+                 </Text>[m
+               ) : ingredients.map((item) => ([m
+                 <Pressable[m
+[36m@@ -2950,74 +3190,66 @@[m [mexport default function StaffWorkspace({[m
+                   accessibilityRole="button"[m
+                   accessibilityState={{ selected: item.id === selectedIngredientId }}[m
+                   onPress={() => {[m
+[32m+[m[32m                    wasteReviewGeneration.current += 1;[m
+                     setSelectedIngredientId(item.id);[m
+                     setIngredientListOpen(false);[m
+[32m+[m[32m                    setSuccessMessage('');[m
+                     setWasteFieldErrors((current) => ({ ...current, item: '' }));[m
+[32m+[m[32m                    updateWasteValidation({ ingredientId: item.id });[m
+                   }}[m
+                   style={styles.ingredientReasonOption}[m
+                 >[m
+[31m-                  <IngredientThumbnail item={item} small />[m
+[31m-                  <View style={styles.dropdownCopy}>[m
+[31m-                    <Text style={[styles.reasonOptionText, item.id === selectedIngredientId && styles.reasonOptionSelected]}>[m
+[31m-                      {item.name}[m
+[31m-                    </Text>[m
+[31m-                    <Text style={styles.dropdownQuantity}>[m
+[31m-                      {formatUnitQuantity(item.quantity, item.unit)} before this event[m
+[31m-                    </Text>[m
+[31m-                  </View>[m
+[32m+[m[32m                  <Text[m
+[32m+[m[32m                    numberOfLines={1}[m
+[32m+[m[32m                    style={[styles.reasonOptionText, item.id === selectedIngredientId && styles.reasonOptionSelected]}[m
+[32m+[m[32m                  >[m
+[32m+[m[32m                    {item.name} · {formatUnitQuantity(item.quantity, item.unit)} available[m
+[32m+[m[32m                  </Text>[m
+                 </Pressable>[m
+               ))}[m
+[31m-            </View>[m
+[32m+[m[32m            </ScrollView>[m
+           ) : null}[m
+         </View>[m
+ [m
+[31m-        <TextField[m
+[31m-          label="Quantity wasted *"[m
+[31m-          value={quantity}[m
+[31m-          onChangeText={(value) => {[m
+[31m-            changeQuantity(value);[m
+[31m-            if (wasteValidationAttempted) {[m
+[31m-              const parsed = Number(value);[m
+[31m-              const error = !value.trim() || !Number.isFinite(parsed) || parsed <= 0[m
+[31m-                ? 'Enter a quantity greater than 0.'[m
+[31m-                : selectedIngredient && !isValidDailyQuantity(value, selectedIngredient.unit)[m
+[31m-                  ? selectedIngredient.unit === 'pcs'[m
+[31m-                    ? 'Enter a whole number of pieces.'[m
+[31m-                    : 'Enter a quantity with up to 2 decimal places.'[m
+[31m-                : selectedIngredient && parsed > selectedIngredient.quantity[m
+[31m-                  ? `Only ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available.`[m
+[31m-                  : '';[m
+[31m-              setWasteFieldErrors((current) => ({ ...current, quantity: error }));[m
+[31m-            }[m
+[31m-          }}[m
+[31m-          placeholder="Enter quantity"[m
+[31m-          keyboardType="decimal-pad"[m
+[31m-          error={wasteFieldErrors.quantity}[m
+[31m-          suffix={selectedIngredient?.unit}[m
+[31m-        />[m
+[31m-[m
+[31m-        <View>[m
+[31m-          <DatePickerField[m
+[31m-            label="Transaction date *"[m
+[31m-            value={transactionDate}[m
+[31m-            onChange={(date) => {[m
+[31m-              setTransactionDate(date);[m
+[31m-              setWasteFieldErrors((current) => ({ ...current, date: '' }));[m
+[31m-            }}[m
+[31m-          />[m
+[31m-          {wasteFieldErrors.date ? <Text style={styles.fieldError}>{wasteFieldErrors.date}</Text> : null}[m
+[32m+[m[32m        <View style={windowWidth >= 600 ? styles.formRowWide : styles.formRow}>[m
+[32m+[m[32m          <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m            <TextField[m
+[32m+[m[32m              label="Quantity Wasted *"[m
+[32m+[m[32m              value={quantity}[m
+[32m+[m[32m              onChangeText={changeWasteQuantity}[m
+[32m+[m[32m              placeholder="Enter quantity"[m
+[32m+[m[32m              keyboardType="decimal-pad"[m
+[32m+[m[32m              error={wasteFieldErrors.quantity}[m
+[32m+[m[32m              suffix={selectedIngredient?.unit}[m
+[32m+[m[32m            />[m
+[32m+[m[32m          </View>[m
+[32m+[m[32m          <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m            <DatePickerField[m
+[32m+[m[32m              label="Transaction Date *"[m
+[32m+[m[32m              value={transactionDate}[m
+[32m+[m[32m              error={wasteFieldErrors.date}[m
+[32m+[m[32m              onChange={(date) => {[m
+[32m+[m[32m                wasteReviewGeneration.current += 1;[m
+[32m+[m[32m                setTransactionDate(date);[m
+[32m+[m[32m                setSuccessMessage('');[m
+[32m+[m[32m                updateWasteValidation({ dateValue: date });[m
+[32m+[m[32m              }}[m
+[32m+[m[32m            />[m
+[32m+[m[32m          </View>[m
+         </View>[m
+ [m
+         <View style={styles.fieldGroup}>[m
+[31m-          <Text style={styles.fieldLabel}>Type / Reason *</Text>[m
+[32m+[m[32m          <Text style={styles.fieldLabel}>Reason *</Text>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+[32m+[m[32m            accessibilityState={{ expanded: reasonListOpen }}[m
+             onPress={() => setReasonListOpen((open) => !open)}[m
+             style={[styles.selectInput, wasteFieldErrors.reason ? styles.textInputError : undefined]}[m
+           >[m
+[31m-            <Text style={styles.selectText}>{reason}</Text>[m
+[32m+[m[32m            <Text style={styles.selectText}>{reason || 'Select a reason'}</Text>[m
+             <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>[m
+           </Pressable>[m
+[32m+[m[32m          <Text style={styles.wasteReasonHelper}>Spoiled · Expired · Spilled/Damaged · Other</Text>[m
+           {reasonListOpen ? ([m
+             <View style={styles.reasonDropdown}>[m
+               {wasteReasons.map((option) => ([m
+[36m@@ -3026,9 +3258,12 @@[m [mexport default function StaffWorkspace({[m
+                   accessibilityRole="button"[m
+                   accessibilityState={{ selected: reason === option }}[m
+                   onPress={() => {[m
+[32m+[m[32m                    wasteReviewGeneration.current += 1;[m
+                     setReason(option);[m
+                     setReasonListOpen(false);[m
+[31m-                    setWasteFieldErrors((current) => ({ ...current, reason: '', description: '' }));[m
+[32m+[m[32m                    setSuccessMessage('');[m
+[32m+[m[32m                    setWasteFieldErrors((current) => ({ ...current, reason: '' }));[m
+[32m+[m[32m                    updateWasteValidation({ reasonValue: option });[m
+                   }}[m
+                   style={styles.reasonOption}[m
+                 >[m
+[36m@@ -3039,44 +3274,41 @@[m [mexport default function StaffWorkspace({[m
+               ))}[m
+             </View>[m
+           ) : null}[m
+[31m-          {wasteFieldErrors.reason ? <Text style={styles.fieldError}>{wasteFieldErrors.reason}</Text> : null}[m
+[32m+[m[32m          {wasteFieldErrors.reason ? <InlineFieldError message={wasteFieldErrors.reason} /> : null}[m
+         </View>[m
+ [m
+         <TextField[m
+[31m-          label="Other description *"[m
+[31m-          value={wasteDescription}[m
+[31m-          onChangeText={updateWasteDescription}[m
+[31m-          placeholder="Describe the cause"[m
+[31m-          error={wasteFieldErrors.description}[m
+[31m-        />[m
+[31m-        <TextField[m
+[31m-          label="Notes (optional)"[m
+[32m+[m[32m          label="Notes"[m
+           value={notes}[m
+[31m-          onChangeText={setNotes}[m
+[31m-          placeholder="Add notes"[m
+[32m+[m[32m          onChangeText={(value) => {[m
+[32m+[m[32m            wasteReviewGeneration.current += 1;[m
+[32m+[m[32m            setNotes(value);[m
+[32m+[m[32m            setSuccessMessage('');[m
+[32m+[m[32m          }}[m
+[32m+[m[32m          placeholder="Add context (optional)"[m
+           multiline[m
+         />[m
+ [m
+[31m-        <View style={styles.formButtons}>[m
+[32m+[m[32m        <View style={styles.wasteFormActions}>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+             disabled={confirming}[m
+             onPress={reviewTransaction}[m
+[31m-            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}[m
+[32m+[m[32m            style={({ pressed }) => [styles.saveButton, styles.wasteFormActionButton, pressed && styles.pressed]}[m
+           >[m
+[31m-            <Text style={styles.saveButtonText}>Review waste</Text>[m
+[32m+[m[32m            <Text style={styles.saveButtonText}>Save</Text>[m
+           </Pressable>[m
+           <Pressable[m
+             accessibilityRole="button"[m
+             disabled={confirming}[m
+             onPress={returnFromForm}[m
+[31m-            style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}[m
+[32m+[m[32m            style={({ pressed }) => [styles.cancelButton, styles.wasteFormActionButton, pressed && styles.pressed]}[m
+           >[m
+             <Text style={styles.cancelButtonText}>Cancel</Text>[m
+           </Pressable>[m
+         </View>[m
+       </ScrollView>[m
+[31m-    </>[m
+[32m+[m[32m    </View>[m
+   );[m
+ [m
+   const renderMovementForm = () => {[m
+[36m@@ -3093,7 +3325,7 @@[m [mexport default function StaffWorkspace({[m
+         : ['Cooking usage', 'Spoilage', 'Other'];[m
+ [m
+     return ([m
+[31m-    <>[m
+[32m+[m[32m    <View style={route === 'stockOut' ? styles.wasteFormSurface : styles.movementFormRoot}>[m
+       <View style={styles.formHeader}>[m
+         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>[m
+           <Text style={styles.backGlyph}>‹</Text>[m
+[36m@@ -3206,29 +3438,60 @@[m [mexport default function StaffWorkspace({[m
+         ) : ([m
+           <>[m
+             {renderIngredientSelector()}[m
+[31m-            <TextField[m
+[31m-              label={quantityLabel}[m
+[31m-              value={quantity}[m
+[31m-              onChangeText={changeQuantity}[m
+[31m-              placeholder="Enter quantity"[m
+[31m-              keyboardType="decimal-pad"[m
+[31m-              error={route === 'stockOut' ? stockOutFieldErrors.quantity || quantityError : undefined}[m
+[31m-              suffix={route === 'stockOut' ? selectedIngredient?.unit : undefined}[m
+[31m-            />[m
+[32m+[m[32m            {route === 'stockOut' ? ([m
+[32m+[m[32m              <View style={windowWidth >= 600 ? styles.formRowWide : styles.formRow}>[m
+[32m+[m[32m                <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m                  <TextField[m
+[32m+[m[32m                    label={quantityLabel}[m
+[32m+[m[32m                    value={quantity}[m
+[32m+[m[32m                    onChangeText={changeQuantity}[m
+[32m+[m[32m                    placeholder="Enter quantity"[m
+[32m+[m[32m                    keyboardType="decimal-pad"[m
+[32m+[m[32m                    error={stockOutFieldErrors.quantity || quantityError}[m
+[32m+[m[32m                    suffix={selectedIngredient?.unit}[m
+[32m+[m[32m                  />[m
+[32m+[m[32m                </View>[m
+[32m+[m[32m                <View style={windowWidth >= 600 ? styles.rowField : undefined}>[m
+[32m+[m[32m                  <DatePickerField[m
+[32m+[m[32m                    label="Transaction Date *"[m
+[32m+[m[32m                    value={transactionDate}[m
+[32m+[m[32m                    error={stockOutFieldErrors.transactionDate}[m
+[32m+[m[32m                    onChange={(date) => {[m
+[32m+[m[32m                      setTransactionDate(date);[m
+[32m+[m[32m                      setFormError('');[m
+[32m+[m[32m                      if (stockOutValidationAttempted) {[m
+[32m+[m[32m                        updateStockOutValidation({ transactionDateValue: date });[m
+[32m+[m[32m                      }[m
+[32m+[m[32m                    }}[m
+[32m+[m[32m                  />[m
+[32m+[m[32m                </View>[m
+[32m+[m[32m              </View>[m
+[32m+[m[32m            ) : ([m
+[32m+[m[32m              <TextField[m
+[32m+[m[32m                label={quantityLabel}[m
+[32m+[m[32m                value={quantity}[m
+[32m+[m[32m                onChangeText={changeQuantity}[m
+[32m+[m[32m                placeholder="Enter quantity"[m
+[32m+[m[32m                keyboardType="decimal-pad"[m
+[32m+[m[32m                suffix={selectedIngredient?.unit}[m
+[32m+[m[32m              />[m
+[32m+[m[32m            )}[m
+           </>[m
+         )}[m
+[31m-        <DatePickerField[m
+[31m-          label="Transaction Date *"[m
+[31m-          value={transactionDate}[m
+[31m-          error={route === 'stockOut' ? stockOutFieldErrors.transactionDate : undefined}[m
+[31m-          onChange={(date) => {[m
+[31m-            setTransactionDate(date);[m
+[31m-            setFormError('');[m
+[31m-            if (route === 'stockOut' && stockOutValidationAttempted) {[m
+[31m-              updateStockOutValidation({ transactionDateValue: date });[m
+[31m-            }[m
+[31m-          }}[m
+[31m-        />[m
+[32m+[m[32m        {route === 'stockOut' && usageMode === 'manual' ? null : ([m
+[32m+[m[32m          <DatePickerField[m
+[32m+[m[32m            label="Transaction Date *"[m
+[32m+[m[32m            value={transactionDate}[m
+[32m+[m[32m            error={route === 'stockOut' ? stockOutFieldErrors.transactionDate : undefined}[m
+[32m+[m[32m            onChange={(date) => {[m
+[32m+[m[32m              setTransactionDate(date);[m
+[32m+[m[32m              setFormError('');[m
+[32m+[m[32m              if (route === 'stockOut' && stockOutValidationAttempted) {[m
+[32m+[m[32m                updateStockOutValidation({ transactionDateValue: date });[m
+[32m+[m[32m              }[m
+[32m+[m[32m            }}[m
+[32m+[m[32m          />[m
+[32m+[m[32m        )}[m
+         <View style={styles.fieldGroup}>[m
+           <Text style={styles.fieldLabel}>Reason *</Text>[m
+           <Pressable[m
+[36m@@ -3274,17 +3537,35 @@[m [mexport default function StaffWorkspace({[m
+           placeholder={route === 'stockOut' ? 'Add context (optional)' : 'Add a note'}[m
+           multiline[m
+         />[m
+[31m-        <View style={styles.formButtons}>[m
+[31m-          <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>[m
+[32m+[m[32m        <View style={route === 'stockOut' ? styles.wasteFormActions : styles.formButtons}>[m
+[32m+[m[32m          <Pressable[m
+[32m+[m[32m            accessibilityRole="button"[m
+[32m+[m[32m            onPress={reviewTransaction}[m
+[32m+[m[32m            style={({ pressed }) => [[m
+[32m+[m[32m              styles.saveButton,[m
+[32m+[m[32m              route === 'stockOut' ? styles.wasteFormActionButton : undefined,[m
+[32m+[m[32m              pressed && styles.pressed,[m
+[32m+[m[32m            ]}[m
+[32m+[m[32m          >[m
+             <Text style={styles.saveButtonText}>{route === 'stockOut' ? 'Save' : 'Review Waste'}</Text>[m
+           </Pressable>[m
+[31m-          <Pressable accessibilityRole="button" onPress={returnFromForm} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>[m
+[32m+[m[32m          <Pressable[m
+[32m+[m[32m            accessibilityRole="button"[m
+[32m+[m[32m            onPress={returnFromForm}[m
+[32m+[m[32m            style={({ pressed }) => [[m
+[32m+[m[32m              styles.cancelButton,[m
+[32m+[m[32m              route === 'stockOut' ? styles.wasteFormActionButton : undefined,[m
+[32m+[m[32m              pressed && styles.pressed,[m
+[32m+[m[32m            ]}[m
+[32m+[m[32m          >[m
+             <Text style={styles.cancelButtonText}>Cancel</Text>[m
+           </Pressable>[m
+         </View>[m
+[31m-        <Text style={styles.formDemoNote}>Confirmed movements are saved to the assigned branch.</Text>[m
+[32m+[m[32m        {route !== 'stockOut' ? ([m
+[32m+[m[32m          <Text style={styles.formDemoNote}>Confirmed movements are saved to the assigned branch.</Text>[m
+[32m+[m[32m        ) : null}[m
+       </ScrollView>[m
+[31m-    </>[m
+[32m+[m[32m    </View>[m
+     );[m
+   };[m
+ [m
+[36m@@ -3419,9 +3700,9 @@[m [mexport default function StaffWorkspace({[m
+           </View>[m
+         </View>[m
+         <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>[m
+[31m-          <View style={styles.receiptSuccessBanner}>[m
+[31m-            <Text style={styles.receiptSuccessIcon}>✓</Text>[m
+[31m-            <Text style={styles.receiptSuccessText}>Stock-Out recorded successfully.</Text>[m
+[32m+[m[32m          <View style={styles.successBanner} accessibilityRole="alert">[m
+[32m+[m[32m            <Text style={styles.successIcon}>✓</Text>[m
+[32m+[m[32m            <Text style={styles.successText}>Stock-Out recorded successfully.</Text>[m
+           </View>[m
+           <View style={styles.receiptSummaryCard}>[m
+             <Text style={styles.receiptSummaryTitle}>[m
+[36m@@ -3527,8 +3808,7 @@[m [mexport default function StaffWorkspace({[m
+         <View style={styles.receiptDetails}>[m
+           <DetailRow label="Reference" value={receipt.reference} />[m
+           <DetailRow label="Date" value={formatWasteDate(receipt.transactionDate)} />[m
+[31m-          <DetailRow label="Reason" value={receipt.reason === 'Waste / Other' ? 'Other' : receipt.reason} />[m
+[31m-          <DetailRow label="Description" value={receipt.description || '—'} />[m
+[32m+[m[32m          <DetailRow label="Reason" value={receipt.reason} />[m
+           <DetailRow label="Notes" value={receipt.notes || '—'} />[m
+           <DetailRow label="Staff" value={staffName} />[m
+         </View>[m
+[36m@@ -3911,8 +4191,8 @@[m [mexport default function StaffWorkspace({[m
+     case 'inventoryHistory':[m
+       screenContent = renderInventoryHistory();[m
+       break;[m
+[31m-    case 'notificationAlertDetails':[m
+[31m-      screenContent = renderNotificationAlertDetails();[m
+[32m+[m[32m    case 'alertDetails':[m
+[32m+[m[32m      screenContent = renderAlertDetails();[m
+       break;[m
+     case 'dailyInventoryCheck':[m
+       screenContent = renderDailyInventoryCheck();[m
+[36m@@ -3953,8 +4233,8 @@[m [mexport default function StaffWorkspace({[m
+     case 'transactionDetails':[m
+       screenContent = renderTransactionDetails();[m
+       break;[m
+[31m-    case 'notifications':[m
+[31m-      screenContent = renderNotifications();[m
+[32m+[m[32m    case 'alerts':[m
+[32m+[m[32m      screenContent = renderAlerts();[m
+       break;[m
+     case 'more':[m
+       screenContent = renderMore();[m
+[36m@@ -3964,7 +4244,7 @@[m [mexport default function StaffWorkspace({[m
+   return ([m
+     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>[m
+       <View style={styles.screenArea}>[m
+[31m-        {backendError !== '' && route !== 'menu' && route !== 'cart' && route !== 'checkout' ? ([m
+[32m+[m[32m        {backendError !== '' && route !== 'menu' && route !== 'cart' && route !== 'checkout' && route !== 'alerts' ? ([m
+           <Pressable[m
+             accessibilityRole="button"[m
+             accessibilityLabel="Retry loading branch data"[m
+[36m@@ -4187,16 +4467,14 @@[m [mexport default function StaffWorkspace({[m
+       >[m
+         <View style={styles.confirmBackdrop}>[m
+           <View style={styles.confirmCard}>[m
+[31m-            <View style={[[m
+[31m-              styles.confirmIcon,[m
+[31m-              route === 'usagePreview' && styles.usageConfirmIcon,[m
+[31m-              route === 'waste' && styles.wasteConfirmIcon,[m
+[31m-            ]}>[m
+[31m-              {route === 'waste' ? <WasteTrashIcon /> : <Text style={styles.confirmIconText}>↓</Text>}[m
+[31m-            </View>[m
+[32m+[m[32m            {route !== 'waste' ? ([m
+[32m+[m[32m              <View style={[styles.confirmIcon, route === 'usagePreview' && styles.usageConfirmIcon]}>[m
+[32m+[m[32m                <Text style={styles.confirmIconText}>↓</Text>[m
+[32m+[m[32m              </View>[m
+[32m+[m[32m            ) : null}[m
+             <Text style={styles.confirmTitle}>[m
+               {route === 'waste'[m
+[31m-                ? 'Confirm waste record'[m
+[32m+[m[32m                ? 'Record Waste / Spoilage'[m
+                 : route === 'stockOut'[m
+                 ? 'Confirm Stock-Out / Usage'[m
+                 : route === 'usagePreview'[m
+[36m@@ -4207,7 +4485,7 @@[m [mexport default function StaffWorkspace({[m
+             </Text>[m
+             <Text style={styles.confirmSubtitle}>[m
+               {route === 'waste'[m
+[31m-                ? `Record this waste event for ${assignedBranch}?`[m
+[32m+[m[32m                ? 'Remove spoiled items from available stock.'[m
+                 : route === 'stockOut'[m
+                 ? 'Record ingredients used in preparation?'[m
+                 : route === 'usagePreview'[m
+[36m@@ -4219,22 +4497,9 @@[m [mexport default function StaffWorkspace({[m
+             {route === 'waste' && selectedIngredient && transactionDate ? ([m
+               <View style={styles.confirmSummary}>[m
+                 <Text style={styles.confirmSummaryText}>[m
+[31m-                  {selectedIngredient.name} · -{formatUnitQuantity(Number(quantity), selectedIngredient.unit)} · Waste[m
+[32m+[m[32m                  {selectedIngredient.name} · {formatUnitQuantity(Number(quantity), selectedIngredient.unit)}[m
+                 </Text>[m
+[31m-                <Text style={styles.confirmSummaryText}>{formatWasteDate(transactionDate)}</Text>[m
+[31m-                <Text style={styles.confirmSummaryText}>[m
+[31m-                  Reason: {reason === 'Waste / Other' ? 'Other' : reason}[m
+[31m-                </Text>[m
+[31m-                <Text style={styles.confirmSummaryText}>[m
+[31m-                  Description: {wasteDescription.trim() || '—'}[m
+[31m-                </Text>[m
+[31m-                <Text style={styles.confirmSummaryText}>[m
+[31m-                  {formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} → {formatUnitQuantity([m
+[31m-                    selectedIngredient.quantity - Number(quantity),[m
+[31m-                    selectedIngredient.unit,[m
+[31m-                  )} after waste[m
+[31m-                </Text>[m
+[31m-                <Text style={styles.confirmSummaryText}>Notes: {notes.trim() || '—'}</Text>[m
+[32m+[m[32m                <Text style={styles.confirmSummaryText}>Reason: {reason} · {assignedBranch}</Text>[m
+               </View>[m
+             ) : route === 'usagePreview' || route === 'stockOut' ? ([m
+               <View style={styles.confirmSummary}>[m
+[36m@@ -4309,8 +4574,36 @@[m [mexport default function StaffWorkspace({[m
+                 )}[m
+               </View>[m
+             ) : null}[m
+[31m-            <View style={route === 'stockIn' || route === 'stockOut' ? styles.stockInConfirmActions : styles.confirmActions}>[m
+[31m-              {route === 'stockIn' ? ([m
+[32m+[m[32m            <View style={route === 'waste' || route === 'stockIn' || route === 'stockOut' ? styles.stockInConfirmActions : styles.confirmActions}>[m
+[32m+[m[32m              {route === 'waste' ? ([m
+[32m+[m[32m                <>[m
+[32m+[m[32m                  <Pressable[m
+[32m+[m[32m                    accessibilityRole="button"[m
+[32m+[m[32m                    disabled={confirming}[m
+[32m+[m[32m                    onPress={confirmTransaction}[m
+[32m+[m[32m                    style={({ pressed }) => [[m
+[32m+[m[32m                      styles.confirmButton,[m
+[32m+[m[32m                      styles.stockInConfirmButton,[m
+[32m+[m[32m                      pressed && styles.pressed,[m
+[32m+[m[32m                      confirming && styles.confirmButtonDisabled,[m
+[32m+[m[32m                    ]}[m
+[32m+[m[32m                  >[m
+[32m+[m[32m                    <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Record Waste'}</Text>[m
+[32m+[m[32m                  </Pressable>[m
+[32m+[m[32m                  <Pressable[m
+[32m+[m[32m                    accessibilityRole="button"[m
+[32m+[m[32m                    disabled={confirming}[m
+[32m+[m[32m                    onPress={() => setConfirmationVisible(false)}[m
+[32m+[m[32m                    style={({ pressed }) => [[m
+[32m+[m[32m                      styles.confirmCancelButton,[m
+[32m+[m[32m                      styles.stockInConfirmButton,[m
+[32m+[m[32m                      pressed && styles.pressed,[m
+[32m+[m[32m                    ]}[m
+[32m+[m[32m                  >[m
+[32m+[m[32m                    <Text style={styles.confirmCancelText}>Cancel</Text>[m
+[32m+[m[32m                  </Pressable>[m
+[32m+[m[32m                </>[m
+[32m+[m[32m              ) : route === 'stockIn' ? ([m
+                 <>[m
+                   <Pressable[m
+                     accessibilityRole="button"[m
+[36m@@ -4387,11 +4680,9 @@[m [mexport default function StaffWorkspace({[m
+                     <Text style={styles.confirmButtonText}>[m
+                       {confirming[m
+                         ? 'Recording…'[m
+[31m-                        : route === 'waste'[m
+[31m-                          ? 'Record waste'[m
+[31m-                          : route === 'usagePreview'[m
+[31m-                            ? 'Record usage'[m
+[31m-                            : 'Confirm'}[m
+[32m+[m[32m                        : route === 'usagePreview'[m
+[32m+[m[32m                          ? 'Record usage'[m
+[32m+[m[32m                          : 'Confirm'}[m
+                     </Text>[m
+                   </Pressable>[m
+                 </>[m
+[36m@@ -4444,7 +4735,7 @@[m [mexport default function StaffWorkspace({[m
+                     setSelectedAlertIngredientId(alertIngredient.id);[m
+                     setSelectedAlertBatchReference('');[m
+                     setSelectedAlertKind('lowStock');[m
+[31m-                    setRoute('notificationAlertDetails');[m
+[32m+[m[32m                    setRoute('alertDetails');[m
+                   }}[m
+                   style={({ pressed }) => [styles.lowStockAlertPrimary, pressed && styles.pressed]}[m
+                 >[m
+[36m@@ -4480,7 +4771,16 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   workspace: { flex: 1, backgroundColor: '#F5F5F5' },[m
+   screenArea: { flex: 1, minHeight: 0 },[m
+   scroll: { flex: 1 },[m
+[32m+[m[32m  movementFormRoot: { flex: 1, minHeight: 0 },[m
+[32m+[m[32m  wasteFormSurface: {[m
+[32m+[m[32m    flex: 1, minHeight: 0, marginHorizontal: 12, marginVertical: 10, borderRadius: 16,[m
+[32m+[m[32m    backgroundColor: colors.white, overflow: 'hidden', elevation: 2,[m
+[32m+[m[32m    shadowColor: colors.navy, shadowOpacity: 0.08, shadowRadius: 7,[m
+[32m+[m[32m    shadowOffset: { width: 0, height: 2 },[m
+[32m+[m[32m  },[m
+   dashboardContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 20 },[m
+[32m+[m[32m  dashboardLowStockScroll: { flexGrow: 0, marginHorizontal: -18 },[m
+[32m+[m[32m  dashboardLowStockList: { gap: 10, paddingHorizontal: 18, paddingTop: 2, paddingBottom: 8 },[m
+   dashboardPageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 21, lineHeight: 28, marginBottom: 9 },[m
+   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },[m
+   inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },[m
+[36m@@ -4636,16 +4936,19 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   greetingCopy: { flex: 1 },[m
+   greeting: { color: colors.ink, fontFamily: font.semibold, fontSize: 14, lineHeight: 20 },[m
+   branchName: { color: colors.muted, fontFamily: font.regular, fontSize: 10, marginTop: 1 },[m
+[31m-  notificationButton: { width: 39, height: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: colors.pale },[m
+[32m+[m[32m  alertButton: { width: 39, height: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: colors.pale },[m
+   bellIcon: { width: 22, height: 23, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 1 },[m
+   bellBody: { width: 14, height: 15, borderWidth: 1.7, borderColor: colors.navy, borderTopLeftRadius: 8, borderTopRightRadius: 8, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },[m
+   bellBase: { width: 18, height: 2, borderRadius: 1, backgroundColor: colors.navy, marginTop: 1 },[m
+   bellClapper: { width: 4, height: 3, borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: colors.navy, marginTop: 1 },[m
+[31m-  notificationDot: { position: 'absolute', top: 8, right: 9, width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink },[m
+[32m+[m[32m  alertDot: { position: 'absolute', top: 8, right: 9, width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink },[m
+   searchBar: {[m
+     minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,[m
+     borderRadius: 22, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 17,[m
+   },[m
+[32m+[m[32m  alertSearchBar: {[m
+[32m+[m[32m    minHeight: 42, borderRadius: 13, backgroundColor: '#F5F5F7', borderColor: '#F5F5F7', marginBottom: 0,[m
+[32m+[m[32m  },[m
+   searchGlyph: { color: colors.muted, fontSize: 25, lineHeight: 29, width: 24, textAlign: 'center', marginRight: 7 },[m
+   searchInput: { flex: 1, minHeight: 42, paddingVertical: 0, color: colors.ink, fontFamily: font.regular, fontSize: 11 },[m
+   clearSearch: { color: colors.muted, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 4 },[m
+[36m@@ -4740,47 +5043,55 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 13, borderRadius: 13, backgroundColor: '#F7F6FB', marginTop: 19 },[m
+   stockTipIcon: { width: 17, height: 17, borderRadius: 9, overflow: 'hidden', color: colors.white, backgroundColor: colors.navy, fontFamily: font.semibold, fontSize: 11, textAlign: 'center', marginRight: 9 },[m
+   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },[m
+[31m-  notificationList: { gap: 10 },[m
+[31m-  notificationPageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },[m
+[31m-  markReadButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: '#FCE3EB', marginBottom: 17 },[m
+[31m-  markReadText: { color: colors.pink, fontFamily: font.medium, fontSize: 8 },[m
+[31m-  notificationPageContent: { paddingHorizontal: 18, paddingTop: 19, paddingBottom: 20 },[m
+[31m-  alertFilterScroll: { flexGrow: 0, marginTop: -4, marginBottom: 13 },[m
+[31m-  alertFilterRow: { flexDirection: 'row', gap: 7, paddingRight: 8 },[m
+[31m-  alertFilterChip: {[m
+[31m-    minHeight: 31, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,[m
+[31m-    borderRadius: 17, backgroundColor: '#EEEEEF',[m
+[32m+[m[32m  alertsPageContent: { flexGrow: 1, paddingHorizontal: 18, paddingTop: 19, paddingBottom: 20, backgroundColor: colors.white },[m
+[32m+[m[32m  alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 22, lineHeight: 29 },[m
+[32m+[m[32m  alertSections: { flex: 1, paddingTop: 17, gap: 19 },[m
+[32m+[m[32m  alertSection: { gap: 9 },[m
+[32m+[m[32m  alertSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, lineHeight: 18 },[m
+[32m+[m[32m  alertCardList: { gap: 9 },[m
+[32m+[m[32m  alertsScreen: {[m
+[32m+[m[32m    marginHorizontal: 8, marginTop: 7, borderTopLeftRadius: 18, borderTopRightRadius: 18,[m
+[32m+[m[32m    backgroundColor: colors.white, overflow: 'hidden',[m
+   },[m
+[31m-  alertFilterChipSelected: { backgroundColor: colors.navy },[m
+[31m-  alertFilterChipText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },[m
+[31m-  alertFilterChipTextSelected: { color: colors.white },[m
+[31m-  alertMetadata: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginBottom: 11 },[m
+   inventoryAlertCard: {[m
+[31m-    minHeight: 78, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 10,[m
+[31m-    borderRadius: 13, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: '#E8E8EB',[m
+[31m-    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.045, shadowRadius: 4,[m
+[32m+[m[32m    minHeight: 80, justifyContent: 'center', paddingHorizontal: 13, paddingVertical: 11,[m
+[32m+[m[32m    borderRadius: 13, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,[m
+[32m+[m[32m    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 5,[m
+     shadowOffset: { width: 0, height: 2 },[m
+   },[m
+   inventoryAlertTopline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },[m
+[31m-  inventoryAlertName: { flex: 1, color: colors.navy, fontFamily: font.semibold, fontSize: 10 },[m
+[32m+[m[32m  inventoryAlertName: { flex: 1, minWidth: 0, color: colors.navy, fontFamily: font.semibold, fontSize: 11 },[m
+   inventoryAlertBadge: {[m
+[31m-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingVertical: 4,[m
+[32m+[m[32m    flexShrink: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4,[m
+     borderRadius: 10, backgroundColor: '#FFF2C4',[m
+   },[m
+[31m-  inventoryExpiryBadge: { backgroundColor: '#FFF2C4' },[m
+[31m-  inventoryAlertBadgeIcon: { color: colors.orange, fontFamily: font.bold, fontSize: 9, marginRight: 4 },[m
+[31m-  inventoryAlertBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 7 },[m
+[31m-  inventoryAlertDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginTop: 6 },[m
+[32m+[m[32m  inventoryExpiryBadge: { backgroundColor: colors.red },[m
+[32m+[m[32m  inventoryAlertBadgeIcon: { color: colors.white, fontFamily: font.bold, fontSize: 8, marginRight: 4 },[m
+[32m+[m[32m  inventoryAlertBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },[m
+[32m+[m[32m  inventoryExpiryBadgeText: { color: colors.white },[m
+[32m+[m[32m  inventoryAlertDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 6 },[m
+[32m+[m[32m  stockLevelTrack: { height: 5, overflow: 'hidden', borderRadius: 3, backgroundColor: '#E8E8EB', marginTop: 9 },[m
+[32m+[m[32m  stockLevelFill: { height: '100%', borderRadius: 3, backgroundColor: '#F0C419' },[m
+   alertEmptyCard: {[m
+[31m-    alignItems: 'center', paddingHorizontal: 17, paddingVertical: 23, borderRadius: 14,[m
+[31m-    backgroundColor: '#F5F5F7', marginTop: 1,[m
+[32m+[m[32m    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 17, paddingVertical: 22,[m
+   },[m
+[31m-  alertEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },[m
+[31m-  alertEmptyText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 4 },[m
+[31m-  alertListInfoBanner: {[m
+[31m-    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11,[m
+[31m-    backgroundColor: colors.yellow, marginTop: 14,[m
+[32m+[m[32m  alertEmptyIconCircle: {[m
+[32m+[m[32m    width: 68, height: 68, alignItems: 'center', justifyContent: 'center',[m
+[32m+[m[32m    borderRadius: 34, backgroundColor: '#F0F0F2', marginBottom: 15,[m
+[32m+[m[32m  },[m
+[32m+[m[32m  alertEmptyBellBody: {[m
+[32m+[m[32m    position: 'absolute', top: 17, width: 19, height: 21, borderWidth: 1.7, borderColor: '#777783',[m
+[32m+[m[32m    borderTopLeftRadius: 10, borderTopRightRadius: 10, borderBottomLeftRadius: 4, borderBottomRightRadius: 4,[m
+   },[m
+[32m+[m[32m  alertEmptyBellBase: { position: 'absolute', top: 39, width: 24, height: 2, borderRadius: 1, backgroundColor: '#777783' },[m
+[32m+[m[32m  alertEmptyBellClapper: { position: 'absolute', top: 42, width: 5, height: 4, borderRadius: 3, backgroundColor: '#777783' },[m
+[32m+[m[32m  alertEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, textAlign: 'center' },[m
+[32m+[m[32m  alertEmptyText: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 5 },[m
+[32m+[m[32m  alertState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },[m
+[32m+[m[32m  alertStateTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, textAlign: 'center' },[m
+[32m+[m[32m  alertStateText: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 6 },[m
+[32m+[m[32m  alertRetryButton: { minWidth: 90, alignItems: 'center', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 18, backgroundColor: colors.pink, marginTop: 13 },[m
+[32m+[m[32m  alertRetryText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },[m
+   alertDetailContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 20 },[m
+   alertDetailBadge: {[m
+     alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9,[m
+[36m@@ -4902,7 +5213,7 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+     borderTopWidth: 1, borderTopColor: '#DDDDDF',[m
+   },[m
+   profilePreferenceLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },[m
+[31m-  profileNotificationNote: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 2 },[m
+[32m+[m[32m  profileAlertNote: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 2 },[m
+   profileVersionRow: {[m
+     minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',[m
+     paddingHorizontal: 1, marginBottom: 7,[m
+[36m@@ -4954,18 +5265,6 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+     borderRadius: 10, backgroundColor: colors.pink,[m
+   },[m
+   logoutConfirmText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },[m
+[31m-  notificationCard: { minHeight: 76, flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },[m
+[31m-  notificationUnread: { backgroundColor: '#FFFAFC', borderColor: '#F7C3D2' },[m
+[31m-  notificationAlertIcon: { width: 39, height: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 13, marginRight: 11 },[m
+[31m-  alertLowIcon: { backgroundColor: colors.yellow },[m
+[31m-  alertExpiryIcon: { backgroundColor: colors.paleRed },[m
+[31m-  alertActivityIcon: { backgroundColor: '#E8EAFE' },[m
+[31m-  alertGlyph: { color: colors.orange, fontFamily: font.bold, fontSize: 17 },[m
+[31m-  notificationCopy: { flex: 1 },[m
+[31m-  notificationTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },[m
+[31m-  notificationUnreadTitle: { color: colors.pink },[m
+[31m-  notificationDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 3 },[m
+[31m-  unreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink, marginLeft: 8 },[m
+   accountCard: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 16, backgroundColor: colors.pale, marginBottom: 13 },[m
+   dailyEntryCard: {[m
+     minHeight: 65, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,[m
+[36m@@ -5124,6 +5423,8 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+     paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',[m
+   },[m
+   dateInputText: { color: colors.ink, fontFamily: font.regular, fontSize: 10 },[m
+[32m+[m[32m  dateInputAction: { flex: 1, minWidth: 0, justifyContent: 'center', minHeight: 40 },[m
+[32m+[m[32m  calendarButton: { width: 30, minHeight: 40, alignItems: 'center', justifyContent: 'center' },[m
+   clearDateButton: { width: 25, height: 32, alignItems: 'center', justifyContent: 'center' },[m
+   clearDateText: { color: colors.muted, fontFamily: font.medium, fontSize: 18, lineHeight: 21 },[m
+   placeholderText: { color: '#A0A0AA' },[m
+[36m@@ -5132,6 +5433,7 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   formRowWide: { flexDirection: 'row', gap: 12 },[m
+   rowField: { flex: 1, minWidth: 0 },[m
+   helperText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: -8, marginBottom: 14 },[m
+[32m+[m[32m  wasteReasonHelper: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 5, marginBottom: 12 },[m
+   selectInput: {[m
+     minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,[m
+     borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',[m
+[36m@@ -5141,6 +5443,8 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   selectChevron: { color: colors.orange, fontSize: 18, marginLeft: 5 },[m
+   dropdown: { maxHeight: 230, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },[m
+   ingredientCategoryHeading: { paddingHorizontal: 10, paddingTop: 9, paddingBottom: 4, color: colors.muted, fontFamily: font.semibold, fontSize: 8, textTransform: 'uppercase' },[m
+[32m+[m[32m  stockInDropdownCopy: { marginLeft: 0, paddingVertical: 2 },[m
+[32m+[m[32m  stockOutDropdownCopy: { marginLeft: 0, paddingVertical: 2 },[m
+   ingredientPickerEmpty: {[m
+     paddingHorizontal: 12, paddingVertical: 13, color: colors.muted,[m
+     fontFamily: font.regular, fontSize: 9, lineHeight: 14,[m
+[36m@@ -5149,7 +5453,7 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   dropdownCopy: { flex: 1, minWidth: 0, marginLeft: 10 },[m
+   dropdownName: { color: colors.navy, fontFamily: font.medium, fontSize: 10 },[m
+   dropdownQuantity: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },[m
+[31m-  reasonDropdown: { borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },[m
+[32m+[m[32m  reasonDropdown: { maxHeight: 230, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },[m
+   reasonOption: { paddingHorizontal: 13, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: colors.line },[m
+   ingredientReasonOption: {[m
+     minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9,[m
+[36m@@ -5157,7 +5461,11 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   },[m
+   reasonOptionText: { color: colors.ink, fontFamily: font.regular, fontSize: 10 },[m
+   reasonOptionSelected: { color: colors.pink, fontFamily: font.semibold },[m
+[32m+[m[32m  stockInFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },[m
+[32m+[m[32m  stockInFormButton: { width: '50%', maxWidth: 180, minHeight: 44 },[m
+   formButtons: { gap: 9, marginTop: 7 },[m
+[32m+[m[32m  wasteFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },[m
+[32m+[m[32m  wasteFormActionButton: { width: '50%', maxWidth: 180, minHeight: 44 },[m
+   saveButton: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },[m
+   saveButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },[m
+   cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#EEEEF0' },[m
+[36m@@ -5218,12 +5526,12 @@[m [mfunction createStaffStyles(theme: AppTheme) {[m
+   confirmButtonDisabled: { opacity: 0.6 },[m
+   lowStockAlertBackdrop: {[m
+     flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 19,[m
+[31m-    paddingVertical: 26, backgroundColor: 'rgba(16, 16, 39, 0.58)',[m
+[32m+[m[32m    paddingVertical: 26, backgroundColor: 'rgba(25, 25, 34, 0.55)',[m
+   },[m
+   lowStockAlertCard: {[m
+[31m-    width: '100%', maxWidth: 365, maxHeight: '90%', padding: 18, borderRadius: 19,[m
+[31m-    backgroundColor: colors.white, elevation: 16, shadowColor: '#000000',[m
+[31m-    shadowOpacity: 0.22, shadowRadius: 15, shadowOffset: { width: 0, height: 7 },[m
+[32m+[m[32m    width: '100%', maxWidth: 370, maxHeight: '92%', padding: 18, borderRadius: 19,[m
+[32m+[m[32m    backgroundColor: colors.white, elevation: 12, shadowColor: '#000000',[m
+[32m+[m[32m    shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 7 },[m
+   },[m
+   lowStockAlertTitle: { color: '#D29A00', fontFamily: font.semibold, fontSize: 14, lineHeight: 20 },[m
+   lowStockAlertDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 5 },[m

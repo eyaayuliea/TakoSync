@@ -104,7 +104,7 @@ export default function OwnerLoginScreen({
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.content, { maxWidth: Math.min(width - 32, 430) }]}>
+            <View style={[styles.content, { maxWidth: Math.min(width - 40, 380) }]}>
               <View style={styles.brandRow}>
                 <Pressable
                   accessibilityRole="button"
@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 22,
   },
   shortScrollContent: { justifyContent: 'flex-start', paddingVertical: 14 },
