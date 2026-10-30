@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
+import MenuWorkspace from './MenuWorkspace';
+import { menuPreviewProducts, type MenuCartLine } from './menuPreviewData';
 import {
   loadInventory,
   loadTransactionHistory,
@@ -726,6 +728,7 @@ export default function StaffWorkspace({
   };
   const [route, setRoute] = useState<StaffRoute>('dashboard');
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
+  const [menuCart, setMenuCart] = useState<MenuCartLine[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [backendLoading, setBackendLoading] = useState(true);
@@ -1074,6 +1077,25 @@ export default function StaffWorkspace({
     setLogoutConfirmationVisible(false);
     setRoute(nextRoute);
     setDashboardMessage('');
+  };
+
+  const addMenuProduct = (productId: string) => {
+    if (!menuPreviewProducts.some((product) => product.id === productId)) return;
+    setMenuCart((current) => current.some((line) => line.productId === productId)
+      ? current
+      : [...current, { productId, quantity: 1 }]);
+  };
+
+  const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
+    setMenuCart((current) => current.flatMap((line) => {
+      if (line.productId !== productId) return [line];
+      const quantity = line.quantity + change;
+      return quantity > 0 ? [{ ...line, quantity }] : [];
+    }));
+  };
+
+  const removeMenuProduct = (productId: string) => {
+    setMenuCart((current) => current.filter((line) => line.productId !== productId));
   };
 
   const openIngredientDetails = (item: Ingredient) => {
@@ -1668,25 +1690,6 @@ export default function StaffWorkspace({
       <Text style={styles.pageTitle}>{title}</Text>
       {subtitle ? <Text style={styles.pageSubtitle}>{subtitle}</Text> : null}
     </View>
-  );
-
-  const renderSalesUnavailable = () => (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.pageContent}
-      showsVerticalScrollIndicator={false}
-    >
-      {renderTopHeader('POS / Sales', 'Sales tools are not connected yet.')}
-      <View style={styles.salesUnavailableCard}>
-        <View style={styles.salesUnavailableIcon}>
-          <Text style={styles.salesUnavailableIconText}>▤</Text>
-        </View>
-        <Text style={styles.salesUnavailableTitle}>Point of sale unavailable</Text>
-        <Text style={styles.salesUnavailableMessage}>
-          This app has no product catalog, pricing, or sales-order service. No sales or inventory records have been created.
-        </Text>
-      </View>
-    </ScrollView>
   );
 
   const renderDashboard = () => (
@@ -4460,8 +4463,10 @@ export default function StaffWorkspace({
     case 'dashboard':
       screenContent = renderDashboard();
       break;
-    case 'sales':
-      screenContent = renderSalesUnavailable();
+    case 'menu':
+    case 'cart':
+    case 'checkout':
+      screenContent = null;
       break;
     case 'inventory':
       screenContent = renderInventory();
@@ -4540,7 +4545,7 @@ export default function StaffWorkspace({
   return (
     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.screenArea}>
-        {backendError !== '' ? (
+        {backendError !== '' && route !== 'menu' && route !== 'cart' && route !== 'checkout' ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Retry loading branch data"
@@ -4551,6 +4556,16 @@ export default function StaffWorkspace({
           </Pressable>
         ) : null}
         {screenContent}
+        <MenuWorkspace
+          visible={route === 'menu' || route === 'cart' || route === 'checkout'}
+          page={route === 'menu' || route === 'cart' || route === 'checkout' ? route : 'menu'}
+          cart={menuCart}
+          onSetPage={setRoute}
+          onAddProduct={addMenuProduct}
+          onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
+          onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
+          onRemoveProduct={removeMenuProduct}
+        />
       </View>
       <BottomNavigation active={route} onSelect={navigate} />
       <Modal
@@ -5463,20 +5478,6 @@ function createStaffStyles(theme: AppTheme) {
   pageHeader: { marginBottom: 17 },
   pageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 22, lineHeight: 29 },
   pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 10, marginTop: 2 },
-  salesUnavailableCard: {
-    alignItems: 'center', paddingHorizontal: 22, paddingVertical: 26, borderRadius: 20,
-    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
-  },
-  salesUnavailableIcon: {
-    width: 54, height: 54, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 17, backgroundColor: '#FFF1E2', marginBottom: 14,
-  },
-  salesUnavailableIconText: { color: colors.orange, fontFamily: font.semibold, fontSize: 28 },
-  salesUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 14, textAlign: 'center' },
-  salesUnavailableMessage: {
-    maxWidth: 300, color: colors.muted, fontFamily: font.regular, fontSize: 10,
-    lineHeight: 16, textAlign: 'center', marginTop: 8,
-  },
   categoryScroll: { flexGrow: 0, marginBottom: 19 },
   categoryList: { gap: 8, paddingRight: 6 },
   categoryChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.pale },

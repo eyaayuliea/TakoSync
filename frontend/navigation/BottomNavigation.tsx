@@ -11,7 +11,9 @@ const colors = {
 
 export type StaffRoute =
   | 'dashboard'
-  | 'sales'
+  | 'menu'
+  | 'cart'
+  | 'checkout'
   | 'inventory'
   | 'stocks'
   | 'stockIn'
@@ -37,11 +39,11 @@ export type StaffRoute =
   | 'notifications'
   | 'more';
 
-export type StaffTab = Extract<StaffRoute, 'dashboard' | 'sales' | 'inventory' | 'stocks' | 'notifications' | 'more'>;
+export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'notifications' | 'more'>;
 
-const destinations: { route: StaffTab; label: string; icon: 'home' | 'pos' | 'box' | 'stock' | 'bell' | 'more' }[] = [
+const destinations: { route: StaffTab; label: string; icon: 'home' | 'menu' | 'box' | 'stock' | 'bell' | 'more' }[] = [
   { route: 'dashboard', label: 'Dashboard', icon: 'home' },
-  { route: 'sales', label: 'POS / Sales', icon: 'pos' },
+  { route: 'menu', label: 'Menu', icon: 'menu' },
   { route: 'inventory', label: 'Inventory', icon: 'box' },
   { route: 'stocks', label: 'Stock movement', icon: 'stock' },
   { route: 'notifications', label: 'Notifications', icon: 'bell' },
@@ -61,12 +63,12 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
     );
   }
 
-  if (name === 'pos') {
+  if (name === 'menu') {
     return (
-      <View style={[iconStyles.pos, { borderColor: color }]}>
-        <View style={[iconStyles.posLine, { backgroundColor: color }]} />
-        <View style={[iconStyles.posLine, { backgroundColor: color }]} />
-        <View style={[iconStyles.posLineShort, { backgroundColor: color }]} />
+      <View style={[iconStyles.menu, { borderColor: color }]}>
+        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
+        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
+        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
       </View>
     );
   }
@@ -113,6 +115,7 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
 }
 
 export function activeStaffTab(route: StaffRoute): StaffTab {
+  if (route === 'cart' || route === 'checkout') return 'menu';
   if (
     route === 'stockIn' ||
     route === 'stockOut' ||
@@ -139,18 +142,18 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
 export default function BottomNavigation({
   active,
   onSelect,
-  showSales = true,
+  showMenu = true,
 }: {
   active: StaffRoute;
   onSelect: (route: StaffTab) => void;
-  showSales?: boolean;
+  showMenu?: boolean;
 }) {
   const { colors: themeColors, isDark } = useTheme();
   const styles = useNavigationStyles();
   const selectedTab = activeStaffTab(active);
-  const visibleDestinations = showSales
+  const visibleDestinations = showMenu
     ? destinations
-    : destinations.filter((destination) => destination.route !== 'sales');
+    : destinations.filter((destination) => destination.route !== 'menu');
 
   return (
     <View style={styles.outer}>
@@ -240,9 +243,8 @@ const iconStyles = StyleSheet.create({
   },
   homeBody: { width: 14, height: 11, borderWidth: 1.8, borderBottomWidth: 0, alignItems: 'center', justifyContent: 'flex-end' },
   homeDoor: { width: 4, height: 6, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
-  pos: { width: 16, height: 20, borderWidth: 1.8, borderRadius: 3, alignItems: 'center', justifyContent: 'center', gap: 2 },
-  posLine: { width: 9, height: 1.5, borderRadius: 1 },
-  posLineShort: { width: 6, height: 1.5, alignSelf: 'flex-start', marginLeft: 3, borderRadius: 1 },
+  menu: { width: 19, height: 19, borderWidth: 1.8, borderRadius: 4, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  menuLine: { width: 10, height: 1.5, borderRadius: 1 },
   box: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   boxTopLeft: { position: 'absolute', top: 3, left: 3, width: 8, height: 8, borderLeftWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '45deg' }] },
   boxTopRight: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRightWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '-45deg' }] },

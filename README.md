@@ -83,6 +83,8 @@ The app calls Supabase directly through the Supabase JavaScript client. Database
 │   ├── navigation/                 # Staff bottom navigation
 │   ├── services/                   # Supabase client and application data operations
 │   ├── staff/                      # Staff workspace and inventory workflows
+│   │   ├── MenuWorkspace.tsx        # Staff menu, cart, and unavailable checkout state
+│   │   └── menuPreviewData.ts       # Isolated UI-only menu examples; not production data
 │   └── theme/                      # Theme provider and persisted theme preference
 ├── backend/
 │   ├── README.md                   # Supabase setup notes
@@ -211,7 +213,8 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Stock-In, Stock-Out/usage, waste/spoilage, Fast-Log | Implemented through the database transaction function |
 | Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push notification delivery |
 | Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
-| Staff POS / Sales | Not connected; the frontend has no product catalog or sales-order service, so the Staff POS tab reports this limitation rather than creating sample sales |
+| Staff Menu / cart | Menu filters, selection, cart quantities, and preview totals are implemented with isolated UI-only sample data from the project brief; these are not live products or production prices |
+| Staff checkout / sales submission | Not connected; checkout explicitly reports that no order was submitted and inventory was unchanged |
 | Branch-to-branch stock transfers | Not implemented; the current frontend contract and transaction service do not support atomic transfers between branches |
 | Owner Login screen | Frontend preview only; mock error state, no authentication request |
 | Owner mobile dashboard, branch picker, inventory, and item details | Development-only frontend preview using clearly labeled local sample data |
@@ -223,7 +226,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 
 The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Notification preferences are not persisted or connected to a push service.
 
-To implement POS safely, the frontend needs a branch-scoped product/menu catalog contract (including prices and availability), an order creation/read contract with line-item and total semantics, and a defined cancellation/refund flow. If sales should consume ingredient inventory, the backend must also define how recipes map to ingredients and provide an atomic order-and-inventory operation. Transfers similarly require a backend contract that records both branch sides atomically; the existing inventory transaction operation is branch-scoped and must not be used to simulate a transfer.
+To replace the UI preview and implement POS safely, the frontend needs a branch-scoped product/menu catalog contract (including prices, availability, and categories), an order creation/read contract with line-item and total semantics, idempotent submission behavior, and a defined cancellation/refund flow. If sales should consume ingredient inventory, the backend must also define how recipes map to ingredients and provide an atomic order-and-inventory operation. Transfers similarly require a backend contract that records both branch sides atomically; the existing inventory transaction operation is branch-scoped and must not be used to simulate a transfer.
 
 ## Project scope
 
