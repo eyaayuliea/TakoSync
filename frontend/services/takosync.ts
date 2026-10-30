@@ -99,6 +99,42 @@ export type OwnerSalesData = {
   items: OwnerSaleItem[];
 };
 
+export type ProductMenuItem = {
+  id: string;
+  product_name: string;
+  description: string;
+  price: number;
+  is_available: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IngredientCategoryRecord = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+export type IngredientConfigurationRecord = {
+  id: string;
+  category_id: string;
+  name: string;
+  unit: string;
+  quantity_precision: number;
+  expiration_tracking: boolean;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecipeIngredientRecord = {
+  id: string;
+  product_id: string;
+  ingredient_id: string;
+  quantity_required: number;
+  unit_of_measure: string;
+};
+
 const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
   octopus: { emoji: '🐙', tint: '#FCE9DE', type: 'Frozen seafood' },
   flour: { emoji: '🌾', tint: '#FFF1D8', type: 'Dry goods' },
@@ -112,6 +148,16 @@ const ingredientVisuals: Record<string, { emoji: string; tint: string; type: str
 
 function assertNoError(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
+}
+
+function makeRecordId(prefix: string, value: string): string {
+  const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || prefix;
+  return `${slug}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function assertUniqueNameError(error: { message: string; code?: string } | null, label: string): void {
+  if (error?.code === '23505') throw new Error(`A ${label} with this name already exists.`);
+  assertNoError(error);
 }
 
 function formatDate(value: string | null): string | null {
@@ -560,6 +606,248 @@ async function fetchTransactionPage(
     .range(offset, offset + pageSize - 1);
   assertNoError(error);
   return data ?? [];
+}
+
+export async function loadProducts(): Promise<ProductMenuItem[]> {
+  const { data, error } = await requireSupabase()
+    .from('products')
+    .select('id, product_name, description, price, is_available, created_at, updated_at')
+    .order('product_name', { ascending: true });
+  assertNoError(error);
+  return (data ?? []).map((row) => ({
+    ...row,
+    price: Number(row.price),
+  }));
+}
+
+export async function loadIngredientRecipeConfiguration(): Promise<{
+  ingredients: IngredientConfigurationRecord[];
+  categories: IngredientCategoryRecord[];
+  recipeIngredients: RecipeIngredientRecord[];
+}> {
+  const client = requireSupabase();
+  const [ingredientsResult, categoriesResult, recipesResult] = await Promise.all([
+    client.from('ingredients')
+      .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active, created_at, updated_at')
+      .order('name', { ascending: true }),
+    client.from('ingredient_categories')
+      .select('id, name, created_at')
+      .order('name', { ascending: true }),
+    client.from('recipes')
+      .select('id, product_id, ingredient_id, quantity_required, unit_of_measure')
+      .order('product_id', { ascending: true }),
+  ]);
+  assertNoError(ingredientsResult.error);
+  assertNoError(categoriesResult.error);
+  assertNoError(recipesResult.error);
+  return {
+    ingredients: ingredientsResult.data ?? [],
+    categories: categoriesResult.data ?? [],
+    recipeIngredients: (recipesResult.data ?? []).map((line) => ({
+      ...line,
+      quantity_required: Number(line.quantity_required),
+    })),
+  };
+}
+
+export async function createIngredientCategory(name: string): Promise<IngredientCategoryRecord> {
+  const categoryName = name.trim();
+  if (!categoryName) throw new Error('Category name is required.');
+
+  const client = requireSupabase();
+  const { data: existingCategories, error: existingError } = await client
+    .from('ingredient_categories')
+    .select('id, name, created_at');
+  assertNoError(existingError);
+  const existing = (existingCategories ?? []).find((category) =>
+    category.name.trim().toLocaleLowerCase() === categoryName.toLocaleLowerCase(),
+  );
+  if (existing) return existing;
+
+  const { data, error } = await client
+    .from('ingredient_categories')
+    .insert({ id: makeRecordId('category', categoryName), name: categoryName })
+    .select('id, name, created_at')
+    .single();
+  assertUniqueNameError(error, 'category');
+  if (!data) throw new Error('The ingredient category could not be created.');
+  return data;
+}
+
+export async function createIngredient(input: {
+  name: string;
+  category_id: string;
+  unit: string;
+}): Promise<IngredientConfigurationRecord> {
+  const name = input.name.trim();
+  if (!name) throw new Error('Ingredient name is required.');
+  if (!input.category_id) throw new Error('Choose an ingredient category.');
+  if (!input.unit.trim()) throw new Error('Choose a unit of measurement.');
+
+  const { data, error } = await requireSupabase()
+    .from('ingredients')
+    .insert({
+      id: makeRecordId('ingredient', name),
+      name,
+      category_id: input.category_id,
+      unit: input.unit,
+      quantity_precision: input.unit === 'pcs' || input.unit === 'g' ? 0 : 2,
+      expiration_tracking: false,
+      active: true,
+    })
+    .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active, created_at, updated_at')
+    .single();
+  assertUniqueNameError(error, 'ingredient');
+  if (!data) throw new Error('The ingredient could not be created.');
+  return data;
+}
+
+export async function updateIngredient(
+  ingredientId: string,
+  updates: { name: string; category_id: string; unit: string },
+): Promise<IngredientConfigurationRecord> {
+  const name = updates.name.trim();
+  if (!ingredientId) throw new Error('The ingredient to update is missing.');
+  if (!name) throw new Error('Ingredient name is required.');
+  if (!updates.category_id) throw new Error('Choose an ingredient category.');
+  if (!updates.unit.trim()) throw new Error('Choose a unit of measurement.');
+
+  const { data, error } = await requireSupabase()
+    .from('ingredients')
+    .update({ name, category_id: updates.category_id, unit: updates.unit })
+    .eq('id', ingredientId)
+    .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active, created_at, updated_at')
+    .single();
+  assertUniqueNameError(error, 'ingredient');
+  if (!data) throw new Error('The ingredient could not be updated.');
+  return data;
+}
+
+export async function saveProductRecipe(
+  productId: string,
+  lines: { ingredient_id: string; quantity_required: number; unit_of_measure: string }[],
+): Promise<RecipeIngredientRecord[]> {
+  if (!productId) throw new Error('Choose a menu product.');
+  const ingredientIds = new Set<string>();
+  for (const line of lines) {
+    if (!line.ingredient_id) throw new Error('Choose an ingredient for every recipe entry.');
+    if (!Number.isFinite(line.quantity_required) || line.quantity_required <= 0) {
+      throw new Error('Every recipe quantity must be greater than zero.');
+    }
+    if (!line.unit_of_measure.trim()) throw new Error('Every recipe entry must have a unit of measurement.');
+    if (ingredientIds.has(line.ingredient_id)) {
+      throw new Error('An ingredient can only appear once in a recipe.');
+    }
+    ingredientIds.add(line.ingredient_id);
+  }
+
+  const client = requireSupabase();
+  const { data: currentLines, error: loadError } = await client
+    .from('recipes')
+    .select('id, ingredient_id')
+    .eq('product_id', productId);
+  assertNoError(loadError);
+
+  if (lines.length) {
+    const { error } = await client
+      .from('recipes')
+      .upsert(
+        lines.map((line) => ({
+          product_id: productId,
+          ingredient_id: line.ingredient_id,
+          quantity_required: line.quantity_required,
+          unit_of_measure: line.unit_of_measure,
+        })),
+        { onConflict: 'product_id,ingredient_id' },
+      );
+    assertNoError(error);
+  }
+
+  const removedIds = (currentLines ?? [])
+    .filter((line) => !ingredientIds.has(line.ingredient_id))
+    .map((line) => line.id);
+  if (removedIds.length) {
+    const { error } = await client
+      .from('recipes')
+      .delete()
+      .eq('product_id', productId)
+      .in('id', removedIds);
+    assertNoError(error);
+  }
+
+  const { data, error } = await client
+    .from('recipes')
+    .select('id, product_id, ingredient_id, quantity_required, unit_of_measure')
+    .eq('product_id', productId)
+    .order('ingredient_id', { ascending: true });
+  assertNoError(error);
+  return (data ?? []).map((line) => ({
+    ...line,
+    quantity_required: Number(line.quantity_required),
+  }));
+}
+
+export async function createProduct(input: {
+  product_name: string;
+  description: string;
+  price: number;
+  is_available: boolean;
+}): Promise<ProductMenuItem> {
+  const productName = input.product_name.trim();
+  const description = input.description.trim();
+  const price = Number(input.price);
+  if (!productName) throw new Error('Product name is required.');
+  if (!Number.isFinite(price) || price < 0) throw new Error('Selling price must be a valid number greater than or equal to zero.');
+
+  const { data, error } = await requireSupabase()
+    .from('products')
+    .insert({
+      product_name: productName,
+      description,
+      price,
+      is_available: Boolean(input.is_available),
+    })
+    .select('id, product_name, description, price, is_available, created_at, updated_at')
+    .single();
+  assertNoError(error);
+  if (!data) throw new Error('The product could not be created.');
+  return { ...data, price: Number(data.price) };
+}
+
+export async function updateProduct(
+  productId: string,
+  updates: Partial<{ product_name: string; description: string; price: number; is_available: boolean }>,
+): Promise<ProductMenuItem> {
+  const payload: Record<string, unknown> = {};
+  if ('product_name' in updates && typeof updates.product_name === 'string') {
+    const productName = updates.product_name.trim();
+    if (!productName) throw new Error('Product name is required.');
+    payload.product_name = productName;
+  }
+  if ('description' in updates) payload.description = (updates.description ?? '').trim();
+  if ('price' in updates) {
+    const price = Number(updates.price);
+    if (!Number.isFinite(price) || price < 0) throw new Error('Selling price must be a valid number greater than or equal to zero.');
+    payload.price = price;
+  }
+  if ('is_available' in updates) payload.is_available = Boolean(updates.is_available);
+
+  const updatePayload: {
+    product_name?: string;
+    description?: string;
+    price?: number;
+    is_available?: boolean;
+  } = payload;
+
+  const { data, error } = await requireSupabase()
+    .from('products')
+    .update(updatePayload)
+    .eq('id', productId)
+    .select('id, product_name, description, price, is_available, created_at, updated_at')
+    .single();
+  assertNoError(error);
+  if (!data) throw new Error('The product could not be updated.');
+  return { ...data, price: Number(data.price) };
 }
 
 export async function loadOwnerInventory() {

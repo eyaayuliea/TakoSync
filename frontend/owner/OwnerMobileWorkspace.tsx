@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,14 +9,25 @@ import {
   View,
 } from 'react-native';
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
+import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
-import type { AppUser, loadOwnerActivityData, loadOwnerInventory, OwnerSalesData } from '../services/takosync';
+import {
+  createProduct,
+  loadOwnerActivityData,
+  loadOwnerInventory,
+  loadProducts,
+  updateProduct,
+  type AppUser,
+  type ProductMenuItem,
+  type OwnerSalesData,
+} from '../services/takosync';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Discrepancies' | 'Records' | 'Profile';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'Discrepancies' | 'Records' | 'Profile';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
+type ProductRecord = ProductMenuItem;
 
 const colors = {
   pink: '#F20D55',
@@ -172,6 +183,21 @@ export default function OwnerMobileWorkspace({
   const [inventorySearch, setInventorySearch] = useState('');
   const [alertCategory, setAlertCategory] = useState<'Low stock' | 'Expiring soon' | 'Expired'>('Low stock');
   const [recordType, setRecordType] = useState<'All' | 'Sales' | 'Inventory' | 'Counts' | 'Audit'>('All');
+  const [productRecords, setProductRecords] = useState<ProductRecord[]>([]);
+  const [productSearch, setProductSearch] = useState('');
+  const [productEditorMode, setProductEditorMode] = useState<'add' | 'edit' | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<ProductRecord | null>(null);
+  const [productForm, setProductForm] = useState({
+    product_name: '',
+    description: '',
+    price: '',
+    is_available: true,
+  });
+  const [productFormErrors, setProductFormErrors] = useState<Partial<Record<'product_name' | 'description' | 'price', string>>>({});
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState('');
+  const [productSaving, setProductSaving] = useState(false);
+  const [productFeedback, setProductFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const branches = data?.branches ?? [];
   const branchNames = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
@@ -326,8 +352,99 @@ export default function OwnerMobileWorkspace({
     `${item.name} ${item.category} ${item.branch}`.toLowerCase().includes(inventorySearch.trim().toLowerCase()),
   );
   const filteredAlerts = alertCategory === 'Expired' ? expired : expiringSoon;
+  const visibleProducts = productRecords.filter((product) =>
+    `${product.product_name} ${product.description}`.toLowerCase().includes(productSearch.trim().toLowerCase()),
+  );
+  const availableProductCount = productRecords.filter((product) => product.is_available).length;
+  const unavailableProductCount = productRecords.length - availableProductCount;
+
+  const refreshProducts = async () => {
+    setProductsLoading(true);
+    setProductsError('');
+    try {
+      const nextProducts = await loadProducts();
+      setProductRecords(nextProducts);
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : 'Unable to load products and menu items.');
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (page !== 'Products') return;
+    void refreshProducts();
+  }, [page]);
+
+  const resetProductForm = (mode: 'add' | 'edit', product?: ProductRecord) => {
+    setProductEditorMode(mode);
+    setProductFeedback(null);
+    setProductFormErrors({});
+    setSelectedProduct(product ?? null);
+    setProductForm({
+      product_name: product?.product_name ?? '',
+      description: product?.description ?? '',
+      price: product ? String(product.price) : '',
+      is_available: product?.is_available ?? true,
+    });
+  };
+
+  const submitProductForm = async () => {
+    const errors: Partial<Record<'product_name' | 'description' | 'price', string>> = {};
+    const name = productForm.product_name.trim();
+    const description = productForm.description.trim();
+    const price = Number(productForm.price);
+    if (!name) errors.product_name = 'Product name is required.';
+    if (!description) errors.description = 'Product description is required.';
+    if (!Number.isFinite(price) || price < 0) errors.price = 'Enter a valid selling price greater than or equal to zero.';
+    if (Object.keys(errors).length) {
+      setProductFormErrors(errors);
+      return;
+    }
+
+    setProductSaving(true);
+    setProductFormErrors({});
+    try {
+      const payload = {
+        product_name: name,
+        description,
+        price,
+        is_available: productForm.is_available,
+      };
+      const nextProduct = productEditorMode === 'edit' && selectedProduct
+        ? await updateProduct(selectedProduct.id, payload)
+        : await createProduct(payload);
+
+      setProductRecords((current) => {
+        const next = productEditorMode === 'edit' && selectedProduct
+          ? current.map((product) => (product.id === nextProduct.id ? nextProduct : product))
+          : [...current.filter((product) => product.id !== nextProduct.id), nextProduct].sort((a, b) => a.product_name.localeCompare(b.product_name));
+        return next;
+      });
+      setProductFeedback({
+        type: 'success',
+        text: productEditorMode === 'edit' ? 'Product updated successfully.' : 'Product added successfully.',
+      });
+      setProductEditorMode(null);
+      setSelectedProduct(nextProduct);
+      setProductForm({
+        product_name: nextProduct.product_name,
+        description: nextProduct.description,
+        price: String(nextProduct.price),
+        is_available: nextProduct.is_available,
+      });
+    } catch (error) {
+      setProductFeedback({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to save this product right now.',
+      });
+    } finally {
+      setProductSaving(false);
+    }
+  };
+
   const activePrimaryPage = page === 'Reports' ? 'Sales'
-    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' ? 'More' : page;
+    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' ? 'More' : page;
 
   const showError = (message: string) => (
     <View style={styles.errorCard} accessibilityRole="alert">
@@ -376,13 +493,193 @@ export default function OwnerMobileWorkspace({
     </View>
   );
 
+  const renderProducts = () => (
+    <>
+      <View style={styles.productOverviewGrid}>
+        <View style={styles.bentoSummaryCard}>
+          <Text style={styles.bentoLabel}>Total products</Text>
+          <Text style={styles.bentoValue}>{productRecords.length}</Text>
+        </View>
+        <View style={styles.bentoSummaryCard}>
+          <Text style={styles.bentoLabel}>Available</Text>
+          <Text style={[styles.bentoValue, styles.bentoValueSuccess]}>{availableProductCount}</Text>
+        </View>
+        <View style={styles.bentoSummaryCard}>
+          <Text style={styles.bentoLabel}>Unavailable</Text>
+          <Text style={[styles.bentoValue, styles.bentoValueMuted]}>{unavailableProductCount}</Text>
+        </View>
+      </View>
+
+      <View style={styles.searchBox}>
+        <Text style={styles.searchGlyph}>⌕</Text>
+        <TextInput
+          value={productSearch}
+          onChangeText={setProductSearch}
+          placeholder="Search products"
+          placeholderTextColor={colors.muted}
+          style={styles.searchInput}
+          accessibilityLabel="Search products by name"
+          returnKeyType="search"
+        />
+        {productSearch ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Clear product search" onPress={() => setProductSearch('')}>
+            <Text style={styles.clearSearch}>×</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <Pressable accessibilityRole="button" onPress={() => resetProductForm('add')} style={styles.primaryActionButton}>
+        <Text style={styles.primaryActionText}>+ Add Product</Text>
+      </Pressable>
+
+      {productsError ? showError(productsError) : productsLoading && productRecords.length === 0 ? (
+        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading products…</Text></View>
+      ) : visibleProducts.length ? (
+        visibleProducts.map((product) => (
+          <Pressable key={product.id} accessibilityRole="button" onPress={() => setSelectedProduct(product)} style={styles.productCard}>
+            <View style={styles.productMetaRow}>
+              <View style={styles.productCopy}>
+                <Text style={styles.productName}>{product.product_name}</Text>
+                <Text style={styles.productDescription} numberOfLines={2}>{product.description || 'No description provided.'}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${product.product_name}`}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  resetProductForm('edit', product);
+                }}
+                style={styles.editActionButton}
+              >
+                <Text style={styles.editActionText}>Edit</Text>
+              </Pressable>
+            </View>
+            <View style={styles.productFooterRow}>
+              <View>
+                <Text style={styles.productPriceLabel}>Selling price</Text>
+                <Text style={styles.productPriceValue}>{currency(product.price)}</Text>
+              </View>
+              <View style={[styles.availabilityPill, product.is_available ? styles.availabilityAvailable : styles.availabilityUnavailable]}>
+                <Text style={[styles.availabilityText, !product.is_available && styles.availabilityTextMuted]}>{product.is_available ? 'Available' : 'Unavailable'}</Text>
+              </View>
+            </View>
+          </Pressable>
+        ))
+      ) : (
+        <EmptyState text={productRecords.length ? 'No products match your current search.' : 'No menu products are available yet. Add the first product to start managing your menu.'} />
+      )}
+
+      {selectedProduct && !productEditorMode && (
+        <View style={styles.productDetailSheet}>
+          <View style={styles.productDetailHeader}>
+            <Text style={styles.productName}>{selectedProduct.product_name}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setSelectedProduct(null)} style={styles.closeActionButton}>
+              <Text style={styles.closeActionText}>×</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.productDetailLabel}>Description</Text>
+          <Text style={styles.productDetailText}>{selectedProduct.description || 'No description provided.'}</Text>
+          <View style={styles.productDetailGrid}>
+            <View style={styles.detailStatBox}>
+              <Text style={styles.productDetailLabel}>Selling price</Text>
+              <Text style={styles.productDetailValue}>{currency(selectedProduct.price)}</Text>
+            </View>
+            <View style={styles.detailStatBox}>
+              <Text style={styles.productDetailLabel}>Availability</Text>
+              <Text style={styles.productDetailValue}>{selectedProduct.is_available ? 'Available' : 'Unavailable'}</Text>
+            </View>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => resetProductForm('edit', selectedProduct)} style={styles.secondaryActionButton}>
+            <Text style={styles.secondaryActionText}>Edit Product</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {productEditorMode && (
+        <View style={styles.productModalBackdrop}>
+          <View style={styles.productModalCard}>
+            <View style={styles.productModalHeader}>
+              <Text style={styles.productModalTitle}>{productEditorMode === 'edit' ? 'Edit Product' : 'Add Product'}</Text>
+              <Pressable accessibilityRole="button" onPress={() => { setProductEditorMode(null); setProductFeedback(null); }} style={styles.closeActionButton}>
+                <Text style={styles.closeActionText}>×</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.fieldLabel}>Product name</Text>
+            <TextInput
+              value={productForm.product_name}
+              onChangeText={(value) => setProductForm((current) => ({ ...current, product_name: value }))}
+              placeholder="e.g. Takoyaki Special"
+              placeholderTextColor={colors.muted}
+              style={[styles.textInput, productFormErrors.product_name && styles.textInputError]}
+              accessibilityLabel="Product name"
+            />
+            {productFormErrors.product_name ? <Text style={styles.fieldError}>{productFormErrors.product_name}</Text> : null}
+
+            <Text style={styles.fieldLabel}>Description</Text>
+            <TextInput
+              value={productForm.description}
+              onChangeText={(value) => setProductForm((current) => ({ ...current, description: value }))}
+              placeholder="Describe the product"
+              placeholderTextColor={colors.muted}
+              multiline
+              style={[styles.textInput, styles.textArea, productFormErrors.description && styles.textInputError]}
+              accessibilityLabel="Product description"
+            />
+            {productFormErrors.description ? <Text style={styles.fieldError}>{productFormErrors.description}</Text> : null}
+
+            <Text style={styles.fieldLabel}>Selling price</Text>
+            <TextInput
+              value={productForm.price}
+              onChangeText={(value) => setProductForm((current) => ({ ...current, price: value }))}
+              placeholder="0.00"
+              keyboardType="decimal-pad"
+              placeholderTextColor={colors.muted}
+              style={[styles.textInput, productFormErrors.price && styles.textInputError]}
+              accessibilityLabel="Product selling price"
+            />
+            {productFormErrors.price ? <Text style={styles.fieldError}>{productFormErrors.price}</Text> : null}
+
+            <Text style={styles.fieldLabel}>Availability</Text>
+            <View style={styles.segmentedRow}>
+              {(['Available', 'Unavailable'] as const).map((status) => {
+                const selected = productForm.is_available === (status === 'Available');
+                return (
+                  <Pressable
+                    key={status}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setProductForm((current) => ({ ...current, is_available: status === 'Available' }))}
+                    style={[styles.segmentButton, selected && styles.segmentButtonSelected]}
+                  >
+                    <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextSelected]}>{status}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {productFeedback ? (
+              <Text style={[styles.feedbackText, productFeedback.type === 'error' ? styles.feedbackError : styles.feedbackSuccess]}>{productFeedback.text}</Text>
+            ) : null}
+
+            <Pressable accessibilityRole="button" disabled={productSaving} onPress={submitProductForm} style={styles.primaryActionButton}>
+              <Text style={styles.primaryActionText}>{productSaving ? 'Saving…' : productEditorMode === 'edit' ? 'Save Changes' : 'Add Product'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+    </>
+  );
+
   const renderDashboard = () => (
     <>
       <View style={styles.welcomePanel}>
         <View style={styles.welcomeCopy}>
           <Text style={styles.eyebrow}>BUSINESS OVERVIEW</Text>
           <Text style={styles.welcomeTitle}>Welcome back, {user.displayName.split(' ')[0]}</Text>
-          <Text style={styles.welcomeSubtext}>Monitoring {branchId ? branchNames.get(branchId) : 'all active branches'}</Text>
+          <Text style={styles.welcomeSubtext}>
+            Monitoring {branchId ? branchNames.get(branchId) : 'all active branches'} · {new Date().toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </Text>
         </View>
         <View style={styles.welcomeMark}><Text style={styles.welcomeMarkText}>T</Text></View>
       </View>
@@ -681,6 +978,8 @@ export default function OwnerMobileWorkspace({
   const renderMore = () => (
     <>
       {[
+        { title: 'Ingredients & Recipes', detail: 'Manage ingredient records and product recipes', page: 'Ingredients' as const, icon: '◈' },
+        { title: 'Products & Menu', detail: 'Manage menu items, prices, and availability', page: 'Products' as const, icon: '▣' },
         { title: 'Discrepancy review', detail: `${discrepancies.length} pending count discrepancies`, page: 'Discrepancies' as const, icon: '!' },
         { title: 'Business records', detail: 'Sales, inventory movements, and counts', page: 'Records' as const, icon: '↻' },
         { title: 'Owner profile', detail: 'Account details and preferences', page: 'Profile' as const, icon: '●' },
@@ -730,6 +1029,8 @@ export default function OwnerMobileWorkspace({
     Inventory: 'Inventory',
     Alerts: 'Alerts',
     More: 'More',
+    Products: 'Products & Menu',
+    Ingredients: 'Ingredients & Recipes',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
     Profile: 'Owner profile',
@@ -758,7 +1059,7 @@ export default function OwnerMobileWorkspace({
         </View>
       </View>
 
-      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && (
+      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && page !== 'Ingredients' && (
         <View style={styles.branchFilterBlock}>
           <Text style={styles.filterLabel}>BRANCH</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
@@ -783,23 +1084,14 @@ export default function OwnerMobileWorkspace({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {(page === 'Dashboard' || page === 'Sales' || page === 'Reports' || page === 'Inventory' || page === 'Alerts') && (
-          <View style={styles.screenIntro}>
-            <Text style={styles.screenIntroTitle}>
-              {page === 'Dashboard' ? 'Hello, ' + user.displayName.split(' ')[0] : pageTitle[page]}
-            </Text>
-            <Text style={styles.screenIntroSubtitle}>
-              {new Date().toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })}
-              {page !== 'Dashboard' ? ` · ${branchId ? branchNames.get(branchId) : 'All active branches'}` : ''}
-            </Text>
-          </View>
-        )}
         {page === 'Dashboard' && renderDashboard()}
         {page === 'Sales' && renderSales()}
         {page === 'Reports' && renderReports()}
         {page === 'Inventory' && renderInventory()}
         {page === 'Alerts' && renderAlerts()}
         {page === 'More' && renderMore()}
+        {page === 'Products' && renderProducts()}
+        {page === 'Ingredients' && <OwnerIngredientsRecipes onManageProducts={() => setPage('Products')} />}
         {page === 'Discrepancies' && renderDiscrepancies()}
         {page === 'Records' && renderRecords()}
         {page === 'Profile' && renderProfile()}
@@ -858,9 +1150,6 @@ function useStyles() {
     branchChipTextSelected: { color: colors.white, fontFamily: font.semibold },
     contentScroll: { flex: 1 },
     content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 },
-    screenIntro: { marginBottom: 12 },
-    screenIntroTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 17 },
-    screenIntroSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
     welcomePanel: { minHeight: 98, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 15, marginBottom: 12, borderRadius: 19, backgroundColor: colors.navy, overflow: 'hidden' },
     welcomeCopy: { flex: 1, paddingRight: 8 },
     eyebrow: { color: colors.orange, fontFamily: font.semibold, fontSize: 7, letterSpacing: 1 },
@@ -931,6 +1220,57 @@ function useStyles() {
     searchGlyph: { color: colors.muted, fontSize: 20, marginRight: 7 },
     searchInput: { flex: 1, height: 40, color: colors.ink, fontFamily: font.regular, fontSize: 8, paddingVertical: 0 },
     clearSearch: { color: colors.muted, fontSize: 20, paddingLeft: 8 },
+    productOverviewGrid: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+    bentoSummaryCard: { flex: 1, minHeight: 80, padding: 12, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
+    bentoLabel: { color: colors.muted, fontFamily: font.medium, fontSize: 7 },
+    bentoValue: { color: colors.navy, fontFamily: font.bold, fontSize: 18, marginTop: 8 },
+    bentoValueSuccess: { color: colors.green },
+    bentoValueMuted: { color: colors.red },
+    primaryActionButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, marginBottom: 10, borderRadius: 12, backgroundColor: colors.pink },
+    primaryActionText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+    secondaryActionButton: { minHeight: 38, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, marginTop: 10, borderRadius: 12, backgroundColor: '#FCE3EB' },
+    secondaryActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+    productCard: { padding: 12, marginBottom: 8, borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
+    productMetaRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+    productCopy: { flex: 1, minWidth: 0 },
+    productName: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+    productDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 3 },
+    productFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
+    productPriceLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
+    productPriceValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12, marginTop: 2 },
+    availabilityPill: { minHeight: 26, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderRadius: 999, borderWidth: 1 },
+    availabilityAvailable: { backgroundColor: colors.paleGreen, borderColor: '#CFE9D7' },
+    availabilityUnavailable: { backgroundColor: colors.paleRed, borderColor: '#F4D5DA' },
+    availabilityText: { color: colors.green, fontFamily: font.semibold, fontSize: 7 },
+    availabilityTextMuted: { color: colors.red },
+    editActionButton: { minHeight: 27, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 9, backgroundColor: '#FCE3EB' },
+    editActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 7 },
+    productDetailSheet: { padding: 12, marginTop: 10, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },
+    productDetailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    productDetailLabel: { color: colors.muted, fontFamily: font.medium, fontSize: 7, marginBottom: 4 },
+    productDetailText: { color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginBottom: 10 },
+    productDetailGrid: { flexDirection: 'row', gap: 8 },
+    detailStatBox: { flex: 1, minHeight: 60, padding: 10, borderRadius: 12, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.line },
+    productDetailValue: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+    closeActionButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pale },
+    closeActionText: { color: colors.navy, fontFamily: font.bold, fontSize: 16 },
+    productModalBackdrop: { position: 'absolute', inset: 0, justifyContent: 'center', padding: 16, backgroundColor: 'rgba(16, 16, 39, 0.35)' },
+    productModalCard: { maxWidth: 420, width: '100%', alignSelf: 'center', padding: 16, borderRadius: 18, backgroundColor: colors.white },
+    productModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    productModalTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 14 },
+    fieldLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginTop: 8, marginBottom: 6 },
+    textInput: { minHeight: 38, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, color: colors.ink, fontFamily: font.regular, fontSize: 8 },
+    textArea: { minHeight: 74, textAlignVertical: 'top', paddingTop: 9 },
+    textInputError: { borderColor: colors.red },
+    fieldError: { color: colors.red, fontFamily: font.regular, fontSize: 7, marginTop: 4 },
+    segmentedRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+    segmentButton: { flex: 1, minHeight: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white },
+    segmentButtonSelected: { borderColor: colors.pink, backgroundColor: '#FCE3EB' },
+    segmentButtonText: { color: colors.muted, fontFamily: font.medium, fontSize: 7 },
+    segmentButtonTextSelected: { color: colors.pink, fontFamily: font.semibold },
+    feedbackText: { marginTop: 8, fontFamily: font.medium, fontSize: 7 },
+    feedbackSuccess: { color: colors.green },
+    feedbackError: { color: colors.red },
     dataDisclaimer: { color: colors.muted, fontFamily: font.regular, fontSize: 7, marginBottom: 10 },
     alertTabs: { flexDirection: 'row', gap: 5, paddingVertical: 2, marginBottom: 10 },
     recordFilterRow: { flexDirection: 'row', gap: 5, paddingVertical: 2, marginBottom: 10 },

@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Image,
   ImageBackground,
-  Platform,
   Pressable,
   ScrollView,
   SafeAreaView,
@@ -176,17 +175,12 @@ function AppContent() {
   });
   const { width, height } = useWindowDimensions();
   const isWideScreen = width > 600 && height > 500;
-  const isOwnerDashboard = screen === 'dashboard' && authenticatedUser?.role === 'Owner';
   const isSalesPage = dashboardTab === 'Sales' || dashboardTab === 'Reports';
   const frameWidth = isWideScreen
-    ? isOwnerDashboard && Platform.OS === 'web'
-      ? Math.min(width - 32, 1320)
-      : Math.min(430, height * 0.5)
+    ? Math.min(430, height * 0.5)
     : width;
   const frameHeight = isWideScreen
-    ? isOwnerDashboard && Platform.OS === 'web'
-      ? Math.min(height - 32, 900)
-      : Math.min(height, frameWidth * 2)
+    ? Math.min(height, frameWidth * 2)
     : height;
   const visibleScreen =
     (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null

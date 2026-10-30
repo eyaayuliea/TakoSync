@@ -38,9 +38,11 @@ The current Owner dashboard reads inventory, low-stock and near-expiry items, re
 
 Owner Sales Monitoring and Sales Reports read completed records from the existing `sales`, `sale_items`, and `products` tables. Owners can filter by active branch and today, daily, weekly, monthly, or custom dates; reports include transaction, branch, product, and payment summaries. Reports export as CSV in the browser or as a shareable CSV file on iOS/Android. Cancelled and pending sales are excluded. This frontend does not write sales or change inventory; it reports only data already recorded by the backend. Product summaries require matching sale-item and product records and are omitted when that data is unavailable. The current client has read-only access to sales records, so the backend partner must populate `sales` and `sale_items` through the authorized checkout workflow before these views contain sales; no sales-writing endpoint or checkout integration was added in this phase.
 
+Owner Products & Menu supports creating and editing menu products through the existing `products` table. Ingredients & Recipes lets Owners search, view, add, and edit ingredient records and categories, and create, review, edit, and remove ingredient lines for those menu products through the existing `ingredients`, `ingredient_categories`, and `recipes` tables. Recipe quantities use the ingredient's configured unit. These configuration changes do not write inventory movements or alter historical sales. The current backend does not yet connect recipe quantities to an atomic completed-sale workflow, so recipe configuration alone does not deduct stock; that consumption workflow remains a backend dependency.
+
 Owner and Staff sign in with their registered Supabase Auth email and password. The app loads each user's active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the live cross-branch monitoring dashboard. There is no demo login or authentication bypass.
 
-The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner-side ingredient management, staff/branch assignment, and daily-check approval or rejection screens are not implemented.
+The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner account/branch assignment and daily-check approval or rejection screens are not implemented.
 
 ## Architecture
 
@@ -81,7 +83,7 @@ The app calls Supabase directly through the Supabase JavaScript client. Database
 ├── frontend/
 │   ├── App.tsx                     # Loading, welcome, login, and Owner routing/UI
 │   ├── navigation/                 # Staff bottom navigation
-│   ├── owner/                      # Owner login and sales monitoring/reporting
+│   ├── owner/                      # Owner mobile dashboard, products, ingredients, recipes, and reports
 │   ├── services/                   # Supabase client and application data operations
 │   ├── staff/                      # Staff workspace and inventory workflows
 │   │   ├── MenuWorkspace.tsx        # Staff menu, cart, and unavailable checkout state
@@ -236,7 +238,10 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Branch-to-branch stock transfers | Not implemented; the current frontend contract and transaction service do not support atomic transfers between branches |
 | Owner Login screen | Supabase Auth email/password with active Owner profile check |
 | Owner inventory, activity, and alert monitoring | Read-only dashboard using shared Supabase data for accessible branches |
-| Owner management of ingredients, accounts, or branch assignments | Not implemented in the app |
+| Owner Products & Menu | Create and edit products using the existing Supabase table |
+| Owner ingredients, categories, and product recipes | CRUD through existing Supabase tables; configuration does not deduct inventory |
+| Recipe-driven consumption after completed sales | Not implemented; requires a trusted backend checkout and atomic inventory workflow |
+| Owner account and branch assignments | Not implemented in the app |
 | Owner review/approval of physical checks | Pending checks are displayed; approval/rejection workflow is not implemented |
 | Separate Owner web application | Not present; the Expo app has a web target |
 | Live backend integration | Requires a configured Supabase project; live Auth, RLS, and database behavior cannot be verified from this repository alone |
@@ -247,7 +252,7 @@ To replace the UI preview and implement POS safely, the frontend needs a branch-
 
 ## Project scope
 
-TakoSync is scoped to staff inventory operations and Owner monitoring for Gelo’s Takoyaki’s three branches. The current repository does not implement a separate custom backend, a separate web administration product, or the Owner management/review workflows listed above. No additional account types are part of the current database role model.
+TakoSync is scoped to staff inventory operations and Owner monitoring/configuration for Gelo’s Takoyaki’s three branches. The current repository does not implement a separate custom backend, a separate web administration product, or Owner account/branch assignment and daily-check review workflows. No additional account types are part of the current database role model.
 
 ## Project team
 

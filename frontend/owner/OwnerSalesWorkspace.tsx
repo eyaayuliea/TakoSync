@@ -594,7 +594,6 @@ export default function OwnerSalesWorkspace({
     <View style={styles.workspace}>
       <View style={styles.pageHeading}>
         <View style={styles.pageHeadingCopy}>
-          <Text style={styles.pageTitle}>{mode === 'monitoring' ? 'Sales Monitoring' : 'Sales Reports'}</Text>
           <Text style={styles.subtitle}>
             {mode === 'monitoring'
               ? 'Completed sales across your branches, from recorded transactions.'
@@ -1042,7 +1041,6 @@ function useStyles() {
     workspace: { width: '100%', paddingBottom: 15 },
     pageHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
     pageHeadingCopy: { flex: 1, paddingRight: 10 },
-    pageTitle: { color: '#101027', fontFamily: 'Poppins_700Bold', fontSize: 22, lineHeight: 29 },
     subtitle: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 10, lineHeight: 15, marginTop: 2 },
     headingActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
     refreshButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FCE3EB' },
