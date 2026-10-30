@@ -15,6 +15,7 @@ export type Database = {
         code: string;
         name: string;
         city: string;
+        address: string;
         active: boolean;
         created_at: string;
       }>;
@@ -39,11 +40,12 @@ export type Database = {
         name: string;
         unit: string;
         quantity_precision: number;
+        expiration_tracking: boolean;
         active: boolean;
         created_at: string;
         updated_at: string;
       }>;
-      inventory: Table<{
+      branch_inventory: Table<{
         id: string;
         branch_id: string;
         ingredient_id: string;
@@ -62,13 +64,13 @@ export type Database = {
         quantity_remaining: number;
         created_at: string;
       }>;
-      inventory_transactions: Table<{
+      inventory_movements: Table<{
         id: string;
         reference: string;
         branch_id: string;
         ingredient_id: string;
         actor_id: string;
-        type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment';
+        type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out';
         quantity: number;
         unit: string;
         movement: number;
@@ -100,14 +102,65 @@ export type Database = {
         unit: string;
         created_at: string;
       }>;
+      products: Table<{
+        id: string;
+        product_name: string;
+        description: string;
+        price: number;
+        is_available: boolean;
+        created_at: string;
+        updated_at: string;
+      }>;
+      recipes: Table<{
+        id: string;
+        product_id: string;
+        ingredient_id: string;
+        quantity_required: number;
+        unit_of_measure: string;
+      }>;
+      sales: Table<{
+        id: string;
+        transaction_reference: string;
+        branch_id: string;
+        staff_id: string;
+        total_amount: number;
+        payment_method: string;
+        status: 'pending' | 'completed' | 'cancelled';
+        created_at: string;
+      }>;
+      sale_items: Table<{
+        id: string;
+        sale_id: string;
+        product_id: string;
+        quantity: number;
+        unit_price: number;
+        subtotal: number;
+      }>;
+      audit_logs: Table<{
+        id: string;
+        user_id: string | null;
+        branch_id: string | null;
+        action: string;
+        description: string;
+        created_at: string;
+      }>;
     };
-    Views: Record<string, never>;
+    Views: {
+      inventory: {
+        Row: Database['public']['Tables']['branch_inventory']['Row'];
+        Relationships: [];
+      };
+      inventory_transactions: {
+        Row: Database['public']['Tables']['inventory_movements']['Row'];
+        Relationships: [];
+      };
+    };
     Functions: {
       can_access_branch: { Args: { target_branch: string }; Returns: boolean };
       is_active_owner: { Args: Record<PropertyKey, never>; Returns: boolean };
       record_inventory_transactions: {
         Args: { p_branch_id: string; p_transactions: Json };
-        Returns: Database['public']['Tables']['inventory_transactions']['Row'][];
+        Returns: Database['public']['Tables']['inventory_movements']['Row'][];
       };
       submit_daily_stock_check: {
         Args: { p_branch_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
@@ -116,7 +169,7 @@ export type Database = {
     };
     Enums: {
       app_role: 'owner' | 'staff';
-      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment';
+      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out';
     };
     CompositeTypes: Record<string, never>;
   };

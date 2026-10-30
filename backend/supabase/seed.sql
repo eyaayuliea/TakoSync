@@ -22,7 +22,7 @@ set category_id = excluded.category_id,
     quantity_precision = excluded.quantity_precision,
     active = true;
 
-insert into public.inventory (branch_id, ingredient_id, quantity, minimum_stock) values
+insert into public.branch_inventory (branch_id, ingredient_id, quantity, minimum_stock) values
   ('00000000-0000-4000-8000-000000000001', 'octopus', 3, 5),
   ('00000000-0000-4000-8000-000000000001', 'flour', 12, 5),
   ('00000000-0000-4000-8000-000000000001', 'eggs', 48, 24),
@@ -46,7 +46,7 @@ where not exists (
     and transaction_record.ingredient_id = excluded.ingredient_id
 );
 
-insert into public.inventory (branch_id, ingredient_id, quantity, minimum_stock)
+insert into public.branch_inventory (branch_id, ingredient_id, quantity, minimum_stock)
 select branch.id, ingredient.id, 0, 0
 from public.branches as branch
 cross join public.ingredients as ingredient

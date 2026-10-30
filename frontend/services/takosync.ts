@@ -1,4 +1,4 @@
-import { getStaffLoginEmail, requireSupabase } from './supabase';
+import { requireSupabase } from './supabase';
 import type { Json } from '../../backend/types/database';
 
 export type AppUser = {
@@ -106,9 +106,17 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     .eq('id', session.user.id)
     .maybeSingle();
   assertNoError(error);
-  if (!profile || !profile.active) {
+  if (!profile) {
     await client.auth.signOut();
-    throw new Error('This account is inactive or has no profile. Contact the owner.');
+    throw new Error('No TakoSync profile exists for this account. Ask the owner to provision it.');
+  }
+  if (!profile.active) {
+    await client.auth.signOut();
+    throw new Error('This account is inactive. Ask the owner to reactivate it.');
+  }
+  if (profile.role === 'staff' && !profile.branch_id) {
+    await client.auth.signOut();
+    throw new Error('This staff account has no assigned branch. Ask the owner to assign one.');
   }
 
   let branch = 'All branches';
@@ -119,7 +127,10 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       .eq('id', profile.branch_id)
       .maybeSingle();
     assertNoError(branchError);
-    if (!branchRecord) throw new Error('The assigned branch is unavailable. Contact the owner.');
+    if (!branchRecord) {
+      await client.auth.signOut();
+      throw new Error('The assigned branch is inactive or unavailable. Ask the owner to check the assignment.');
+    }
     branch = branchLabel(branchRecord.city, branchRecord.code);
   }
 
@@ -133,16 +144,30 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   };
 }
 
-export async function signIn(loginIdentifier: string, password: string): Promise<AppUser> {
+export async function signIn(
+  email: string,
+  password: string,
+  expectedRole: AppUser['role'],
+): Promise<AppUser> {
   const client = requireSupabase();
-  const identifier = loginIdentifier.trim();
-  const email = identifier.toLowerCase() === 'staff'
-    ? getStaffLoginEmail()
-    : identifier;
-  const { error } = await client.auth.signInWithPassword({ email, password });
-  assertNoError(error);
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) throw new Error('Enter the email address registered with Supabase.');
+  const { error } = await client.auth.signInWithPassword({ email: normalizedEmail, password });
+  if (error) {
+    if (error.message.toLowerCase().includes('invalid login credentials')) {
+      throw new Error('Email or password is incorrect.');
+    }
+    if (error.message.toLowerCase().includes('email not confirmed')) {
+      throw new Error('Confirm this email address before signing in.');
+    }
+    throw new Error(error.message);
+  }
   const user = await getCurrentUser();
   if (!user) throw new Error('Supabase did not return an authenticated session.');
+  if (user.role !== expectedRole) {
+    await client.auth.signOut();
+    throw new Error(`This account does not have ${expectedRole} access.`);
+  }
   return user;
 }
 

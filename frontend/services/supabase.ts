@@ -5,7 +5,25 @@ import type { Database } from '../../backend/types/database';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
+export const supabaseConfigurationError = (() => {
+  if (!supabaseUrl || !supabasePublishableKey) {
+    return 'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in the root .env file, then restart Expo.';
+  }
+  if (/your[-_]project[-_]ref|your[-_]supabase/i.test(`${supabaseUrl} ${supabasePublishableKey}`)) {
+    return 'Replace the placeholder Supabase URL and key in the root .env file, then restart Expo.';
+  }
+  try {
+    const url = new URL(supabaseUrl);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return 'EXPO_PUBLIC_SUPABASE_URL must use HTTP or HTTPS.';
+    }
+  } catch {
+    return 'EXPO_PUBLIC_SUPABASE_URL must be a valid HTTP(S) URL.';
+  }
+  return null;
+})();
+
+export const isSupabaseConfigured = supabaseConfigurationError === null;
 
 export const supabase = isSupabaseConfigured
   ? createClient<Database>(supabaseUrl!, supabasePublishableKey!, {
@@ -20,14 +38,7 @@ export const supabase = isSupabaseConfigured
 
 export function requireSupabase() {
   if (!supabase) {
-    throw new Error('Backend is not configured. Add the Supabase URL and publishable key to .env and restart Expo.');
+    throw new Error(supabaseConfigurationError ?? 'Supabase is not configured.');
   }
   return supabase;
-}
-
-export function getStaffLoginEmail(): string {
-  if (!supabaseUrl) {
-    throw new Error('Backend is not configured. Add the Supabase URL and publishable key to .env and restart Expo.');
-  }
-  return `staff@${new URL(supabaseUrl).hostname}`;
 }

@@ -21,9 +21,8 @@ import {
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
-import OwnerWorkspace from './owner/OwnerWorkspace';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
-import { isSupabaseConfigured } from './services/supabase';
+import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
 import {
   getCurrentUser,
   loadOwnerInventory,
@@ -57,7 +56,7 @@ type PreviewInventoryItem = {
   expiration: string | null;
   branch?: string;
 };
-type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'ownerDashboard' | 'dashboard' | 'staffWorkspace';
+type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'History' | 'Alerts';
 
@@ -74,12 +73,11 @@ function AppContent() {
   const styles = useAppStyles();
   const [screen, setScreen] = useState<Screen>('loading');
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
-  const [username, setUsername] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
-  const ownerPreviewRequested = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
@@ -114,7 +112,7 @@ function AppContent() {
     let active = true;
     getCurrentUser()
       .then((user) => {
-        if (!active || !user || ownerPreviewRequested.current) return;
+        if (!active || !user) return;
         setAuthenticatedUser(user);
         setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
       })
@@ -197,17 +195,17 @@ function AppContent() {
   const visibleExpiringItems = filterItems(expiringItems);
   const handleLogin = async () => {
     if (authLock.current) return;
-    if (!username.trim() || !password) {
-      setLoginError('Enter your username or email and password to continue.');
+    if (!loginEmail.trim() || !password) {
+      setLoginError('Enter your registered email address and password to continue.');
       return;
     }
     authLock.current = true;
     setAuthenticating(true);
     setLoginError('');
     try {
-      const user = await signIn(username, password);
+      const user = await signIn(loginEmail, password, 'Staff');
       setAuthenticatedUser(user);
-      setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+      setScreen('staffWorkspace');
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
@@ -216,10 +214,16 @@ function AppContent() {
     }
   };
 
+  const handleOwnerLogin = async (email: string, ownerPassword: string) => {
+    const user = await signIn(email, ownerPassword, 'Owner');
+    setAuthenticatedUser(user);
+    setScreen('dashboard');
+  };
+
   const clearSignedInState = () => {
     setAuthenticatedUser(null);
     setOwnerData(null);
-    setUsername('');
+    setLoginEmail('');
     setPassword('');
     setDashboardTab('Dashboard');
   };
@@ -248,16 +252,11 @@ function AppContent() {
     setScreen('welcome');
   };
 
-  const openOwnerPreview = () => {
-    ownerPreviewRequested.current = true;
-    setScreen('ownerDashboard');
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
-        barStyle={screen === 'ownerLogin' || screen === 'ownerDashboard' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={screen === 'ownerLogin' ? '#E8B77E' : screen === 'ownerDashboard' ? '#FFFFFF' : colors.background}
+        barStyle={screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={screen === 'ownerLogin' ? '#E8B77E' : colors.background}
       />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
@@ -324,12 +323,8 @@ function AppContent() {
             {visibleScreen === 'ownerLogin' && (
               <OwnerLoginScreen
                 onBack={() => setScreen('welcome')}
-                onPreviewDashboard={openOwnerPreview}
+                onLogin={handleOwnerLogin}
               />
-            )}
-
-            {visibleScreen === 'ownerDashboard' && (
-              <OwnerWorkspace onExitPreview={() => setScreen('ownerLogin')} />
             )}
 
             {visibleScreen === 'login' && (
@@ -364,15 +359,15 @@ function AppContent() {
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
-                        <Text style={styles.loginLabel}>Username or email *</Text>
+                        <Text style={styles.loginLabel}>Email *</Text>
                         <TextInput
-                          value={username}
+                          value={loginEmail}
                           onChangeText={(value) => {
-                            setUsername(value);
+                            setLoginEmail(value);
                             setLoginError('');
                           }}
                           style={styles.loginInput}
-                          placeholder="Enter staff or your email address"
+                          placeholder="Enter your registered email address"
                           placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
                           autoCapitalize="none"
                           autoCorrect={false}
@@ -397,11 +392,11 @@ function AppContent() {
                           onSubmitEditing={handleLogin}
                         />
                         <Text style={styles.loginHelper}>
-                          Staff can sign in with username “staff”. Owners should use their account email. Contact the owner if you need access.
+                          Use your registered Supabase email address. Owners should use the Owner Login screen.
                         </Text>
                         {!isSupabaseConfigured && (
                           <Text style={styles.errorText}>
-                            Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env, then restart Expo.
+                            {supabaseConfigurationError}
                           </Text>
                         )}
                         <Pressable

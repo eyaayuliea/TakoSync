@@ -26,7 +26,7 @@ set category_id = excluded.category_id,
     quantity_precision = excluded.quantity_precision,
     active = true;
 
-insert into public.inventory (branch_id, ingredient_id, quantity, minimum_stock)
+insert into public.branch_inventory (branch_id, ingredient_id, quantity, minimum_stock)
 select branch.id, ingredient.id, 0, 0
 from public.branches as branch
 cross join public.ingredients as ingredient
@@ -45,7 +45,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  insert into public.inventory (branch_id, ingredient_id, quantity, minimum_stock)
+  insert into public.branch_inventory (branch_id, ingredient_id, quantity, minimum_stock)
   select new.id, ingredient.id, 0, 0
   from public.ingredients as ingredient
   where ingredient.active
@@ -66,7 +66,7 @@ set search_path = public, pg_temp
 as $$
 begin
   if new.active then
-    insert into public.inventory (branch_id, ingredient_id, quantity, minimum_stock)
+    insert into public.branch_inventory (branch_id, ingredient_id, quantity, minimum_stock)
     select branch.id, new.id, 0, 0
     from public.branches as branch
     where branch.active

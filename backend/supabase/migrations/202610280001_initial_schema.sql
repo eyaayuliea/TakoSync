@@ -56,7 +56,7 @@ create table public.ingredients (
   updated_at timestamptz not null default now()
 );
 
-create table public.inventory (
+create table public.branch_inventory (
   id uuid primary key default gen_random_uuid(),
   branch_id uuid not null references public.branches(id),
   ingredient_id text not null references public.ingredients(id),
@@ -78,11 +78,11 @@ create table public.ingredient_batches (
   created_at timestamptz not null default now(),
   unique (branch_id, batch_reference),
   foreign key (branch_id, ingredient_id)
-    references public.inventory(branch_id, ingredient_id)
+    references public.branch_inventory(branch_id, ingredient_id)
     on delete cascade
 );
 
-create table public.inventory_transactions (
+create table public.inventory_movements (
   id uuid primary key default gen_random_uuid(),
   reference text not null unique,
   branch_id uuid not null references public.branches(id),
@@ -100,6 +100,18 @@ create table public.inventory_transactions (
   batch_id uuid references public.ingredient_batches(id),
   created_at timestamptz not null default now()
 );
+
+create view public.inventory
+with (security_invoker = true)
+as select id, branch_id, ingredient_id, quantity, minimum_stock, updated_at
+from public.branch_inventory;
+
+create view public.inventory_transactions
+with (security_invoker = true)
+as select id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit,
+          movement, before_quantity, after_quantity, transaction_date, reason,
+          notes, batch_id, created_at
+from public.inventory_movements;
 
 create table public.daily_stock_checks (
   id uuid primary key default gen_random_uuid(),
@@ -124,13 +136,21 @@ create table public.daily_stock_count_lines (
   unique (daily_stock_check_id, ingredient_id)
 );
 
-create index inventory_transactions_branch_date_idx
-  on public.inventory_transactions (branch_id, transaction_date desc);
+create index inventory_movements_branch_date_idx
+  on public.inventory_movements (branch_id, transaction_date desc);
+create index profiles_branch_idx on public.profiles (branch_id);
+create index ingredients_category_idx on public.ingredients (category_id);
+create index branch_inventory_ingredient_idx on public.branch_inventory (ingredient_id);
+create index inventory_movements_ingredient_idx on public.inventory_movements (ingredient_id);
+create index inventory_movements_actor_idx on public.inventory_movements (actor_id);
+create index inventory_movements_batch_idx on public.inventory_movements (batch_id);
 create index ingredient_batches_expiration_idx
   on public.ingredient_batches (branch_id, expiration_date)
   where expiration_date is not null;
 create index daily_stock_checks_branch_date_idx
   on public.daily_stock_checks (branch_id, check_date desc);
+create index daily_stock_checks_submitter_idx on public.daily_stock_checks (submitted_by);
+create index daily_stock_count_lines_ingredient_idx on public.daily_stock_count_lines (ingredient_id);
 
 create or replace function public.touch_updated_at()
 returns trigger
@@ -240,9 +260,9 @@ alter table public.branches enable row level security;
 alter table public.profiles enable row level security;
 alter table public.ingredient_categories enable row level security;
 alter table public.ingredients enable row level security;
-alter table public.inventory enable row level security;
+alter table public.branch_inventory enable row level security;
 alter table public.ingredient_batches enable row level security;
-alter table public.inventory_transactions enable row level security;
+alter table public.inventory_movements enable row level security;
 alter table public.daily_stock_checks enable row level security;
 alter table public.daily_stock_count_lines enable row level security;
 
@@ -270,11 +290,11 @@ for select to authenticated using (exists (
 create policy ingredients_owner_manage on public.ingredients
 for all to authenticated using (public.is_active_owner()) with check (public.is_active_owner());
 
-create policy inventory_read_branch on public.inventory
+create policy inventory_read_branch on public.branch_inventory
 for select to authenticated using (public.can_access_branch(branch_id));
 create policy batches_read_branch on public.ingredient_batches
 for select to authenticated using (public.can_access_branch(branch_id));
-create policy transactions_read_branch on public.inventory_transactions
+create policy transactions_read_branch on public.inventory_movements
 for select to authenticated using (public.can_access_branch(branch_id));
 create policy checks_read_branch on public.daily_stock_checks
 for select to authenticated using (public.can_access_branch(branch_id));
@@ -286,11 +306,13 @@ for select to authenticated using (exists (
 ));
 
 revoke all on public.branches, public.profiles, public.ingredient_categories,
-  public.ingredients, public.inventory, public.ingredient_batches,
+  public.ingredients, public.branch_inventory, public.inventory,
+  public.ingredient_batches, public.inventory_movements,
   public.inventory_transactions, public.daily_stock_checks,
   public.daily_stock_count_lines from anon;
 grant select on public.branches, public.profiles, public.ingredient_categories,
-  public.ingredients, public.inventory, public.ingredient_batches,
+  public.ingredients, public.branch_inventory, public.inventory,
+  public.ingredient_batches, public.inventory_movements,
   public.inventory_transactions, public.daily_stock_checks,
   public.daily_stock_count_lines to authenticated;
 grant insert, update, delete on public.ingredient_categories,
@@ -306,7 +328,7 @@ create or replace function public.record_inventory_transactions(
   p_branch_id uuid,
   p_transactions jsonb
 )
-returns setof public.inventory_transactions
+returns setof public.inventory_movements
 language plpgsql
 security definer
 set search_path = public, pg_temp
@@ -314,10 +336,10 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_entry jsonb;
-  v_inventory public.inventory%rowtype;
+  v_inventory public.branch_inventory%rowtype;
   v_ingredient public.ingredients%rowtype;
   v_batch public.ingredient_batches%rowtype;
-  v_transaction public.inventory_transactions%rowtype;
+  v_transaction public.inventory_movements%rowtype;
   v_type public.inventory_transaction_type;
   v_quantity numeric(12, 3);
   v_movement numeric(12, 3);
@@ -347,7 +369,7 @@ begin
       raise exception 'Transaction quantity must be positive';
     end if;
 
-    select * into v_inventory from public.inventory
+    select * into v_inventory from public.branch_inventory
     where branch_id = p_branch_id and ingredient_id = v_entry ->> 'ingredient_id'
     for update;
     if not found then raise exception 'Ingredient is not configured for this branch'; end if;
@@ -364,7 +386,7 @@ begin
     v_after := v_inventory.quantity + v_movement;
     if v_after < 0 then raise exception 'Transaction exceeds available stock'; end if;
 
-    update public.inventory set quantity = v_after, updated_at = now()
+    update public.branch_inventory set quantity = v_after, updated_at = now()
     where id = v_inventory.id;
 
     v_batch := null;
@@ -403,7 +425,7 @@ begin
     end if;
 
     v_reference := 'TX-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12));
-    insert into public.inventory_transactions (
+    insert into public.inventory_movements (
       reference, branch_id, ingredient_id, actor_id, type, quantity, unit, movement,
       before_quantity, after_quantity, transaction_date, reason, notes, batch_id
     ) values (
@@ -432,7 +454,7 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_line jsonb;
-  v_inventory public.inventory%rowtype;
+  v_inventory public.branch_inventory%rowtype;
   v_ingredient public.ingredients%rowtype;
   v_check public.daily_stock_checks%rowtype;
   v_physical numeric(12, 3);
@@ -463,7 +485,7 @@ begin
   loop
     v_physical := (v_line ->> 'physical_quantity')::numeric;
     if v_physical is null or v_physical < 0 then raise exception 'Physical counts must be zero or greater'; end if;
-    select * into v_inventory from public.inventory
+    select * into v_inventory from public.branch_inventory
     where branch_id = p_branch_id and ingredient_id = v_line ->> 'ingredient_id'
     for update;
     if not found then raise exception 'Ingredient is not configured for this branch'; end if;

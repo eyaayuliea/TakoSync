@@ -12,6 +12,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { isSupabaseConfigured, supabaseConfigurationError } from '../services/supabase';
 
 type FieldErrors = {
   email?: string;
@@ -19,7 +20,6 @@ type FieldErrors = {
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MOCK_ERROR = 'Incorrect email or password. Check your details and try again.';
 const FONT = {
   regular: 'Poppins_400Regular',
   medium: 'Poppins_500Medium',
@@ -29,30 +29,35 @@ const FONT = {
 
 export default function OwnerLoginScreen({
   onBack,
-  onPreviewDashboard,
+  onLogin,
 }: {
   onBack: () => void;
-  onPreviewDashboard?: () => void;
+  onLogin: (email: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [showMockError, setShowMockError] = useState(false);
+  const [loginError, setLoginError] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submissionLock = useRef(false);
   const passwordInput = useRef<TextInput>(null);
   const isShortScreen = height < 700;
   const logoWidth = Math.min(width * 0.48, 205);
+  const displayedError = loginError || (!isSupabaseConfigured ? supabaseConfigurationError : '');
 
   const clearFeedback = () => {
     setFieldErrors({});
-    setShowMockError(false);
+    setLoginError('');
   };
 
-  const submitForPreview = async () => {
+  const submitLogin = async () => {
     if (submissionLock.current) return;
+    if (!isSupabaseConfigured) {
+      setLoginError(supabaseConfigurationError ?? 'Supabase is not configured.');
+      return;
+    }
 
     const trimmedEmail = email.trim();
     const nextErrors: FieldErrors = {};
@@ -65,14 +70,15 @@ export default function OwnerLoginScreen({
 
     setEmail(trimmedEmail);
     setFieldErrors(nextErrors);
-    setShowMockError(false);
+    setLoginError('');
     if (Object.keys(nextErrors).length > 0) return;
 
     submissionLock.current = true;
     setSubmitting(true);
     try {
-      await new Promise<void>((resolve) => setTimeout(resolve, 650));
-      setShowMockError(true);
+      await onLogin(trimmedEmail, password);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
       submissionLock.current = false;
       setSubmitting(false);
@@ -124,12 +130,12 @@ export default function OwnerLoginScreen({
                 <Text style={styles.heading}>Log In</Text>
                 <Text style={styles.subtitle}>Owner access · Gelo’s Takoyaki</Text>
 
-                {showMockError && (
+                {displayedError !== '' && (
                   <View style={styles.errorBanner} accessibilityRole="alert">
                     <View style={styles.errorIcon}>
                       <Text style={styles.errorIconText}>!</Text>
                     </View>
-                    <Text style={styles.errorMessage}>{MOCK_ERROR}</Text>
+                    <Text style={styles.errorMessage}>{displayedError}</Text>
                   </View>
                 )}
 
@@ -178,7 +184,7 @@ export default function OwnerLoginScreen({
                       accessibilityLabel="Password, required"
                       editable={!submitting}
                       returnKeyType="done"
-                      onSubmitEditing={submitForPreview}
+                      onSubmitEditing={submitLogin}
                     />
                     <Pressable
                       accessibilityRole="button"
@@ -201,7 +207,7 @@ export default function OwnerLoginScreen({
                   accessibilityRole="button"
                   accessibilityLabel="Log In"
                   accessibilityState={{ disabled: submitting, busy: submitting }}
-                  onPress={submitForPreview}
+                  onPress={submitLogin}
                   disabled={submitting}
                   style={({ pressed }) => [
                     styles.loginButton,
@@ -209,25 +215,13 @@ export default function OwnerLoginScreen({
                     submitting && styles.loginButtonDisabled,
                   ]}
                 >
-                  <Text style={styles.loginButtonText}>{submitting ? 'Checking…' : 'Log In'}</Text>
+                  <Text style={styles.loginButtonText}>{submitting ? 'Signing in…' : 'Log In'}</Text>
                 </Pressable>
-
-                {__DEV__ && onPreviewDashboard && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Preview Owner Dashboard using mock data"
-                    onPress={onPreviewDashboard}
-                    style={({ pressed }) => [styles.previewButton, pressed && styles.loginButtonPressed]}
-                  >
-                    <Text style={styles.previewButtonText}>Preview Owner Dashboard · Mock data</Text>
-                  </Pressable>
-                )}
 
                 <Text style={styles.helper}>
                   Monitor all three branches with your owner account. Keep your credentials private.
                 </Text>
                 <Text style={styles.footer}>Secure access to your inventory</Text>
-                <Text style={styles.previewNote}>Frontend preview only · authentication is not connected</Text>
               </View>
             </View>
           </ScrollView>
