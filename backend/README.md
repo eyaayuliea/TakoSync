@@ -48,6 +48,6 @@ All three developers should have their own GitHub and Supabase project access. E
 The repository includes `.github/workflows/supabase-migrations.yml`, which applies migrations after migration changes are merged to `main` (or by manual workflow dispatch). Before enabling it, create a protected GitHub environment named `supabase-production`, require a reviewer, and configure:
 
 - Environment variable `SUPABASE_PROJECT_ID` with the Supabase project reference.
-- Environment secret `SUPABASE_DB_PASSWORD`.
+- Environment secret `SUPABASE_DB_URL` with the full PostgreSQL connection URI (direct `db.<project-ref>.supabase.co` or Supabase pooler host) including password and database name.
 
-Do not use the service-role key for this workflow. The database password is a privileged deployment credential and must remain in GitHub environment secrets. The workflow does not distribute source code to collaborators; everyone still pulls merged commits from GitHub.
+Do not use the service-role key for this workflow. The database connection URI is a privileged deployment credential and must remain in GitHub environment secrets. The workflow does not distribute source code to collaborators; everyone still pulls merged commits from GitHub.

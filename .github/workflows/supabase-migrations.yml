@@ -32,36 +32,82 @@ jobs:
       - name: Require Supabase deployment configuration
         env:
           SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -euo pipefail
           if [ -z "$SUPABASE_PROJECT_ID" ]; then
             echo "::error::Missing required environment variable SUPABASE_PROJECT_ID in supabase-production."
             exit 1
           fi
-          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
-            echo "::error::Missing required environment secret SUPABASE_DB_PASSWORD in supabase-production."
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::Missing required environment secret SUPABASE_DB_URL in supabase-production."
             exit 1
           fi
 
-      - name: Prefer IPv4 for direct database host
+      - name: Validate Supabase database connection target
         env:
           SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          DB_HOST="db.${SUPABASE_PROJECT_ID}.supabase.co"
-          DB_IPV4="$(getent ahostsv4 "$DB_HOST" | awk 'NR==1 {print $1}')"
-          if [ -z "$DB_IPV4" ]; then
-            echo "::error::Could not resolve an IPv4 address for $DB_HOST."
-            exit 1
-          fi
-          echo "$DB_IPV4 $DB_HOST" | sudo tee -a /etc/hosts >/dev/null
+          python - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlparse
+
+          project_id = os.environ["SUPABASE_PROJECT_ID"].strip()
+          db_url = os.environ["SUPABASE_DB_URL"].strip()
+
+          try:
+            parsed = urlparse(db_url)
+          except Exception:
+            print("::error::SUPABASE_DB_URL is not a valid PostgreSQL connection URI.", file=sys.stderr)
+            raise SystemExit(1)
+
+          if parsed.scheme not in {"postgresql", "postgres"}:
+            print("::error::SUPABASE_DB_URL must use the postgres:// or postgresql:// scheme.", file=sys.stderr)
+            raise SystemExit(1)
+
+          host = (parsed.hostname or "").lower()
+          user = parsed.username or ""
+          is_direct = host == f"db.{project_id}.supabase.co"
+          is_pooler = host.endswith(".pooler.supabase.com")
+
+          if not host:
+            print("::error::SUPABASE_DB_URL must include a database host.", file=sys.stderr)
+            raise SystemExit(1)
+          if not parsed.password:
+            print("::error::SUPABASE_DB_URL must include a database password.", file=sys.stderr)
+            raise SystemExit(1)
+          if parsed.path in {"", "/"}:
+            print("::error::SUPABASE_DB_URL must include a database name.", file=sys.stderr)
+            raise SystemExit(1)
+          if not (is_direct or is_pooler):
+            print(
+              "::error::SUPABASE_DB_URL host must be the direct host db.<project-ref>.supabase.co or a Supabase pooler host (*.pooler.supabase.com).",
+              file=sys.stderr,
+            )
+            raise SystemExit(1)
+          if is_pooler and not user.endswith(f".{project_id}"):
+            print(
+              "::error::Pooler URLs must use the project-scoped database username format (for example postgres.<project-ref>).",
+              file=sys.stderr,
+            )
+            raise SystemExit(1)
+          if is_direct and user != "postgres":
+            print(
+              "::error::Direct database URLs must use the postgres role user.",
+              file=sys.stderr,
+            )
+            raise SystemExit(1)
+          PY
 
       - name: Preview pending migration SQL
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --dry-run
         env:
-          SUPABASE_DB_URL: postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@db.${{ vars.SUPABASE_PROJECT_ID }}.supabase.co:5432/postgres
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Apply reviewed migrations
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --yes
         env:
-          SUPABASE_DB_URL: postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@db.${{ vars.SUPABASE_PROJECT_ID }}.supabase.co:5432/postgres
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
