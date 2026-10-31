@@ -29,6 +29,33 @@ jobs:
         with:
           version: latest
 
+      - name: Require Supabase deployment configuration
+        env:
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [ -z "$SUPABASE_PROJECT_ID" ]; then
+            echo "::error::Missing required environment variable SUPABASE_PROJECT_ID in supabase-production."
+            exit 1
+          fi
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::error::Missing required environment secret SUPABASE_DB_PASSWORD in supabase-production."
+            exit 1
+          fi
+
+      - name: Prefer IPv4 for direct database host
+        env:
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          DB_HOST="db.${SUPABASE_PROJECT_ID}.supabase.co"
+          DB_IPV4="$(getent ahostsv4 "$DB_HOST" | awk 'NR==1 {print $1}')"
+          if [ -z "$DB_IPV4" ]; then
+            echo "::error::Could not resolve an IPv4 address for $DB_HOST."
+            exit 1
+          fi
+          echo "$DB_IPV4 $DB_HOST" | sudo tee -a /etc/hosts >/dev/null
+
       - name: Preview pending migration SQL
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --dry-run
         env:

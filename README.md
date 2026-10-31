@@ -10,16 +10,13 @@ TakoSync is a React Native and Expo application for monitoring ingredient invent
 
 - Provide staff with inventory information for their assigned branch.
 - Record stock receipts, deductions, usage, waste, and spoilage with a transaction history.
- set role = 'owner', branch_id = null, full_name = 'Owner name', active = true
 - Record daily physical counts and discrepancies without silently overwriting recorded stock.
 - Give the Owner a view of inventory and recent activity across the three branches.
 
 ## Modules and features
 
- set branch_id = '00000000-0000-4000-8000-000000000002', active = true
-
 The Staff interface currently includes:
- A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
+- A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
 - Supabase email/password sign-in, session restoration, and logout.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
@@ -207,7 +204,7 @@ Never accept role or branch assignments from user-editable Auth metadata.
 - Each developer uses the same Supabase project URL and public client key in their own root `.env`; `.env` is ignored and must never be committed.
 - Create schema changes only as new, uniquely named SQL files in `backend/supabase/migrations/`. Do not edit migrations already applied to the shared project.
 - Review migration changes through a GitHub pull request. Merging a migration to `main` triggers `.github/workflows/supabase-migrations.yml`; configure the GitHub `supabase-production` environment with required reviewers before adding its secrets.
-- Add `SUPABASE_PROJECT_ID` as an environment variable and `SUPABASE_ACCESS_TOKEN` plus `SUPABASE_DB_PASSWORD` as environment secrets for `supabase-production`. These privileged credentials are only used by GitHub Actions, never the Expo app.
+- Add `SUPABASE_PROJECT_ID` as an environment variable and `SUPABASE_DB_PASSWORD` as an environment secret for `supabase-production`. This privileged credential is only used by GitHub Actions, never the Expo app.
 - Collaborators must pull merged code locally. Applying database migrations updates the shared database, not each developer's local source files.
 
 ## Checks and troubleshooting
