@@ -47,7 +47,14 @@ All three developers should have their own GitHub and Supabase project access. E
 
 The repository includes `.github/workflows/supabase-migrations.yml`, which applies migrations after migration changes are merged to `main` (or by manual workflow dispatch). Before enabling it, create a protected GitHub environment named `supabase-production`, require a reviewer, and configure:
 
-- Environment variable `SUPABASE_PROJECT_ID` with the Supabase project reference.
-- Environment secret `SUPABASE_DB_PASSWORD`.
+- Environment secret `SUPABASE_DB_URL` containing the session pooler connection string from the Supabase
+  dashboard's **Connect** dialog. Use the session pooler (port `5432`) with host
+  `<region>.pooler.supabase.com`, username `postgres.<project-ref>`, database `postgres`, and
+  `sslmode=require`.
 
-Do not use the service-role key for this workflow. The database password is a privileged deployment credential and must remain in GitHub environment secrets. The workflow does not distribute source code to collaborators; everyone still pulls merged commits from GitHub.
+Do not use the service-role key for this workflow. The database URL is a privileged deployment
+credential and must remain in a GitHub environment secret. The workflow does not distribute source
+code to collaborators; everyone still pulls merged commits from GitHub.
+
+The workflow uses the session pooler URL explicitly because the hosted GitHub runner may otherwise select an
+unreachable IPv6 address for the direct database host. It previews pending SQL before applying migrations.

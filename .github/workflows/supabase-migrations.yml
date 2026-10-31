@@ -29,39 +29,28 @@ jobs:
         with:
           version: latest
 
-      - name: Require Supabase deployment configuration
-        env:
-          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          if [ -z "$SUPABASE_PROJECT_ID" ]; then
-            echo "::error::Missing required environment variable SUPABASE_PROJECT_ID in supabase-production."
-            exit 1
-          fi
-          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
-            echo "::error::Missing required environment secret SUPABASE_DB_PASSWORD in supabase-production."
-            exit 1
-          fi
-
-      - name: Prefer IPv4 for direct database host
-        env:
-          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+      - name: Validate migration connection secret
+        shell: bash
         run: |
           set -euo pipefail
-          DB_HOST="db.${SUPABASE_PROJECT_ID}.supabase.co"
-          DB_IPV4="$(getent ahostsv4 "$DB_HOST" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
-          if [ -z "$DB_IPV4" ]; then
-            echo "::warning::Could not resolve an IPv4 address for $DB_HOST; continuing without /etc/hosts override."
-            exit 0
+
+          if [[ -z "$SUPABASE_DB_URL" ]]; then
+            echo "::error::SUPABASE_DB_URL is not configured"
+            exit 1
           fi
-          echo "$DB_IPV4 $DB_HOST" | sudo tee -a /etc/hosts >/dev/null
+          if [[ ! "$SUPABASE_DB_URL" =~ ^postgres(ql)?://postgres\.[a-z0-9-]+:[^@]+@[a-z0-9-]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
+            echo "::error::SUPABASE_DB_URL must be the Supabase session pooler URL (port 5432, postgres database, sslmode=require)"
+            exit 1
+          fi
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Preview pending migration SQL
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --dry-run
         env:
-          SUPABASE_DB_URL: postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@db.${{ vars.SUPABASE_PROJECT_ID }}.supabase.co:5432/postgres
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Apply reviewed migrations
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --yes
         env:
-          SUPABASE_DB_URL: postgresql://postgres:${{ secrets.SUPABASE_DB_PASSWORD }}@db.${{ vars.SUPABASE_PROJECT_ID }}.supabase.co:5432/postgres
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
