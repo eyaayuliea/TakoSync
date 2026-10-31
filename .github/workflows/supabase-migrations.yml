@@ -96,9 +96,13 @@ jobs:
           except (UnicodeError, ValueError):
               fail("SUPABASE_DB_URL has invalid query parameters")
           sslmode_values = [
-              parameter for key, parameter in parameters if key == "sslmode"
+              parameter.strip().lower()
+              for key, parameter in parameters
+              if key.strip().lower() == "sslmode"
           ]
-          sslmode_required = sslmode_values == ["require"]
+          if sslmode_values and sslmode_values != ["require"]:
+              fail("SUPABASE_DB_URL must use sslmode=require")
+          sslmode_required = bool(sslmode_values)
 
           print("URL parsing succeeded: True")
           print(f"Parsed hostname: {hostname}")
@@ -114,18 +118,22 @@ jobs:
               fail("SUPABASE_DB_URL must use Session Pooler port 5432")
           if database != "postgres":
               fail("SUPABASE_DB_URL must use the postgres database")
+
+          effective_url = value
           if not sslmode_required:
-              fail("SUPABASE_DB_URL must include sslmode=require")
+              effective_url += "&" if query else "?"
+              effective_url += "sslmode=require"
+          github_env = os.environ.get("GITHUB_ENV")
+          if not github_env:
+              fail("GitHub Actions environment file is unavailable")
+          with open(github_env, "a", encoding="utf-8") as environment:
+              environment.write(f"SUPABASE_DB_URL_EFFECTIVE={effective_url}\n")
           PY
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Preview pending migration SQL (database connectivity and migration preview)
-        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --dry-run
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL_EFFECTIVE" --dry-run
 
       - name: Apply reviewed migrations (migration apply)
-        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --yes
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL_EFFECTIVE" --yes
