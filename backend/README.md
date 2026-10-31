@@ -1,4 +1,4 @@
-# TakoSync Supabase backend
+git push# TakoSync Supabase backend
 
 The backend is Supabase PostgreSQL and Auth; there is no separate application server. The Expo client-facing Supabase client and application queries/mutations live in `../frontend/services/`. The database schema, access policies, and transactional logic are maintained here:
 

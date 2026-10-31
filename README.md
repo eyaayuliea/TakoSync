@@ -204,7 +204,12 @@ Never accept role or branch assignments from user-editable Auth metadata.
 - Each developer uses the same Supabase project URL and public client key in their own root `.env`; `.env` is ignored and must never be committed.
 - Create schema changes only as new, uniquely named SQL files in `backend/supabase/migrations/`. Do not edit migrations already applied to the shared project.
 - Review migration changes through a GitHub pull request. Merging a migration to `main` triggers `.github/workflows/supabase-migrations.yml`; configure the GitHub `supabase-production` environment with required reviewers before adding its secrets.
-- Add `SUPABASE_PROJECT_ID` as an environment variable and `SUPABASE_DB_PASSWORD` as an environment secret for `supabase-production`. This privileged credential is only used by GitHub Actions, never the Expo app.
+- Add `SUPABASE_DB_URL` as an environment secret for `supabase-production`, using the Supabase
+  **Connect** dialog's session pooler URL. It must use the regional
+  `<region>.pooler.supabase.com` host, port `5432`, username `postgres.<project-ref>`, database
+  `postgres`, and `sslmode=require`. This avoids the direct database host's IPv6 connectivity issue on
+  GitHub-hosted runners. The database URL is only used by GitHub Actions and must never be printed or
+  committed.
 - Collaborators must pull merged code locally. Applying database migrations updates the shared database, not each developer's local source files.
 
 ## Checks and troubleshooting
