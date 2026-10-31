@@ -41,19 +41,41 @@ jobs:
           from urllib.parse import parse_qsl, unquote, urlsplit
 
           value = os.environ.get("SUPABASE_DB_URL", "")
-          error = "::error::SUPABASE_DB_URL must be a valid Supabase session pooler URL"
-
+          print(f"SUPABASE_DB_URL empty: {not value}")
+          parsed = None
           try:
               parsed = urlsplit(value)
-              pooler_suffix = ".pooler.supabase.com"
               hostname = parsed.hostname or ""
-              if parsed.scheme not in {"postgres", "postgresql"}:
+              port = parsed.port
+              database = parsed.path.removeprefix("/")
+              parameters = parse_qsl(
+                  parsed.query, keep_blank_values=True, strict_parsing=True
+              )
+              sslmode_values = [
+                  parameter for key, parameter in parameters if key == "sslmode"
+              ]
+              sslmode_required = sslmode_values == ["require"]
+          except (ValueError, UnicodeError):
+              hostname = ""
+              port = None
+              database = ""
+              sslmode_values = []
+              sslmode_required = False
+
+          print(f"Parsed hostname: {hostname or '<unavailable>'}")
+          print(f"Parsed port: {port if port is not None else '<unavailable>'}")
+          print(f"Parsed database: {database or '<unavailable>'}")
+          print(f"sslmode=require present: {sslmode_required}")
+
+          try:
+              pooler_suffix = ".pooler.supabase.com"
+              if parsed is None or parsed.scheme not in {"postgres", "postgresql"}:
                   raise ValueError
               if not hostname.endswith(pooler_suffix) or not re.fullmatch(
                   r"[a-z0-9-]+", hostname[: -len(pooler_suffix)]
               ):
                   raise ValueError
-              if parsed.port != 5432 or parsed.path != "/postgres" or parsed.fragment:
+              if port != 5432 or database != "postgres" or parsed.fragment:
                   raise ValueError
               if parsed.username is None or not re.fullmatch(
                   r"postgres\.[a-z0-9-]+", unquote(parsed.username)
@@ -63,13 +85,13 @@ jobs:
                   r"[@\s]|%(?![0-9a-fA-F]{2})", parsed.password
               ):
                   raise ValueError
-              parameters = parse_qsl(
-                  parsed.query, keep_blank_values=True, strict_parsing=True
-              )
-              if [value for key, value in parameters if key == "sslmode"] != ["require"]:
+              if sslmode_values != ["require"]:
                   raise ValueError
           except (ValueError, UnicodeError):
-              print(error, file=sys.stderr)
+              print(
+                  "::error::SUPABASE_DB_URL must be a valid Supabase session pooler URL",
+                  file=sys.stderr,
+              )
               sys.exit(1)
           PY
         env:
