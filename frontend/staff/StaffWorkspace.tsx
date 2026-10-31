@@ -124,6 +124,14 @@ function formatWasteDate(date: Date) {
   return `${formatDate(date)} · 08:30 AM`;
 }
 
+function formatManilaTime(date: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 type UsageDeduction = {
   ingredientId: string;
   quantity: number;
@@ -218,7 +226,7 @@ const historyTypeFilters: HistoryTypeFilter[] = [
 ];
 
 function formatHistoryDateTime(date: Date) {
-  return `${formatDate(date)} · ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${formatDate(manilaBusinessDate(date))} · ${formatManilaTime(date)}`;
 }
 
 const wasteReasons: WasteReason[] = ['Spoiled', 'Expired', 'Spilled/Damaged', 'Other'];
@@ -715,6 +723,7 @@ export default function StaffWorkspace({
   const { width: windowWidth } = useWindowDimensions();
   const lowStockCardWidth = Math.min(292, (windowWidth - 36) * 0.88);
   const wasteReviewGeneration = useRef(0);
+  const [today, setToday] = useState(() => manilaBusinessDate());
   const colors = {
     ...theme.colors,
     pink: theme.colors.accent,
@@ -762,7 +771,7 @@ export default function StaffWorkspace({
   const [batchPreset, setBatchPreset] = useState<string>(stockOutBatchPresets[0].name);
   const [batchPresetOpen, setBatchPresetOpen] = useState(false);
   const [batchCount, setBatchCount] = useState('1');
-  const [transactionDate, setTransactionDate] = useState<Date | null>(new Date());
+  const [transactionDate, setTransactionDate] = useState<Date | null>(() => manilaBusinessDate());
   const [expirationDate, setExpirationDate] = useState<Date | null>(null);
   const [reason, setReason] = useState('Cooking usage');
   const [reasonListOpen, setReasonListOpen] = useState(false);
@@ -811,6 +820,22 @@ export default function StaffWorkspace({
     lowStock: true,
     expiration: true,
   });
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshAtNextManilaDay = () => {
+      setToday(manilaBusinessDate());
+      const nextDay = manilaBusinessDate();
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextMidnight = new Date(manilaMidnightTimestamp(nextDay)).getTime();
+      timer = setTimeout(refreshAtNextManilaDay, Math.max(1000, nextMidnight - Date.now() + 50));
+    };
+    const nextDay = manilaBusinessDate();
+    nextDay.setDate(nextDay.getDate() + 1);
+    const nextMidnight = new Date(manilaMidnightTimestamp(nextDay)).getTime();
+    timer = setTimeout(refreshAtNextManilaDay, Math.max(1000, nextMidnight - Date.now() + 50));
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1027,11 +1052,7 @@ export default function StaffWorkspace({
       (historyTypeFilter === 'Stock-Out'
         ? transaction.type === 'Stock-Out / Usage' || transaction.type === 'Usage'
         : transaction.type === historyTypeFilter);
-    const dateValue = new Date(
-      transaction.transactionDate.getFullYear(),
-      transaction.transactionDate.getMonth(),
-      transaction.transactionDate.getDate(),
-    ).getTime();
+    const dateValue = manilaBusinessDate(transaction.transactionDate).getTime();
     const from = historyFromDate
       ? new Date(historyFromDate.getFullYear(), historyFromDate.getMonth(), historyFromDate.getDate()).getTime()
       : Number.NEGATIVE_INFINITY;
@@ -1281,7 +1302,7 @@ export default function StaffWorkspace({
     dailyCheckSubmissionLock.current = true;
     setDailyCheckSubmitting(true);
     setFormError('');
-    const checkDate = new Date();
+    const checkDate = manilaBusinessDate();
     const lines = dailyCheckLines.map((line) => {
       const physicalQuantity = Number(line.physicalQuantity);
       return {
@@ -1296,7 +1317,7 @@ export default function StaffWorkspace({
     try {
       const saved = await submitDailyStockCheck({
         branchId: user.branchId,
-        checkDate: checkDate.toISOString().slice(0, 10),
+        checkDate: formatLocalIsoDate(checkDate),
         remarks: dailyCheckRemarks.trim(),
         lines: lines.map((line) => ({
           ingredientId: line.ingredientId,
@@ -1347,7 +1368,7 @@ export default function StaffWorkspace({
     setUsageMode('manual');
     setBatchPresetOpen(false);
     setBatchCount('1');
-    setTransactionDate(formRoute === 'stockOut' || formRoute === 'waste' ? manilaBusinessDate() : new Date());
+    setTransactionDate(manilaBusinessDate());
     setExpirationDate(null);
     setReason(formRoute === 'waste' || formRoute === 'stockOut' ? '' : 'Cooking usage');
     setReasonListOpen(false);
@@ -1752,7 +1773,7 @@ export default function StaffWorkspace({
       setQuantity('');
       setExpirationDate(null);
       setNotes('');
-      setTransactionDate(new Date());
+      setTransactionDate(manilaBusinessDate());
       setStockInFieldErrors({});
       setStockInValidationAttempted(false);
       setSuccessMessage('Stock-In recorded successfully.');
@@ -2483,7 +2504,7 @@ export default function StaffWorkspace({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.dailyCheckIntro}>{formatDate(new Date())} · Enter today's physical quantities.</Text>
+          <Text style={styles.dailyCheckIntro}>{formatDate(today)} · Enter today's physical quantities.</Text>
           <View style={styles.dailyTableHeader}>
             <Text style={[styles.dailyColumnTitle, styles.dailyIngredientColumn]}>Ingredient</Text>
             <Text style={[styles.dailyColumnTitle, styles.dailyRecordedColumn]}>Recorded</Text>
@@ -2623,7 +2644,7 @@ export default function StaffWorkspace({
     const check = currentDailyCheck;
     const flour = check.lines.find((line) => line.ingredientId === 'flour');
     const discrepancyCount = check.lines.filter((line) => line.difference !== 0).length;
-    const time = check.submittedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const time = formatManilaTime(check.submittedAt);
     const auditText = flour
       ? `Flour's recorded balance remains ${formatUnitQuantity(flour.recordedQuantity, flour.unit)}. The ${formatUnitQuantity(flour.physicalQuantity, flour.unit)} physical count is an audit observation, not a stock adjustment.`
       : 'Physical counts are audit observations and do not adjust recorded stock balances.';
@@ -3869,7 +3890,7 @@ export default function StaffWorkspace({
         </View>
         <View style={styles.historyMetadataRow}>
           <View style={styles.historyMetadataCopy}>
-            <Text style={styles.historyMetadataTitle}>{assignedBranch} · {formatDate(new Date())}</Text>
+            <Text style={styles.historyMetadataTitle}>{assignedBranch} · {formatDate(today)}</Text>
             <Text style={styles.historyMetadataSubtitle}>
               {historyTypeFilter === 'All types' ? 'All transaction types' : historyTypeFilter}
               {' · '}{filteredHistoryTransactions.length} {filteredHistoryTransactions.length === 1 ? 'transaction' : 'transactions'}
@@ -4411,7 +4432,7 @@ export default function StaffWorkspace({
                   Send this physical count for owner review. Recorded balances will not change.
                 </Text>
                 <View style={styles.dailyModalSummary}>
-                  <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(new Date())}</Text>
+                  <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(today)}</Text>
                   <Text style={styles.dailyModalSummaryEmphasis}>
                     {dailyCheckLines.length} ingredients counted · {dailyDiscrepancies.length}{' '}
                     {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}
