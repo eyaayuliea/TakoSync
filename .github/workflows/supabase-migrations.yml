@@ -38,82 +38,94 @@ jobs:
           import os
           import re
           import sys
-          from urllib.parse import parse_qsl, unquote, urlsplit
+          from urllib.parse import parse_qsl, unquote
 
           value = os.environ.get("SUPABASE_DB_URL", "")
           print(f"SUPABASE_DB_URL empty: {not value}")
-          parsed = None
+
+          def fail(message):
+              print(f"::error title=Secret configuration::{message}", file=sys.stderr)
+              sys.exit(1)
+
+          if not value:
+              fail(
+                  "SUPABASE_DB_URL is empty; configure the SUPABASE_DB_URL secret "
+                  "in the supabase-production environment"
+              )
+          if any(character in value for character in "\r\n"):
+              fail("SUPABASE_DB_URL contains an invalid line break")
+
+          uri_match = re.fullmatch(
+              r"(postgres|postgresql)://([^/?#]*)(/[^?#]*)?(?:\?([^#]*))?(?:#(.*))?",
+              value,
+          )
+          if uri_match is None:
+              fail("SUPABASE_DB_URL is not a valid PostgreSQL URI")
+
+          scheme, authority, path, query, fragment = uri_match.groups()
+          if fragment is not None:
+              fail("SUPABASE_DB_URL must not contain a URI fragment")
+          if "@" not in authority:
+              fail("SUPABASE_DB_URL is missing database credentials")
+          userinfo, hostport = authority.rsplit("@", 1)
+          if ":" not in userinfo:
+              fail("SUPABASE_DB_URL is missing a database password")
+          username, password = userinfo.split(":", 1)
+          if not username or not password:
+              fail("SUPABASE_DB_URL has an empty database username or password")
+          if not re.fullmatch(r"postgres\.[a-z0-9-]+", unquote(username)):
+              fail("SUPABASE_DB_URL must use the Supabase postgres.<project-ref> user")
+          if re.search(r"[\s@\[\]]|%(?![0-9a-fA-F]{2})", password):
+              fail("SUPABASE_DB_URL contains invalid password encoding")
+          if ":" not in hostport:
+              fail("SUPABASE_DB_URL is missing a database port")
+          hostname, port_text = hostport.rsplit(":", 1)
+          hostname = hostname.lower()
+          database = (path or "").removeprefix("/")
+          if not re.fullmatch(r"[0-9]+", port_text):
+              fail("SUPABASE_DB_URL has an invalid database port")
           try:
-              parsed = urlsplit(value)
-          except (ValueError, UnicodeError):
-              print("URL parsing succeeded: False")
-          else:
-              print("URL parsing succeeded: True")
+              port = int(port_text)
+          except ValueError:
+              fail("SUPABASE_DB_URL has an invalid database port")
+          if re.search(r"%(?![0-9a-fA-F]{2})", query or ""):
+              fail("SUPABASE_DB_URL contains invalid query encoding")
 
           try:
-              hostname = parsed.hostname or "" if parsed is not None else ""
-          except (ValueError, UnicodeError):
-              hostname = ""
-          try:
-              port = parsed.port if parsed is not None else None
-          except (ValueError, UnicodeError):
-              port = None
-          database = ""
-          if parsed is not None:
-              database = parsed.path.removeprefix("/")
-          try:
-              parameters = parse_qsl(
-                  parsed.query if parsed is not None else "",
-                  keep_blank_values=True,
-              )
-              sslmode_values = [
-                  parameter for key, parameter in parameters if key == "sslmode"
-              ]
-          except (ValueError, UnicodeError):
-              sslmode_values = []
+              parameters = parse_qsl(query or "", keep_blank_values=True)
+          except (UnicodeError, ValueError):
+              fail("SUPABASE_DB_URL has invalid query parameters")
+          sslmode_values = [
+              parameter for key, parameter in parameters if key == "sslmode"
+          ]
           sslmode_required = sslmode_values == ["require"]
 
-          print(f"Parsed hostname: {hostname or '<unavailable>'}")
-          print(f"Parsed port: {port if port is not None else '<unavailable>'}")
+          print("URL parsing succeeded: True")
+          print(f"Parsed hostname: {hostname}")
+          print(f"Parsed port: {port}")
           print(f"Parsed database: {database or '<unavailable>'}")
           print(f"sslmode=require present: {sslmode_required}")
 
-          try:
-              pooler_suffix = ".pooler.supabase.com"
-              if parsed is None or parsed.scheme not in {"postgres", "postgresql"}:
-                  raise ValueError
-              if not hostname.endswith(pooler_suffix) or not re.fullmatch(
-                  r"[a-z0-9-]+", hostname[: -len(pooler_suffix)]
-              ):
-                  raise ValueError
-              if port != 5432 or database != "postgres" or parsed.fragment:
-                  raise ValueError
-              if parsed.username is None or not re.fullmatch(
-                  r"postgres\.[a-z0-9-]+", unquote(parsed.username)
-              ):
-                  raise ValueError
-              if parsed.password is None or not parsed.password or re.search(
-                  r"[@\s]|%(?![0-9a-fA-F]{2})", parsed.password
-              ):
-                  raise ValueError
-              if sslmode_values != ["require"]:
-                  raise ValueError
-          except (ValueError, UnicodeError):
-              print(
-                  "::error::SUPABASE_DB_URL must be a valid Supabase session pooler URL",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
+          if not hostname.endswith(".pooler.supabase.com") or not re.fullmatch(
+              r"[a-z0-9-]+", hostname[: -len(".pooler.supabase.com")]
+          ):
+              fail("SUPABASE_DB_URL must use a Supabase Session Pooler hostname")
+          if port != 5432:
+              fail("SUPABASE_DB_URL must use Session Pooler port 5432")
+          if database != "postgres":
+              fail("SUPABASE_DB_URL must use the postgres database")
+          if not sslmode_required:
+              fail("SUPABASE_DB_URL must include sslmode=require")
           PY
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
-      - name: Preview pending migration SQL
+      - name: Preview pending migration SQL (database connectivity and migration preview)
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --dry-run
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
-      - name: Apply reviewed migrations
+      - name: Apply reviewed migrations (migration apply)
         run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL" --yes
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
