@@ -45,10 +45,12 @@ jobs:
 
           try:
               parsed = urlsplit(value)
+              pooler_suffix = ".pooler.supabase.com"
+              hostname = parsed.hostname or ""
               if parsed.scheme not in {"postgres", "postgresql"}:
                   raise ValueError
-              if parsed.hostname is None or not re.fullmatch(
-                  r"[a-z0-9-]+\.pooler\.supabase\.com", parsed.hostname
+              if not hostname.endswith(pooler_suffix) or not re.fullmatch(
+                  r"[a-z0-9-]+", hostname[: -len(pooler_suffix)]
               ):
                   raise ValueError
               if parsed.port != 5432 or parsed.path != "/postgres" or parsed.fragment:
@@ -61,9 +63,10 @@ jobs:
                   r"[@\s]|%(?![0-9a-fA-F]{2})", parsed.password
               ):
                   raise ValueError
-              parameters = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-              ssl_modes = [value for key, value in parameters if key == "sslmode"]
-              if ssl_modes != ["require"]:
+              parameters = parse_qsl(
+                  parsed.query, keep_blank_values=True, strict_parsing=True
+              )
+              if [value for key, value in parameters if key == "sslmode"] != ["require"]:
                   raise ValueError
           except (ValueError, UnicodeError):
               print(error, file=sys.stderr)
