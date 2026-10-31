@@ -45,22 +45,33 @@ jobs:
           parsed = None
           try:
               parsed = urlsplit(value)
-              hostname = parsed.hostname or ""
-              port = parsed.port
+          except (ValueError, UnicodeError):
+              print("URL parsing succeeded: False")
+          else:
+              print("URL parsing succeeded: True")
+
+          try:
+              hostname = parsed.hostname or "" if parsed is not None else ""
+          except (ValueError, UnicodeError):
+              hostname = ""
+          try:
+              port = parsed.port if parsed is not None else None
+          except (ValueError, UnicodeError):
+              port = None
+          database = ""
+          if parsed is not None:
               database = parsed.path.removeprefix("/")
+          try:
               parameters = parse_qsl(
-                  parsed.query, keep_blank_values=True, strict_parsing=True
+                  parsed.query if parsed is not None else "",
+                  keep_blank_values=True,
               )
               sslmode_values = [
                   parameter for key, parameter in parameters if key == "sslmode"
               ]
-              sslmode_required = sslmode_values == ["require"]
           except (ValueError, UnicodeError):
-              hostname = ""
-              port = None
-              database = ""
               sslmode_values = []
-              sslmode_required = False
+          sslmode_required = sslmode_values == ["require"]
 
           print(f"Parsed hostname: {hostname or '<unavailable>'}")
           print(f"Parsed port: {port if port is not None else '<unavailable>'}")
