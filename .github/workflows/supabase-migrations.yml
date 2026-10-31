@@ -34,14 +34,41 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -z "$SUPABASE_DB_URL" ]]; then
-            echo "::error::SUPABASE_DB_URL is not configured"
-            exit 1
-          fi
-          if [[ ! "$SUPABASE_DB_URL" =~ ^postgres(ql)?://postgres\.[a-z0-9-]+:[^@]+@[a-z0-9-]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
-            echo "::error::SUPABASE_DB_URL must be the Supabase session pooler URL (port 5432, postgres database, sslmode=require)"
-            exit 1
-          fi
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          from urllib.parse import parse_qsl, unquote, urlsplit
+
+          value = os.environ.get("SUPABASE_DB_URL", "")
+          error = "::error::SUPABASE_DB_URL must be a valid Supabase session pooler URL"
+
+          try:
+              parsed = urlsplit(value)
+              if parsed.scheme not in {"postgres", "postgresql"}:
+                  raise ValueError
+              if parsed.hostname is None or not re.fullmatch(
+                  r"[a-z0-9-]+\.pooler\.supabase\.com", parsed.hostname
+              ):
+                  raise ValueError
+              if parsed.port != 5432 or parsed.path != "/postgres" or parsed.fragment:
+                  raise ValueError
+              if parsed.username is None or not re.fullmatch(
+                  r"postgres\.[a-z0-9-]+", unquote(parsed.username)
+              ):
+                  raise ValueError
+              if parsed.password is None or not parsed.password or re.search(
+                  r"[@\s]|%(?![0-9a-fA-F]{2})", parsed.password
+              ):
+                  raise ValueError
+              parameters = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+              ssl_modes = [value for key, value in parameters if key == "sslmode"]
+              if ssl_modes != ["require"]:
+                  raise ValueError
+          except (ValueError, UnicodeError):
+              print(error, file=sys.stderr)
+              sys.exit(1)
+          PY
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
