@@ -135,6 +135,40 @@ export type RecipeIngredientRecord = {
   unit_of_measure: string;
 };
 
+export type StockThresholdInventory = {
+  branch_id: string;
+  ingredient_id: string;
+  quantity: number;
+  minimum_stock: number;
+};
+
+export type ExpirationBatchRecord = {
+  id: string;
+  branch_id: string;
+  ingredient_id: string;
+  batch_reference: string;
+  received_date: string;
+  expiration_date: string | null;
+  quantity_received: number;
+  quantity_remaining: number;
+};
+
+export type StockExpirationSettingsData = {
+  branches: Awaited<ReturnType<typeof loadBranches>>;
+  inventory: StockThresholdInventory[];
+  ingredients: {
+    id: string;
+    category_id: string;
+    name: string;
+    unit: string;
+    quantity_precision: number;
+    expiration_tracking: boolean;
+  }[];
+  categories: { id: string; name: string }[];
+  batches: ExpirationBatchRecord[];
+  nearExpirationDays: number;
+};
+
 const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
   octopus: { emoji: '🐙', tint: '#FCE9DE', type: 'Frozen seafood' },
   flour: { emoji: '🌾', tint: '#FFF1D8', type: 'Dry goods' },
@@ -854,7 +888,7 @@ export async function loadOwnerInventory() {
   const branches = await loadBranches();
   const client = requireSupabase();
   const pageSize = 500;
-  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult] = await Promise.all([
+  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult, settingsResult] = await Promise.all([
     client.from('inventory').select('branch_id, ingredient_id, quantity, minimum_stock, updated_at'),
     client.from('ingredients').select('id, category_id, name, unit, expiration_tracking, active').eq('active', true).order('name'),
     client.from('ingredient_categories').select('id, name'),
@@ -865,11 +899,16 @@ export async function loadOwnerInventory() {
       .order('expiration_date')
       .order('id', { ascending: false })
       .range(0, pageSize - 1),
+    client.from('owner_inventory_settings')
+      .select('near_expiration_days')
+      .eq('id', true)
+      .maybeSingle(),
   ]);
   assertNoError(inventoryResult.error);
   assertNoError(ingredientsResult.error);
   assertNoError(categoriesResult.error);
   assertNoError(batchesResult.error);
+  assertNoError(settingsResult.error);
 
   const batches = [...(batchesResult.data ?? [])];
   for (let offset = pageSize; (batchesResult.data?.length ?? 0) === pageSize; offset += pageSize) {
@@ -891,7 +930,150 @@ export async function loadOwnerInventory() {
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     batches,
+    nearExpirationDays: settingsResult.data?.near_expiration_days ?? 7,
   };
+}
+
+export async function loadStockExpirationSettings(): Promise<StockExpirationSettingsData> {
+  const branches = await loadBranches();
+  const client = requireSupabase();
+  const [inventoryResult, ingredientsResult, categoriesResult, settingsResult] = await Promise.all([
+    client.from('branch_inventory')
+      .select('branch_id, ingredient_id, quantity, minimum_stock')
+      .order('branch_id')
+      .order('ingredient_id'),
+    client.from('ingredients')
+      .select('id, category_id, name, unit, quantity_precision, expiration_tracking')
+      .eq('active', true)
+      .order('name'),
+    client.from('ingredient_categories')
+      .select('id, name')
+      .order('name'),
+    client.from('owner_inventory_settings')
+      .select('near_expiration_days')
+      .eq('id', true)
+      .maybeSingle(),
+  ]);
+  assertNoError(inventoryResult.error);
+  assertNoError(ingredientsResult.error);
+  assertNoError(categoriesResult.error);
+  assertNoError(settingsResult.error);
+
+  const batches: ExpirationBatchRecord[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await client.from('ingredient_batches')
+      .select('id, branch_id, ingredient_id, batch_reference, received_date, expiration_date, quantity_received, quantity_remaining')
+      .gt('quantity_remaining', 0)
+      .order('expiration_date', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    assertNoError(error);
+    batches.push(...(data ?? []).map((batch) => ({
+      ...batch,
+      quantity_received: Number(batch.quantity_received),
+      quantity_remaining: Number(batch.quantity_remaining),
+    })));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+
+  return {
+    branches,
+    inventory: (inventoryResult.data ?? []).map((item) => ({
+      ...item,
+      quantity: Number(item.quantity),
+      minimum_stock: Number(item.minimum_stock),
+    })),
+    ingredients: ingredientsResult.data ?? [],
+    categories: categoriesResult.data ?? [],
+    batches,
+    nearExpirationDays: settingsResult.data?.near_expiration_days ?? 7,
+  };
+}
+
+export async function updateMinimumStock(
+  branchId: string,
+  ingredientId: string,
+  minimumStock: number,
+): Promise<void> {
+  if (
+    !branchId
+    || !ingredientId
+    || !Number.isFinite(minimumStock)
+    || minimumStock < 0
+    || minimumStock > 999_999_999.999
+    || maximumDecimalPlaces(minimumStock) > 3
+  ) {
+    throw new Error('Enter a valid minimum stock amount greater than or equal to zero.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('branch_inventory')
+    .update({ minimum_stock: minimumStock })
+    .eq('branch_id', branchId)
+    .eq('ingredient_id', ingredientId)
+    .select('branch_id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The minimum stock setting could not be updated for this branch.');
+}
+
+function maximumDecimalPlaces(value: number): number {
+  const decimalPart = String(value).split('.')[1] ?? '';
+  return decimalPart.length;
+}
+
+export async function updateBatchExpirationDate(
+  batchId: string,
+  expirationDate: string,
+  receivedDate: string,
+): Promise<void> {
+  if (!batchId || !/^\d{4}-\d{2}-\d{2}$/.test(expirationDate)) {
+    throw new Error('Enter an expiration date in YYYY-MM-DD format.');
+  }
+  const [year, month, day] = expirationDate.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    throw new Error('Enter a real calendar date for the expiration date.');
+  }
+  if (expirationDate < receivedDate) {
+    throw new Error('Expiration date cannot be before the batch received date.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('ingredient_batches')
+    .update({ expiration_date: expirationDate })
+    .eq('id', batchId)
+    .select('id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The batch expiration date could not be updated.');
+}
+
+export async function updateIngredientExpirationTracking(
+  ingredientId: string,
+  expirationTracking: boolean,
+): Promise<void> {
+  if (!ingredientId) throw new Error('Choose an ingredient to update.');
+  const { data, error } = await requireSupabase()
+    .from('ingredients')
+    .update({ expiration_tracking: expirationTracking })
+    .eq('id', ingredientId)
+    .select('id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('Ingredient expiration tracking could not be updated.');
+}
+
+export async function updateNearExpirationDays(days: number): Promise<void> {
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    throw new Error('Expiration alerts must be set from 1 to 365 days.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('owner_inventory_settings')
+    .upsert({ id: true, near_expiration_days: days }, { onConflict: 'id' })
+    .select('near_expiration_days')
+    .single();
+  assertNoError(error);
+  if (!data) throw new Error('The expiration alert setting could not be saved.');
 }
 
 export async function loadOwnerActivityData(input: {

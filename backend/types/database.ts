@@ -144,6 +144,11 @@ export type Database = {
         description: string;
         created_at: string;
       }>;
+      owner_inventory_settings: Table<{
+        id: boolean;
+        near_expiration_days: number;
+        updated_at: string;
+      }>;
     };
     Views: {
       inventory: {

@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
+import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
   createProduct,
@@ -23,7 +24,7 @@ import {
 } from '../services/takosync';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'Discrepancies' | 'Records' | 'Profile';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'Discrepancies' | 'Records' | 'Profile';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -227,12 +228,13 @@ export default function OwnerMobileWorkspace({
     }];
   });
   const lowStock = inventoryRows.filter((item) => item.quantity <= 0 || (item.minimumStock > 0 && item.quantity <= item.minimumStock));
+  const expirationWindow = data?.nearExpirationDays ?? 7;
   const expirationItems = (data?.batches ?? []).flatMap((batch) => {
     if (!batch.expiration_date || Number(batch.quantity_remaining) <= 0 || (branchId && branchId !== batch.branch_id)) return [];
     const ingredient = ingredients.get(batch.ingredient_id);
     if (!ingredient?.expiration_tracking) return [];
     const days = daysUntil(batch.expiration_date);
-    return days <= 7
+    return days <= expirationWindow
       ? [{
           id: batch.id,
           ingredientId: batch.ingredient_id,
@@ -444,7 +446,7 @@ export default function OwnerMobileWorkspace({
   };
 
   const activePrimaryPage = page === 'Reports' ? 'Sales'
-    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' ? 'More' : page;
+    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' ? 'More' : page;
 
   const showError = (message: string) => (
     <View style={styles.errorCard} accessibilityRole="alert">
@@ -807,7 +809,7 @@ export default function OwnerMobileWorkspace({
           </View>
           <StatusBadge label={item.days < 0 ? 'Expired' : item.days === 0 ? 'Today' : `${item.days}d left`} tone={item.days < 0 ? 'low' : 'warning'} />
         </View>
-      )) : <EmptyState text={inventoryLoading ? 'Loading expiration dates…' : 'No tracked batches are expiring within 7 days.'} />}
+      )) : <EmptyState text={inventoryLoading ? 'Loading expiration dates…' : `No tracked batches are expiring within ${expirationWindow} days.`} />}
 
       <SectionHeading title="Recent activities" action="View all" onAction={() => setPage('Records')} />
       {activityError ? showError(activityError) : activityLoading && !activityData ? (
@@ -917,7 +919,7 @@ export default function OwnerMobileWorkspace({
           </View>
           <StatusBadge label={item.days < 0 ? 'Expired' : item.days === 0 ? 'Today' : `${item.days}d left`} tone={item.days < 0 ? 'low' : 'warning'} />
         </View>
-      )) : <EmptyState text={alertCategory === 'Expired' ? 'No tracked batches have expired.' : 'No tracked batches expire within 7 days.'} />}
+      )) : <EmptyState text={alertCategory === 'Expired' ? 'No tracked batches have expired.' : `No tracked batches expire within ${expirationWindow} days.`} />}
     </>
   );
 
@@ -978,6 +980,7 @@ export default function OwnerMobileWorkspace({
   const renderMore = () => (
     <>
       {[
+        { title: 'Stock & Expiration Settings', detail: 'Configure branch thresholds and batch expiration alerts', page: 'StockSettings' as const, icon: '◷' },
         { title: 'Ingredients & Recipes', detail: 'Manage ingredient records and product recipes', page: 'Ingredients' as const, icon: '◈' },
         { title: 'Products & Menu', detail: 'Manage menu items, prices, and availability', page: 'Products' as const, icon: '▣' },
         { title: 'Discrepancy review', detail: `${discrepancies.length} pending count discrepancies`, page: 'Discrepancies' as const, icon: '!' },
@@ -1031,6 +1034,7 @@ export default function OwnerMobileWorkspace({
     More: 'More',
     Products: 'Products & Menu',
     Ingredients: 'Ingredients & Recipes',
+    StockSettings: 'Stock Threshold & Expiration Settings',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
     Profile: 'Owner profile',
@@ -1092,6 +1096,13 @@ export default function OwnerMobileWorkspace({
         {page === 'More' && renderMore()}
         {page === 'Products' && renderProducts()}
         {page === 'Ingredients' && <OwnerIngredientsRecipes onManageProducts={() => setPage('Products')} />}
+        {page === 'StockSettings' && (
+          <OwnerStockExpirationSettings
+            branchId={branchId}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
+        )}
         {page === 'Discrepancies' && renderDiscrepancies()}
         {page === 'Records' && renderRecords()}
         {page === 'Profile' && renderProfile()}
