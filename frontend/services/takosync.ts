@@ -135,6 +135,8 @@ export type SharedRecipeRecord = {
   recipe_code: string;
   name: string;
   estimated_yield_pieces: number;
+  prepared_quantity: number;
+  prepared_unit: string;
   active: boolean;
   automatic_consumption_enabled: boolean;
   version: number;
@@ -769,6 +771,7 @@ export async function prepareBatterBatch(branchId: string, batchReference: strin
     p_batch_reference: batchReference,
   });
   assertNoError(error);
+  if (!data) throw new Error('The batter preparation service returned no batch result.');
   return data;
 }
 
@@ -785,8 +788,20 @@ export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
     })),
     p_addons: input.addonIds.map((addonId) => ({ addon_id: addonId })),
   });
-  assertNoError(error);
+  if (error) {
+    const message = error.message.toLowerCase();
+    if (message.includes('exceeds available stock')) {
+      throw new Error('Insufficient inventory to complete this sale.');
+    }
+    if (message.includes('unavailable for this branch')) {
+      throw new Error('One of the selected products is no longer available.');
+    }
+    throw new Error('Unable to complete the sale. No inventory was deducted. Please try again.');
+  }
   if (!data) throw new Error('The sale service returned no saved transaction.');
+  if (data.inventory_processing_status !== 'completed' || data.status !== 'completed') {
+    throw new Error('The sale was not fully processed. No checkout success was recorded.');
+  }
   return {
     id: data.id,
     transaction_reference: data.transaction_reference,
@@ -835,7 +850,7 @@ export async function loadSharedRecipes(): Promise<SharedRecipeRecord[]> {
   const client = requireSupabase();
   const [recipes, lines, products] = await Promise.all([
     client.from('shared_recipes')
-      .select('id, recipe_code, name, estimated_yield_pieces, active, automatic_consumption_enabled, version')
+      .select('id, recipe_code, name, estimated_yield_pieces, prepared_quantity, prepared_unit, active, automatic_consumption_enabled, version')
       .order('name', { ascending: true }),
     client.from('shared_recipe_ingredients')
       .select('shared_recipe_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled' ),
@@ -849,6 +864,8 @@ export async function loadSharedRecipes(): Promise<SharedRecipeRecord[]> {
   return (recipes.data ?? []).map((recipe) => ({
     ...recipe,
     estimated_yield_pieces: Number(recipe.estimated_yield_pieces),
+    prepared_quantity: Number(recipe.prepared_quantity),
+    prepared_unit: recipe.prepared_unit,
     ingredientLines: (lines.data ?? [])
       .filter((line) => line.shared_recipe_id === recipe.id)
       .map((line) => ({ ...line, quantity_required: Number(line.quantity_required) })),
@@ -863,6 +880,8 @@ export async function saveSharedRecipe(input: {
   recipe_code: string;
   name: string;
   estimated_yield_pieces: number;
+  prepared_quantity: number;
+  prepared_unit: string;
   active: boolean;
   automatic_consumption_enabled: boolean;
   ingredientLines: SharedRecipeRecord['ingredientLines'];
@@ -871,6 +890,12 @@ export async function saveSharedRecipe(input: {
   if (!input.recipe_code.trim() || !input.name.trim()) throw new Error('Recipe code and name are required.');
   if (!Number.isFinite(input.estimated_yield_pieces) || input.estimated_yield_pieces <= 0) {
     throw new Error('Estimated yield must be greater than zero.');
+  }
+  const preparedUnit = input.prepared_unit.trim();
+  const supportedUnits = new Set(['g', 'kg', 'ml', 'L', 'pcs', 'bottle', 'pack', 'tsp', 'tbsp', 'unknown']);
+  if (!Number.isFinite(input.prepared_quantity) || input.prepared_quantity <= 0
+    || !Number.isInteger(input.prepared_quantity) || !supportedUnits.has(preparedUnit)) {
+    throw new Error('Prepared quantity must be a positive whole number with a valid unit.');
   }
   if (input.automatic_consumption_enabled && (!input.active || input.ingredientLines.length === 0)) {
     throw new Error('An active automatic recipe requires at least one ingredient.');
@@ -897,6 +922,8 @@ export async function saveSharedRecipe(input: {
     recipe_code: input.recipe_code.trim(),
     name: input.name.trim(),
     estimated_yield_pieces: input.estimated_yield_pieces,
+    prepared_quantity: input.prepared_quantity,
+    prepared_unit: preparedUnit,
     active: input.active,
     automatic_consumption_enabled: input.automatic_consumption_enabled,
     version,
@@ -907,6 +934,8 @@ export async function saveSharedRecipe(input: {
     version,
     name: input.name.trim(),
     estimated_yield_pieces: input.estimated_yield_pieces,
+    prepared_quantity: input.prepared_quantity,
+    prepared_unit: preparedUnit,
     active: input.active,
     automatic_consumption_enabled: input.automatic_consumption_enabled,
   });
@@ -1073,6 +1102,7 @@ export async function saveProductRecipe(
           ingredient_id: line.ingredient_id,
           quantity_required: line.quantity_required,
           unit_of_measure: line.unit_of_measure,
+          automatic_consumption_enabled: true,
         })),
         { onConflict: 'product_id,ingredient_id' },
       );

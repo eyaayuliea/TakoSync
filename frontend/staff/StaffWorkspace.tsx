@@ -24,6 +24,7 @@ import {
   loadInventory,
   loadStaffMenuCatalog,
   loadTransactionHistory,
+  prepareBatterBatch,
   recordInventoryTransactions,
   submitSale,
   submitDailyStockCheck,
@@ -807,6 +808,11 @@ export default function StaffWorkspace({
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
+  const [batterPreparationVisible, setBatterPreparationVisible] = useState(false);
+  const [batterBatchReference, setBatterBatchReference] = useState('');
+  const [batterPreparationError, setBatterPreparationError] = useState('');
+  const [batterPreparationSubmitting, setBatterPreparationSubmitting] = useState(false);
+  const batterPreparationSubmissionLock = useRef(false);
   const [historySearch, setHistorySearch] = useState('');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('All types');
   const [historyFromDate, setHistoryFromDate] = useState<Date | null>(null);
@@ -1378,8 +1384,39 @@ export default function StaffWorkspace({
     });
     setMenuCart([]);
     setMenuTransactionReference(null);
+    await refreshBackendData();
     setDashboardMessage(`Sale ${sale.transaction_reference} was recorded successfully.`);
     setRoute('dashboard');
+  };
+
+  const submitBatterPreparation = async () => {
+    if (batterPreparationSubmissionLock.current || batterPreparationSubmitting) return;
+    const batchReference = batterBatchReference.trim();
+    if (!user?.branchId) {
+      setBatterPreparationError('Your account does not have an assigned branch.');
+      return;
+    }
+    if (!batchReference) {
+      setBatterPreparationError('Enter a batch reference.');
+      return;
+    }
+    batterPreparationSubmissionLock.current = true;
+    setBatterPreparationSubmitting(true);
+    setBatterPreparationError('');
+    try {
+      const batch = await prepareBatterBatch(user.branchId, batchReference);
+      setBatterPreparationVisible(false);
+      setBatterBatchReference('');
+      setDashboardMessage(
+        `Batter batch ${batchReference} prepared: ${Number(batch.prepared_quantity)} ${batch.prepared_unit} added to inventory.`,
+      );
+      await refreshDashboardData();
+    } catch (error) {
+      setBatterPreparationError(error instanceof Error ? error.message : 'Unable to prepare the batter batch.');
+    } finally {
+      batterPreparationSubmissionLock.current = false;
+      setBatterPreparationSubmitting(false);
+    }
   };
 
   const openIngredientDetails = (item: Ingredient) => {
@@ -2015,6 +2052,14 @@ export default function StaffWorkspace({
             title: 'Daily Check',
             icon: '✓',
             onPress: startDailyInventoryCheck,
+          },
+          {
+            title: 'Prepare Batter',
+            icon: '＋',
+            onPress: () => {
+              setBatterPreparationError('');
+              setBatterPreparationVisible(true);
+            },
           },
         ].map((action) => (
           <Pressable
@@ -4422,6 +4467,51 @@ export default function StaffWorkspace({
         <BottomNavigation active={route} onSelect={navigate} />
       ) : null}
       <Modal
+        visible={batterPreparationVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!batterPreparationSubmitting) setBatterPreparationVisible(false);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.batterPreparationModal}>
+            <Text style={styles.modalTitle}>Prepare batter</Text>
+            <Text style={styles.modalSubtitle}>
+              This batch uses the configured recipe and adds the prepared quantity to inventory.
+            </Text>
+            <Text style={styles.fieldLabel}>Batch reference</Text>
+            <TextInput
+              value={batterBatchReference}
+              onChangeText={setBatterBatchReference}
+              placeholder="e.g. BATTER-2026-001"
+              autoCapitalize="characters"
+              editable={!batterPreparationSubmitting}
+              style={styles.textInput}
+            />
+            {batterPreparationError ? (
+              <Text style={styles.fieldError} accessibilityRole="alert">{batterPreparationError}</Text>
+            ) : null}
+            <View style={styles.modalActions}>
+              <Pressable
+                disabled={batterPreparationSubmitting}
+                onPress={() => setBatterPreparationVisible(false)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                disabled={batterPreparationSubmitting}
+                onPress={() => void submitBatterPreparation()}
+                style={[styles.primaryButton, batterPreparationSubmitting && styles.buttonDisabled]}
+              >
+                {batterPreparationSubmitting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonText}>Prepare batch</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
         visible={logoutConfirmationVisible}
         transparent
         animationType="fade"
@@ -5567,6 +5657,19 @@ function createStaffStyles(theme: AppTheme) {
   suffixedTextInput: { flex: 1, minHeight: 40, borderWidth: 0, backgroundColor: 'transparent' },
   inputSuffix: { color: colors.muted, fontFamily: font.medium, fontSize: 10, paddingHorizontal: 12 },
   fieldError: { color: colors.red, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 4 },
+  batterPreparationModal: {
+    width: '100%', maxWidth: 370, padding: 18, borderRadius: 19,
+    backgroundColor: colors.white, elevation: 12, shadowColor: '#000000',
+    shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 7 },
+  },
+  modalTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
+  modalSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 5, marginBottom: 14 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 15 },
+  secondaryButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
+  secondaryButtonText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  primaryButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
+  primaryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  buttonDisabled: { opacity: 0.6 },
   inlineFieldError: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   inlineFieldErrorIcon: { width: 13, height: 13, overflow: 'hidden', borderRadius: 7, borderWidth: 1, borderColor: colors.red, color: colors.red, fontFamily: font.bold, fontSize: 8, textAlign: 'center', lineHeight: 11, marginRight: 5 },
   notesInput: { minHeight: 76 },

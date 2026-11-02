@@ -166,6 +166,9 @@ export type Database = {
         prepared_by: string;
         bottle_count: number;
         bottle_volume_ml: number;
+        prepared_quantity: number;
+        prepared_unit: string;
+        estimated_yield_pieces: number;
         expected_min_pieces: number;
         expected_max_pieces: number;
         created_at: string;
@@ -213,6 +216,8 @@ export type Database = {
         recipe_code: string;
         name: string;
         estimated_yield_pieces: number;
+        prepared_quantity: number;
+        prepared_unit: string;
         active: boolean;
         automatic_consumption_enabled: boolean;
         version: number;
@@ -250,6 +255,8 @@ export type Database = {
         version: number;
         name: string;
         estimated_yield_pieces: number;
+        prepared_quantity: number;
+        prepared_unit: string;
         active: boolean;
         automatic_consumption_enabled: boolean;
         created_at: string;

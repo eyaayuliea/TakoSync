@@ -73,7 +73,7 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
-const standardUnits = ['g', 'kg', 'pcs', 'L'];
+const standardUnits = ['g', 'kg', 'ml', 'L', 'pcs', 'bottle', 'pack', 'tsp', 'tbsp'];
 
 function makeDraftLine(): RecipeDraftLine {
   return {
@@ -117,6 +117,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
   const [sharedRecipeCode, setSharedRecipeCode] = useState('shared-batter');
   const [sharedRecipeName, setSharedRecipeName] = useState('Shared Takoyaki Batter');
   const [sharedRecipeYield, setSharedRecipeYield] = useState('');
+  const [sharedRecipePreparedQuantity, setSharedRecipePreparedQuantity] = useState('');
+  const [sharedRecipePreparedUnit, setSharedRecipePreparedUnit] = useState('bottle');
   const [sharedRecipeActive, setSharedRecipeActive] = useState(false);
   const [sharedRecipeAutomatic, setSharedRecipeAutomatic] = useState(false);
   const [sharedRecipeProducts, setSharedRecipeProducts] = useState<string[]>([]);
@@ -150,6 +152,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
         setSharedRecipeCode(currentShared.recipe_code);
         setSharedRecipeName(currentShared.name);
         setSharedRecipeYield(String(currentShared.estimated_yield_pieces));
+        setSharedRecipePreparedQuantity(String(currentShared.prepared_quantity));
+        setSharedRecipePreparedUnit(currentShared.prepared_unit);
         setSharedRecipeActive(currentShared.active);
         setSharedRecipeAutomatic(currentShared.automatic_consumption_enabled);
         setSharedRecipeProducts(currentShared.productIds);
@@ -438,8 +442,12 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
     if (savingSharedRecipe) return;
     setSharedRecipeError('');
     const yieldPieces = Number(sharedRecipeYield);
-    if (!sharedRecipeCode.trim() || !sharedRecipeName.trim() || !Number.isFinite(yieldPieces) || yieldPieces <= 0) {
-      setSharedRecipeError('Enter a recipe code, name, and estimated yield greater than zero.');
+    const preparedQuantity = Number(sharedRecipePreparedQuantity);
+    const preparedUnit = sharedRecipePreparedUnit.trim();
+    if (!sharedRecipeCode.trim() || !sharedRecipeName.trim() || !Number.isFinite(yieldPieces) || yieldPieces <= 0
+      || !Number.isFinite(preparedQuantity) || preparedQuantity <= 0 || !Number.isInteger(preparedQuantity)
+      || !availableUnits.includes(preparedUnit)) {
+      setSharedRecipeError('Enter a positive whole prepared quantity and yield with a configured unit.');
       return;
     }
     const seen = new Set<string>();
@@ -470,6 +478,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
         recipe_code: sharedRecipeCode,
         name: sharedRecipeName,
         estimated_yield_pieces: yieldPieces,
+        prepared_quantity: preparedQuantity,
+        prepared_unit: sharedRecipePreparedUnit,
         active: sharedRecipeActive,
         automatic_consumption_enabled: sharedRecipeAutomatic,
         ingredientLines,
@@ -491,6 +501,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
       <TextInput value={sharedRecipeCode} onChangeText={setSharedRecipeCode} placeholder="Recipe code" style={styles.searchInput} />
       <TextInput value={sharedRecipeName} onChangeText={setSharedRecipeName} placeholder="Recipe name" style={styles.searchInput} />
       <TextInput value={sharedRecipeYield} onChangeText={setSharedRecipeYield} placeholder="Estimated pieces per recipe" keyboardType="decimal-pad" style={styles.searchInput} />
+      <TextInput value={sharedRecipePreparedQuantity} onChangeText={setSharedRecipePreparedQuantity} placeholder="Prepared quantity per recipe" keyboardType="decimal-pad" style={styles.searchInput} />
+      <TextInput value={sharedRecipePreparedUnit} onChangeText={setSharedRecipePreparedUnit} placeholder="Prepared quantity unit" style={styles.searchInput} />
       {sharedRecipeLines.map((line) => (
         <View key={line.key} style={styles.detailIngredientRow}>
           <View style={styles.cardCopy}>
