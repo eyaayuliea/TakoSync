@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,15 +14,19 @@ import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
+  authorizeOwnerDiscrepancyAdjustment,
   createProduct,
   loadOwnerActivityData,
+  loadOwnerDiscrepancyReviews,
   loadOwnerInventory,
   loadProducts,
   updateProduct,
   type AppUser,
+  type OwnerDiscrepancyReview,
   type ProductMenuItem,
   type OwnerSalesData,
 } from '../services/takosync';
+import { inventoryTransactionLabel } from '../services/transactionLabels';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'Discrepancies' | 'Records' | 'Profile';
@@ -93,6 +98,7 @@ function StatusBadge({ label, tone }: { label: string; tone: 'low' | 'good' | 'w
       </Text>
     </View>
   );
+
 }
 
 function SectionHeading({
@@ -154,7 +160,7 @@ export default function OwnerMobileWorkspace({
 }: {
   user: AppUser;
   availableWidth: number;
-  onLogout: () => void;
+  onLogout: () => Promise<void>;
   data: OwnerData | null;
   inventoryLoading: boolean;
   inventoryError: string;
@@ -199,6 +205,18 @@ export default function OwnerMobileWorkspace({
   const [productsError, setProductsError] = useState('');
   const [productSaving, setProductSaving] = useState(false);
   const [productFeedback, setProductFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [discrepancyReviews, setDiscrepancyReviews] = useState<OwnerDiscrepancyReview[]>([]);
+  const [discrepancyReviewsLoaded, setDiscrepancyReviewsLoaded] = useState(false);
+  const [discrepancyLoading, setDiscrepancyLoading] = useState(false);
+  const [discrepancyError, setDiscrepancyError] = useState('');
+  const [discrepancyFeedback, setDiscrepancyFeedback] = useState('');
+  const [discrepancyFilter, setDiscrepancyFilter] = useState<'Pending' | 'Adjusted'>('Pending');
+  const [selectedDiscrepancyId, setSelectedDiscrepancyId] = useState<string | null>(null);
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [adjustmentError, setAdjustmentError] = useState('');
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
+  const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
 
   const branches = data?.branches ?? [];
   const branchNames = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
@@ -269,7 +287,7 @@ export default function OwnerMobileWorkspace({
   const bestBranch = branchMetrics.filter((branch) => branch.transactions > 0)
     .sort((a, b) => b.total - a.total)[0];
   const pendingChecks = (activityData?.dailyChecks ?? []).filter((check) => check.status === 'pending_owner_review');
-  const discrepancies = (activityData?.countLines ?? []).flatMap((line) => {
+  const activityDiscrepancies = (activityData?.countLines ?? []).flatMap((line) => {
     if (Number(line.difference) === 0) return [];
     const check = pendingChecks.find((item) => item.id === line.daily_stock_check_id);
     if (!check) return [];
@@ -287,21 +305,18 @@ export default function OwnerMobileWorkspace({
       status: check.status,
     }];
   });
+  const visibleDiscrepancies = discrepancyReviews.filter((review) => review.status === discrepancyFilter);
+  const pendingDiscrepancyCount = discrepancyReviews.filter((review) => review.status === 'Pending').length;
+  const selectedDiscrepancy = discrepancyReviews.find((review) => review.countLineId === selectedDiscrepancyId) ?? null;
+  const dashboardDiscrepancies = discrepancyReviewsLoaded
+    ? discrepancyReviews.filter((review) => review.status === 'Pending')
+      .map((review) => ({ ...review, id: review.countLineId }))
+    : [];
   const activities = [
     ...(activityData?.transactions ?? []).map((item) => ({
       id: item.id,
       category: 'Inventory' as const,
-      type: ({
-        stock_in: 'Stock-In',
-        stock_out: 'Stock-Out',
-        usage: 'Usage',
-        waste: 'Waste',
-        spoilage: 'Spoilage',
-        sales_consumption: 'Sales Consumption',
-        transfer_in: 'Branch Transfer In',
-        transfer_out: 'Branch Transfer Out',
-        adjustment: 'Authorized Adjustment',
-      } as Record<string, string>)[item.type] ?? item.type,
+      type: inventoryTransactionLabel(item.type),
       detail: `${ingredients.get(item.ingredient_id)?.name ?? item.ingredient_id} · ${Number(item.quantity)} ${item.unit}`,
       branchId: item.branch_id,
       reference: item.reference,
@@ -338,7 +353,7 @@ export default function OwnerMobileWorkspace({
       date: item.created_at,
       amount: null as number | null,
     })),
-    ...discrepancies.map((item) => ({
+    ...activityDiscrepancies.map((item) => ({
       id: item.id,
       category: 'Counts' as const,
       type: 'Inventory Discrepancy',
@@ -377,6 +392,59 @@ export default function OwnerMobileWorkspace({
     if (page !== 'Products') return;
     void refreshProducts();
   }, [page]);
+
+  const refreshDiscrepancyReviews = async () => {
+    setDiscrepancyLoading(true);
+    setDiscrepancyError('');
+    try {
+      const reviews = await loadOwnerDiscrepancyReviews(branchId);
+      setDiscrepancyReviews(reviews);
+      setDiscrepancyReviewsLoaded(true);
+    } catch (error) {
+      setDiscrepancyError(error instanceof Error ? error.message : 'Unable to load discrepancy reviews.');
+    } finally {
+      setDiscrepancyLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (page !== 'Dashboard' && page !== 'Discrepancies' && page !== 'More') return;
+    setDiscrepancyReviews([]);
+    setDiscrepancyReviewsLoaded(false);
+    void refreshDiscrepancyReviews();
+  }, [page, branchId]);
+
+  const submitDiscrepancyAdjustment = async () => {
+    if (!selectedDiscrepancy) return;
+    const reason = adjustmentReason.trim();
+    if (!reason) {
+      setAdjustmentError('An adjustment reason is required.');
+      return;
+    }
+    if (reason.length > 1000) {
+      setAdjustmentError('The adjustment reason must be 1000 characters or fewer.');
+      return;
+    }
+
+    setAdjustmentSubmitting(true);
+    setAdjustmentError('');
+    setDiscrepancyFeedback('');
+    try {
+      await authorizeOwnerDiscrepancyAdjustment({
+        countLineId: selectedDiscrepancy.countLineId,
+        reason,
+      });
+      setDiscrepancyFeedback('Inventory adjustment authorized and recorded.');
+      setSelectedDiscrepancyId(null);
+      setAdjustmentReason('');
+      await refreshDiscrepancyReviews();
+      await onRefresh();
+    } catch (error) {
+      setAdjustmentError(error instanceof Error ? error.message : 'Unable to authorize this inventory adjustment.');
+    } finally {
+      setAdjustmentSubmitting(false);
+    }
+  };
 
   const resetProductForm = (mode: 'add' | 'edit', product?: ProductRecord) => {
     setProductEditorMode(mode);
@@ -448,14 +516,25 @@ export default function OwnerMobileWorkspace({
   const activePrimaryPage = page === 'Reports' ? 'Sales'
     : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' ? 'More' : page;
 
-  const showError = (message: string) => (
+  const showError = (message: string, onRetry: () => void = onRefresh) => (
     <View style={styles.errorCard} accessibilityRole="alert">
       <Text style={styles.errorText}>{message}</Text>
-      <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retryAction}>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={styles.retryAction}>
         <Text style={styles.retryText}>Retry</Text>
       </Pressable>
     </View>
   );
+
+  const confirmOwnerLogout = async () => {
+    if (loggingOut) return;
+    setLogoutError('');
+    try {
+      await onLogout();
+      setLogoutConfirmationVisible(false);
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : 'Unable to log out. Please try again.');
+    }
+  };
 
   const renderInventoryRow = (item: (typeof inventoryRows)[number]) => {
     const status = inventoryStatus(item.quantity, item.minimumStock);
@@ -817,10 +896,10 @@ export default function OwnerMobileWorkspace({
       ) : activities.length ? activities.slice(0, 5).map(renderActivity) : (
         <EmptyState text="No recorded activity in the selected period." />
       )}
-      {discrepancies.length > 0 && (
+      {dashboardDiscrepancies.length > 0 && (
         <>
           <SectionHeading title="Discrepancies awaiting review" action="Review" onAction={() => setPage('Discrepancies')} />
-          {discrepancies.slice(0, 3).map((item) => (
+          {dashboardDiscrepancies.slice(0, 3).map((item) => (
             <View key={item.id} style={styles.listCard}>
               <View style={[styles.itemMark, styles.itemMarkWarning]}><Text style={styles.itemMarkText}>!</Text></View>
               <View style={styles.listCopy}>
@@ -926,32 +1005,76 @@ export default function OwnerMobileWorkspace({
   const renderDiscrepancies = () => (
     <>
       <View style={styles.noticeCard}>
-        <Text style={styles.noticeTitle}>Pending owner review</Text>
-        <Text style={styles.noticeText}>Physical counts are shown separately from expected inventory. Reviewing a count here does not adjust stock.</Text>
+        <Text style={styles.noticeTitle}>Owner-authorized inventory adjustments</Text>
+        <Text style={styles.noticeText}>Each adjustment requires a reason and explicit confirmation. The original count is retained. Approval is blocked if inventory changed after the count.</Text>
       </View>
-      {activityError ? showError(activityError) : activityLoading && !activityData ? (
+      <View style={styles.alertTabs}>
+        {(['Pending', 'Adjusted'] as const).map((value) => {
+          const selected = discrepancyFilter === value;
+          const count = discrepancyReviews.filter((review) => review.status === value).length;
+          return (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setDiscrepancyFilter(value)}
+              style={[styles.alertTab, selected && styles.alertTabSelected]}
+            >
+              <Text style={[styles.alertTabText, selected && styles.alertTabTextSelected]}>{value} · {count}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {discrepancyError ? showError(discrepancyError, () => void refreshDiscrepancyReviews()) : null}
+      {discrepancyFeedback ? (
+        <View style={styles.successCard} accessibilityRole="alert">
+          <Text style={styles.successText}>{discrepancyFeedback}</Text>
+        </View>
+      ) : null}
+      {discrepancyLoading && !discrepancyReviewsLoaded ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading count submissions…</Text></View>
-      ) : discrepancies.length ? discrepancies.map((item) => (
-        <View key={item.id} style={styles.discrepancyCard}>
+      ) : visibleDiscrepancies.length ? visibleDiscrepancies.map((item) => (
+        <View key={item.countLineId} style={styles.discrepancyCard}>
           <View style={styles.discrepancyHeading}>
             <Text style={styles.listTitle}>{item.ingredient}</Text>
-            <StatusBadge label="Pending" tone="warning" />
+            <StatusBadge label={item.status} tone={item.status === 'Pending' ? 'warning' : 'good'} />
           </View>
           <Text style={styles.listMeta}>{item.branch} · Ref {item.reference}</Text>
+          <Text style={styles.listMeta}>Submitted by {item.staff} · {compactDate(item.submittedAt)}</Text>
           <View style={styles.quantityCompare}>
             <View><Text style={styles.compareLabel}>Expected</Text><Text style={styles.compareValue}>{item.expected} {item.unit}</Text></View>
             <View><Text style={styles.compareLabel}>Counted</Text><Text style={styles.compareValue}>{item.actual} {item.unit}</Text></View>
             <View><Text style={styles.compareLabel}>Difference</Text><Text style={[styles.compareValue, styles.lowText]}>{item.difference > 0 ? '+' : ''}{item.difference} {item.unit}</Text></View>
           </View>
           {item.remarks ? <Text style={styles.remarksText}>Staff remarks: {item.remarks}</Text> : <Text style={styles.remarksText}>No staff remarks recorded.</Text>}
-          <Text style={styles.listMeta}>Submitted {compactDate(item.submittedAt)}</Text>
+          {item.adjustment ? (
+            <View style={styles.adjustmentAudit}>
+              <Text style={styles.auditDetail}>Authorized by {item.adjustment.approvingOwner} · {compactDate(item.adjustment.approvedAt)}</Text>
+              <Text style={styles.auditDetail}>Reason: {item.adjustment.reason}</Text>
+              <Text style={styles.auditDetail}>
+                Movement {item.adjustment.movementReference}: {item.adjustment.movement > 0 ? '+' : ''}{item.adjustment.movement} {item.unit}
+                {' · '}stock {item.adjustment.beforeQuantity} → {item.adjustment.afterQuantity} {item.unit}
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSelectedDiscrepancyId(item.countLineId);
+                setAdjustmentReason('');
+                setAdjustmentError('');
+                setDiscrepancyFeedback('');
+              }}
+              style={({ pressed }) => [styles.primaryActionButton, pressed && { opacity: 0.82 }]}
+            >
+              <Text style={styles.primaryActionText}>Review and authorize adjustment</Text>
+            </Pressable>
+          )}
         </View>
-      )) : <EmptyState text="No pending discrepancies require review." />}
-      {discrepancies.length > 0 && (
-        <Text style={styles.workflowUnavailable}>
-          Approval and rejection controls are not available in the existing backend workflow. No inventory changes are made here.
-        </Text>
-      )}
+      )) : <EmptyState text={discrepancyFilter === 'Pending' ? 'No pending discrepancies require review.' : 'No authorized discrepancy adjustments are recorded.'} />}
+      {discrepancyLoading && discrepancyReviewsLoaded ? (
+        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing discrepancy records…</Text></View>
+      ) : null}
     </>
   );
 
@@ -983,7 +1106,7 @@ export default function OwnerMobileWorkspace({
         { title: 'Stock & Expiration Settings', detail: 'Configure branch thresholds and batch expiration alerts', page: 'StockSettings' as const, icon: '◷' },
         { title: 'Ingredients & Recipes', detail: 'Manage ingredient records and product recipes', page: 'Ingredients' as const, icon: '◈' },
         { title: 'Products & Menu', detail: 'Manage menu items, prices, and availability', page: 'Products' as const, icon: '▣' },
-        { title: 'Discrepancy review', detail: `${discrepancies.length} pending count discrepancies`, page: 'Discrepancies' as const, icon: '!' },
+        { title: 'Discrepancy review', detail: discrepancyReviewsLoaded ? `${pendingDiscrepancyCount} pending count discrepancies` : 'Review pending inventory counts', page: 'Discrepancies' as const, icon: '!' },
         { title: 'Business records', detail: 'Sales, inventory movements, and counts', page: 'Records' as const, icon: '↻' },
         { title: 'Owner profile', detail: 'Account details and preferences', page: 'Profile' as const, icon: '●' },
       ].map((item) => (
@@ -1000,7 +1123,10 @@ export default function OwnerMobileWorkspace({
           <Text style={styles.themeSwitchText}>{isDark ? 'Light' : 'Dark'}</Text>
         </Pressable>
       </View>
-      <Pressable accessibilityRole="button" disabled={loggingOut} onPress={onLogout} style={styles.logoutCard}>
+      <Pressable accessibilityRole="button" disabled={loggingOut} onPress={() => {
+        setLogoutError('');
+        setLogoutConfirmationVisible(true);
+      }} style={styles.logoutCard}>
         <Text style={styles.logoutText}>{loggingOut ? 'Logging out…' : 'Log out'}</Text>
       </Pressable>
     </>
@@ -1018,8 +1144,10 @@ export default function OwnerMobileWorkspace({
         <View style={styles.profileRow}><Text style={styles.compareLabel}>Email</Text><Text style={styles.profileValue}>{user.email}</Text></View>
         <View style={[styles.profileRow, styles.profileRowLast]}><Text style={styles.compareLabel}>Access</Text><Text style={styles.profileValue}>All active branches</Text></View>
       </View>
-      <Text style={styles.workflowUnavailable}>Profile editing is not connected to an existing owner update workflow.</Text>
-      <Pressable accessibilityRole="button" disabled={loggingOut} onPress={onLogout} style={styles.logoutCard}>
+      <Pressable accessibilityRole="button" disabled={loggingOut} onPress={() => {
+        setLogoutError('');
+        setLogoutConfirmationVisible(true);
+      }} style={styles.logoutCard}>
         <Text style={styles.logoutText}>{loggingOut ? 'Logging out…' : 'Log out securely'}</Text>
       </Pressable>
     </>
@@ -1134,6 +1262,119 @@ export default function OwnerMobileWorkspace({
           );
         })}
       </View>
+
+      <Modal
+        visible={selectedDiscrepancy !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!adjustmentSubmitting) setSelectedDiscrepancyId(null);
+        }}
+      >
+        <View style={styles.productModalBackdrop}>
+          <View style={styles.productModalCard}>
+            <View style={styles.productModalHeader}>
+              <Text style={styles.productModalTitle}>Confirm inventory adjustment</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close adjustment confirmation"
+                disabled={adjustmentSubmitting}
+                onPress={() => setSelectedDiscrepancyId(null)}
+                style={styles.closeActionButton}
+              >
+                <Text style={styles.closeActionText}>×</Text>
+              </Pressable>
+            </View>
+            {selectedDiscrepancy ? (
+              <>
+                <Text style={styles.modalSummary}>
+                  {selectedDiscrepancy.ingredient} · {selectedDiscrepancy.branch} · {selectedDiscrepancy.reference}
+                </Text>
+                <Text style={styles.modalSummary}>
+                  Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; physical count {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
+                  {'\n'}Adjustment: {selectedDiscrepancy.difference > 0 ? '+' : ''}{selectedDiscrepancy.difference} {selectedDiscrepancy.unit}.
+                </Text>
+                <Text style={styles.modalWarning}>
+                  Confirmation records this adjustment only if on-hand stock still matches the expected quantity. Otherwise, submit a new physical count.
+                </Text>
+                <Text style={styles.fieldLabel}>Reason for adjustment *</Text>
+                <TextInput
+                  value={adjustmentReason}
+                  onChangeText={(value) => {
+                    setAdjustmentReason(value);
+                    setAdjustmentError('');
+                  }}
+                  placeholder="Explain why this adjustment is authorized"
+                  placeholderTextColor={colors.muted}
+                  accessibilityLabel="Reason for discrepancy adjustment"
+                  maxLength={1000}
+                  multiline
+                  style={[styles.textInput, styles.textArea, adjustmentError && styles.textInputError]}
+                />
+                {adjustmentError ? <Text style={styles.fieldError}>{adjustmentError}</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={adjustmentSubmitting || !adjustmentReason.trim()}
+                  onPress={() => void submitDiscrepancyAdjustment()}
+                  style={({ pressed }) => [
+                    styles.primaryActionButton,
+                    styles.modalPrimaryAction,
+                    (adjustmentSubmitting || !adjustmentReason.trim()) && styles.disabledAction,
+                    pressed && { opacity: 0.82 },
+                  ]}
+                >
+                  {adjustmentSubmitting
+                    ? <ActivityIndicator size="small" color={colors.white} />
+                    : <Text style={styles.primaryActionText}>Confirm and authorize adjustment</Text>}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={adjustmentSubmitting}
+                  onPress={() => setSelectedDiscrepancyId(null)}
+                  style={styles.modalCancelAction}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={logoutConfirmationVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!loggingOut) setLogoutConfirmationVisible(false);
+        }}
+      >
+        <View style={styles.productModalBackdrop}>
+          <View style={styles.productModalCard}>
+            <Text style={styles.productModalTitle}>Confirm logout</Text>
+            <Text style={styles.modalWarning}>Are you sure you want to log out of your Owner account?</Text>
+            {logoutError ? <Text style={styles.fieldError}>{logoutError}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Confirm logout"
+              disabled={loggingOut}
+              onPress={() => void confirmOwnerLogout()}
+              style={[styles.primaryActionButton, styles.modalPrimaryAction, loggingOut && styles.disabledAction]}
+            >
+              {loggingOut
+                ? <ActivityIndicator size="small" color={colors.white} />
+                : <Text style={styles.primaryActionText}>Log out</Text>}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={loggingOut}
+              onPress={() => setLogoutConfirmationVisible(false)}
+              style={styles.modalCancelAction}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1269,6 +1510,12 @@ function useStyles() {
     productModalCard: { maxWidth: 420, width: '100%', alignSelf: 'center', padding: 16, borderRadius: 18, backgroundColor: colors.white },
     productModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
     productModalTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 14 },
+    modalSummary: { color: colors.ink, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginBottom: 8 },
+    modalWarning: { color: '#735518', fontFamily: font.medium, fontSize: 8, lineHeight: 13, padding: 9, marginBottom: 4, borderRadius: 9, backgroundColor: '#FFF7E5' },
+    modalPrimaryAction: { marginTop: 12, marginBottom: 0 },
+    disabledAction: { opacity: 0.55 },
+    modalCancelAction: { minHeight: 36, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
+    modalCancelText: { color: colors.muted, fontFamily: font.semibold, fontSize: 8 },
     fieldLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginTop: 8, marginBottom: 6 },
     textInput: { minHeight: 38, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, color: colors.ink, fontFamily: font.regular, fontSize: 8 },
     textArea: { minHeight: 74, textAlignVertical: 'top', paddingTop: 9 },
@@ -1299,6 +1546,8 @@ function useStyles() {
     compareLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
     compareValue: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginTop: 4 },
     remarksText: { color: colors.ink, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginVertical: 8 },
+    adjustmentAudit: { padding: 9, marginTop: 4, borderRadius: 10, backgroundColor: colors.paleGreen },
+    auditDetail: { color: colors.ink, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginVertical: 2 },
     workflowUnavailable: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, paddingHorizontal: 2, marginVertical: 10 },
     moreCard: { minHeight: 65, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white },
     moreIcon: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 11, marginRight: 10, backgroundColor: '#FCE3EB' },
@@ -1319,6 +1568,8 @@ function useStyles() {
     profileValue: { maxWidth: '67%', color: colors.navy, fontFamily: font.medium, fontSize: 8, textAlign: 'right' },
     errorCard: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 11, paddingVertical: 8, marginBottom: 8, borderRadius: 12, backgroundColor: colors.paleRed },
     errorText: { flex: 1, color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
+    successCard: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 11, paddingVertical: 8, marginBottom: 8, borderRadius: 12, backgroundColor: colors.paleGreen },
+    successText: { color: colors.green, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
     retryAction: { paddingHorizontal: 9, paddingVertical: 6, marginLeft: 7, borderRadius: 9, backgroundColor: colors.white },
     retryText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
     loadingCard: { minHeight: 62, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.white },

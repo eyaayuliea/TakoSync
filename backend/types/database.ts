@@ -53,6 +53,7 @@ export type Database = {
         quantity: number;
         minimum_stock: number;
         updated_at: string;
+        inventory_revision: number;
       }>;
       ingredient_batches: Table<{
         id: string;
@@ -102,6 +103,7 @@ export type Database = {
         difference: number;
         unit: string;
         created_at: string;
+        inventory_revision: number | null;
       }>;
       products: Table<{
         id: string;
@@ -290,6 +292,20 @@ export type Database = {
         near_expiration_days: number;
         updated_at: string;
       }>;
+      inventory_discrepancy_adjustments: Table<{
+        id: string;
+        daily_stock_count_line_id: string;
+        daily_stock_check_id: string;
+        branch_id: string;
+        ingredient_id: string;
+        recorded_quantity: number;
+        physical_quantity: number;
+        difference: number;
+        approved_by: string;
+        reason: string;
+        approved_at: string;
+        inventory_movement_id: string;
+      }>;
     };
     Views: {
       inventory: {
@@ -311,6 +327,10 @@ export type Database = {
       submit_daily_stock_check: {
         Args: { p_branch_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
         Returns: Json;
+      };
+      authorize_inventory_discrepancy_adjustment: {
+        Args: { p_count_line_id: string; p_reason: string };
+        Returns: Database['public']['Tables']['inventory_discrepancy_adjustments']['Row'];
       };
       prepare_batter_batch: {
         Args: { p_branch_id: string; p_batch_reference: string };

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
 import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
@@ -6,6 +6,7 @@ import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import appConfig from '../app.json';
 import {
+  AppState,
   ActivityIndicator,
   Image,
   ImageBackground,
@@ -25,8 +26,10 @@ import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
+import { millisecondsUntilNextLocalDay } from './services/staffSessionPolicy';
 import {
   getCurrentUser,
+  isStaffSessionDayExpired,
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
@@ -144,6 +147,7 @@ function AppContent() {
   const authLock = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
+  const staffExpiryLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
@@ -554,7 +558,7 @@ function AppContent() {
     setScreen('dashboard');
   };
 
-  const clearSignedInState = () => {
+  const clearSignedInState = useCallback(() => {
     setAuthenticatedUser(null);
     setOwnerData(null);
     setOwnerSalesData(null);
@@ -571,7 +575,41 @@ function AppContent() {
     setSalesLoadError('');
     setActivityLoadError('');
     setDashboardMessage('');
-  };
+  }, []);
+
+  useEffect(() => {
+    if (authenticatedUser?.role !== 'Staff') return;
+    let active = true;
+    const expireStaffSession = async () => {
+      if (staffExpiryLock.current) return;
+      staffExpiryLock.current = true;
+      try {
+        if (!(await isStaffSessionDayExpired())) return;
+        await signOut();
+        if (!active) return;
+        clearSignedInState();
+        setLoginError('Your Staff session ended at the end of the calendar day. Sign in again.');
+        setScreen('login');
+      } catch (error) {
+        if (active) {
+          clearSignedInState();
+          setLoginError(error instanceof Error ? error.message : 'Unable to verify the Staff session. Sign in again.');
+          setScreen('login');
+        }
+      } finally {
+        staffExpiryLock.current = false;
+      }
+    };
+    const timer = setTimeout(() => void expireStaffSession(), millisecondsUntilNextLocalDay());
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void expireStaffSession();
+    });
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [authenticatedUser, clearSignedInState]);
 
   const handleLogout = async () => {
     if (logoutLock.current) return;
@@ -583,7 +621,9 @@ function AppContent() {
       setLoginError('');
       setScreen(authenticatedUser?.role === 'Owner' ? 'ownerLogin' : 'welcome');
     } catch (error) {
-      setDashboardMessage(error instanceof Error ? error.message : 'Unable to end the session. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unable to end the session. Please try again.';
+      setDashboardMessage(message);
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       logoutLock.current = false;
       setLoggingOut(false);

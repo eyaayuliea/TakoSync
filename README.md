@@ -17,17 +17,17 @@ TakoSync is a React Native and Expo application for monitoring ingredient invent
 
 The Staff interface currently includes:
 - A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
-- Supabase email/password sign-in, session restoration, and logout.
+- Supabase email/password sign-in, persistent session restoration, logout, and Staff session expiry at the end of the local calendar day.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
 - Stock-Out and usage entries, including cooking-batch workflows.
 - Waste and spoilage recording with spoiled, expired, spilled/damaged, and other reasons, plus optional notes.
-- Low-stock and near-expiry alerts derived from branch inventory and active batches.
+- Low Stock, Out of Stock, Near Expiration, and Expired alerts derived from branch inventory, active batches, and the Owner-configured expiration window.
 - Transaction history with filters and transaction details.
 - Daily physical inventory checks that record observed quantities and discrepancies for Owner review.
 - Bottom navigation for Dashboard, Inventory, Stocks, Alerts, and More; theme preference is stored on the device.
 
-Inventory changes and daily checks are submitted to Supabase. Alert category toggles are UI state only: push delivery and persistent alert preferences are not implemented.
+Inventory changes and daily checks are submitted to Supabase. Alert category toggles are UI state only: push delivery and persistent alert preferences are not implemented. Staff can read, but cannot change, the Owner-configured expiration window.
 
 ### Owner Module
 
@@ -41,7 +41,7 @@ Stock & Expiration Settings lets Owners search and filter branch inventory, edit
 
 Owner and Staff sign in with their registered Supabase Auth email and password. The app loads each user's active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the live cross-branch monitoring dashboard. There is no demo login or authentication bypass.
 
-The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner account/branch assignment and daily-check approval or rejection screens are not implemented.
+The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner account/branch assignment is not managed in the mobile app. The Owner discrepancy screen provides reasoned adjustment authorization; apply and verify the corresponding database migration before enabling it against a hosted project.
 
 ## Architecture
 
@@ -235,9 +235,9 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Staff authentication, session restoration, and logout | Implemented against Supabase Auth; requires project configuration and provisioned accounts |
 | Staff inventory, search, categories, ingredient details, and history | Implemented against Supabase |
 | Stock-In, Stock-Out/usage, waste/spoilage | Implemented through the database transaction function |
-| Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push alert delivery |
-| Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
-| Staff Menu / cart | Menu filters, selection, cart quantities, and preview totals are implemented with isolated UI-only sample data from the project brief; these are not live products or production prices |
+| Low-stock and expiry alerts | Uses the persisted Owner-configured window; Staff alert categories distinguish low stock, out of stock, near expiration, and expired; no push alert delivery |
+| Daily physical stock check and discrepancy recording | Counts remain unchanged until an active Owner authorizes a reasoned, audited adjustment through the database operation |
+| Staff Menu / cart | Loads the branch-visible menu from Supabase; checkout uses the atomic sale operation |
 | Staff checkout / sales submission | Connected to the atomic `submit_sale` RPC; requires configured branch-visible menu items, prices, and recipes |
 | Branch-to-branch stock transfers | Not implemented; the current frontend contract and transaction service do not support atomic transfers between branches |
 | Owner Login screen | Supabase Auth email/password with active Owner profile check |

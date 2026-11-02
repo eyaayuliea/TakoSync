@@ -21,6 +21,14 @@ import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvi
 import MenuWorkspace from './MenuWorkspace';
 import type { MenuCartLine } from './menuPreviewData';
 import {
+  classifyExpirationAlert,
+  classifyStockAlert,
+  inventoryAlertLabel,
+  isStockAlert,
+  type InventoryAlertKind,
+} from './inventoryAlerts';
+import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
+import {
   loadInventory,
   loadStaffMenuCatalog,
   loadTransactionHistory,
@@ -197,8 +205,8 @@ type WasteReceipt = {
   notes: string;
 };
 
-type HistoryTransactionType = 'Stock-In' | 'Stock-Out / Usage' | 'Usage' | 'Waste' | 'Spoilage';
-type HistoryTypeFilter = 'All types' | 'Stock-In' | 'Stock-Out' | 'Usage' | 'Waste' | 'Spoilage';
+type HistoryTransactionType = InventoryTransactionLabel;
+type HistoryTypeFilter = 'All types' | InventoryTransactionLabel;
 
 type HistoryTransaction = {
   id: string;
@@ -222,14 +230,7 @@ type HistoryTransaction = {
   batchReference: string | null;
 };
 
-const historyTypeFilters: HistoryTypeFilter[] = [
-  'All types',
-  'Stock-In',
-  'Stock-Out',
-  'Usage',
-  'Waste',
-  'Spoilage',
-];
+const historyTypeFilters: HistoryTypeFilter[] = ['All types', ...Object.values(inventoryTransactionLabels)];
 
 function formatHistoryDateTime(date: Date) {
   return `${formatDate(manilaBusinessDate(date))} · ${formatManilaTime(date)}`;
@@ -246,10 +247,6 @@ const stockOutBatchPresets = [
     ],
   },
 ] as const;
-
-const nearExpiryWindowDays = 3;
-
-type InventoryAlertKind = 'lowStock' | 'expiration';
 
 type InventoryAlert = {
   id: string;
@@ -759,6 +756,7 @@ export default function StaffWorkspace({
   const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
   const [menuCatalogBranchId, setMenuCatalogBranchId] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [nearExpirationDays, setNearExpirationDays] = useState<number | null>(null);
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [backendLoading, setBackendLoading] = useState(true);
   const [backendError, setBackendError] = useState('');
@@ -866,10 +864,15 @@ export default function StaffWorkspace({
     }
     setBackendLoading(true);
     setBackendError('');
-    Promise.all([loadInventory(user.branchId), loadTransactionHistory(user.branchId)])
+    setNearExpirationDays(null);
+    Promise.all([
+      loadInventory(user.branchId, manilaBusinessDate()),
+      loadTransactionHistory(user.branchId),
+    ])
       .then(([inventory, history]) => {
         if (!active) return;
-        setIngredients(inventory);
+        setIngredients(inventory.items);
+        setNearExpirationDays(inventory.nearExpirationDays);
         setBackendHistory(history);
       })
       .catch((error: unknown) => {
@@ -958,10 +961,11 @@ export default function StaffWorkspace({
     }
     try {
       const [inventory, history] = await Promise.all([
-        loadInventory(user.branchId),
+        loadInventory(user.branchId, manilaBusinessDate()),
         loadTransactionHistory(user.branchId),
       ]);
-      setIngredients(inventory);
+      setIngredients(inventory.items);
+      setNearExpirationDays(inventory.nearExpirationDays);
       setBackendHistory(history);
       setBackendError('');
     } catch (error) {
@@ -1134,10 +1138,7 @@ export default function StaffWorkspace({
       transaction.notes,
       transaction.batchReference ?? '',
     ].join(' ').toLowerCase().includes(normalizedHistorySearch);
-    const matchesType = historyTypeFilter === 'All types' ||
-      (historyTypeFilter === 'Stock-Out'
-        ? transaction.type === 'Stock-Out / Usage' || transaction.type === 'Usage'
-        : transaction.type === historyTypeFilter);
+    const matchesType = historyTypeFilter === 'All types' || transaction.type === historyTypeFilter;
     const dateValue = manilaBusinessDate(transaction.transactionDate).getTime();
     const from = historyFromDate
       ? new Date(historyFromDate.getFullYear(), historyFromDate.getMonth(), historyFromDate.getDate()).getTime()
@@ -1265,19 +1266,35 @@ export default function StaffWorkspace({
     [category, ingredients, normalizedSearch],
   );
   const alertDate = manilaBusinessDate();
-  const lowStockItems = ingredients.filter((item) => item.lowStock);
-  const expiringBatches = ingredients.flatMap((item) => {
+  const lowStockItems = ingredients.filter(
+    (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'lowStock',
+  );
+  const outOfStockItems = ingredients.filter(
+    (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'outOfStock',
+  );
+  const nearExpirationBatches = ingredients.flatMap((item) => {
     if (!item.expirationTracking) return [];
     return item.batches.flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return daysRemaining >= 0 && daysRemaining <= nearExpiryWindowDays
+      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'nearExpiration'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
   });
-  const expiringItems = [...new Map(expiringBatches.map(({ item }) => [item.id, item])).values()];
+  const expiredBatches = ingredients.flatMap((item) => {
+    if (!item.expirationTracking) return [];
+    return item.batches.flatMap((batch) => {
+      const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
+      if (!expirationDateValue) return [];
+      const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
+      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'expired'
+        ? [{ item, batch, daysRemaining }]
+        : [];
+    });
+  });
+  const expiringItems = [...new Map(nearExpirationBatches.map(({ item }) => [item.id, item])).values()];
   const inventoryAlerts: InventoryAlert[] = [
     ...lowStockItems.map((item) => ({
       id: `low-${item.id}`,
@@ -1290,7 +1307,16 @@ export default function StaffWorkspace({
         ? Math.max(0, Math.min(1, item.quantity / item.minimumStock))
         : 0,
     })),
-    ...expiringBatches.map(({ item, batch, daysRemaining }) => {
+    ...outOfStockItems.map((item) => ({
+      id: `out-${item.id}`,
+      kind: 'outOfStock' as const,
+      ingredientId: item.id,
+      batch: item.batches[0] ?? null,
+      title: item.name,
+      detail: `No stock available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
+      stockProgress: 0,
+    })),
+    ...nearExpirationBatches.map(({ item, batch, daysRemaining }) => {
       const expiryText = daysRemaining === 0
         ? 'Expires today'
         : daysRemaining === 1
@@ -1298,21 +1324,30 @@ export default function StaffWorkspace({
           : `In ${daysRemaining} days`;
       return {
         id: `expiry-${item.id}-${batch.reference}`,
-        kind: 'expiration' as const,
+        kind: 'nearExpiration' as const,
         ingredientId: item.id,
         batch,
         title: item.name,
         detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expires ${batch.expirationDate} · ${expiryText}`,
       };
     }),
+    ...expiredBatches.map(({ item, batch }) => ({
+      id: `expired-${item.id}-${batch.reference}`,
+      kind: 'expired' as const,
+      ingredientId: item.id,
+      batch,
+      title: item.name,
+      detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expired ${batch.expirationDate}`,
+    })),
   ];
   const alertTerm = alertSearch.trim().toLowerCase();
-  const visibleAlerts = inventoryAlerts.filter((item) =>
-    alertPreferences[item.kind] &&
-    `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${item.kind === 'lowStock' ? 'low stock' : 'nearing expiration near expiry'} ${item.detail}`
-      .toLowerCase()
-      .includes(alertTerm),
-  );
+  const visibleAlerts = inventoryAlerts.filter((item) => {
+    const preference = isStockAlert(item.kind) ? alertPreferences.lowStock : alertPreferences.expiration;
+    return preference &&
+      `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${inventoryAlertLabel(item.kind)} ${item.detail}`
+        .toLowerCase()
+        .includes(alertTerm);
+  });
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
@@ -1408,7 +1443,7 @@ export default function StaffWorkspace({
       setBatterPreparationVisible(false);
       setBatterBatchReference('');
       setDashboardMessage(
-        `Batter batch ${batchReference} prepared: ${Number(batch.prepared_quantity)} ${batch.prepared_unit} added to inventory.`,
+        `Batter batch ${batch.batch_reference} is recorded: ${Number(batch.prepared_quantity)} ${batch.prepared_unit}.`,
       );
       await refreshDashboardData();
     } catch (error) {
@@ -1732,10 +1767,11 @@ export default function StaffWorkspace({
       setFormError('');
       const requestGeneration = ++wasteReviewGeneration.current;
       try {
-        const latestInventory = await loadInventory(user.branchId);
+        const latestInventory = await loadInventory(user.branchId, manilaBusinessDate());
         if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;
-        setIngredients(latestInventory);
-        if (!validateWasteForm(latestInventory)) return;
+        setIngredients(latestInventory.items);
+        setNearExpirationDays(latestInventory.nearExpirationDays);
+        if (!validateWasteForm(latestInventory.items)) return;
       } catch (error) {
         if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;
         setFormError(error instanceof Error ? error.message : 'Unable to refresh available stock.');
@@ -2018,7 +2054,7 @@ export default function StaffWorkspace({
               ? 'Loading stock alerts…'
               : backendError !== '' && ingredients.length === 0
                 ? 'Stock data unavailable'
-                : `${lowStockItems.length + expiringItems.length} stock alerts need attention`}
+                : `${inventoryAlerts.length} stock alerts need attention`}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -2397,7 +2433,8 @@ export default function StaffWorkspace({
       );
     }
 
-    const isLowStock = selectedAlertKind === 'lowStock';
+    const stockAlert = isStockAlert(selectedAlertKind);
+    const alertLabel = inventoryAlertLabel(selectedAlertKind);
     const batch = item.batches.find((candidate) => candidate.reference === selectedAlertBatchReference) ?? item.batches[0] ?? null;
     const expirationDateValue = parseInventoryDate(batch?.expirationDateIso ?? batch?.expirationDate ?? null);
     const alertDate = manilaBusinessDate();
@@ -2433,9 +2470,9 @@ export default function StaffWorkspace({
           contentContainerStyle={styles.alertDetailContent}
           showsVerticalScrollIndicator={false}
         >
-          <View style={[styles.alertDetailBadge, !isLowStock && styles.alertDetailExpiryBadge]}>
-            <Text style={styles.alertDetailBadgeIcon}>{isLowStock ? '!' : '▦'}</Text>
-            <Text style={styles.alertDetailBadgeText}>{isLowStock ? 'Low Stock' : 'Near Expiry'}</Text>
+          <View style={[styles.alertDetailBadge, !stockAlert && styles.alertDetailExpiryBadge]}>
+            <Text style={styles.alertDetailBadgeIcon}>{stockAlert ? '!' : '▦'}</Text>
+            <Text style={styles.alertDetailBadgeText}>{alertLabel}</Text>
           </View>
 
           <View style={styles.alertDetailSummaryCard}>
@@ -2445,12 +2482,17 @@ export default function StaffWorkspace({
           </View>
 
           <View style={styles.alertDetailRows}>
-            {isLowStock ? (
+            {stockAlert ? (
               <>
                 <DetailRow label="Current stock" value={formatUnitQuantity(item.quantity, item.unit)} />
                 <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />
                 <DetailRow label="Below minimum" value={formatUnitQuantity(stockGap, item.unit)} />
-                <DetailRow label="Status" value={item.quantity < item.minimumStock ? 'Low stock' : 'At minimum'} />
+                <DetailRow
+                  label="Status"
+                  value={selectedAlertKind === 'outOfStock'
+                    ? 'Out of Stock'
+                    : item.quantity < item.minimumStock ? 'Low stock' : 'At minimum'}
+                />
                 <DetailRow label="Received" value={receivedDate} />
                 <DetailRow label="Batch expires" value={batch?.expirationDate ?? 'Not recorded'} />
                 <DetailRow label="Last updated" value={item.lastUpdated} />
@@ -2472,14 +2514,18 @@ export default function StaffWorkspace({
           <View style={styles.alertDetailInfoBanner}>
             <Text style={styles.alertDetailInfoIcon}>i</Text>
             <Text style={styles.alertDetailInfoText}>
-              {isLowStock
-                ? 'Replenish before the next cooking batch. Alert clears when available stock reaches the minimum.'
-                : 'Use the earliest valid batch first. This batch remains usable until its recorded expiration date.'}
+              {selectedAlertKind === 'outOfStock'
+                ? 'No stock is currently available. Record a stock-in before using this ingredient.'
+                : selectedAlertKind === 'lowStock'
+                  ? 'Replenish before the next cooking batch. Alert clears when available stock reaches the minimum.'
+                  : selectedAlertKind === 'expired'
+                    ? 'Do not use this expired batch. Record the loss through the inventory waste workflow.'
+                    : 'Use the earliest valid batch first. This batch remains usable until its recorded expiration date.'}
             </Text>
           </View>
 
           <View style={styles.alertDetailActions}>
-            {isLowStock ? (
+            {stockAlert ? (
               <Pressable
                 accessibilityRole="button"
                 onPress={() => {
@@ -2517,12 +2563,13 @@ export default function StaffWorkspace({
   };
 
   const renderAlertCard = (alert: InventoryAlert) => {
-    const isLowStock = alert.kind === 'lowStock';
+    const stockAlert = isStockAlert(alert.kind);
+    const alertLabel = inventoryAlertLabel(alert.kind);
     return (
       <Pressable
         key={alert.id}
         accessibilityRole="button"
-        accessibilityLabel={`${alert.title}, ${isLowStock ? 'Low Stock' : 'Near Expiry'}. ${alert.detail}`}
+        accessibilityLabel={`${alert.title}, ${alertLabel}. ${alert.detail}`}
         onPress={() => {
           setSelectedAlertIngredientId(alert.ingredientId);
           setSelectedAlertBatchReference(alert.batch?.reference ?? '');
@@ -2533,15 +2580,15 @@ export default function StaffWorkspace({
       >
         <View style={styles.inventoryAlertTopline}>
           <Text style={styles.inventoryAlertName}>{alert.title}</Text>
-          <View style={[styles.inventoryAlertBadge, !isLowStock && styles.inventoryExpiryBadge]}>
-            {!isLowStock ? <Text style={styles.inventoryAlertBadgeIcon}>!</Text> : null}
-            <Text style={[styles.inventoryAlertBadgeText, !isLowStock && styles.inventoryExpiryBadgeText]}>
-              {isLowStock ? 'Low Stock' : 'Near Expiry'}
+          <View style={[styles.inventoryAlertBadge, !stockAlert && styles.inventoryExpiryBadge]}>
+            {!stockAlert ? <Text style={styles.inventoryAlertBadgeIcon}>!</Text> : null}
+            <Text style={[styles.inventoryAlertBadgeText, !stockAlert && styles.inventoryExpiryBadgeText]}>
+              {alertLabel}
             </Text>
           </View>
         </View>
         <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>
-        {isLowStock ? (
+        {stockAlert ? (
           <View
             style={styles.stockLevelTrack}
             accessibilityRole="progressbar"
@@ -2557,7 +2604,9 @@ export default function StaffWorkspace({
 
   const renderAlerts = () => {
     const lowStockAlerts = visibleAlerts.filter((alert) => alert.kind === 'lowStock');
-    const expirationAlerts = visibleAlerts.filter((alert) => alert.kind === 'expiration');
+    const outOfStockAlerts = visibleAlerts.filter((alert) => alert.kind === 'outOfStock');
+    const nearExpirationAlerts = visibleAlerts.filter((alert) => alert.kind === 'nearExpiration');
+    const expiredAlerts = visibleAlerts.filter((alert) => alert.kind === 'expired');
 
     return (
       <ScrollView
@@ -2613,7 +2662,7 @@ export default function StaffWorkspace({
               <View style={styles.alertEmptyBellClapper} />
             </View>
             <Text style={styles.alertEmptyTitle}>No alerts at the moment.</Text>
-            <Text style={styles.alertEmptyText}>Low-stock and expiry alerts appear here.</Text>
+            <Text style={styles.alertEmptyText}>Stock and expiration alerts appear here.</Text>
           </View>
         ) : visibleAlerts.length === 0 ? (
           <View style={styles.alertState}>
@@ -2624,14 +2673,26 @@ export default function StaffWorkspace({
           <View style={styles.alertSections}>
             {lowStockAlerts.length > 0 ? (
               <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Low-Stock Items</Text>
+                <Text style={styles.alertSectionTitle}>Low Stock</Text>
                 <View style={styles.alertCardList}>{lowStockAlerts.map(renderAlertCard)}</View>
               </View>
             ) : null}
-            {expirationAlerts.length > 0 ? (
+            {outOfStockAlerts.length > 0 ? (
               <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Nearing Expiration</Text>
-                <View style={styles.alertCardList}>{expirationAlerts.map(renderAlertCard)}</View>
+                <Text style={styles.alertSectionTitle}>Out of Stock</Text>
+                <View style={styles.alertCardList}>{outOfStockAlerts.map(renderAlertCard)}</View>
+              </View>
+            ) : null}
+            {nearExpirationAlerts.length > 0 ? (
+              <View style={styles.alertSection}>
+                <Text style={styles.alertSectionTitle}>Near Expiration</Text>
+                <View style={styles.alertCardList}>{nearExpirationAlerts.map(renderAlertCard)}</View>
+              </View>
+            ) : null}
+            {expiredAlerts.length > 0 ? (
+              <View style={styles.alertSection}>
+                <Text style={styles.alertSectionTitle}>Expired</Text>
+                <View style={styles.alertCardList}>{expiredAlerts.map(renderAlertCard)}</View>
               </View>
             ) : null}
           </View>
@@ -4090,7 +4151,7 @@ export default function StaffWorkspace({
                   <View style={styles.historyTransactionTop}>
                     <View style={styles.historyTransactionTitleWrap}>
                       <Text style={styles.historyTransactionTitle}>
-                        {transaction.type === 'Stock-Out / Usage' ? 'Usage' : transaction.type} · {transaction.ingredientName}
+                        {transaction.type} · {transaction.ingredientName}
                       </Text>
                       <Text style={styles.historyTransactionReference}>{transaction.reference}</Text>
                     </View>
@@ -4259,9 +4320,7 @@ export default function StaffWorkspace({
     }
 
     const ledgerExplanation = historyLedgerExplanation(transaction.ingredientId);
-    const typeLabel = transaction.type === 'Usage' || transaction.type === 'Stock-Out / Usage'
-      ? 'Stock-Out / Usage'
-      : transaction.type;
+    const typeLabel = transaction.type;
     const purpose = transaction.reason === 'Cooking usage'
       ? 'Cooking usage'
       : transaction.type === 'Stock-In'
