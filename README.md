@@ -33,9 +33,9 @@ Inventory changes and daily checks are submitted to Supabase. Alert category tog
 
 The current Owner dashboard reads inventory, low-stock and near-expiry items, recent transactions, and daily checks awaiting review across accessible branches. The dashboard is read-only: its Stock-In, Stock-Out, Waste, and Daily Check quick actions explicitly report that those actions are unavailable there.
 
-Owner Sales Monitoring and Sales Reports read completed records from the existing `sales`, `sale_items`, and `products` tables. Owners can filter by active branch and today, daily, weekly, monthly, or custom dates; reports include transaction, branch, product, and payment summaries. Reports export as CSV in the browser or as a shareable CSV file on iOS/Android. Cancelled and pending sales are excluded. This frontend does not write sales or change inventory; it reports only data already recorded by the backend. Product summaries require matching sale-item and product records and are omitted when that data is unavailable. The current client has read-only access to sales records, so the backend partner must populate `sales` and `sale_items` through the authorized checkout workflow before these views contain sales; no sales-writing endpoint or checkout integration was added in this phase.
+Owner Sales Monitoring and Sales Reports read completed records from the existing `sales`, `sale_items`, and `products` tables. Owners can filter by active branch and today, daily, weekly, monthly, or custom dates; reports include transaction, branch, product, and payment summaries. Reports export as CSV in the browser or as a shareable CSV file on iOS/Android. Cancelled and pending sales are excluded. Staff checkout submits sales through the trusted `submit_sale` RPC; the database validates the branch, menu price, and transaction reference, then atomically records configured recipe consumption. Product summaries require matching sale-item and product records and are omitted when that data is unavailable. The client has read-only access to sales tables and cannot write sale rows directly.
 
-Owner Products & Menu supports creating and editing menu products through the existing `products` table. Ingredients & Recipes lets Owners search, view, add, and edit ingredient records and categories, and create, review, edit, and remove ingredient lines for those menu products through the existing `ingredients`, `ingredient_categories`, and `recipes` tables. Recipe quantities use the ingredient's configured unit. These configuration changes do not write inventory movements or alter historical sales. The current backend does not yet connect recipe quantities to an atomic completed-sale workflow, so recipe configuration alone does not deduct stock; that consumption workflow remains a backend dependency.
+Owner Products & Menu supports creating and editing menu products through the existing `products` table. Ingredients & Recipes lets Owners search, view, add, and edit ingredient records and categories, and create, review, edit, and remove ingredient lines for those menu products through the existing `ingredients`, `ingredient_categories`, and `recipes` tables. Recipe quantities use the ingredient's configured unit. These configuration changes do not write inventory movements or alter historical sales. Configured active recipes are consumed only when a sale completes through the atomic backend workflow. A cancellation/refund workflow that reverses completed-sale inventory has not been implemented.
 
 Stock & Expiration Settings lets Owners search and filter branch inventory, edit each ingredient's branch-specific minimum stock, enable or disable ingredient expiration tracking, and add or edit dates on existing active stock-in batches. The persisted owner-wide alert window controls nearing-expiration status; expired batches are identified separately. Batch quantities and stock levels are not changed by these settings, and expiration alerts are dashboard indicators only—notification delivery is not implemented. Apply the `202610310001_stock_expiration_settings.sql` migration before using this screen. Expiration dates can only be attached to existing stock-in batches; creating stock or standalone batch records is intentionally not supported here.
 
@@ -154,21 +154,21 @@ Without both variables, the app intentionally disables sign-in and reports that 
    ```sh
    supabase login
    supabase --workdir backend link --project-ref YOUR_PROJECT_REF
-  supabase --workdir backend migration list --linked
-  supabase --workdir backend db push --linked --dry-run
+  supabase --workdir backend migration list --remote
+  supabase --workdir backend db push --remote --include-all --dry-run
    ```
 
   If the existing database was created manually or does not have matching migration history, stop before `db push`. Have the database owner compare the live schema with the checked-in migrations and reconcile migration history deliberately; never mark a migration applied just to silence a mismatch.
 3. Only after reviewing the dry run, apply pending migrations:
 
   ```sh
-  supabase --workdir backend db push --linked
+  supabase --workdir backend db push --remote --include-all
   ```
 
 4. Configure Supabase Auth email settings and create Auth users through the dashboard or another trusted administrative process. `enable_signup = false` in `backend/supabase/config.toml` applies to a local Supabase stack; disable public sign-ups separately in the hosted project's dashboard.
 5. Copy `.env.example` to `.env`, set the shared project URL and public publishable/anon key, then restart Expo. Each collaborator keeps their own ignored local `.env` file.
 
-The migrations create three fixed branch records, the inventory and audit tables, branch-level RLS policies, and the RPC functions used for inventory transactions and daily checks. The base stock tables are `branch_inventory` and `inventory_movements`; security-invoker views named `inventory` and `inventory_transactions` preserve the existing app query contract. The migration `202610300001_business_schema_extensions.sql` adds product/recipe/sale metadata and audit logs. It intentionally does not allow client-side sale writes or deduct stock from sales until a trusted atomic checkout contract is implemented. No real product prices or recipe quantities are seeded.
+The migrations create three fixed branch records, the inventory and audit tables, branch-level RLS policies, and RPC functions for inventory transactions, daily checks, batter preparation, and atomic sale submission. The base stock tables are `branch_inventory` and `inventory_movements`; security-invoker views named `inventory` and `inventory_transactions` preserve the existing app query contract. Sale table writes remain unavailable to clients; checkout uses the trusted `submit_sale` RPC. No real product prices or recipe quantities are seeded, and completed sales cannot currently be cancelled or reversed through an inventory-restoring workflow.
 
 New Auth users receive a Staff profile assigned to Branch 1. To designate the first Owner, create the Auth user, then promote the matching profile in the Supabase SQL editor:
 
@@ -238,13 +238,13 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Low-stock and expiry alerts | Derived from saved inventory and batch dates; no push alert delivery |
 | Daily physical stock check and discrepancy recording | Implemented; discrepancy checks are marked pending Owner review |
 | Staff Menu / cart | Menu filters, selection, cart quantities, and preview totals are implemented with isolated UI-only sample data from the project brief; these are not live products or production prices |
-| Staff checkout / sales submission | Not connected; checkout explicitly reports that no order was submitted and inventory was unchanged |
+| Staff checkout / sales submission | Connected to the atomic `submit_sale` RPC; requires configured branch-visible menu items, prices, and recipes |
 | Branch-to-branch stock transfers | Not implemented; the current frontend contract and transaction service do not support atomic transfers between branches |
 | Owner Login screen | Supabase Auth email/password with active Owner profile check |
 | Owner inventory, activity, and alert monitoring | Read-only dashboard using shared Supabase data for accessible branches |
 | Owner Products & Menu | Create and edit products using the existing Supabase table |
 | Owner ingredients, categories, and product recipes | CRUD through existing Supabase tables; configuration does not deduct inventory |
-| Recipe-driven consumption after completed sales | Not implemented; requires a trusted backend checkout and atomic inventory workflow |
+| Recipe-driven consumption after completed sales | Implemented through the trusted atomic sale workflow for configured automatic-consumption recipes |
 | Owner account and branch assignments | Not implemented in the app |
 | Owner review/approval of physical checks | Pending checks are displayed; approval/rejection workflow is not implemented |
 | Separate Owner web application | Not present; the Expo app has a web target |
@@ -252,7 +252,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 
 The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Alert preferences are not persisted or connected to a push service.
 
-To replace the UI preview and implement POS safely, the frontend needs a branch-scoped product/menu catalog contract (including prices, availability, and categories), an order creation/read contract with line-item and total semantics, idempotent submission behavior, and a defined cancellation/refund flow. If sales should consume ingredient inventory, the backend must also define how recipes map to ingredients and provide an atomic order-and-inventory operation. Transfers similarly require a backend contract that records both branch sides atomically; the existing inventory transaction operation is branch-scoped and must not be used to simulate a transfer.
+Before operational POS use, configure and verify the live branch-visible catalog, prices, and automatic-consumption recipes. Sale submission is idempotent by transaction reference and stock changes are committed atomically. A cancellation/refund workflow must be defined before completed sales can be reversed; transfers still require a backend contract that records both branch sides atomically, and the existing branch-scoped inventory transaction operation must not be used to simulate a transfer.
 
 ## Project scope
 

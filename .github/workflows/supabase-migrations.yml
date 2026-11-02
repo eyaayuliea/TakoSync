@@ -132,8 +132,48 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
+      - name: Validate remote migration ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          migration_history="$(
+            supabase --workdir backend --output-format json \
+              migration list --remote="$SUPABASE_DB_URL_EFFECTIVE"
+          )"
+          printf '%s' "$migration_history" | python -c '
+          import json
+          import sys
+
+          try:
+              history = json.load(sys.stdin)
+              migrations = history["migrations"]
+              applied = [row["remote"] for row in migrations if row.get("remote")]
+              pending = [
+                  row["local"] for row in migrations
+                  if row.get("local") and not row.get("remote")
+              ]
+          except (KeyError, TypeError, json.JSONDecodeError):
+              print("::error title=Migration history::Could not parse Supabase migration history")
+              sys.exit(1)
+
+          latest_applied = max(applied, default="")
+          unexpected_older = sorted(
+              version for version in pending
+              if version < latest_applied and version != "202611020000"
+          )
+          if unexpected_older:
+              print(
+                  "::error title=Migration history::Unexpected unapplied migrations "
+                  "precede the latest remote migration: "
+                  + ", ".join(unexpected_older)
+              )
+              sys.exit(1)
+          print("Remote migration history ordering is valid.")
+          '
+
       - name: Preview pending migration SQL (database connectivity and migration preview)
-        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL_EFFECTIVE" --dry-run
+        run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --dry-run
 
       - name: Apply reviewed migrations (migration apply)
-        run: supabase --workdir backend db push --db-url "$SUPABASE_DB_URL_EFFECTIVE" --yes
+        run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --yes

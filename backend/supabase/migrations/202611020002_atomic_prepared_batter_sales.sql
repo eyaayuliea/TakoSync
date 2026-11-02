@@ -49,7 +49,7 @@ begin
   if exists (
     select 1
     from public.inventory_movements
-    where type = 'sales_consumption'
+    where type::text = 'sales_consumption'
       and notes like 'sale:%'
     group by branch_id, notes, ingredient_id, type
     having count(*) > 1
@@ -60,7 +60,7 @@ end;
 $$;
 create unique index inventory_movements_sale_consumption_ref_idx
   on public.inventory_movements (branch_id, notes, ingredient_id, type)
-  where type = 'sales_consumption' and notes like 'sale:%';
+  where notes like 'sale:%';
 
 update public.shared_recipe_versions version
 set prepared_quantity = recipe.prepared_quantity,
