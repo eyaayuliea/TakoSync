@@ -19,13 +19,15 @@ import {
 import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import MenuWorkspace from './MenuWorkspace';
-import { menuPreviewProducts, type MenuCartLine } from './menuPreviewData';
+import type { MenuCartLine } from './menuPreviewData';
 import {
   loadInventory,
+  loadProducts,
   loadTransactionHistory,
   recordInventoryTransactions,
   submitDailyStockCheck,
   type AppUser,
+  type ProductMenuItem,
 } from '../services/takosync';
 
 const colors = {
@@ -745,6 +747,10 @@ export default function StaffWorkspace({
   routeRef.current = route;
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
   const [menuCart, setMenuCart] = useState<MenuCartLine[]>([]);
+  const [menuCatalog, setMenuCatalog] = useState<ProductMenuItem[]>([]);
+  const [menuCatalogLoading, setMenuCatalogLoading] = useState(false);
+  const [menuCatalogError, setMenuCatalogError] = useState('');
+  const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [backendLoading, setBackendLoading] = useState(true);
@@ -864,6 +870,52 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [user?.branchId]);
+
+  useEffect(() => {
+    if (route !== 'menu' && route !== 'cart' && route !== 'checkout') return;
+    if (menuCatalogLoaded || menuCatalogLoading) return;
+    let active = true;
+    setMenuCatalogLoading(true);
+    setMenuCatalogError('');
+    loadProducts()
+      .then((products) => {
+        if (active) {
+          setMenuCatalog(products);
+          setMenuCatalogError('');
+          setMenuCatalogLoaded(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setMenuCatalog([]);
+          setMenuCatalogError(error instanceof Error ? error.message : 'Unable to load the current product catalog.');
+        }
+      })
+      .finally(() => {
+        if (active) setMenuCatalogLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route]);
+
+  const retryMenuCatalog = () => {
+    if (menuCatalogLoading || (route !== 'menu' && route !== 'cart' && route !== 'checkout')) return;
+    setMenuCatalogLoading(true);
+    setMenuCatalogError('');
+    setMenuCatalogLoaded(false);
+    loadProducts()
+      .then((products) => {
+        setMenuCatalog(products);
+        setMenuCatalogError('');
+        setMenuCatalogLoaded(true);
+      })
+      .catch((error: unknown) => {
+        setMenuCatalog([]);
+        setMenuCatalogError(error instanceof Error ? error.message : 'Unable to load the current product catalog.');
+      })
+      .finally(() => setMenuCatalogLoading(false));
+  };
 
   const refreshBackendData = async () => {
     if (!user?.branchId) {
@@ -1241,7 +1293,19 @@ export default function StaffWorkspace({
   };
 
   const addMenuProduct = (productId: string) => {
-    if (!menuPreviewProducts.some((product) => product.id === productId)) return;
+    const product = menuCatalog.find((item) => item.id === productId);
+    if (!product && menuCatalogLoading) {
+      setDashboardMessage('The menu is still loading. Please try adding the product again.');
+      return;
+    }
+    if (!product) {
+      setDashboardMessage('This product is no longer available in the current catalog.');
+      return;
+    }
+    if (!product.is_available) {
+      setDashboardMessage(`${product.product_name} is unavailable and was not added.`);
+      return;
+    }
     setMenuCart((current) => current.some((line) => line.productId === productId)
       ? current
       : [...current, { productId, quantity: 1 }]);
@@ -4285,6 +4349,12 @@ export default function StaffWorkspace({
           onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
           onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
           onRemoveProduct={removeMenuProduct}
+          catalog={menuCatalog}
+          catalogLoading={menuCatalogLoading}
+          catalogError={menuCatalogError}
+          onRetryCatalog={retryMenuCatalog}
+          feedbackMessage={dashboardMessage}
+          onDismissFeedback={() => setDashboardMessage('')}
         />
       </View>
       {route !== 'stockOut' && route !== 'usagePreview' ? (

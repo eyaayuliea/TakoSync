@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -8,8 +9,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import type { MenuCartLine, MenuCategory, MenuFilter, MenuProduct } from './menuPreviewData';
-import { calculateMenuCart, filterMenuProducts, menuCategories, menuPreviewProducts } from './menuPreviewData';
+import type { ProductMenuItem } from '../services/takosync';
+import type { MenuCartLine, MenuFilter, MenuProduct } from './menuPreviewData';
+import { calculateMenuCart, filterMenuProducts } from './menuPreviewData';
 
 type MenuPage = 'menu' | 'cart' | 'checkout';
 
@@ -22,6 +24,12 @@ type MenuWorkspaceProps = {
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
   onRemoveProduct: (productId: string) => void;
+  catalog: ProductMenuItem[];
+  catalogLoading: boolean;
+  catalogError: string;
+  onRetryCatalog: () => void;
+  feedbackMessage?: string;
+  onDismissFeedback?: () => void;
 };
 
 const colors = {
@@ -134,28 +142,29 @@ function MenuProductCard({
   selected: boolean;
   onAdd: () => void;
 }) {
+  const available = product.isAvailable;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${product.name}, ${product.type}${product.flavor ? ` ${product.flavor}` : ''}, ${product.pieces}, ${money(product.price)}${selected ? ', added to cart' : ', add to cart'}`}
+      accessibilityLabel={`${product.name}, ${money(product.price)}, ${available ? 'available' : 'unavailable'}${selected ? ', added to cart' : ', add to cart'}`}
       accessibilityState={{ selected }}
-      disabled={selected}
+      disabled={selected || !available}
       onPress={onAdd}
       style={({ pressed }) => [
         styles.productCard,
         selected && styles.productCardSelected,
+        !available && styles.productCardUnavailable,
         pressed && styles.pressed,
       ]}
     >
       <View style={styles.productCopy}>
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
-        <Text style={styles.productType}>{product.type}{product.flavor ? ` - ${product.flavor}` : ''}</Text>
-        <Text style={styles.productPieces}>{product.pieces}</Text>
+        <Text style={styles.productType} numberOfLines={2}>{product.description || 'No description available'}</Text>
       </View>
       <View style={styles.productPriceColumn}>
         <Text style={styles.productPrice}>{money(product.price)}</Text>
-        <Text style={[styles.productAction, selected && styles.productActionSelected]}>
-          {selected ? 'Added' : 'Add'}
+        <Text style={[styles.productAction, selected && styles.productActionSelected, !available && styles.unavailableText]}>
+          {!available ? 'Unavailable' : selected ? 'Added' : 'Add'}
         </Text>
       </View>
       {selected ? (
@@ -184,7 +193,7 @@ function CartItemCard({
     <View style={styles.cartItem}>
       <View style={styles.cartItemCopy}>
         <Text style={styles.cartItemName} numberOfLines={2}>{product.name}</Text>
-        <Text style={styles.cartItemDetail}>{product.type}{product.flavor ? ` - ${product.flavor}` : ''} · {product.pieces}</Text>
+        <Text style={styles.cartItemDetail} numberOfLines={2}>{product.description || 'No description available'}</Text>
         <Text style={styles.cartItemPrice}>{money(product.price)} each</Text>
       </View>
       <View style={styles.cartItemActions}>
@@ -225,16 +234,45 @@ export default function MenuWorkspace({
   onIncreaseQuantity,
   onDecreaseQuantity,
   onRemoveProduct,
+  catalog,
+  catalogLoading,
+  catalogError,
+  onRetryCatalog,
+  feedbackMessage = '',
+  onDismissFeedback,
 }: MenuWorkspaceProps) {
   const [filter, setFilter] = useState<MenuFilter>('All');
-  const [category, setCategory] = useState<MenuCategory | 'All'>('All');
   const [search, setSearch] = useState('');
-  const totals = calculateMenuCart(cart, menuPreviewProducts);
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card'>('Cash');
+  const [cashReceived, setCashReceived] = useState('');
+  const products: MenuProduct[] = useMemo(
+    () => catalog.map((product) => ({
+      id: product.id,
+      name: product.product_name,
+      description: product.description,
+      price: product.price,
+      isAvailable: product.is_available,
+    })),
+    [catalog],
+  );
+
+  useEffect(() => {
+    if (catalogLoading || catalogError) return;
+    const availableIds = new Set(products.filter((product) => product.isAvailable).map((product) => product.id));
+    for (const line of cart) {
+      if (!availableIds.has(line.productId)) onRemoveProduct(line.productId);
+    }
+  }, [catalogLoading, catalogError, products]);
+
+  const totals = calculateMenuCart(cart, products);
   const cartProducts = useMemo(() => cart.flatMap((line) => {
-    const product = menuPreviewProducts.find((item) => item.id === line.productId);
+    const product = products.find((item) => item.id === line.productId);
     return product ? [{ product, quantity: line.quantity }] : [];
-  }), [cart]);
-  const visibleProducts = filterMenuProducts(menuPreviewProducts, filter, category, search);
+  }), [cart, products]);
+  const visibleProducts = filterMenuProducts(products, filter, search);
+  const parsedCash = Number(cashReceived);
+  const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= totals.total);
+  const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
 
   if (!visible) return <View style={styles.hidden} />;
 
@@ -272,7 +310,7 @@ export default function MenuWorkspace({
           >
             <Text style={styles.addMoreText}>＋  Add more items</Text>
           </Pressable>
-          <Text style={styles.previewNotice}>Preview cart only · no sale will be recorded</Text>
+          <Text style={styles.previewNotice}>Cart is saved while you review checkout. No inventory changes occur yet.</Text>
         </ScrollView>
         <View style={styles.totalFooter}>
           <View style={styles.totalRow}>
@@ -302,19 +340,72 @@ export default function MenuWorkspace({
       <View style={styles.screen}>
         <ScreenHeader title="Order" onBack={() => onSetPage('cart')} />
         <ProgressSteps active={3} />
-        <View style={styles.checkoutContent}>
-          <View style={styles.checkoutIcon}>
-            <Text style={styles.checkoutIconText}>!</Text>
+        <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled">
+          <Text style={styles.checkoutTitle}>Review transaction</Text>
+          {cartProducts.map(({ product, quantity }) => (
+            <View key={product.id} style={styles.checkoutLine}>
+              <View style={styles.checkoutLineCopy}>
+                <Text style={styles.checkoutLineName}>{product.name}</Text>
+                <Text style={styles.checkoutLineMeta}>{quantity} × {money(product.price)}</Text>
+              </View>
+              <Text style={styles.checkoutLineTotal}>{money(product.price * quantity)}</Text>
+            </View>
+          ))}
+          <View style={styles.checkoutTotalRow}>
+            <Text style={styles.totalLabel}>Total</Text>
+            <Text style={styles.totalValue}>{money(totals.total)}</Text>
           </View>
-          <Text style={styles.checkoutTitle}>Order submission unavailable</Text>
-          <Text style={styles.checkoutMessage}>
-            The sales-order service is not connected. Your order has not been submitted and inventory has not changed.
+          <Text style={styles.paymentLabel}>Payment method (pending backend confirmation)</Text>
+          <Text style={styles.paymentMessage}>
+            Cash and Card are provisional checkout UI choices. The backend contract must confirm supported methods before a sale can be submitted.
           </Text>
-          <Text style={styles.checkoutSummary}>{totals.count} preview items · {money(totals.total)}</Text>
+          <View style={styles.paymentOptions}>
+            {(['Cash', 'Card'] as const).map((method) => (
+              <Pressable
+                key={method}
+                accessibilityRole="button"
+                accessibilityState={{ selected: paymentMethod === method }}
+                onPress={() => setPaymentMethod(method)}
+                style={[styles.paymentOption, paymentMethod === method && styles.paymentOptionSelected]}
+              >
+                <Text style={[styles.paymentOptionText, paymentMethod === method && styles.paymentOptionTextSelected]}>{method}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {paymentMethod === 'Cash' ? (
+            <View>
+              <Text style={styles.paymentLabel}>Cash received</Text>
+              <TextInput
+                accessibilityLabel="Cash received"
+                value={cashReceived}
+                onChangeText={setCashReceived}
+                keyboardType="decimal-pad"
+                placeholder="Enter amount"
+                placeholderTextColor={colors.secondary}
+                style={[styles.paymentInput, cashReceived !== '' && !cashValid && styles.paymentInputError]}
+              />
+              {cashReceived !== '' && !cashValid ? <Text style={styles.paymentError}>Cash received must cover the total.</Text> : null}
+              {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - totals.total)}</Text> : null}
+            </View>
+          ) : (
+            <Text style={styles.paymentMessage}>Card payment confirmation requires the approved sales service.</Text>
+          )}
+          {!checkoutValid && cartProducts.length > 0 ? (
+            <Text style={styles.paymentError}>Complete the required payment information before confirming.</Text>
+          ) : null}
+          <View style={styles.checkoutUnavailableBox}>
+            <Text style={styles.checkoutUnavailableTitle}>Transaction submission unavailable</Text>
+            <Text style={styles.checkoutMessage}>
+              The approved atomic sales service is not connected. This transaction has not been submitted and inventory has not changed.
+            </Text>
+          </View>
           <Pressable accessibilityRole="button" onPress={() => onSetPage('cart')} style={styles.checkoutBackButton}>
             <Text style={styles.checkoutBackText}>Return to cart</Text>
           </Pressable>
-        </View>
+          <View style={[styles.placeOrderButton, styles.disabledButton]}>
+            <Text style={styles.placeOrderText}>Confirm Transaction</Text>
+          </View>
+        </ScrollView>
         <View style={styles.totalFooter}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total</Text>
@@ -322,9 +413,6 @@ export default function MenuWorkspace({
           </View>
           <View style={styles.footerActions}>
             <Text style={styles.previewNotice}>No order was placed</Text>
-            <View style={[styles.placeOrderButton, styles.disabledButton]}>
-              <Text style={styles.placeOrderText}>Unavailable</Text>
-            </View>
           </View>
         </View>
       </View>
@@ -340,39 +428,22 @@ export default function MenuWorkspace({
         onSearchChange={setSearch}
       />
       <View style={styles.menuPanel}>
+        {feedbackMessage !== '' ? (
+          <Pressable onPress={onDismissFeedback} style={styles.feedbackBanner} accessibilityRole="alert">
+            <Text style={styles.feedbackText}>{feedbackMessage}</Text>
+            <Text style={styles.feedbackDismiss}>×</Text>
+          </Pressable>
+        ) : null}
         <ScrollView
           horizontal
           style={styles.categoryScroll}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryList}
         >
-          {menuCategories.map((item) => {
-            const selected = category === item;
-            return (
-              <Pressable
-                key={item}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => setCategory(selected ? 'All' : item)}
-                style={styles.categoryButton}
-              >
-                <View style={[styles.categoryImageWrap, selected && styles.categoryImageWrapSelected]}>
-                  <Image
-                    source={require('../../assets/takoyaki-plate.png')}
-                    style={styles.categoryImage}
-                    resizeMode="cover"
-                    accessibilityLabel={`${item} takoyaki`}
-                  />
-                </View>
-                <Text style={[styles.categoryName, selected && styles.categoryNameSelected]} numberOfLines={1}>
-                  {item}
-                </Text>
-              </Pressable>
-            );
-          })}
+          <Text style={styles.catalogLabel}>Live product catalog</Text>
         </ScrollView>
         <View style={styles.filterTabs}>
-          {(['All', 'Regular', 'Combo'] as const).map((item) => {
+          {(['All', 'Available', 'Unavailable'] as const).map((item) => {
             const selected = filter === item;
             return (
               <Pressable
@@ -394,24 +465,21 @@ export default function MenuWorkspace({
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.productSectionTitle}>{filter}</Text>
+          {catalogLoading ? (
+            <View style={styles.stateCard}><ActivityIndicator color={colors.pink} /><Text style={styles.emptyCopy}>Loading menu…</Text></View>
+          ) : catalogError ? (
+            <View style={styles.stateCard}><Text style={styles.emptyTitle}>Unable to load menu</Text><Text style={styles.emptyCopy}>{catalogError}</Text><Pressable onPress={onRetryCatalog} style={styles.retryButton}><Text style={styles.retryText}>Retry</Text></Pressable></View>
+          ) : visibleProducts.length === 0 ? (
+            <View style={styles.emptyCard}><Text style={styles.emptyTitle}>{products.length === 0 ? 'No products available' : 'No matching products'}</Text><Text style={styles.emptyCopy}>{products.length === 0 ? 'The branch product catalog is empty.' : 'Try another search or filter.'}</Text></View>
+          ) : null}
           {visibleProducts.map((product) => (
             <MenuProductCard
               key={product.id}
               product={product}
               selected={cart.some((line) => line.productId === product.id)}
-              onAdd={() => onAddProduct(product.id)}
+              onAdd={() => product.isAvailable && onAddProduct(product.id)}
             />
           ))}
-          {visibleProducts.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No preview items found</Text>
-              <Text style={styles.emptyCopy}>
-                {search.trim()
-                  ? 'Try another search.'
-                  : 'There are no configured sample items for this category and filter.'}
-              </Text>
-            </View>
-          ) : null}
         </ScrollView>
         <View style={styles.cartSummaryOuter}>
           <Pressable
@@ -447,6 +515,22 @@ const styles = StyleSheet.create({
     height: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     borderRadius: 22, backgroundColor: colors.white,
   },
+  catalogLabel: { color: colors.white, fontFamily: font.semibold, fontSize: 9, marginBottom: 2 },
+  feedbackBanner: {
+    flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
+  },
+  feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  feedbackDismiss: { color: colors.navy, fontFamily: font.bold, fontSize: 16, paddingLeft: 8 },
+  stateCard: {
+    alignItems: 'center', gap: 7, paddingHorizontal: 16, paddingVertical: 22,
+    borderRadius: 15, backgroundColor: colors.white,
+  },
+  retryButton: {
+    minHeight: 34, justifyContent: 'center', paddingHorizontal: 18,
+    borderRadius: 12, backgroundColor: colors.pink, marginTop: 7,
+  },
+  retryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   searchGlyph: { color: colors.secondary, fontSize: 23, marginRight: 7 },
   searchInput: { flex: 1, height: 42, color: colors.text, fontFamily: font.regular, fontSize: 10 },
   clearSearch: { color: colors.secondary, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 3 },
@@ -487,6 +571,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: 'transparent', borderRadius: 14, backgroundColor: colors.white,
   },
   productCardSelected: { borderColor: colors.navy, borderWidth: 2 },
+  productCardUnavailable: { opacity: 0.58, borderColor: colors.border },
   pressed: { opacity: 0.8 },
   productCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
   productName: { color: colors.text, fontFamily: font.bold, fontSize: 10 },
@@ -496,6 +581,7 @@ const styles = StyleSheet.create({
   productPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 13 },
   productAction: { color: colors.pink, fontFamily: font.semibold, fontSize: 8, marginTop: 3 },
   productActionSelected: { color: colors.navy },
+  unavailableText: { color: colors.secondary },
   selectedCheck: {
     position: 'absolute', top: -7, right: -5, width: 20, height: 20,
     alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.navy,
@@ -583,8 +669,45 @@ const styles = StyleSheet.create({
   disabledButton: { opacity: 0.65 },
   placeOrderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutContent: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 26,
+    paddingHorizontal: 16, paddingBottom: 20,
   },
+  checkoutScroll: { flex: 1, minHeight: 0 },
+  checkoutLine: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 13,
+    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, marginBottom: 7,
+  },
+  checkoutLineCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
+  checkoutLineName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
+  checkoutLineMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 10 },
+  checkoutTotalRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: 12,
+  },
+  paymentLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 8, marginBottom: 7 },
+  paymentOptions: { flexDirection: 'row', gap: 8 },
+  paymentOption: {
+    minWidth: 84, minHeight: 36, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  paymentOptionSelected: { borderColor: colors.navy, backgroundColor: colors.navy },
+  paymentOptionText: { color: colors.secondary, fontFamily: font.medium, fontSize: 9 },
+  paymentOptionTextSelected: { color: colors.white, fontFamily: font.semibold },
+  paymentInput: {
+    height: 42, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1,
+    borderColor: colors.border, backgroundColor: colors.white, color: colors.text,
+    fontFamily: font.regular, fontSize: 10,
+  },
+  paymentInputError: { borderColor: colors.error },
+  paymentError: { color: colors.error, fontFamily: font.medium, fontSize: 8, marginTop: 5 },
+  changeText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 7 },
+  paymentMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
+  checkoutUnavailableBox: {
+    padding: 12, borderRadius: 13, backgroundColor: colors.warning, marginTop: 16,
+  },
+  checkoutUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutIcon: {
     width: 53, height: 53, alignItems: 'center', justifyContent: 'center',
     borderRadius: 27, backgroundColor: colors.warning, marginBottom: 14,

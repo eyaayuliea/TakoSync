@@ -1,14 +1,12 @@
 export type MenuCategory = 'Octobits' | 'Cheese' | 'Crab' | 'Baconbits';
-export type MenuFilter = 'All' | 'Regular' | 'Combo';
+export type MenuFilter = 'All' | 'Available' | 'Unavailable';
 
 export type MenuProduct = {
   id: string;
   name: string;
-  category: MenuCategory;
-  type: 'Regular' | 'Combo';
-  flavor: string | null;
-  pieces: string;
+  description: string;
   price: number;
+  isAvailable: boolean;
 };
 
 export type MenuCartLine = {
@@ -16,30 +14,19 @@ export type MenuCartLine = {
   quantity: number;
 };
 
-export const menuCategories: MenuCategory[] = ['Octobits', 'Cheese', 'Crab', 'Baconbits'];
-
-// These examples are isolated UI-preview data, not a production catalog.
-export const menuPreviewProducts: MenuProduct[] = [
-  { id: 'preview-octobits-4', name: 'Octobits Takoyaki', category: 'Octobits', type: 'Regular', flavor: null, pieces: '4pcs', price: 49 },
-  { id: 'preview-octobits-8', name: 'Octobits Takoyaki', category: 'Octobits', type: 'Regular', flavor: null, pieces: '8pcs', price: 89 },
-  { id: 'preview-octobits-10-plus-1', name: 'Octobits Takoyaki', category: 'Octobits', type: 'Regular', flavor: null, pieces: '10+1pcs', price: 120 },
-  { id: 'preview-cheese-4', name: 'Octobits Takoyaki', category: 'Cheese', type: 'Combo', flavor: 'Cheese', pieces: '4pcs', price: 59 },
-  { id: 'preview-cheese-8', name: 'Octobits Takoyaki', category: 'Cheese', type: 'Combo', flavor: 'Cheese', pieces: '8pcs', price: 99 },
-];
-
 export function filterMenuProducts(
   products: MenuProduct[],
   filter: MenuFilter,
-  category: MenuCategory | 'All',
   search: string,
 ) {
   const searchTerm = search.trim().toLowerCase();
   return products.filter((product) => {
-    const matchesType = filter === 'All' || product.type === filter;
-    const matchesCategory = category === 'All' || product.category === category;
-    const matchesSearch = `${product.name} ${product.type} ${product.flavor ?? ''} ${product.pieces}`
+    const matchesAvailability = filter === 'All'
+      || (filter === 'Available' && product.isAvailable)
+      || (filter === 'Unavailable' && !product.isAvailable);
+    const matchesSearch = `${product.name} ${product.description}`
       .toLowerCase().includes(searchTerm);
-    return matchesType && matchesCategory && matchesSearch;
+    return matchesAvailability && matchesSearch;
   });
 }
 
