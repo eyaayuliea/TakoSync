@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import type { ProductMenuItem } from '../services/takosync';
+import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
 import type { MenuCartLine, MenuFilter, MenuProduct } from './menuPreviewData';
 import { calculateMenuCart, filterMenuProducts } from './menuPreviewData';
 
@@ -24,7 +24,9 @@ type MenuWorkspaceProps = {
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
   onRemoveProduct: (productId: string) => void;
-  catalog: ProductMenuItem[];
+  onSubmitSale: (input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>) => Promise<void>;
+  catalog: StaffMenuCatalogItem[];
+  addons: StaffMenuAddon[];
   catalogLoading: boolean;
   catalogError: string;
   onRetryCatalog: () => void;
@@ -234,7 +236,9 @@ export default function MenuWorkspace({
   onIncreaseQuantity,
   onDecreaseQuantity,
   onRemoveProduct,
+  onSubmitSale,
   catalog,
+  addons,
   catalogLoading,
   catalogError,
   onRetryCatalog,
@@ -245,13 +249,16 @@ export default function MenuWorkspace({
   const [search, setSearch] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
+  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
+  const [saleSubmitting, setSaleSubmitting] = useState(false);
+  const [saleError, setSaleError] = useState('');
   const products: MenuProduct[] = useMemo(
     () => catalog.map((product) => ({
       id: product.id,
-      name: product.product_name,
-      description: product.description,
+      name: `${product.name} - ${product.sizeLabel}`,
+      description: `${product.category} · ${product.description}`,
       price: product.price,
-      isAvailable: product.is_available,
+      isAvailable: product.isAvailable,
     })),
     [catalog],
   );
@@ -265,14 +272,40 @@ export default function MenuWorkspace({
   }, [catalogLoading, catalogError, products]);
 
   const totals = calculateMenuCart(cart, products);
+  const selectedAddons = addons.filter((addon) => selectedAddonIds.includes(addon.id) && addon.isAvailable);
+  const addonsTotal = selectedAddons.reduce((total, addon) => total + addon.price, 0);
+  const checkoutTotal = totals.total + addonsTotal;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
     const product = products.find((item) => item.id === line.productId);
     return product ? [{ product, quantity: line.quantity }] : [];
   }), [cart, products]);
   const visibleProducts = filterMenuProducts(products, filter, search);
   const parsedCash = Number(cashReceived);
-  const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= totals.total);
+  const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
   const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
+  const submitCheckout = async () => {
+    if (!checkoutValid || saleSubmitting) return;
+    setSaleSubmitting(true);
+    setSaleError('');
+    try {
+      await onSubmitSale({
+        paymentMethod,
+        totalAmount: checkoutTotal,
+        items: cartProducts.map(({ product, quantity }) => ({
+          variantId: product.id,
+          quantity,
+          unitPrice: product.price,
+        })),
+        addonIds: selectedAddons.map((addon) => addon.id),
+      });
+      setCashReceived('');
+      setSelectedAddonIds([]);
+    } catch (error) {
+      setSaleError(error instanceof Error ? error.message : 'The sale could not be recorded. Your cart was preserved.');
+    } finally {
+      setSaleSubmitting(false);
+    }
+  };
 
   if (!visible) return <View style={styles.hidden} />;
 
@@ -353,11 +386,37 @@ export default function MenuWorkspace({
           ))}
           <View style={styles.checkoutTotalRow}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(totals.total)}</Text>
+            <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
-          <Text style={styles.paymentLabel}>Payment method (pending backend confirmation)</Text>
+          <Text style={styles.paymentLabel}>Add-ons (provisional menu selection)</Text>
+          {addons.length === 0 ? (
+            <Text style={styles.paymentMessage}>No add-ons are currently available.</Text>
+          ) : addons.map((addon) => {
+            const selected = selectedAddonIds.includes(addon.id);
+            return (
+              <Pressable
+                key={addon.id}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: selected }}
+                onPress={() => setSelectedAddonIds((current) => selected
+                  ? current.filter((id) => id !== addon.id)
+                  : [...current, addon.id])}
+                style={styles.addonOption}
+              >
+                <Text style={styles.addonOptionText}>{selected ? '✓ ' : ''}{addon.name}</Text>
+                <Text style={styles.addonOptionPrice}>{money(addon.price)}</Text>
+              </Pressable>
+            );
+          })}
+          {selectedAddons.length > 0 ? (
+            <View style={styles.checkoutTotalRow}>
+              <Text style={styles.checkoutSummary}>Add-ons total</Text>
+              <Text style={styles.checkoutLineTotal}>{money(addonsTotal)}</Text>
+            </View>
+          ) : null}
+          <Text style={styles.paymentLabel}>Payment method</Text>
           <Text style={styles.paymentMessage}>
-            Cash and Card are provisional checkout UI choices. The backend contract must confirm supported methods before a sale can be submitted.
+            Cash and Card are recorded with the sale after the atomic backend transaction succeeds.
           </Text>
           <View style={styles.paymentOptions}>
             {(['Cash', 'Card'] as const).map((method) => (
@@ -385,7 +444,7 @@ export default function MenuWorkspace({
                 style={[styles.paymentInput, cashReceived !== '' && !cashValid && styles.paymentInputError]}
               />
               {cashReceived !== '' && !cashValid ? <Text style={styles.paymentError}>Cash received must cover the total.</Text> : null}
-              {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - totals.total)}</Text> : null}
+              {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - checkoutTotal)}</Text> : null}
             </View>
           ) : (
             <Text style={styles.paymentMessage}>Card payment confirmation requires the approved sales service.</Text>
@@ -393,18 +452,25 @@ export default function MenuWorkspace({
           {!checkoutValid && cartProducts.length > 0 ? (
             <Text style={styles.paymentError}>Complete the required payment information before confirming.</Text>
           ) : null}
+          {saleError !== '' ? <Text style={styles.paymentError}>{saleError}</Text> : null}
           <View style={styles.checkoutUnavailableBox}>
-            <Text style={styles.checkoutUnavailableTitle}>Transaction submission unavailable</Text>
+            <Text style={styles.checkoutUnavailableTitle}>Atomic transaction recording</Text>
             <Text style={styles.checkoutMessage}>
-              The approved atomic sales service is not connected. This transaction has not been submitted and inventory has not changed.
+              Sale recording and configured inventory consumption succeed or fail together. Failed submissions preserve this cart.
             </Text>
           </View>
           <Pressable accessibilityRole="button" onPress={() => onSetPage('cart')} style={styles.checkoutBackButton}>
             <Text style={styles.checkoutBackText}>Return to cart</Text>
           </Pressable>
-          <View style={[styles.placeOrderButton, styles.disabledButton]}>
-            <Text style={styles.placeOrderText}>Confirm Transaction</Text>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Confirm transaction"
+            disabled={!checkoutValid || saleSubmitting}
+            onPress={() => void submitCheckout()}
+            style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
+          >
+            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Recording…' : 'Confirm Transaction'}</Text>
+          </Pressable>
         </ScrollView>
         <View style={styles.totalFooter}>
           <View style={styles.totalRow}>
@@ -681,6 +747,13 @@ const styles = StyleSheet.create({
   checkoutLineName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
   checkoutLineMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
   checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 10 },
+  addonOption: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 9, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white, marginBottom: 6,
+  },
+  addonOptionText: { color: colors.text, fontFamily: font.medium, fontSize: 9 },
+  addonOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutTotalRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: 12,

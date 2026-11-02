@@ -42,6 +42,7 @@ export type Database = {
         quantity_precision: number;
         expiration_tracking: boolean;
         active: boolean;
+        automatic_consumption_enabled: boolean;
         created_at: string;
         updated_at: string;
       }>;
@@ -107,9 +108,67 @@ export type Database = {
         product_name: string;
         description: string;
         price: number;
+        piece_count: number | null;
+        is_available: boolean;
+        category: string;
+        internal_code: string | null;
+        display_name: string | null;
+        recipe_status: 'complete' | 'incomplete' | 'pending_confirmation';
+        created_at: string;
+        updated_at: string;
+      }>;
+      units_of_measure: Table<{
+        code: string;
+        name: string;
+        dimension: string;
+      }>;
+      unit_conversions: Table<{
+        from_unit: string;
+        to_unit: string;
+        factor: number;
+      }>;
+      ingredient_package_sizes: Table<{
+        ingredient_id: string;
+        package_quantity: number;
+        package_unit: string;
+        package_label: string;
+      }>;
+      product_variants: Table<{
+        id: string;
+        product_id: string;
+        variant_code: string;
+        size_label: string;
+        piece_count: number;
+        price: number;
+        active: boolean;
         is_available: boolean;
         created_at: string;
         updated_at: string;
+      }>;
+      branch_product_visibility: Table<{
+        branch_id: string;
+        product_variant_id: string;
+        is_visible: boolean;
+        created_at: string;
+      }>;
+      menu_addons: Table<{
+        id: string;
+        addon_code: string;
+        addon_name: string;
+        price: number;
+        active: boolean;
+        created_at: string;
+        updated_at: string;
+      }>;
+      batter_preparation_batches: Table<{
+        batch_reference: string;
+        branch_id: string;
+        prepared_by: string;
+        bottle_count: number;
+        bottle_volume_ml: number;
+        expected_min_pieces: number;
+        expected_max_pieces: number;
+        created_at: string;
       }>;
       recipes: Table<{
         id: string;
@@ -117,6 +176,7 @@ export type Database = {
         ingredient_id: string;
         quantity_required: number;
         unit_of_measure: string;
+        automatic_consumption_enabled: boolean;
       }>;
       sales: Table<{
         id: string;
@@ -126,15 +186,89 @@ export type Database = {
         total_amount: number;
         payment_method: string;
         status: 'pending' | 'completed' | 'cancelled';
+        inventory_processing_status: 'pending' | 'processing' | 'completed' | 'failed';
+        inventory_processing_error: string | null;
+        inventory_processed_at: string | null;
         created_at: string;
       }>;
       sale_items: Table<{
         id: string;
         sale_id: string;
         product_id: string;
+        product_variant_id: string | null;
         quantity: number;
         unit_price: number;
         subtotal: number;
+      }>;
+      sale_addons: Table<{
+        id: string;
+        sale_id: string;
+        addon_id: string;
+        quantity: number;
+        unit_price: number;
+        subtotal: number;
+      }>;
+      shared_recipes: Table<{
+        id: string;
+        recipe_code: string;
+        name: string;
+        estimated_yield_pieces: number;
+        active: boolean;
+        automatic_consumption_enabled: boolean;
+        version: number;
+        created_at: string;
+        updated_at: string;
+      }>;
+      shared_recipe_ingredients: Table<{
+        shared_recipe_id: string;
+        ingredient_id: string;
+        quantity_required: number;
+        unit_of_measure: string;
+        automatic_consumption_enabled: boolean;
+      }>;
+      shared_recipe_products: Table<{
+        shared_recipe_id: string;
+        product_id: string;
+        active: boolean;
+      }>;
+      sale_consumption_snapshots: Table<{
+        id: string;
+        sale_id: string;
+        ingredient_id: string;
+        quantity_consumed: number;
+        unit_of_measure: string;
+        applicable_pieces: number;
+        recipe_type: 'shared' | 'product';
+        recipe_id: string | null;
+        recipe_version: number | null;
+        recipe_quantity_required: number | null;
+        estimated_yield_pieces: number | null;
+        created_at: string;
+      }>;
+      shared_recipe_versions: Table<{
+        shared_recipe_id: string;
+        version: number;
+        name: string;
+        estimated_yield_pieces: number;
+        active: boolean;
+        automatic_consumption_enabled: boolean;
+        created_at: string;
+      }>;
+      shared_recipe_version_ingredients: Table<{
+        shared_recipe_id: string;
+        version: number;
+        ingredient_id: string;
+        quantity_required: number;
+        unit_of_measure: string;
+        automatic_consumption_enabled: boolean;
+      }>;
+      sale_inventory_processing: Table<{
+        sale_id: string;
+        status: 'pending' | 'processing' | 'completed' | 'failed';
+        failure_reason: string | null;
+        attempt_count: number;
+        processed_at: string | null;
+        updated_at: string;
       }>;
       audit_logs: Table<{
         id: string;
@@ -169,6 +303,29 @@ export type Database = {
       };
       submit_daily_stock_check: {
         Args: { p_branch_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
+        Returns: Json;
+      };
+      prepare_batter_batch: {
+        Args: { p_branch_id: string; p_batch_reference: string };
+        Returns: Database['public']['Tables']['batter_preparation_batches']['Row'];
+      };
+      submit_sale: {
+        Args: {
+          p_transaction_reference: string;
+          p_branch_id: string;
+          p_payment_method: string;
+          p_total_amount: number;
+          p_items: Json;
+          p_addons?: Json;
+        };
+        Returns: Database['public']['Tables']['sales']['Row'];
+      };
+      inspect_sale_reconciliation: {
+        Args: { p_transaction_reference: string };
+        Returns: Json;
+      };
+      process_sale_inventory: {
+        Args: { p_sale_id: string };
         Returns: Json;
       };
     };

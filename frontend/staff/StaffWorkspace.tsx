@@ -22,12 +22,15 @@ import MenuWorkspace from './MenuWorkspace';
 import type { MenuCartLine } from './menuPreviewData';
 import {
   loadInventory,
-  loadProducts,
+  loadStaffMenuCatalog,
   loadTransactionHistory,
   recordInventoryTransactions,
+  submitSale,
   submitDailyStockCheck,
   type AppUser,
-  type ProductMenuItem,
+  type SaleSubmission,
+  type StaffMenuAddon,
+  type StaffMenuCatalogItem,
 } from '../services/takosync';
 
 const colors = {
@@ -747,10 +750,13 @@ export default function StaffWorkspace({
   routeRef.current = route;
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
   const [menuCart, setMenuCart] = useState<MenuCartLine[]>([]);
-  const [menuCatalog, setMenuCatalog] = useState<ProductMenuItem[]>([]);
+  const [menuTransactionReference, setMenuTransactionReference] = useState<string | null>(null);
+  const [menuCatalog, setMenuCatalog] = useState<StaffMenuCatalogItem[]>([]);
+  const [menuAddons, setMenuAddons] = useState<StaffMenuAddon[]>([]);
   const [menuCatalogLoading, setMenuCatalogLoading] = useState(false);
   const [menuCatalogError, setMenuCatalogError] = useState('');
   const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
+  const [menuCatalogBranchId, setMenuCatalogBranchId] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [backendLoading, setBackendLoading] = useState(true);
@@ -873,16 +879,32 @@ export default function StaffWorkspace({
 
   useEffect(() => {
     if (route !== 'menu' && route !== 'cart' && route !== 'checkout') return;
-    if (menuCatalogLoaded || menuCatalogLoading) return;
+    if (menuCatalogLoading) return;
     let active = true;
     setMenuCatalogLoading(true);
     setMenuCatalogError('');
-    loadProducts()
-      .then((products) => {
+    if (!user?.branchId) {
+      setMenuCatalogError('Your account does not have an assigned branch. Contact the owner.');
+      setMenuCatalogLoading(false);
+      return;
+    }
+    if (menuCatalogLoaded && menuCatalogBranchId === user.branchId) {
+      setMenuCatalogLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setMenuCatalog([]);
+    setMenuAddons([]);
+    setMenuCatalogLoaded(false);
+    loadStaffMenuCatalog(user.branchId)
+      .then(({ products, addons }) => {
         if (active) {
           setMenuCatalog(products);
+          setMenuAddons(addons);
           setMenuCatalogError('');
           setMenuCatalogLoaded(true);
+          setMenuCatalogBranchId(user.branchId);
         }
       })
       .catch((error: unknown) => {
@@ -897,18 +919,24 @@ export default function StaffWorkspace({
     return () => {
       active = false;
     };
-  }, [route]);
+  }, [route, user?.branchId]);
 
   const retryMenuCatalog = () => {
     if (menuCatalogLoading || (route !== 'menu' && route !== 'cart' && route !== 'checkout')) return;
     setMenuCatalogLoading(true);
     setMenuCatalogError('');
     setMenuCatalogLoaded(false);
-    loadProducts()
-      .then((products) => {
+    if (!user?.branchId) {
+      setMenuCatalogError('Your account does not have an assigned branch. Contact the owner.');
+      return;
+    }
+    loadStaffMenuCatalog(user.branchId)
+      .then(({ products, addons }) => {
         setMenuCatalog(products);
+        setMenuAddons(addons);
         setMenuCatalogError('');
         setMenuCatalogLoaded(true);
+        setMenuCatalogBranchId(user.branchId);
       })
       .catch((error: unknown) => {
         setMenuCatalog([]);
@@ -1302,25 +1330,56 @@ export default function StaffWorkspace({
       setDashboardMessage('This product is no longer available in the current catalog.');
       return;
     }
-    if (!product.is_available) {
-      setDashboardMessage(`${product.product_name} is unavailable and was not added.`);
+    if (!product.isAvailable) {
+      setDashboardMessage(`${product.name} is unavailable and was not added.`);
       return;
     }
-    setMenuCart((current) => current.some((line) => line.productId === productId)
-      ? current
-      : [...current, { productId, quantity: 1 }]);
+    setMenuCart((current) => {
+      if (current.some((line) => line.productId === productId)) return current;
+      if (!menuTransactionReference) {
+        setMenuTransactionReference(`SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`);
+      }
+      return [...current, { productId, quantity: 1 }];
+    });
   };
 
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
-    setMenuCart((current) => current.flatMap((line) => {
+    setMenuCart((current) => {
+      const next = current.flatMap((line) => {
       if (line.productId !== productId) return [line];
       const quantity = line.quantity + change;
       return quantity > 0 ? [{ ...line, quantity }] : [];
-    }));
+      });
+      if (next.length === 0) setMenuTransactionReference(null);
+      return next;
+    });
   };
 
   const removeMenuProduct = (productId: string) => {
-    setMenuCart((current) => current.filter((line) => line.productId !== productId));
+    setMenuCart((current) => {
+      const next = current.filter((line) => line.productId !== productId);
+      if (next.length === 0) setMenuTransactionReference(null);
+      return next;
+    });
+  };
+
+  const submitMenuSale = async (
+    input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>,
+  ) => {
+    if (!user?.branchId) {
+      throw new Error('Your account does not have an assigned branch.');
+    }
+    const transactionReference = menuTransactionReference
+      ?? `SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const sale = await submitSale({
+      ...input,
+      branchId: user.branchId,
+      transactionReference,
+    });
+    setMenuCart([]);
+    setMenuTransactionReference(null);
+    setDashboardMessage(`Sale ${sale.transaction_reference} was recorded successfully.`);
+    setRoute('dashboard');
   };
 
   const openIngredientDetails = (item: Ingredient) => {
@@ -4349,7 +4408,9 @@ export default function StaffWorkspace({
           onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
           onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
           onRemoveProduct={removeMenuProduct}
+          onSubmitSale={submitMenuSale}
           catalog={menuCatalog}
+          addons={menuAddons}
           catalogLoading={menuCatalogLoading}
           catalogError={menuCatalogError}
           onRetryCatalog={retryMenuCatalog}

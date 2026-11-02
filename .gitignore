@@ -8,3 +8,5 @@ web-build/
 coverage/
 *.tsbuildinfo
 backend/supabase/.temp/
+supabase/.temp/
+supabase/.temp/

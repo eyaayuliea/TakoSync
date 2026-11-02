@@ -13,13 +13,16 @@ import {
   createIngredient,
   createIngredientCategory,
   loadIngredientRecipeConfiguration,
+  loadSharedRecipes,
   loadProducts,
+  saveSharedRecipe,
   saveProductRecipe,
   updateIngredient,
   type IngredientCategoryRecord,
   type IngredientConfigurationRecord,
   type ProductMenuItem,
   type RecipeIngredientRecord,
+  type SharedRecipeRecord,
 } from '../services/takosync';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 
@@ -38,6 +41,13 @@ type RecipeDraftLine = {
   key: string;
   ingredientId: string;
   quantity: string;
+};
+
+type SharedRecipeDraftLine = {
+  key: string;
+  ingredientId: string;
+  quantity: string;
+  unit: string;
 };
 
 const colors = {
@@ -102,6 +112,17 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraftLine[]>([]);
   const [recipeError, setRecipeError] = useState('');
   const [savingRecipe, setSavingRecipe] = useState(false);
+  const [sharedRecipes, setSharedRecipes] = useState<SharedRecipeRecord[]>([]);
+  const [sharedRecipeId, setSharedRecipeId] = useState<string | undefined>();
+  const [sharedRecipeCode, setSharedRecipeCode] = useState('shared-batter');
+  const [sharedRecipeName, setSharedRecipeName] = useState('Shared Takoyaki Batter');
+  const [sharedRecipeYield, setSharedRecipeYield] = useState('');
+  const [sharedRecipeActive, setSharedRecipeActive] = useState(false);
+  const [sharedRecipeAutomatic, setSharedRecipeAutomatic] = useState(false);
+  const [sharedRecipeProducts, setSharedRecipeProducts] = useState<string[]>([]);
+  const [sharedRecipeLines, setSharedRecipeLines] = useState<SharedRecipeDraftLine[]>([]);
+  const [sharedRecipeError, setSharedRecipeError] = useState('');
+  const [savingSharedRecipe, setSavingSharedRecipe] = useState(false);
   const [expandedIngredientLine, setExpandedIngredientLine] = useState<string | null>(null);
   const [selectedRecipeProductId, setSelectedRecipeProductId] = useState<string | null>(null);
   const [confirmRemoveLineId, setConfirmRemoveLineId] = useState<string | null>(null);
@@ -113,14 +134,32 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
     setLoading(true);
     setLoadError('');
     try {
-      const [configuration, nextProducts] = await Promise.all([
+      const [configuration, nextProducts, nextSharedRecipes] = await Promise.all([
         loadIngredientRecipeConfiguration(),
         loadProducts(),
+        loadSharedRecipes(),
       ]);
       setIngredients(configuration.ingredients);
       setCategories(configuration.categories);
       setRecipeIngredients(configuration.recipeIngredients);
       setProducts(nextProducts);
+      setSharedRecipes(nextSharedRecipes);
+      const currentShared = nextSharedRecipes[0];
+      if (currentShared) {
+        setSharedRecipeId(currentShared.id);
+        setSharedRecipeCode(currentShared.recipe_code);
+        setSharedRecipeName(currentShared.name);
+        setSharedRecipeYield(String(currentShared.estimated_yield_pieces));
+        setSharedRecipeActive(currentShared.active);
+        setSharedRecipeAutomatic(currentShared.automatic_consumption_enabled);
+        setSharedRecipeProducts(currentShared.productIds);
+        setSharedRecipeLines(currentShared.ingredientLines.map((line, index) => ({
+          key: `${currentShared.id}-${index}`,
+          ingredientId: line.ingredient_id,
+          quantity: String(line.quantity_required),
+          unit: line.unit_of_measure,
+        })));
+      }
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Unable to load ingredients and recipes.');
     } finally {
@@ -395,6 +434,102 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
     }
   };
 
+  const saveSharedRecipeDraft = async () => {
+    if (savingSharedRecipe) return;
+    setSharedRecipeError('');
+    const yieldPieces = Number(sharedRecipeYield);
+    if (!sharedRecipeCode.trim() || !sharedRecipeName.trim() || !Number.isFinite(yieldPieces) || yieldPieces <= 0) {
+      setSharedRecipeError('Enter a recipe code, name, and estimated yield greater than zero.');
+      return;
+    }
+    const seen = new Set<string>();
+    const ingredientLines = [];
+    for (const line of sharedRecipeLines) {
+      const ingredient = ingredientById.get(line.ingredientId);
+      if (!ingredient || seen.has(line.ingredientId)) {
+        setSharedRecipeError('Choose a different configured ingredient for each shared recipe line.');
+        return;
+      }
+      const quantity = Number(line.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0 || line.unit !== ingredient.unit) {
+        setSharedRecipeError(`Enter a positive quantity using ${formatUnit(ingredient.unit)} for ${ingredient.name}.`);
+        return;
+      }
+      seen.add(line.ingredientId);
+      ingredientLines.push({
+        ingredient_id: ingredient.id,
+        quantity_required: quantity,
+        unit_of_measure: ingredient.unit,
+        automatic_consumption_enabled: sharedRecipeAutomatic,
+      });
+    }
+    setSavingSharedRecipe(true);
+    try {
+      await saveSharedRecipe({
+        id: sharedRecipeId,
+        recipe_code: sharedRecipeCode,
+        name: sharedRecipeName,
+        estimated_yield_pieces: yieldPieces,
+        active: sharedRecipeActive,
+        automatic_consumption_enabled: sharedRecipeAutomatic,
+        ingredientLines,
+        productIds: sharedRecipeProducts,
+      });
+      setFeedback({ type: 'success', message: 'Shared batter recipe saved. Historical sale consumption is unchanged.' });
+      await refresh();
+    } catch (error) {
+      setSharedRecipeError(error instanceof Error ? error.message : 'Unable to save the shared recipe.');
+    } finally {
+      setSavingSharedRecipe(false);
+    }
+  };
+
+  const renderSharedRecipeEditor = () => (
+    <View style={styles.recipeCard}>
+      <Text style={styles.cardTitle}>Shared batter recipe</Text>
+      <Text style={styles.cardMeta}>Owner-configured yield used for completed-sale estimates. Staff do not record batter batches.</Text>
+      <TextInput value={sharedRecipeCode} onChangeText={setSharedRecipeCode} placeholder="Recipe code" style={styles.searchInput} />
+      <TextInput value={sharedRecipeName} onChangeText={setSharedRecipeName} placeholder="Recipe name" style={styles.searchInput} />
+      <TextInput value={sharedRecipeYield} onChangeText={setSharedRecipeYield} placeholder="Estimated pieces per recipe" keyboardType="decimal-pad" style={styles.searchInput} />
+      {sharedRecipeLines.map((line) => (
+        <View key={line.key} style={styles.detailIngredientRow}>
+          <View style={styles.cardCopy}>
+            <Text style={styles.cardTitle}>{ingredientById.get(line.ingredientId)?.name ?? 'Choose ingredient'}</Text>
+            <TextInput value={line.quantity} onChangeText={(quantity) => setSharedRecipeLines((current) => current.map((item) => item.key === line.key ? { ...item, quantity } : item))} placeholder="Quantity" keyboardType="decimal-pad" style={styles.quantityInput} />
+          </View>
+          <Pressable onPress={() => setSharedRecipeLines((current) => current.filter((item) => item.key !== line.key))} style={styles.removeAction}>
+            <Text style={styles.removeActionText}>Remove</Text>
+          </Pressable>
+        </View>
+      ))}
+      <Pressable onPress={() => {
+        const ingredient = ingredients.find((item) => !sharedRecipeLines.some((line) => line.ingredientId === item.id));
+        if (ingredient) setSharedRecipeLines((current) => [...current, { key: `${Date.now()}-${ingredient.id}`, ingredientId: ingredient.id, quantity: '', unit: ingredient.unit }]);
+      }} style={styles.addEntryButton}>
+        <Text style={styles.addEntryText}>+ Add next ingredient</Text>
+      </Pressable>
+      <Text style={styles.cardMeta}>Applicable products</Text>
+      <View style={styles.inlineActions}>
+        {products.filter((product) => product.is_available).map((product) => {
+          const selected = sharedRecipeProducts.includes(product.id);
+          return (
+            <Pressable key={product.id} onPress={() => setSharedRecipeProducts((current) => selected ? current.filter((id) => id !== product.id) : [...current, product.id])} style={[styles.smallAction, selected && styles.selectedAction]}>
+              <Text style={styles.smallActionText}>{product.product_name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.inlineActions}>
+        <Pressable onPress={() => setSharedRecipeActive((value) => !value)} style={styles.smallAction}><Text style={styles.smallActionText}>{sharedRecipeActive ? 'Active' : 'Inactive'}</Text></Pressable>
+        <Pressable onPress={() => setSharedRecipeAutomatic((value) => !value)} style={styles.smallAction}><Text style={styles.smallActionText}>{sharedRecipeAutomatic ? 'Automatic on' : 'Automatic off'}</Text></Pressable>
+      </View>
+      {sharedRecipeError ? <Text style={styles.fieldError} accessibilityRole="alert">{sharedRecipeError}</Text> : null}
+      <Pressable disabled={savingSharedRecipe} onPress={() => void saveSharedRecipeDraft()} style={[styles.primaryButton, savingSharedRecipe && styles.buttonDisabled]}>
+        <Text style={styles.primaryButtonText}>{savingSharedRecipe ? 'Saving…' : 'Save Shared Recipe'}</Text>
+      </Pressable>
+    </View>
+  );
+
   const renderSummary = () => (
     <View style={styles.summaryGrid}>
       <View style={[styles.summaryCard, styles.summaryCardFeatured]}>
@@ -479,6 +614,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
 
   const renderRecipeList = () => (
     <>
+      {renderSharedRecipeEditor()}
       {renderSearch('Search recipes by product')}
       <Pressable accessibilityRole="button" onPress={() => openRecipeBuilder()} style={styles.primaryButton}>
         <Text style={styles.primaryButtonText}>+ Create Recipe</Text>
@@ -953,6 +1089,7 @@ function useStyles() {
     usageHint: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
     inlineActions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     smallAction: { minHeight: 26, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8, backgroundColor: colors.pale },
+    selectedAction: { backgroundColor: colors.paleGreen, borderWidth: 1, borderColor: colors.green },
     smallActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 7 },
     recipeCard: { padding: 11, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: colors.white },
     recipeHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },

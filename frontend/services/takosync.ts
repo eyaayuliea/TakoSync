@@ -79,6 +79,8 @@ export type OwnerSale = {
   total_amount: number;
   payment_method: string;
   status: 'pending' | 'completed' | 'cancelled';
+  inventory_processing_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  inventory_processing_error?: string | null;
   created_at: string;
 };
 
@@ -109,6 +111,55 @@ export type ProductMenuItem = {
   updated_at: string;
 };
 
+export type StaffMenuCatalogItem = {
+  id: string;
+  productId: string;
+  name: string;
+  description: string;
+  category: string;
+  sizeLabel: string;
+  price: number;
+  pieceCount: number;
+  isAvailable: boolean;
+};
+
+export type StaffMenuAddon = {
+  id: string;
+  name: string;
+  price: number;
+  isAvailable: boolean;
+};
+
+export type SharedRecipeRecord = {
+  id: string;
+  recipe_code: string;
+  name: string;
+  estimated_yield_pieces: number;
+  active: boolean;
+  automatic_consumption_enabled: boolean;
+  version: number;
+  ingredientLines: Array<{
+    ingredient_id: string;
+    quantity_required: number;
+    unit_of_measure: string;
+    automatic_consumption_enabled: boolean;
+  }>;
+  productIds: string[];
+};
+
+export type SaleSubmission = {
+  transactionReference: string;
+  branchId: string;
+  paymentMethod: 'Cash' | 'Card';
+  totalAmount: number;
+  items: Array<{
+    variantId: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+  addonIds: string[];
+};
+
 export type IngredientCategoryRecord = {
   id: string;
   name: string;
@@ -133,6 +184,7 @@ export type RecipeIngredientRecord = {
   ingredient_id: string;
   quantity_required: number;
   unit_of_measure: string;
+  automatic_consumption_enabled: boolean;
 };
 
 export type StockThresholdInventory = {
@@ -654,6 +706,236 @@ export async function loadProducts(): Promise<ProductMenuItem[]> {
   }));
 }
 
+export async function loadStaffMenuCatalog(branchId: string): Promise<{
+  products: StaffMenuCatalogItem[];
+  addons: StaffMenuAddon[];
+}> {
+  const client = requireSupabase();
+  const [productsResult, variantsResult, visibilityResult, addonsResult] = await Promise.all([
+    client.from('products')
+      .select('id, product_name, description, is_available'),
+    client.from('product_variants')
+      .select('id, product_id, size_label, price, piece_count, is_available, active')
+      .eq('active', true),
+    client.from('branch_product_visibility')
+      .select('product_variant_id, is_visible')
+      .eq('branch_id', branchId)
+      .eq('is_visible', true),
+    client.from('menu_addons')
+      .select('id, addon_name, price, active')
+      .eq('active', true)
+      .order('addon_name', { ascending: true }),
+  ]);
+  assertNoError(productsResult.error);
+  assertNoError(variantsResult.error);
+  assertNoError(visibilityResult.error);
+  assertNoError(addonsResult.error);
+
+  const productsById = new Map((productsResult.data ?? []).map((product) => [product.id, product]));
+  const visibleVariantIds = new Set((visibilityResult.data ?? []).map((row) => row.product_variant_id));
+  const products = (variantsResult.data ?? [])
+    .filter((variant) => visibleVariantIds.has(variant.id) && variant.is_available)
+    .map((variant) => {
+      const product = productsById.get(variant.product_id);
+      if (!product || product.product_name === 'combo_octobits_cheese_02') return null;
+      return {
+        id: variant.id,
+        productId: variant.product_id,
+        name: product.product_name,
+        description: product.description,
+        category: 'Menu',
+        sizeLabel: variant.size_label,
+        price: Number(variant.price),
+        pieceCount: Number(variant.piece_count),
+        isAvailable: product.is_available && variant.is_available,
+      };
+    })
+    .filter((product): product is StaffMenuCatalogItem => product !== null);
+
+  return {
+    products,
+    addons: (addonsResult.data ?? []).map((addon) => ({
+      id: addon.id,
+      name: addon.addon_name,
+      price: Number(addon.price),
+      isAvailable: addon.active,
+    })),
+  };
+}
+
+export async function prepareBatterBatch(branchId: string, batchReference: string) {
+  const { data, error } = await requireSupabase().rpc('prepare_batter_batch', {
+    p_branch_id: branchId,
+    p_batch_reference: batchReference,
+  });
+  assertNoError(error);
+  return data;
+}
+
+export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
+  const { data, error } = await requireSupabase().rpc('submit_sale', {
+    p_transaction_reference: input.transactionReference,
+    p_branch_id: input.branchId,
+    p_payment_method: input.paymentMethod,
+    p_total_amount: input.totalAmount,
+    p_items: input.items.map((item) => ({
+      variant_id: item.variantId,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+    })),
+    p_addons: input.addonIds.map((addonId) => ({ addon_id: addonId })),
+  });
+  assertNoError(error);
+  if (!data) throw new Error('The sale service returned no saved transaction.');
+  return {
+    id: data.id,
+    transaction_reference: data.transaction_reference,
+    branch_id: data.branch_id,
+    total_amount: Number(data.total_amount),
+    payment_method: data.payment_method,
+    status: data.status,
+    inventory_processing_status: data.inventory_processing_status,
+    inventory_processing_error: data.inventory_processing_error,
+    created_at: data.created_at,
+  };
+}
+
+export type SaleInventoryProcessingResult = {
+  status: 'completed' | 'failed';
+  sale_id: string;
+  error?: string;
+};
+
+export async function processSaleInventory(saleId: string): Promise<SaleInventoryProcessingResult> {
+  const { data, error } = await requireSupabase().rpc('process_sale_inventory', { p_sale_id: saleId });
+  assertNoError(error);
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || typeof data.status !== 'string' || typeof data.sale_id !== 'string') {
+    throw new Error('The inventory processing service returned an invalid result.');
+  }
+  return {
+    status: data.status === 'completed' ? 'completed' : 'failed',
+    sale_id: data.sale_id,
+    ...(typeof data.error === 'string' ? { error: data.error } : {}),
+  };
+}
+
+export async function inspectSaleReconciliation(transactionReference: string): Promise<Record<string, unknown>> {
+  const { data, error } = await requireSupabase().rpc('inspect_sale_reconciliation', {
+    p_transaction_reference: transactionReference,
+  });
+  assertNoError(error);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('The reconciliation service returned no result.');
+  }
+  return data;
+}
+
+export async function loadSharedRecipes(): Promise<SharedRecipeRecord[]> {
+  const client = requireSupabase();
+  const [recipes, lines, products] = await Promise.all([
+    client.from('shared_recipes')
+      .select('id, recipe_code, name, estimated_yield_pieces, active, automatic_consumption_enabled, version')
+      .order('name', { ascending: true }),
+    client.from('shared_recipe_ingredients')
+      .select('shared_recipe_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled' ),
+    client.from('shared_recipe_products')
+      .select('shared_recipe_id, product_id')
+      .eq('active', true),
+  ]);
+  assertNoError(recipes.error);
+  assertNoError(lines.error);
+  assertNoError(products.error);
+  return (recipes.data ?? []).map((recipe) => ({
+    ...recipe,
+    estimated_yield_pieces: Number(recipe.estimated_yield_pieces),
+    ingredientLines: (lines.data ?? [])
+      .filter((line) => line.shared_recipe_id === recipe.id)
+      .map((line) => ({ ...line, quantity_required: Number(line.quantity_required) })),
+    productIds: (products.data ?? [])
+      .filter((product) => product.shared_recipe_id === recipe.id)
+      .map((product) => product.product_id),
+  }));
+}
+
+export async function saveSharedRecipe(input: {
+  id?: string;
+  recipe_code: string;
+  name: string;
+  estimated_yield_pieces: number;
+  active: boolean;
+  automatic_consumption_enabled: boolean;
+  ingredientLines: SharedRecipeRecord['ingredientLines'];
+  productIds: string[];
+}): Promise<void> {
+  if (!input.recipe_code.trim() || !input.name.trim()) throw new Error('Recipe code and name are required.');
+  if (!Number.isFinite(input.estimated_yield_pieces) || input.estimated_yield_pieces <= 0) {
+    throw new Error('Estimated yield must be greater than zero.');
+  }
+  if (input.automatic_consumption_enabled && (!input.active || input.ingredientLines.length === 0)) {
+    throw new Error('An active automatic recipe requires at least one ingredient.');
+  }
+  const ingredientIds = new Set<string>();
+  for (const line of input.ingredientLines) {
+    if (ingredientIds.has(line.ingredient_id)) throw new Error('An ingredient can only appear once in a shared recipe.');
+    if (!Number.isFinite(line.quantity_required) || line.quantity_required <= 0) {
+      throw new Error('Shared recipe quantities must be greater than zero.');
+    }
+    if (!line.unit_of_measure.trim()) throw new Error('Every shared recipe line needs a unit.');
+    ingredientIds.add(line.ingredient_id);
+  }
+  const client = requireSupabase();
+  const currentResult = input.id
+    ? await client.from('shared_recipes').select('version').eq('id', input.id).maybeSingle()
+    : null;
+  if (currentResult) assertNoError(currentResult.error);
+  const current = currentResult?.data ?? null;
+  const version = (current?.version ?? 0) + 1;
+  const recipeId = input.id ?? crypto.randomUUID();
+  const { error: recipeError } = await client.from('shared_recipes').upsert({
+    id: recipeId,
+    recipe_code: input.recipe_code.trim(),
+    name: input.name.trim(),
+    estimated_yield_pieces: input.estimated_yield_pieces,
+    active: input.active,
+    automatic_consumption_enabled: input.automatic_consumption_enabled,
+    version,
+  });
+  assertNoError(recipeError);
+  const { error: versionError } = await client.from('shared_recipe_versions').insert({
+    shared_recipe_id: recipeId,
+    version,
+    name: input.name.trim(),
+    estimated_yield_pieces: input.estimated_yield_pieces,
+    active: input.active,
+    automatic_consumption_enabled: input.automatic_consumption_enabled,
+  });
+  assertNoError(versionError);
+  await client.from('shared_recipe_version_ingredients').delete().eq('shared_recipe_id', recipeId).eq('version', version);
+  if (input.ingredientLines.length) {
+    const { error } = await client.from('shared_recipe_version_ingredients').insert(
+      input.ingredientLines.map((line) => ({ shared_recipe_id: recipeId, version, ...line })),
+    );
+    assertNoError(error);
+  }
+  const { error: lineError } = await client.from('shared_recipe_ingredients').delete().eq('shared_recipe_id', recipeId);
+  assertNoError(lineError);
+  if (input.ingredientLines.length) {
+    const { error } = await client.from('shared_recipe_ingredients').insert(
+      input.ingredientLines.map((line) => ({ shared_recipe_id: recipeId, ...line })),
+    );
+    assertNoError(error);
+  }
+  const { error: productError } = await client.from('shared_recipe_products').delete().eq('shared_recipe_id', recipeId);
+  assertNoError(productError);
+  if (input.productIds.length) {
+    const { error } = await client.from('shared_recipe_products').insert(
+      input.productIds.map((product_id) => ({ shared_recipe_id: recipeId, product_id, active: true })),
+    );
+    assertNoError(error);
+  }
+}
+
 export async function loadIngredientRecipeConfiguration(): Promise<{
   ingredients: IngredientConfigurationRecord[];
   categories: IngredientCategoryRecord[];
@@ -668,7 +950,7 @@ export async function loadIngredientRecipeConfiguration(): Promise<{
       .select('id, name, created_at')
       .order('name', { ascending: true }),
     client.from('recipes')
-      .select('id, product_id, ingredient_id, quantity_required, unit_of_measure')
+      .select('id, product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled')
       .order('product_id', { ascending: true }),
   ]);
   assertNoError(ingredientsResult.error);
@@ -811,7 +1093,7 @@ export async function saveProductRecipe(
 
   const { data, error } = await client
     .from('recipes')
-    .select('id, product_id, ingredient_id, quantity_required, unit_of_measure')
+    .select('id, product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled')
     .eq('product_id', productId)
     .order('ingredient_id', { ascending: true });
   assertNoError(error);
