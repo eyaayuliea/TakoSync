@@ -15,10 +15,11 @@ sql_paths = ["./seed.sql"]
 
 [auth]
 enabled = true
+enable_signup = false
 site_url = "http://localhost:8081"
 additional_redirect_urls = ["http://localhost:8081"]
 
 [auth.email]
-enable_signup = false
+enabled = true
 double_confirm_changes = true
 enable_confirmations = true
