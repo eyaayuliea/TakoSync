@@ -751,6 +751,7 @@ export default function StaffWorkspace({
   const [menuTransactionReference, setMenuTransactionReference] = useState<string | null>(null);
   const [menuCatalog, setMenuCatalog] = useState<StaffMenuCatalogItem[]>([]);
   const [menuAddons, setMenuAddons] = useState<StaffMenuAddon[]>([]);
+  const menuSaleSubmissionLock = useRef(false);
   const [menuCatalogLoading, setMenuCatalogLoading] = useState(false);
   const [menuCatalogError, setMenuCatalogError] = useState('');
   const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
@@ -1407,21 +1408,33 @@ export default function StaffWorkspace({
   const submitMenuSale = async (
     input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>,
   ) => {
+    if (menuSaleSubmissionLock.current) return;
     if (!user?.branchId) {
       throw new Error('Your account does not have an assigned branch.');
     }
-    const transactionReference = menuTransactionReference
-      ?? `SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const sale = await submitSale({
-      ...input,
-      branchId: user.branchId,
-      transactionReference,
-    });
-    setMenuCart([]);
-    setMenuTransactionReference(null);
-    await refreshBackendData();
-    setDashboardMessage(`Sale ${sale.transaction_reference} was recorded successfully.`);
-    setRoute('dashboard');
+    menuSaleSubmissionLock.current = true;
+    try {
+      const transactionReference = menuTransactionReference
+        ?? `SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const sale = await submitSale({
+        ...input,
+        branchId: user.branchId,
+        transactionReference,
+      });
+      setMenuCart([]);
+      setMenuTransactionReference(null);
+      await refreshBackendData();
+      const inventoryStatus = sale.inventory_processing_status ?? 'pending';
+      const message = inventoryStatus === 'failed'
+        ? `Sale ${sale.transaction_reference} was recorded but inventory processing failed.`
+        : inventoryStatus === 'pending' || inventoryStatus === 'processing'
+          ? `Sale ${sale.transaction_reference} was recorded and is being processed.`
+          : `Sale ${sale.transaction_reference} was recorded successfully.`;
+      setDashboardMessage(message);
+      setRoute('dashboard');
+    } finally {
+      menuSaleSubmissionLock.current = false;
+    }
   };
 
   const submitBatterPreparation = async () => {

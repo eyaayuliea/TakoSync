@@ -873,6 +873,12 @@ export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
   });
   if (error) {
     const message = error.message.toLowerCase();
+    if (message.includes('different sale payload')) {
+      throw new Error('This transaction reference was already used with a different checkout payload.');
+    }
+    if (message.includes('belongs to another branch')) {
+      throw new Error('This transaction reference belongs to a different branch.');
+    }
     if (message.includes('exceeds available stock')) {
       throw new Error('Insufficient inventory to complete this sale.');
     }
@@ -882,8 +888,8 @@ export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
     throw new Error('Unable to complete the sale. No inventory was deducted. Please try again.');
   }
   if (!data) throw new Error('The sale service returned no saved transaction.');
-  if (data.status !== 'completed') {
-    throw new Error('The sale was not fully processed. No checkout success was recorded.');
+  if (data.status !== 'completed' && data.status !== 'pending') {
+    throw new Error('The sale was not recorded correctly. Please check the checkout status.');
   }
   return {
     id: data.id,
