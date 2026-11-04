@@ -158,9 +158,13 @@ jobs:
               sys.exit(1)
 
           latest_applied = max(applied, default="")
+          # 202611020004 was added after 202611040001 had already been applied.
+          # Its database effects were checked, and 202611040002 restores the
+          # business-session guard on the RPC that 020004 replaces.
+          reviewed_late_migrations = {"202611020000", "202611020004"}
           unexpected_older = sorted(
               version for version in pending
-              if version < latest_applied and version != "202611020000"
+              if version < latest_applied and version not in reviewed_late_migrations
           )
           if unexpected_older:
               print(
