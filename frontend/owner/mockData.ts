@@ -98,7 +98,8 @@ export function isNearExpiry(ingredient: OwnerIngredient): boolean {
   const expiresAt = new Date(`${ingredient.expirationDate}T00:00:00`).getTime();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return expiresAt - today.getTime() <= 7 * 86_400_000;
+  const daysRemaining = (expiresAt - today.getTime()) / 86_400_000;
+  return daysRemaining >= 0 && daysRemaining <= 7;
 }
 
 export function formatOwnerDate(value: string): string {

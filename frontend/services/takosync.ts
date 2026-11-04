@@ -7,6 +7,10 @@ import {
   inventoryTransactionLabel,
   type InventoryTransactionLabel,
 } from './transactionLabels';
+import {
+  getOwnerSaleInventoryStatusLabel,
+  shouldIncludeOwnerSaleInSummary,
+} from './ownerSalesStatus';
 
 export type AppUser = {
   id: string;
@@ -112,6 +116,8 @@ export type OwnerSalesData = {
   previousSales: OwnerSale[];
   items: OwnerSaleItem[];
 };
+
+export { getOwnerSaleInventoryStatusLabel, shouldIncludeOwnerSaleInSummary };
 
 export type OwnerDiscrepancyReview = {
   countLineId: string;
@@ -442,7 +448,7 @@ export async function loadOwnerSalesData(input: {
     const sales: OwnerSale[] = [];
     for (let offset = 0; ; offset += pageSize) {
       let query = client.from('sales')
-        .select('id, transaction_reference, branch_id, total_amount, payment_method, status, created_at')
+        .select('id, transaction_reference, branch_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at')
         .eq('status', 'completed')
         .gte('created_at', start.toISOString())
         .lt('created_at', end.toISOString())
@@ -876,7 +882,7 @@ export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
     throw new Error('Unable to complete the sale. No inventory was deducted. Please try again.');
   }
   if (!data) throw new Error('The sale service returned no saved transaction.');
-  if (data.inventory_processing_status !== 'completed' || data.status !== 'completed') {
+  if (data.status !== 'completed') {
     throw new Error('The sale was not fully processed. No checkout success was recorded.');
   }
   return {

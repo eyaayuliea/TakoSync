@@ -13,6 +13,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
+  getOwnerSaleInventoryStatusLabel,
   loadOwnerSalesData,
   type OwnerSale,
   type OwnerSaleItem,
@@ -923,6 +924,12 @@ export default function OwnerSalesWorkspace({
                 {visibleRows.map(({ sale, branch, summary, quantity }) => {
                   const expanded = expandedSaleId === sale.id;
                   const saleItems = productBySale.get(sale.id) ?? [];
+                  const inventoryStatus = getOwnerSaleInventoryStatusLabel(sale);
+                  const inventoryStatusStyle = inventoryStatus === 'Failed'
+                    ? styles.failedStatus
+                    : inventoryStatus === 'Pending' || inventoryStatus === 'Processing'
+                      ? styles.pendingStatus
+                      : styles.completedStatus;
                   return (
                     <Pressable
                       key={sale.id}
@@ -942,7 +949,7 @@ export default function OwnerSalesWorkspace({
                       </Text>
                       <View style={styles.transactionBottomLine}>
                         <Text style={styles.transactionMeta}>{sale.payment_method || 'Payment unavailable'}</Text>
-                        <Text style={styles.completedStatus}>Completed · {expanded ? 'Hide details' : 'View details'}</Text>
+                        <Text style={inventoryStatusStyle}>{inventoryStatus} · {expanded ? 'Hide details' : 'View details'}</Text>
                       </View>
                       {expanded && (
                         <View style={styles.transactionDetails}>
@@ -958,8 +965,14 @@ export default function OwnerSalesWorkspace({
                           )}
                           <View style={styles.transactionDetailRow}>
                             <Text style={styles.transactionDetailName}>Transaction status</Text>
-                            <Text style={styles.completedStatus}>Completed</Text>
+                            <Text style={inventoryStatusStyle}>{inventoryStatus}</Text>
                           </View>
+                          {sale.inventory_processing_error ? (
+                            <View style={styles.transactionDetailRow}>
+                              <Text style={styles.transactionDetailName}>Inventory processing</Text>
+                              <Text style={styles.failedStatus}>{sale.inventory_processing_error}</Text>
+                            </View>
+                          ) : null}
                         </View>
                       )}
                     </Pressable>
@@ -980,6 +993,7 @@ export default function OwnerSalesWorkspace({
                   </View>
                   {visibleRows.map(({ sale, branch, summary, quantity }) => {
                     const expanded = expandedSaleId === sale.id;
+                    const inventoryStatus = getOwnerSaleInventoryStatusLabel(sale);
                     return (
                       <Pressable
                         key={sale.id}
@@ -992,7 +1006,7 @@ export default function OwnerSalesWorkspace({
                         <Text style={[styles.tableCell, styles.dateColumn]} numberOfLines={2}>{compactDate(sale.created_at)}</Text>
                         <Text style={[styles.tableCell, styles.branchColumn]} numberOfLines={1}>{branch}</Text>
                         <Text style={[styles.tableCell, styles.summaryColumn]} numberOfLines={expanded ? undefined : 2}>
-                          {expanded ? `${summary} · ${sale.payment_method} · Completed` : summary}
+                          {expanded ? `${summary} · ${sale.payment_method} · ${inventoryStatus}` : `${summary}${inventoryStatus !== 'Completed' ? ` · ${inventoryStatus}` : ''}`}
                         </Text>
                         <Text style={[styles.tableCell, styles.quantityColumn]}>{quantity || '—'}</Text>
                         <Text style={[styles.tableCell, styles.paymentColumn]}>{sale.payment_method || '—'}</Text>
@@ -1138,6 +1152,8 @@ function useStyles() {
     transactionProducts: { color: '#343440', fontFamily: 'Poppins_500Medium', fontSize: 8, lineHeight: 13, marginTop: 7 },
     transactionBottomLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 7, marginTop: 3 },
     completedStatus: { color: '#2F8C57', fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
+    pendingStatus: { color: '#D98600', fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
+    failedStatus: { color: '#C3224A', fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
     transactionDetails: { marginTop: 9, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#EEEEF1', gap: 7 },
     transactionDetailRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
     transactionDetailName: { flex: 1, color: '#555563', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 12 },
