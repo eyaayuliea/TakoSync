@@ -18,6 +18,7 @@ fi
 
 psql_test=(psql "$database_url" -X -q -v ON_ERROR_STOP=1)
 owner_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
+session_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 branch_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 check_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 line_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
@@ -69,6 +70,19 @@ insert into auth.users (
 update public.profiles
 set role = 'owner', branch_id = null, active = true
 where id = '${owner_id}';
+update public.business_day_settings
+set normal_closing_time = time '23:59:58',
+    extended_closing_time = time '23:59:59',
+    extended_closing_enabled = true
+where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values ('${session_id}', '${owner_id}', now(), now());
+insert into public.business_day_sessions (session_id, user_id, business_date)
+values (
+  '${session_id}',
+  '${owner_id}',
+  (clock_timestamp() at time zone 'Asia/Manila')::date
+);
 update public.branch_inventory
 set quantity = 10
 where branch_id = '${branch_id}' and ingredient_id = 'flour';
@@ -102,6 +116,7 @@ run_approval() {
   local output_file=$1
   "${psql_test[@]}" -At \
     -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+    -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"role\":\"authenticated\",\"session_id\":\"${session_id}\"}', false)" \
     -c "select (public.authorize_inventory_discrepancy_adjustment('${line_id}', 'Concurrent test approval')).id" \
     > "$output_file"
 }

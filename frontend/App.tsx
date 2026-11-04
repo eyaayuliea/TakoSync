@@ -26,10 +26,9 @@ import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
-import { millisecondsUntilNextLocalDay } from './services/staffSessionPolicy';
 import {
   getCurrentUser,
-  isStaffSessionDayExpired,
+  isBusinessSessionExpired,
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
@@ -142,12 +141,13 @@ function AppContent() {
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
-  const staffExpiryLock = useRef(false);
+  const businessExpiryLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
@@ -578,31 +578,34 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (authenticatedUser?.role !== 'Staff') return;
+    if (!authenticatedUser) return;
     let active = true;
-    const expireStaffSession = async () => {
-      if (staffExpiryLock.current) return;
-      staffExpiryLock.current = true;
+    const expireBusinessSession = async () => {
+      if (businessExpiryLock.current) return;
+      businessExpiryLock.current = true;
       try {
-        if (!(await isStaffSessionDayExpired())) return;
+        if (!(await isBusinessSessionExpired())) return;
         await signOut();
         if (!active) return;
         clearSignedInState();
-        setLoginError('Your Staff session ended at the end of the calendar day. Sign in again.');
-        setScreen('login');
+        setLoginError('Your business session has ended. Sign in again for the next business date.');
+        setScreen(authenticatedUser.role === 'Owner' ? 'ownerLogin' : 'login');
       } catch (error) {
         if (active) {
           clearSignedInState();
-          setLoginError(error instanceof Error ? error.message : 'Unable to verify the Staff session. Sign in again.');
-          setScreen('login');
+          setLoginError(error instanceof Error ? error.message : 'Unable to verify the business session. Sign in again.');
+          setScreen(authenticatedUser.role === 'Owner' ? 'ownerLogin' : 'login');
         }
       } finally {
-        staffExpiryLock.current = false;
+        businessExpiryLock.current = false;
       }
     };
-    const timer = setTimeout(() => void expireStaffSession(), millisecondsUntilNextLocalDay());
+    const timer = setTimeout(
+      () => void expireBusinessSession(),
+      Math.max(0, authenticatedUser.businessSessionMillisecondsRemaining + 25),
+    );
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void expireStaffSession();
+      if (state === 'active') void expireBusinessSession();
     });
     return () => {
       active = false;
@@ -792,21 +795,37 @@ function AppContent() {
                           returnKeyType="next"
                         />
                         <Text style={[styles.loginLabel, styles.passwordLabel]}>Password *</Text>
-                        <TextInput
-                          value={password}
-                          onChangeText={(value) => {
-                            setPassword(value);
-                            setLoginError('');
-                          }}
-                          style={styles.loginInput}
-                          placeholder="Enter your password"
-                          placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
-                          secureTextEntry
-                          accessibilityLabel="Password, required"
-                          editable={!authenticating}
-                          returnKeyType="done"
-                          onSubmitEditing={handleLogin}
-                        />
+                        <View style={styles.loginPasswordWrap}>
+                          <TextInput
+                            value={password}
+                            onChangeText={(value) => {
+                              setPassword(value);
+                              setLoginError('');
+                            }}
+                            style={styles.loginPasswordInput}
+                            placeholder="Enter your password"
+                            placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
+                            secureTextEntry={!passwordVisible}
+                            accessibilityLabel="Password, required"
+                            editable={!authenticating}
+                            returnKeyType="done"
+                            onSubmitEditing={handleLogin}
+                          />
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={passwordVisible ? 'Hide password' : 'Show password'}
+                            accessibilityState={{ selected: passwordVisible, disabled: authenticating }}
+                            onPress={() => setPasswordVisible((visible) => !visible)}
+                            disabled={authenticating}
+                            hitSlop={8}
+                            style={styles.passwordVisibilityButton}
+                          >
+                            <View style={styles.passwordEye}>
+                              <View style={styles.passwordEyePupil} />
+                              {passwordVisible && <View style={styles.passwordEyeSlash} />}
+                            </View>
+                          </Pressable>
+                        </View>
                         <Text style={styles.loginHelper}>
                           Use your registered Supabase email address. Owners should use the Owner Login screen.
                         </Text>
@@ -863,6 +882,12 @@ function AppContent() {
                 onRefresh={refreshOwnerDashboard}
                 refreshing={ownerLoading || salesLoading || activityLoading}
                 loggingOut={loggingOut}
+                onBusinessSessionDeadlineChange={(millisecondsUntilExpiration) => {
+                  setAuthenticatedUser((current) => current && ({
+                    ...current,
+                    businessSessionMillisecondsRemaining: millisecondsUntilExpiration,
+                  }));
+                }}
               />
             )}
 
@@ -1571,6 +1596,44 @@ function useAppStyles() {
     backgroundColor: '#FFFFFF',
     color: NAVY,
     fontSize: 15,
+  },
+  loginPasswordWrap: {
+    width: '100%',
+    height: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+  },
+  loginPasswordInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 14,
+    color: NAVY,
+    fontSize: 15,
+  },
+  passwordVisibilityButton: {
+    width: 48,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passwordEye: {
+    width: 18,
+    height: 12,
+    borderWidth: 1.5,
+    borderColor: '#777783',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passwordEyePupil: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#777783' },
+  passwordEyeSlash: {
+    position: 'absolute',
+    width: 23,
+    height: 1.5,
+    backgroundColor: '#777783',
+    transform: [{ rotate: '-45deg' }],
   },
   loginHelper: { color: '#C8C8D0', fontSize: 11, lineHeight: 16, marginTop: 16 },
   loginButton: {
