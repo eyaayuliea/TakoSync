@@ -306,6 +306,22 @@ export type Database = {
         approved_at: string;
         inventory_movement_id: string;
       }>;
+      business_day_settings: Table<{
+        business_date: string;
+        opening_time: string;
+        normal_closing_time: string;
+        extended_closing_time: string;
+        extended_closing_enabled: boolean;
+        timezone: string;
+        updated_by: string | null;
+        updated_at: string;
+      }>;
+      business_day_sessions: Table<{
+        session_id: string;
+        user_id: string;
+        business_date: string;
+        created_at: string;
+      }>;
     };
     Views: {
       inventory: {
@@ -320,6 +336,18 @@ export type Database = {
     Functions: {
       can_access_branch: { Args: { target_branch: string }; Returns: boolean };
       is_active_owner: { Args: Record<PropertyKey, never>; Returns: boolean };
+      authorize_business_session: { Args: Record<PropertyKey, never>; Returns: Json };
+      business_session_status: { Args: Record<PropertyKey, never>; Returns: Json };
+      set_business_day_settings: {
+        Args: {
+          p_business_date: string;
+          p_opening_time: string;
+          p_normal_closing_time: string;
+          p_extended_closing_time: string;
+          p_extended_closing_enabled: boolean;
+        };
+        Returns: Database['public']['Tables']['business_day_settings']['Row'];
+      };
       record_inventory_transactions: {
         Args: { p_branch_id: string; p_transactions: Json };
         Returns: Database['public']['Tables']['inventory_movements']['Row'][];

@@ -38,6 +38,26 @@ update public.profiles
 set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true
 where id = '22222222-2222-4222-8222-222222222222';
 
+update public.business_day_settings
+set normal_closing_time = time '23:59:58',
+    extended_closing_time = time '23:59:59',
+    extended_closing_enabled = true
+where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
+insert into auth.sessions (id, user_id, created_at, updated_at) values
+  ('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', '11111111-1111-4111-8111-111111111111', now(), now()),
+  ('bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', '22222222-2222-4222-8222-222222222222', now(), now());
+insert into public.business_day_sessions (session_id, user_id, business_date) values
+  (
+    'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    '11111111-1111-4111-8111-111111111111',
+    (clock_timestamp() at time zone 'Asia/Manila')::date
+  ),
+  (
+    'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+    '22222222-2222-4222-8222-222222222222',
+    (clock_timestamp() at time zone 'Asia/Manila')::date
+  );
+
 update public.branch_inventory
 set quantity = 10
 where branch_id = '00000000-0000-4000-8000-000000000001'
@@ -116,7 +136,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}',
+  '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated","session_id":"bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"}',
   true
 );
 select throws_ok(
@@ -131,7 +151,7 @@ select throws_ok(
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select throws_ok(
@@ -153,7 +173,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select throws_ok(
@@ -174,7 +194,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 
@@ -235,7 +255,7 @@ select is(
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select is(
@@ -321,7 +341,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select throws_ok(
@@ -381,7 +401,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select lives_ok(
@@ -445,7 +465,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select throws_ok(
@@ -499,7 +519,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
   true
 );
 select throws_ok(

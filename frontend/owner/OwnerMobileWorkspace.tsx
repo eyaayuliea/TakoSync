@@ -12,6 +12,7 @@ import {
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
+import OwnerBusinessDaySettings from './OwnerBusinessDaySettings';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
   authorizeOwnerDiscrepancyAdjustment,
@@ -29,7 +30,7 @@ import {
 import { inventoryTransactionLabel } from '../services/transactionLabels';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'Discrepancies' | 'Records' | 'Profile';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'Profile';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -157,6 +158,7 @@ export default function OwnerMobileWorkspace({
   onRefresh,
   refreshing,
   loggingOut,
+  onBusinessSessionDeadlineChange,
 }: {
   user: AppUser;
   availableWidth: number;
@@ -182,6 +184,7 @@ export default function OwnerMobileWorkspace({
   onRefresh: () => void;
   refreshing: boolean;
   loggingOut: boolean;
+  onBusinessSessionDeadlineChange: (millisecondsUntilExpiration: number) => void;
 }) {
   const styles = useStyles();
   const { colors: themeColors, isDark, setMode } = useTheme();
@@ -514,7 +517,7 @@ export default function OwnerMobileWorkspace({
   };
 
   const activePrimaryPage = page === 'Reports' ? 'Sales'
-    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' ? 'More' : page;
+    : page === 'Discrepancies' || page === 'Records' || page === 'Profile' || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' || page === 'BusinessHours' ? 'More' : page;
 
   const showError = (message: string, onRetry: () => void = onRefresh) => (
     <View style={styles.errorCard} accessibilityRole="alert">
@@ -1103,6 +1106,7 @@ export default function OwnerMobileWorkspace({
   const renderMore = () => (
     <>
       {[
+        { title: 'Business closing time', detail: 'Authorize an 11 PM closing extension for today', page: 'BusinessHours' as const, icon: '◷' },
         { title: 'Stock & Expiration Settings', detail: 'Configure branch thresholds and batch expiration alerts', page: 'StockSettings' as const, icon: '◷' },
         { title: 'Ingredients & Recipes', detail: 'Manage ingredient records and product recipes', page: 'Ingredients' as const, icon: '◈' },
         { title: 'Products & Menu', detail: 'Manage menu items, prices, and availability', page: 'Products' as const, icon: '▣' },
@@ -1163,6 +1167,7 @@ export default function OwnerMobileWorkspace({
     Products: 'Products & Menu',
     Ingredients: 'Ingredients & Recipes',
     StockSettings: 'Stock Threshold & Expiration Settings',
+    BusinessHours: 'Business Closing Time',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
     Profile: 'Owner profile',
@@ -1191,7 +1196,7 @@ export default function OwnerMobileWorkspace({
         </View>
       </View>
 
-      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && page !== 'Ingredients' && (
+      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && page !== 'Ingredients' && page !== 'BusinessHours' && (
         <View style={styles.branchFilterBlock}>
           <Text style={styles.filterLabel}>BRANCH</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
@@ -1229,6 +1234,12 @@ export default function OwnerMobileWorkspace({
             branchId={branchId}
             refreshing={refreshing}
             onRefresh={onRefresh}
+          />
+        )}
+        {page === 'BusinessHours' && (
+          <OwnerBusinessDaySettings
+            user={user}
+            onDeadlineChange={onBusinessSessionDeadlineChange}
           />
         )}
         {page === 'Discrepancies' && renderDiscrepancies()}

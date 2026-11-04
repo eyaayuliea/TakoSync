@@ -1,8 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requireSupabase } from './supabase';
 import type { Database, Json } from '../../backend/types/database';
 import { filterBranchVisibleMenuVariants } from './menuCatalog';
-import { getLocalCalendarDay, STAFF_SESSION_DAY_STORAGE_KEY } from './staffSessionPolicy';
+import {
+  readBusinessDaySettings,
+  type BusinessDaySettings,
+} from './businessDaySettings';
 import {
   inventoryTransactionLabel,
   type InventoryTransactionLabel,
@@ -21,6 +23,7 @@ export type AppUser = {
   email: string;
   branchId: string | null;
   branch: string;
+  businessSessionMillisecondsRemaining: number;
 };
 
 export type InventoryItem = {
@@ -316,12 +319,37 @@ function branchLabel(city: string, code: string): string {
   return `${city ? `${city} · ` : ''}Branch ${number}`;
 }
 
-async function loadCurrentUser(validateStaffSessionDay: boolean): Promise<AppUser | null> {
+function readBusinessSessionStatus(value: Json): {
+  active: boolean;
+  millisecondsUntilExpiration: number;
+} {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('The server returned an invalid business-session status.');
+  }
+  if (value.active !== true) {
+    return { active: false, millisecondsUntilExpiration: 0 };
+  }
+  const remaining = value.milliseconds_until_expiration;
+  if (typeof remaining !== 'number' || !Number.isFinite(remaining) || remaining < 0) {
+    throw new Error('The server returned an invalid business-session deadline.');
+  }
+  return { active: true, millisecondsUntilExpiration: remaining };
+}
+
+async function loadCurrentUser(): Promise<AppUser | null> {
   const client = requireSupabase();
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
   assertNoError(sessionError);
   const session = sessionData.session;
   if (!session) return null;
+
+  const { data: businessSession, error: businessSessionError } = await client.rpc('business_session_status');
+  assertNoError(businessSessionError);
+  const businessSessionStatus = readBusinessSessionStatus(businessSession);
+  if (!businessSessionStatus.active) {
+    await signOut();
+    return null;
+  }
 
   const { data: profile, error } = await client
     .from('profiles')
@@ -341,14 +369,6 @@ async function loadCurrentUser(validateStaffSessionDay: boolean): Promise<AppUse
     await signOut();
     throw new Error('This staff account has no assigned branch. Ask the owner to assign one.');
   }
-  if (validateStaffSessionDay && profile.role === 'staff') {
-    const signedInDay = await AsyncStorage.getItem(STAFF_SESSION_DAY_STORAGE_KEY);
-    if (signedInDay !== getLocalCalendarDay()) {
-      await signOut();
-      return null;
-    }
-  }
-
   let branch = 'All branches';
   if (profile.branch_id) {
     const { data: branchRecord, error: branchError } = await client
@@ -371,11 +391,12 @@ async function loadCurrentUser(validateStaffSessionDay: boolean): Promise<AppUse
     email: profile.email || session.user.email || '',
     branchId: profile.branch_id,
     branch,
+    businessSessionMillisecondsRemaining: businessSessionStatus.millisecondsUntilExpiration,
   };
 }
 
 export function getCurrentUser(): Promise<AppUser | null> {
-  return loadCurrentUser(true);
+  return loadCurrentUser();
 }
 
 export async function signIn(
@@ -396,33 +417,56 @@ export async function signIn(
     }
     throw new Error(error.message);
   }
-  const user = await loadCurrentUser(false);
+  const { error: authorizationError } = await client.rpc('authorize_business_session');
+  if (authorizationError) {
+    const { error: signOutError } = await client.auth.signOut();
+    const detail = signOutError ? ` Also unable to clear the rejected Auth session: ${signOutError.message}` : '';
+    throw new Error(`${authorizationError.message}${detail}`);
+  }
+  const user = await loadCurrentUser();
   if (!user) throw new Error('Supabase did not return an authenticated session.');
   if (user.role !== expectedRole) {
     await signOut();
     throw new Error(`This account does not have ${expectedRole} access.`);
   }
-  if (user.role === 'Staff') {
-    try {
-      await AsyncStorage.setItem(STAFF_SESSION_DAY_STORAGE_KEY, getLocalCalendarDay());
-    } catch (error) {
-      await signOut();
-      const detail = error instanceof Error ? ` ${error.message}` : '';
-      throw new Error(`Unable to secure the Staff session deadline.${detail}`);
-    }
-  }
   return user;
 }
 
 export async function signOut(): Promise<void> {
-  await AsyncStorage.removeItem(STAFF_SESSION_DAY_STORAGE_KEY);
   const { error } = await requireSupabase().auth.signOut();
   assertNoError(error);
 }
 
-export async function isStaffSessionDayExpired(): Promise<boolean> {
-  const signedInDay = await AsyncStorage.getItem(STAFF_SESSION_DAY_STORAGE_KEY);
-  return signedInDay !== getLocalCalendarDay();
+export async function isBusinessSessionExpired(): Promise<boolean> {
+  const { data, error } = await requireSupabase().rpc('business_session_status');
+  assertNoError(error);
+  return !readBusinessSessionStatus(data).active;
+}
+
+export async function loadCurrentBusinessDaySettings(): Promise<BusinessDaySettings> {
+  const { data, error } = await requireSupabase().rpc('business_session_status');
+  assertNoError(error);
+  return readBusinessDaySettings(data);
+}
+
+export async function saveCurrentBusinessDayExtension(
+  user: Pick<AppUser, 'role'>,
+  settings: BusinessDaySettings,
+  enabled: boolean,
+): Promise<BusinessDaySettings> {
+  if (user.role !== 'Owner') {
+    throw new Error('Only an authorized Owner can change today’s closing time.');
+  }
+
+  const { error } = await requireSupabase().rpc('set_business_day_settings', {
+    p_business_date: settings.businessDate,
+    p_opening_time: settings.openingTime,
+    p_normal_closing_time: settings.normalClosingTime,
+    p_extended_closing_time: settings.extendedClosingTime,
+    p_extended_closing_enabled: enabled,
+  });
+  assertNoError(error);
+  return loadCurrentBusinessDaySettings();
 }
 
 export async function loadBranches() {
