@@ -3,10 +3,37 @@ import test from 'node:test';
 import {
   calculatePreparedBatterConsumption,
   findDuplicateSaleVariantIds,
+  getStaffSaleFeedback,
   getOwnerSaleInventoryStatusLabel,
   isInventoryProcessingSuccessful,
+  normalizeSalePayload,
   shouldIncludeOwnerSaleInSummary,
 } from './ownerSalesStatus.ts';
+
+test('sale retry payload normalization is order-independent but price-sensitive', () => {
+  const first = normalizeSalePayload({
+    branchId: 'branch-a', paymentMethod: ' Cash ', totalAmount: 13,
+    items: [{ variantId: 'variant-b', quantity: 1, unitPrice: 10 }, { variantId: 'variant-a', quantity: 1, unitPrice: 2 }],
+    addons: [{ addonId: 'addon-b', unitPrice: 1 }, { addonId: 'addon-a', unitPrice: 0.5 }],
+  });
+  const reordered = normalizeSalePayload({
+    branchId: 'branch-a', paymentMethod: 'cash', totalAmount: 13,
+    items: [{ variantId: 'variant-a', quantity: 1, unitPrice: 2 }, { variantId: 'variant-b', quantity: 1, unitPrice: 10 }],
+    addons: [{ addonId: 'addon-a', unitPrice: 0.5, quantity: 1 }, { addonId: 'addon-b', unitPrice: 1, quantity: 1 }],
+  });
+  assert.deepEqual(first, reordered);
+  assert.notDeepEqual(first, normalizeSalePayload({ ...reordered, addons: [{ addonId: 'addon-a', unitPrice: 0.75 }] }));
+  const differentQuantity = normalizeSalePayload({
+    ...reordered,
+    items: [{ ...reordered.items[0], quantity: 2 }, reordered.items[1]],
+  });
+  assert.notDeepEqual(first, differentQuantity);
+  const differentAddonQuantity = normalizeSalePayload({
+    ...reordered,
+    addons: [{ addonId: 'addon-a', unitPrice: 0.5, quantity: 2 }],
+  });
+  assert.notDeepEqual(first, differentAddonQuantity);
+});
 
 const sales = [
   { status: 'completed', inventory_processing_status: 'completed', inventory_processing_error: null },
@@ -29,6 +56,12 @@ test('owner sales include completed sales regardless of inventory processing sta
   assert.equal(isInventoryProcessingSuccessful(sales[0]), true);
   assert.equal(isInventoryProcessingSuccessful(sales[1]), false);
   assert.equal(isInventoryProcessingSuccessful(sales[2]), false);
+});
+
+test('staff checkout feedback distinguishes recorded and inventory outcomes', () => {
+  assert.match(getStaffSaleFeedback('SALE-1', 'completed'), /recorded successfully/);
+  assert.match(getStaffSaleFeedback('SALE-2', 'pending'), /being processed/);
+  assert.match(getStaffSaleFeedback('SALE-3', 'failed'), /inventory processing failed/);
 });
 
 test('duplicate checkout and retry attempts are detected before inventory writes', () => {

@@ -58,7 +58,7 @@ trap cleanup EXIT
 insert into public.branches (id, code, name, city, address, active)
 values ('${branch_id}', 'TEST-${check_id}', 'Concurrency Test Branch', '', '', true);
 insert into auth.users (
-  id, aud, role, email, encrypted_password, confirmed_at,
+  id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data
 ) values (
   '${owner_id}', 'authenticated', 'authenticated',

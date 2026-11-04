@@ -1,6 +1,26 @@
 export type OwnerSaleStatus = 'pending' | 'completed' | 'cancelled';
 export type OwnerInventoryProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
+export function normalizeSalePayload(input: {
+  branchId: string;
+  paymentMethod: string;
+  totalAmount: number;
+  items: Array<{ variantId: string; quantity: number; unitPrice: number }>;
+  addons: Array<{ addonId: string; unitPrice: number; quantity?: number }>;
+}) {
+  return {
+    branchId: input.branchId,
+    paymentMethod: input.paymentMethod.trim().toLowerCase(),
+    totalAmount: Number(input.totalAmount.toFixed(2)),
+    items: [...input.items]
+      .map((item) => ({ variantId: item.variantId, quantity: item.quantity, unitPrice: Number(item.unitPrice.toFixed(2)) }))
+      .sort((left, right) => left.variantId.localeCompare(right.variantId)),
+    addons: [...input.addons]
+      .map((addon) => ({ addonId: addon.addonId, quantity: addon.quantity ?? 1, unitPrice: Number(addon.unitPrice.toFixed(2)) }))
+      .sort((left, right) => left.addonId.localeCompare(right.addonId)),
+  };
+}
+
 export function shouldIncludeOwnerSaleInSummary(
   sale: { status?: string | null },
 ): boolean {
@@ -11,6 +31,19 @@ export function isInventoryProcessingSuccessful(
   sale: { inventory_processing_status?: string | null },
 ): boolean {
   return sale.inventory_processing_status === 'completed';
+}
+
+export function getStaffSaleFeedback(
+  transactionReference: string,
+  inventoryProcessingStatus?: string | null,
+): string {
+  if (inventoryProcessingStatus === 'failed') {
+    return `Sale ${transactionReference} was recorded but inventory processing failed.`;
+  }
+  if (inventoryProcessingStatus === 'pending' || inventoryProcessingStatus === 'processing' || !inventoryProcessingStatus) {
+    return `Sale ${transactionReference} was recorded and is being processed.`;
+  }
+  return `Sale ${transactionReference} was recorded successfully.`;
 }
 
 export function findDuplicateSaleVariantIds(

@@ -32,6 +32,7 @@ type MenuWorkspaceProps = {
   onRetryCatalog: () => void;
   feedbackMessage?: string;
   onDismissFeedback?: () => void;
+  onRetryInventory?: () => void;
 };
 
 const colors = {
@@ -244,6 +245,7 @@ export default function MenuWorkspace({
   onRetryCatalog,
   feedbackMessage = '',
   onDismissFeedback,
+  onRetryInventory,
 }: MenuWorkspaceProps) {
   const [filter, setFilter] = useState<MenuFilter>('All');
   const [search, setSearch] = useState('');
@@ -296,7 +298,7 @@ export default function MenuWorkspace({
           quantity,
           unitPrice: product.price,
         })),
-        addonIds: selectedAddons.map((addon) => addon.id),
+        addons: selectedAddons.map((addon) => ({ addonId: addon.id, unitPrice: addon.price })),
       });
       setCashReceived('');
       setSelectedAddonIds([]);
@@ -495,10 +497,17 @@ export default function MenuWorkspace({
       />
       <View style={styles.menuPanel}>
         {feedbackMessage !== '' ? (
-          <Pressable onPress={onDismissFeedback} style={styles.feedbackBanner} accessibilityRole="alert">
-            <Text style={styles.feedbackText}>{feedbackMessage}</Text>
-            <Text style={styles.feedbackDismiss}>×</Text>
-          </Pressable>
+          <View style={styles.feedbackBanner} accessibilityRole="alert">
+            <Pressable onPress={onDismissFeedback} style={styles.feedbackMessagePressable}>
+              <Text style={styles.feedbackText}>{feedbackMessage}</Text>
+              <Text style={styles.feedbackDismiss}>×</Text>
+            </Pressable>
+            {onRetryInventory ? (
+              <Pressable onPress={onRetryInventory} style={styles.retryInventoryButton} accessibilityRole="button">
+                <Text style={styles.retryInventoryText}>Retry inventory</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
         <ScrollView
           horizontal
@@ -586,6 +595,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
   },
+  feedbackMessagePressable: { flexDirection: 'row', alignItems: 'flex-start', flex: 1, gap: 8 },
+  retryInventoryButton: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.pink },
+  retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8 },
   feedbackDismiss: { color: colors.navy, fontFamily: font.bold, fontSize: 16, paddingLeft: 8 },
   stateCard: {

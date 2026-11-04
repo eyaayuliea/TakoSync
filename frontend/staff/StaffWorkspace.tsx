@@ -29,10 +29,12 @@ import {
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
 import {
+  getStaffSaleFeedback,
   loadInventory,
   loadStaffMenuCatalog,
   loadTransactionHistory,
   prepareBatterBatch,
+  processSaleInventory,
   recordInventoryTransactions,
   submitSale,
   submitDailyStockCheck,
@@ -807,6 +809,8 @@ export default function StaffWorkspace({
   const [currentUsageReceipt, setCurrentUsageReceipt] = useState<UsageReceipt | null>(null);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
+  const [menuInventoryRetrySale, setMenuInventoryRetrySale] = useState<{ id: string; reference: string } | null>(null);
+  const menuInventoryRetryLock = useRef(false);
   const [batterPreparationVisible, setBatterPreparationVisible] = useState(false);
   const [batterBatchReference, setBatterBatchReference] = useState('');
   const [batterPreparationError, setBatterPreparationError] = useState('');
@@ -1424,16 +1428,31 @@ export default function StaffWorkspace({
       setMenuCart([]);
       setMenuTransactionReference(null);
       await refreshBackendData();
-      const inventoryStatus = sale.inventory_processing_status ?? 'pending';
-      const message = inventoryStatus === 'failed'
-        ? `Sale ${sale.transaction_reference} was recorded but inventory processing failed.`
-        : inventoryStatus === 'pending' || inventoryStatus === 'processing'
-          ? `Sale ${sale.transaction_reference} was recorded and is being processed.`
-          : `Sale ${sale.transaction_reference} was recorded successfully.`;
-      setDashboardMessage(message);
+      const inventoryFailed = sale.inventory_processing_status === 'failed';
+      setMenuInventoryRetrySale(inventoryFailed ? { id: sale.id, reference: sale.transaction_reference } : null);
+      setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
       setRoute('dashboard');
     } finally {
       menuSaleSubmissionLock.current = false;
+    }
+  };
+
+  const retryMenuSaleInventory = async () => {
+    if (!menuInventoryRetrySale || menuInventoryRetryLock.current) return;
+    menuInventoryRetryLock.current = true;
+    try {
+      const result = await processSaleInventory(menuInventoryRetrySale.id);
+      await refreshBackendData();
+      if (result.status === 'completed') {
+        setDashboardMessage(`Sale ${menuInventoryRetrySale.reference} inventory processing completed.`);
+        setMenuInventoryRetrySale(null);
+      } else {
+        setDashboardMessage(`Sale ${menuInventoryRetrySale.reference} was recorded but inventory processing failed again.`);
+      }
+    } catch (error) {
+      setDashboardMessage(error instanceof Error ? error.message : 'Inventory processing could not be retried.');
+    } finally {
+      menuInventoryRetryLock.current = false;
     }
   };
 
@@ -4533,6 +4552,7 @@ export default function StaffWorkspace({
           onRetryCatalog={retryMenuCatalog}
           feedbackMessage={dashboardMessage}
           onDismissFeedback={() => setDashboardMessage('')}
+          onRetryInventory={menuInventoryRetrySale ? () => void retryMenuSaleInventory() : undefined}
         />
       </View>
       {route !== 'stockOut' && route !== 'usagePreview' ? (

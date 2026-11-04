@@ -9,6 +9,8 @@ import {
 } from './transactionLabels';
 import {
   getOwnerSaleInventoryStatusLabel,
+  getStaffSaleFeedback,
+  normalizeSalePayload,
   shouldIncludeOwnerSaleInSummary,
 } from './ownerSalesStatus';
 
@@ -117,7 +119,7 @@ export type OwnerSalesData = {
   items: OwnerSaleItem[];
 };
 
-export { getOwnerSaleInventoryStatusLabel, shouldIncludeOwnerSaleInSummary };
+export { getOwnerSaleInventoryStatusLabel, getStaffSaleFeedback, shouldIncludeOwnerSaleInSummary };
 
 export type OwnerDiscrepancyReview = {
   countLineId: string;
@@ -206,8 +208,13 @@ export type SaleSubmission = {
     quantity: number;
     unitPrice: number;
   }>;
-  addonIds: string[];
+  addons: Array<{
+    addonId: string;
+    unitPrice: number;
+    quantity?: number;
+  }>;
 };
+
 
 export type IngredientCategoryRecord = {
   id: string;
@@ -859,17 +866,22 @@ export async function prepareBatterBatch(branchId: string, batchReference: strin
 }
 
 export async function submitSale(input: SaleSubmission): Promise<OwnerSale> {
+  const normalized = normalizeSalePayload(input);
   const { data, error } = await requireSupabase().rpc('submit_sale', {
-    p_transaction_reference: input.transactionReference,
-    p_branch_id: input.branchId,
-    p_payment_method: input.paymentMethod,
-    p_total_amount: input.totalAmount,
-    p_items: input.items.map((item) => ({
+    p_transaction_reference: input.transactionReference.trim(),
+    p_branch_id: normalized.branchId,
+    p_payment_method: input.paymentMethod.trim(),
+    p_total_amount: normalized.totalAmount,
+    p_items: normalized.items.map((item) => ({
       variant_id: item.variantId,
       quantity: item.quantity,
       unit_price: item.unitPrice,
     })),
-    p_addons: input.addonIds.map((addonId) => ({ addon_id: addonId })),
+    p_addons: normalized.addons.map((addon) => ({
+      addon_id: addon.addonId,
+      quantity: addon.quantity,
+      unit_price: addon.unitPrice,
+    })),
   });
   if (error) {
     const message = error.message.toLowerCase();
