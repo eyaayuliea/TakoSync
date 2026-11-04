@@ -10,3 +10,5 @@ coverage/
 backend/supabase/.temp/
 supabase/.temp/
 supabase/.temp/
+
+backend/supabase/.branches/
