@@ -19,6 +19,7 @@ fi
 psql_test=(psql "$database_url" -X -q -v ON_ERROR_STOP=1)
 branch_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 owner_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
+session_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 product_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 variant_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 transaction_reference="TEST-SALE-INVENTORY-RETRY-${branch_id}"
@@ -48,6 +49,8 @@ delete from public.branch_product_visibility where branch_id = '${branch_id}';
 delete from public.product_variants where id = '${variant_id}';
 delete from public.products where id = '${product_id}';
 delete from public.branch_inventory where branch_id = '${branch_id}';
+delete from public.business_day_sessions where session_id = '${session_id}';
+delete from auth.sessions where id = '${session_id}';
 delete from auth.users where id = '${owner_id}';
 delete from public.branches where id = '${branch_id}';
 SQL
@@ -73,6 +76,9 @@ insert into auth.users (
 update public.profiles
 set role = 'owner', branch_id = null, active = true
 where id = '${owner_id}';
+
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values ('${session_id}', '${owner_id}', now(), now());
 
 insert into public.products (id, product_name, description, price, is_available)
 values ('${product_id}', '${product_name}', 'Isolated sale inventory retry fixture', 10.00, true);
@@ -125,6 +131,8 @@ SQL
 items='[{"variant_id":"'"${variant_id}"'","quantity":1.000,"unit_price":10.00}]'
 sale_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select (public.submit_sale('${transaction_reference}', '${branch_id}', 'Cash', 10.00, '${items}'::jsonb, '[]'::jsonb)).id")
 sale_id=$(printf '%s\n' "$sale_output" | tail -n 1)
 if [[ -z "$sale_id" ]]; then
@@ -163,6 +171,8 @@ fi
 
 replenish_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select count(*) from public.record_inventory_transactions('${branch_id}', '[{\"ingredient_id\":\"prepared-batter\",\"type\":\"stock_in\",\"quantity\":1.000,\"batch_reference\":\"TEST-SALE-INVENTORY-RETRY-${branch_id}\",\"reason\":\"Inventory retry replenishment\"}]'::jsonb)")
 if [[ "$(printf '%s\n' "$replenish_output" | tail -n 1)" != "1" ]]; then
   echo "Prepared-batter replenishment did not create exactly one movement: ${replenish_output}" >&2
@@ -181,6 +191,8 @@ fi
 
 retry_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select public.process_sale_inventory('${sale_id}')")
 if [[ "$retry_output" != *"completed"* ]]; then
   echo "Inventory retry did not report completed: ${retry_output}" >&2
@@ -215,6 +227,8 @@ fi
 
 second_retry_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select public.process_sale_inventory('${sale_id}')")
 if [[ "$second_retry_output" != *"completed"* ]]; then
   echo "Retry after completion did not report completed: ${second_retry_output}" >&2

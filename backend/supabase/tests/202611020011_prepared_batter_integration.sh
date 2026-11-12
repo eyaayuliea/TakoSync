@@ -19,6 +19,7 @@ fi
 psql_test=(psql "$database_url" -X -q -v ON_ERROR_STOP=1)
 branch_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 owner_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
+session_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 product_a_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 product_b_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 variant_a_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
@@ -59,6 +60,8 @@ where id in ('${variant_a_id}', '${variant_b_id}');
 delete from public.products
 where id in ('${product_a_id}', '${product_b_id}');
 delete from public.branch_inventory where branch_id = '${branch_id}';
+delete from public.business_day_sessions where session_id = '${session_id}';
+delete from auth.sessions where id = '${session_id}';
 delete from auth.users where id = '${owner_id}';
 delete from public.branches where id = '${branch_id}';
 SQL
@@ -131,6 +134,9 @@ update public.profiles
 set role = 'owner', branch_id = null, active = true
 where id = '${owner_id}';
 
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values ('${session_id}', '${owner_id}', now(), now());
+
 insert into public.products (id, product_name, description, price, is_available)
 values
   ('${product_a_id}', 'Prepared Batter Product A ${product_a_id}', 'Prepared batter fixture A', 10.00, true),
@@ -195,6 +201,8 @@ SQL
 
 batch_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select (public.prepare_batter_batch('${branch_id}', '${batch_reference}')).batch_reference")
 created_batch_reference=$(printf '%s' "$batch_output" | tail -n 1)
 if [[ -z "$created_batch_reference" ]]; then
@@ -254,6 +262,8 @@ fi
 items='[{"variant_id":"'"${variant_a_id}"'","quantity":1.000,"unit_price":10.00},{"variant_id":"'"${variant_b_id}"'","quantity":2.000,"unit_price":12.00}]'
 sale_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select (public.submit_sale('${sale_reference}', '${branch_id}', 'Cash', 34.00, '${items}'::jsonb, '[]'::jsonb)).id")
 sale_id=$(printf '%s' "$sale_output" | tail -n 1)
 if [[ -z "$sale_id" ]]; then
@@ -295,6 +305,8 @@ fi
 
 retry_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select public.process_sale_inventory('${sale_id}')")
 if [[ "$retry_output" != *"completed"* ]]; then
   echo "Reprocessing the completed sale did not report completed: ${retry_output}" >&2
@@ -319,6 +331,8 @@ fi
 "${psql_test[@]}" -c "update public.branch_inventory set quantity = 0.000 where branch_id = '${branch_id}' and ingredient_id = 'octopus';"
 raw_failure_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select (public.submit_sale('${raw_failure_reference}', '${branch_id}', 'Cash', 10.00, '[{\"variant_id\":\"${variant_a_id}\",\"quantity\":1.000,\"unit_price\":10.00}]'::jsonb, '[]'::jsonb)).id")
 raw_failure_sale_id=$(printf '%s' "$raw_failure_output" | tail -n 1)
 raw_failure_state=$("${psql_test[@]}" -AtF '|' -c "
@@ -340,6 +354,8 @@ fi
 "${psql_test[@]}" -c "update public.branch_inventory set quantity = case ingredient_id when 'octopus' then 1.000 when 'prepared-batter' then 0.000 else quantity end where branch_id = '${branch_id}' and ingredient_id in ('octopus', 'prepared-batter');"
 prepared_failure_output=$("${psql_test[@]}" -At \
   -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+  -c "select public.authorize_business_session()" \
   -c "select (public.submit_sale('${prepared_failure_reference}', '${branch_id}', 'Cash', 10.00, '[{\"variant_id\":\"${variant_a_id}\",\"quantity\":1.000,\"unit_price\":10.00}]'::jsonb, '[]'::jsonb)).id")
 prepared_failure_sale_id=$(printf '%s' "$prepared_failure_output" | tail -n 1)
 prepared_failure_state=$("${psql_test[@]}" -AtF '|' -c "

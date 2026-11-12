@@ -119,16 +119,20 @@ select ok(
   'anonymous users cannot read adjustment audit records'
 );
 
+-- Test-only access so pgTAP assertions can run under anon.
+-- The enclosing transaction rolls this grant back.
+grant usage on schema extensions to anon;
+
 set local role anon;
 select set_config('request.jwt.claim.sub', '', true);
 select set_config('request.jwt.claims', '{"role":"anon"}', true);
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '44444444-4444-4444-8444-444444444444', 'anonymous attempt'
-  )$$,
-  '42501',
-  'permission denied for function authorize_inventory_discrepancy_adjustment',
-  'unauthenticated users cannot execute the adjustment operation'
+  )$$::text,
+  '42501'::character(5),
+  'permission denied for function authorize_inventory_discrepancy_adjustment'::text,
+  'unauthenticated users cannot execute the adjustment operation'::text
 );
 reset role;
 
@@ -142,10 +146,10 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '44444444-4444-4444-8444-444444444444', 'staff attempt'
-  )$$,
-  '42501',
-  'Only an active owner may authorize inventory adjustments',
-  'staff cannot authorize a discrepancy adjustment'
+  )$$::text,
+  '42501'::character(5),
+  'Only an active owner may authorize inventory adjustments'::text,
+  'staff cannot authorize a discrepancy adjustment'::text
 );
 
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
@@ -157,10 +161,10 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '44444444-4444-4444-8444-444444444444', '   '
-  )$$,
-  'P0001',
-  'An adjustment reason of 1 to 1000 characters is required',
-  'owner must provide a non-empty reason'
+  )$$::text,
+  'P0001'::character(5),
+  'An adjustment reason of 1 to 1000 characters is required'::text,
+  'owner must provide a non-empty reason'::text
 );
 
 reset role;
@@ -179,10 +183,10 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '44444444-4444-4444-8444-444444444444', 'inactive owner attempt'
-  )$$,
-  '42501',
-  'Only an active owner may authorize inventory adjustments',
-  'inactive owner cannot authorize a discrepancy adjustment'
+  )$$::text,
+  '42501'::character(5),
+  'Only an active owner may authorize inventory adjustments'::text,
+  'inactive owner cannot authorize a discrepancy adjustment'::text
 );
 reset role;
 select set_config('request.jwt.claim.sub', '', true);
@@ -204,6 +208,9 @@ select lives_ok(
   )$$,
   'active owner can authorize a current discrepancy'
 );
+
+reset role;
+
 select is(
   (
     select jsonb_build_array(recorded_quantity, physical_quantity, difference)
@@ -237,27 +244,22 @@ select ok(
   ),
   'approval, reason, timestamp, and resulting movement are linked'
 );
+set local role authenticated;
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
 select set_config(
   'request.jwt.claims',
   '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}',
   true
 );
-select is(
-  (
-    select count(*)::integer
-    from public.inventory_discrepancy_adjustments
-    where daily_stock_count_line_id = '44444444-4444-4444-8444-444444444444'
-  ),
-  0,
-  'staff cannot read owner discrepancy approval records'
+select throws_ok(
+  $$select count(*) from public.inventory_discrepancy_adjustments
+    where daily_stock_count_line_id = '44444444-4444-4444-8444-444444444444'$$::text,
+  '42501'::character(5),
+  'permission denied for table inventory_discrepancy_adjustments'::text,
+  'staff cannot directly read owner discrepancy approval records'::text
 );
-select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
-select set_config(
-  'request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
-  true
-);
+reset role;
+
 select is(
   (
     select quantity
@@ -278,12 +280,26 @@ select is(
   50::numeric,
   'adjustment does not alter inventory in another branch'
 );
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '11111111-1111-4111-8111-111111111111',
+  true
+);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}',
+  true
+);
+
 select lives_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '44444444-4444-4444-8444-444444444444', 'Count verified by owner'
   )$$,
   'retrying authorization is idempotent'
 );
+
+reset role;
 select is(
   (
     select count(*)::integer
@@ -347,11 +363,14 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '66666666-6666-4666-8666-666666666666', 'Stale count attempt'
-  )$$,
-  'P0001',
-  'Inventory changed after this count; submit a new physical count before adjusting',
-  'stale count cannot silently overwrite later inventory activity'
+  )$$::text,
+  'P0001'::character(5),
+  'Inventory changed after this count; submit a new physical count before adjusting'::text,
+  'stale count cannot silently overwrite later inventory activity'::text
 );
+
+reset role;
+
 select is(
   (
     select count(*)::integer
@@ -410,6 +429,9 @@ select lives_ok(
   )$$,
   'active owner can authorize a positive discrepancy'
 );
+
+reset role;
+
 select is(
   (
     select quantity
@@ -471,10 +493,10 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'No-op must not adjust'
-  )$$,
-  'P0001',
-  'The physical count has no discrepancy to adjust',
-  'zero discrepancy cannot create an authorized adjustment'
+  )$$::text,
+  'P0001'::character(5),
+  'The physical count has no discrepancy to adjust'::text,
+  'zero discrepancy cannot create an authorized adjustment'::text
 );
 
 reset role;
@@ -525,11 +547,14 @@ select set_config(
 select throws_ok(
   $$select public.authorize_inventory_discrepancy_adjustment(
     '88888888-8888-4888-8888-888888888888', 'Atomicity test'
-  )$$,
-  'P0001',
-  'Forced failure after inventory movement',
-  'database rolls back when discrepancy audit linking fails'
+  )$$::text,
+  'P0001'::character(5),
+  'Forced failure after inventory movement'::text,
+  'database rolls back when discrepancy audit linking fails'::text
 );
+
+reset role;
+
 select is(
   (
     select quantity

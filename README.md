@@ -17,7 +17,7 @@ TakoSync is a React Native and Expo application for monitoring ingredient invent
 
 The Staff interface currently includes:
 - A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
-- Supabase email/password sign-in, persistent session restoration, logout, and Staff session expiry at the end of the local calendar day.
+- Supabase email/password sign-in, persistent session restoration, logout, and server-enforced Staff and Owner mobile business-session expiration. Sessions use the Asia/Manila business date: the default close is 10:00 PM, with an optional 11:00 PM extension that the Owner must enable before 10:00 PM; no extension authorization is permitted after normal closing.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
 - Stock-Out and usage entries, including cooking-batch workflows.
@@ -41,7 +41,7 @@ Stock & Expiration Settings lets Owners search and filter branch inventory, edit
 
 Owner and Staff sign in with their registered Supabase Auth email and password. The app loads each user's active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the live cross-branch monitoring dashboard. There is no demo login or authentication bypass.
 
-The same Expo application can target the web using `npm run web`; this is not a separate web management product. Owner account/branch assignment is not managed in the mobile app. The Owner discrepancy screen provides reasoned adjustment authorization; apply and verify the corresponding database migration before enabling it against a hosted project.
+The same Expo application can target the web using `npm run web`; this is not a separate web management product. A future Owner web portal must use the same backend-enforced Asia/Manila business-session policy, including the before-10:00 PM extension deadline. No separate Owner web portal is currently implemented. Owner account/branch assignment is not managed in the mobile app. The Owner discrepancy screen provides reasoned adjustment authorization; apply and verify the corresponding database migration before enabling it against a hosted project.
 
 ## Architecture
 

@@ -19,70 +19,79 @@ update public.profiles
 set role = 'owner', branch_id = null, active = true
 where id = '90000000-0000-4000-8000-000000000002';
 
+insert into auth.sessions (id, user_id, created_at, updated_at) values
+  ('92000000-0000-4000-8000-000000000002', '90000000-0000-4000-8000-000000000002', now(), now());
+insert into public.business_day_sessions (session_id, user_id, business_date) values
+  (
+    '92000000-0000-4000-8000-000000000002',
+    '90000000-0000-4000-8000-000000000002',
+    (clock_timestamp() at time zone 'Asia/Manila')::date
+  );
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '90000000-0000-4000-8000-000000000002', true);
-select set_config('request.jwt.claims', '{"sub":"90000000-0000-4000-8000-000000000002","role":"authenticated"}', true);
+select set_config('request.jwt.claims', '{"sub":"90000000-0000-4000-8000-000000000002","role":"authenticated","session_id":"92000000-0000-4000-8000-000000000002"}', true);
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.submit_sale(
     'TEST-PAYLOAD-NULL-ITEMS', '00000000-0000-4000-8000-000000000001',
     'Cash', 0, null::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'At least one sale item is required',
-  'submit_sale rejects SQL NULL items before creating a sale'
+  )$$::text,
+  'P0001'::character(5),
+  'At least one sale item is required'::text,
+  'submit_sale rejects SQL NULL items before creating a sale'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.submit_sale(
     'TEST-PAYLOAD-EMPTY-ITEMS', '00000000-0000-4000-8000-000000000001',
     'Cash', 0, '[]'::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'At least one sale item is required',
-  'submit_sale rejects empty items before creating a sale'
+  )$$::text,
+  'P0001'::character(5),
+  'At least one sale item is required'::text,
+  'submit_sale rejects empty items before creating a sale'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.submit_sale(
     'TEST-PAYLOAD-OBJECT-ITEMS', '00000000-0000-4000-8000-000000000001',
     'Cash', 0, '{}'::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'At least one sale item is required',
-  'submit_sale rejects non-array items before creating a sale'
+  )$$::text,
+  'P0001'::character(5),
+  'At least one sale item is required'::text,
+  'submit_sale rejects non-array items before creating a sale'::text
 );
 
 reset role;
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     null::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'Sale items must be a non-empty array',
-  'SQL NULL items are rejected explicitly'
+  )$$::text,
+  'P0001'::character(5),
+  'Sale items must be a non-empty array'::text,
+  'SQL NULL items are rejected explicitly'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '[]'::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'Sale items must be a non-empty array',
-  'an empty items array is rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Sale items must be a non-empty array'::text,
+  'an empty items array is rejected'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '{}'::jsonb, '[]'::jsonb
-  )$$,
-  'P0001',
-  'Sale items must be a non-empty array',
-  'non-array item payloads are rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Sale items must be a non-empty array'::text,
+  'non-array item payloads are rejected'::text
 );
 
 select is(
@@ -99,15 +108,15 @@ select is(
   'SQL NULL add-ons normalize to the optional empty-array contract'
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '[{"variant_id":"10000000-0000-4000-8000-000000000001","quantity":1,"unit_price":10}]'::jsonb,
     '{}'::jsonb
-  )$$,
-  'P0001',
-  'Sale add-ons must be an array',
-  'non-array add-ons are rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Sale add-ons must be an array'::text,
+  'non-array add-ons are rejected'::text
 );
 
 select is(
@@ -180,37 +189,37 @@ select isnt(
   'different prices remain different payloads'
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '[{"variant_id":"10000000-0000-4000-8000-000000000001","quantity":null,"unit_price":10}]'::jsonb,
     '[]'::jsonb
-  )$$,
-  'P0001',
-  'Each sale item requires a variant, quantity, and price',
-  'NULL item quantities are rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Each sale item requires a variant, quantity, and price'::text,
+  'NULL item quantities are rejected'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '[{"variant_id":"10000000-0000-4000-8000-000000000001","quantity":1,"unit_price":null}]'::jsonb,
     '[]'::jsonb
-  )$$,
-  'P0001',
-  'Each sale item requires a variant, quantity, and price',
-  'NULL item prices are rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Each sale item requires a variant, quantity, and price'::text,
+  'NULL item prices are rejected'::text
 );
 
-select throws_ok(
+select extensions.throws_ok(
   $$select public.compute_sale_payload_hash(
     '00000000-0000-4000-8000-000000000001', 'Cash', 10,
     '[{"variant_id":"10000000-0000-4000-8000-000000000001","quantity":1,"unit_price":10}]'::jsonb,
     '[{"addon_id":"30000000-0000-4000-8000-000000000001","quantity":1,"unit_price":null}]'::jsonb
-  )$$,
-  'P0001',
-  'Each add-on requires an add-on ID, quantity, and price',
-  'NULL add-on prices are rejected'
+  )$$::text,
+  'P0001'::character(5),
+  'Each add-on requires an add-on ID, quantity, and price'::text,
+  'NULL add-on prices are rejected'::text
 );
 
 select ok(

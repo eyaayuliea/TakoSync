@@ -19,6 +19,7 @@ fi
 psql_test=(psql "$database_url" -X -q -v ON_ERROR_STOP=1)
 branch_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 owner_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
+session_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 product_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 variant_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
 addon_id=$("${psql_test[@]}" -Atc 'select gen_random_uuid()')
@@ -75,6 +76,8 @@ delete from public.product_variants where id = '${variant_id}';
 delete from public.products where id = '${product_id}';
 delete from public.menu_addons where id = '${addon_id}';
 delete from public.branch_inventory where branch_id = '${branch_id}';
+delete from public.business_day_sessions where session_id = '${session_id}';
+delete from auth.sessions where id = '${session_id}';
 delete from auth.users where id = '${owner_id}';
 delete from public.branches where id = '${branch_id}';
 SQL
@@ -102,6 +105,9 @@ insert into auth.users (
 update public.profiles
 set role = 'owner', branch_id = null, active = true
 where id = '${owner_id}';
+
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values ('${session_id}', '${owner_id}', now(), now());
 
 insert into public.products (
   id, product_name, description, price, is_available
@@ -175,6 +181,8 @@ run_sale() {
     "$scenario" "$sale_reference" "$branch_id" "Cash" "$total" "$items" "$addons" "$canonical_hash" >&2
   "${psql_test[@]}" -At \
     -c "select set_config('request.jwt.claim.sub', '${owner_id}', false)" \
+    -c "select set_config('request.jwt.claims', '{\"sub\":\"${owner_id}\",\"session_id\":\"${session_id}\",\"role\":\"authenticated\",\"aud\":\"authenticated\"}', false)" \
+    -c "select public.authorize_business_session()" \
     -c "select (public.submit_sale('${sale_reference}', '${branch_id}', 'Cash', ${total}, '${items}'::jsonb, '${addons}'::jsonb)).id" \
     > "$output_file"
 }

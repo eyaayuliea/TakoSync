@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(18);
+select plan(19);
 
 select ok(
   not has_function_privilege(
@@ -32,6 +32,15 @@ update public.profiles
 set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true
 where id = '90000000-0000-4000-8000-000000000001';
 
+insert into auth.sessions (id, user_id, created_at, updated_at) values
+  ('92000000-0000-4000-8000-000000000001', '90000000-0000-4000-8000-000000000001', now(), now());
+insert into public.business_day_sessions (session_id, user_id, business_date) values
+  (
+    '92000000-0000-4000-8000-000000000001',
+    '90000000-0000-4000-8000-000000000001',
+    (clock_timestamp() at time zone 'Asia/Manila')::date
+  );
+
 insert into public.sales (
   id, transaction_reference, branch_id, staff_id, total_amount, payment_method,
   status, inventory_processing_status
@@ -47,8 +56,41 @@ where branch_id = '00000000-0000-4000-8000-000000000001'
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '90000000-0000-4000-8000-000000000001', true);
-select set_config('request.jwt.claims', '{"sub":"90000000-0000-4000-8000-000000000001","role":"authenticated"}', true);
-select set_config('app.sales_processing', 'true', true);
+select set_config('request.jwt.claims', '{"sub":"90000000-0000-4000-8000-000000000001","role":"authenticated","session_id":"92000000-0000-4000-8000-000000000001"}', true);
+select throws_ok(
+  $$select * from public.record_inventory_transactions(
+    '00000000-0000-4000-8000-000000000001',
+    jsonb_build_array(jsonb_build_object(
+      'ingredient_id', 'flour',
+      'type', 'sales_consumption',
+      'quantity', 1,
+      'reason', 'forged authorization test',
+      'notes', 'forged'
+    ))
+  )$$,
+  'P0001',
+  'This movement type requires an approved atomic workflow',
+  'authenticated callers cannot authorize sales consumption by setting the old GUC'
+);
+
+reset role;
+
+-- Trusted test fixture setup: authorize legacy rows with NULL sale IDs.
+-- Authorize the already-linked historical sale movement.
+insert into private.sales_processing_authorizations (
+  backend_pid, transaction_id, sale_id
+) values (
+  pg_backend_pid(), txid_current(),
+  '91000000-0000-4000-8000-000000000003'
+);
+
+insert into private.sales_processing_authorizations (
+  backend_pid, transaction_id, sale_id
+) values (
+  pg_backend_pid(), txid_current(), null
+);
+
+set local role authenticated;
 
 do $$
 begin
@@ -137,6 +179,19 @@ insert into public.sales (
 ) values
   ('91000000-0000-4000-8000-000000000004', 'TEST-BACKFILL-DUPLICATE-CANDIDATES', '00000000-0000-4000-8000-000000000001', '90000000-0000-4000-8000-000000000001', 0, 'Cash', 'pending', 'pending'),
   ('91000000-0000-4000-8000-000000000005', 'TEST-BACKFILL-CONFLICTING-CANDIDATE', '00000000-0000-4000-8000-000000000001', '90000000-0000-4000-8000-000000000001', 0, 'Cash', 'pending', 'pending');
+
+insert into private.sales_processing_authorizations (
+  backend_pid, transaction_id, sale_id
+) values (
+  pg_backend_pid(), txid_current(), null
+);
+
+insert into private.sales_processing_authorizations (
+  backend_pid, transaction_id, sale_id
+) values (
+  pg_backend_pid(), txid_current(),
+  '91000000-0000-4000-8000-000000000005'
+);
 
 set local role authenticated;
 do $$

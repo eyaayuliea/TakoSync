@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(6);
+select plan(7);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -84,11 +84,21 @@ select is(
   21,
   'active staff can read the owner-configured expiration window'
 );
-update public.owner_inventory_settings set near_expiration_days = 22 where id = true;
+with changed as (
+  update public.owner_inventory_settings
+  set near_expiration_days = 22
+  where id = true
+  returning 1
+)
+select is(
+  (select count(*)::integer from changed),
+  0,
+  'staff cannot update the expiration alert setting'
+);
 select is(
   (select near_expiration_days from public.owner_inventory_settings where id = true),
   21,
-  'staff cannot change the expiration alert setting'
+  'expiration alert setting remains unchanged after staff update attempt'
 );
 
 select set_config('request.jwt.claim.sub', '88888888-8888-4888-8888-888888888888', true);
@@ -114,7 +124,6 @@ select is(
 );
 
 reset role;
-set local role anon;
 select ok(
   not has_table_privilege('anon', 'public.owner_inventory_settings', 'SELECT'),
   'anonymous users cannot read expiration alert settings'

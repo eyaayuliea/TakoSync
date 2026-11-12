@@ -363,7 +363,9 @@ set search_path = public, pg_temp
 as $$
 declare
   v_settings public.business_day_settings%rowtype;
-  v_today date := (clock_timestamp() at time zone 'Asia/Manila')::date;
+  v_now timestamptz := clock_timestamp();
+  v_today date := (v_now at time zone 'Asia/Manila')::date;
+  v_normal_closing_time time without time zone;
 begin
   if not public.is_active_owner() then
     raise exception using errcode = '42501', message = 'Only an active owner may change business hours';
@@ -378,6 +380,21 @@ begin
   if not (p_opening_time < p_normal_closing_time
     and p_normal_closing_time < p_extended_closing_time) then
     raise exception 'Business hours must be ordered: opening, normal closing, extended closing';
+  end if;
+
+  if p_business_date = v_today then
+    select settings.normal_closing_time
+    into v_normal_closing_time
+    from public.business_day_settings settings
+    where settings.business_date = v_today;
+
+    if v_now >= (
+      v_today + coalesce(v_normal_closing_time, time '22:00')
+    ) at time zone 'Asia/Manila' then
+      raise exception using
+        errcode = '42501',
+        message = 'The normal business closing time has passed; current-date settings cannot be changed';
+    end if;
   end if;
 
   insert into public.business_day_settings (

@@ -407,7 +407,18 @@ export async function signIn(
   const client = requireSupabase();
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) throw new Error('Enter the email address registered with Supabase.');
-  const { error } = await client.auth.signInWithPassword({ email: normalizedEmail, password });
+  let authResult;
+  try {
+    authResult = await client.auth.signInWithPassword({ email: normalizedEmail, password });
+  } catch (error) {
+    if (error instanceof TypeError && /fetch|network/i.test(error.message)) {
+      throw new Error(
+        'Unable to reach Supabase. Start the local Supabase backend or check EXPO_PUBLIC_SUPABASE_URL in .env.',
+      );
+    }
+    throw error;
+  }
+  const { error } = authResult;
   if (error) {
     if (error.message.toLowerCase().includes('invalid login credentials')) {
       throw new Error('Email or password is incorrect.');
