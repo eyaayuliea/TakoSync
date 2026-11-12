@@ -175,8 +175,9 @@ end;
 \$\$;
 
 update public.branch_inventory inventory
-set quantity = line.quantity_required + 1.000
+set quantity = round(line.quantity_required * 5 / recipe.prepared_quantity, 3) + 1.000
 from public.shared_recipe_ingredients line
+join public.shared_recipes recipe on recipe.id = line.shared_recipe_id
 where inventory.branch_id = '${branch_id}'
   and inventory.ingredient_id = line.ingredient_id
   and line.shared_recipe_id = '${shared_recipe_id}'
@@ -229,31 +230,39 @@ prepared_sale_quantity=$("${psql_test[@]}" -Atc "
   select to_char(round(${prepared_quantity} * ${sale_pieces} / ${yield_pieces}, 3), 'FM999999990.000')
 ")
 expected_prepared_balance=$("${psql_test[@]}" -Atc "
-  select to_char(round(${prepared_quantity} - ${prepared_sale_quantity}, 3), 'FM999999990.000')
+  select to_char(round(5 - ${prepared_sale_quantity}, 3), 'FM999999990.000')
 ")
 
 preparation_state=$("${psql_test[@]}" -AtF '|' -c "
   select
-    (select count(*) from public.batter_preparation_batches where batch_reference = '${created_batch_reference}' and branch_id = '${branch_id}'),
+    (select count(*) from public.batter_preparation_batches
+      where batch_reference = '${created_batch_reference}'
+        and branch_id = '${branch_id}'
+        and bottle_count = 5
+        and prepared_quantity = 5),
     (select count(*) from public.inventory_movements where branch_id = '${branch_id}' and notes = '${batch_reference}' and type = 'usage'),
     (select count(*) from public.inventory_movements movement
       join public.ingredient_batches batch on batch.id = movement.batch_id
       where movement.branch_id = '${branch_id}'
         and movement.ingredient_id = 'prepared-batter'
         and movement.type = 'stock_in'
+        and movement.quantity = 5
         and batch.batch_reference = '${batch_reference}'),
     (select count(*) from public.inventory_movements movement
       join public.shared_recipe_ingredients line on line.shared_recipe_id = '${shared_recipe_id}'
         and line.ingredient_id = movement.ingredient_id
         and line.automatic_consumption_enabled
         and line.ingredient_id <> 'prepared-batter'
-        and movement.quantity = line.quantity_required
-        and movement.movement = -line.quantity_required
-      where movement.branch_id = '${branch_id}' and movement.notes = '${batch_reference}' and movement.type = 'usage'),
+      join public.shared_recipes recipe on recipe.id = line.shared_recipe_id
+      where movement.branch_id = '${branch_id}'
+        and movement.notes = '${batch_reference}'
+        and movement.type = 'usage'
+        and movement.quantity = round(line.quantity_required * 5 / recipe.prepared_quantity, 3)
+        and movement.movement = -round(line.quantity_required * 5 / recipe.prepared_quantity, 3)),
     (select to_char(quantity, 'FM999999990.000') from public.branch_inventory where branch_id = '${branch_id}' and ingredient_id = 'prepared-batter'),
     (select count(*) from public.inventory_movements where branch_id = '${branch_id}' and notes = '${batch_reference}' and sale_id is not null)
 ")
-expected_preparation_state="1|${raw_line_count}|1|${raw_line_count}|${prepared_quantity}|0"
+expected_preparation_state="1|${raw_line_count}|1|${raw_line_count}|5.000|0"
 if [[ "$preparation_state" != "$expected_preparation_state" ]]; then
   echo "Unexpected batter preparation state: ${preparation_state}" >&2
   exit 1

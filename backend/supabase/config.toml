@@ -23,3 +23,6 @@ additional_redirect_urls = ["http://localhost:8081"]
 enabled = true
 double_confirm_changes = true
 enable_confirmations = true
+
+[functions.staff-auth]
+verify_jwt = false

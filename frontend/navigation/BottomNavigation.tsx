@@ -14,6 +14,11 @@ export type StaffRoute =
   | 'menu'
   | 'cart'
   | 'checkout'
+  | 'saleReceipt'
+  | 'dailySales'
+  | 'inventoryReporting'
+  | 'inventoryReport'
+  | 'inventoryCountDetails'
   | 'inventory'
   | 'stocks'
   | 'stockIn'
@@ -112,6 +117,13 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
 
 export function activeStaffTab(route: StaffRoute): StaffTab {
   if (route === 'cart' || route === 'checkout') return 'menu';
+  if (route === 'saleReceipt') return 'dashboard';
+  if (
+    route === 'dailySales' ||
+    route === 'inventoryReporting' ||
+    route === 'inventoryReport' ||
+    route === 'inventoryCountDetails'
+  ) return 'more';
   if (
     route === 'stockIn' ||
     route === 'stockOut' ||

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   FlatList,
   KeyboardAvoidingView,
@@ -16,6 +18,8 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import MenuWorkspace from './MenuWorkspace';
@@ -23,26 +27,90 @@ import type { MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
+  deduplicateInventoryAlerts,
+  filterBranchInventoryAlertItems,
   inventoryAlertLabel,
   isStockAlert,
   type InventoryAlertKind,
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
+import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
 import {
   getStaffSaleFeedback,
+  runInventoryRetryOnce,
+  shouldOfferInventoryRetry,
   loadInventory,
+  loadRecentStaffSales,
+  loadStaffSaleReceipt,
+  loadUnresolvedSales,
   loadStaffMenuCatalog,
   loadTransactionHistory,
   prepareBatterBatch,
   processSaleInventory,
-  recordInventoryTransactions,
   submitSale,
   submitDailyStockCheck,
+  requestInventoryCountCorrection,
+  InventoryCountCorrectionSubmissionError,
   type AppUser,
   type SaleSubmission,
   type StaffMenuAddon,
   type StaffMenuCatalogItem,
+  type UnresolvedSale,
+  type StaffSaleReceipt,
+  type StaffSaleRecord,
+  type StaffDailySalesSummary,
+  loadStaffDailySales,
+  loadStaffInventoryReports,
+  recordInventoryTransactionsIdempotently,
 } from '../services/takosync';
+import {
+  createPendingInventoryCountCorrectionStore,
+  type PendingInventoryCountCorrection,
+} from '../services/inventoryCountCorrectionRecovery';
+import {
+  createPendingDailyStockCheckStore,
+  type PendingDailyStockCheck,
+} from '../services/dailyStockCheckRecovery';
+import {
+  canRetryPendingInventoryTransaction,
+  createPendingInventoryTransactionStore,
+  runInventoryTransactionRequestOnce,
+  sameInventoryTransactionPayload,
+  sameInventoryTransactionWorkflow,
+  type PendingInventoryTransaction,
+  type RetrySafeInventoryTransaction,
+} from '../services/inventoryTransactionRecovery';
+import {
+  getManilaBusinessDayRange,
+  getStaffDailySalesLoadResult,
+  isFutureBusinessDate,
+  STAFF_DAILY_SALES_LOAD_ERROR,
+} from '../services/staffDailySales';
+import {
+  inventoryStockStatus,
+  runDiscrepancySubmissionOnce,
+  runInventoryReportLoad,
+  type InventoryCountRecord,
+  type InventoryReportData,
+} from './inventoryReports';
+import { formatStaffSaleReceipt } from './saleReceipt';
+
+type InventoryReportKey =
+  | 'totalIngredientQuantity'
+  | 'ingredientCategorySummary'
+  | 'ingredientStockStatus'
+  | 'branchInventorySummary'
+  | 'inventoryDiscrepancy'
+  | 'physicalInventoryCount';
+
+const inventoryReportTitles: Record<InventoryReportKey, string> = {
+  totalIngredientQuantity: 'Total Ingredient Quantity Report',
+  ingredientCategorySummary: 'Ingredient Category Summary Report',
+  ingredientStockStatus: 'Ingredient Stock Status Report',
+  branchInventorySummary: 'Branch Inventory Summary Report',
+  inventoryDiscrepancy: 'Inventory Discrepancy Report',
+  physicalInventoryCount: 'Physical Inventory Count Report',
+};
 
 const colors = {
   pink: '#F20D55',
@@ -85,6 +153,7 @@ type Ingredient = {
   expirationTracking: boolean;
   threshold: number;
   lowStock: boolean;
+  hasBranchInventory: boolean;
   expiration: string | null;
   nearExpiry: boolean;
   minimumStock: number;
@@ -100,6 +169,9 @@ type Ingredient = {
 
 const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments', 'Produce'];
 const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const pendingInventoryTransactionStore = createPendingInventoryTransactionStore(AsyncStorage);
+const pendingInventoryCountCorrectionStore = createPendingInventoryCountCorrectionStore(AsyncStorage);
+const pendingDailyStockCheckStore = createPendingDailyStockCheckStore(AsyncStorage);
 
 function formatDate(date: Date) {
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -125,7 +197,7 @@ function manilaBusinessDate(now = new Date()) {
 }
 
 function manilaMidnightTimestamp(date: Date) {
-  return `${formatLocalIsoDate(date)}T00:00:00+08:00`;
+  return getManilaBusinessDayRange(date).start;
 }
 
 function formatReceiptDate(date: Date) {
@@ -170,6 +242,7 @@ type DailyCheckLine = {
   ingredientId: string;
   name: string;
   recordedQuantity: number;
+  inventoryRevision: number;
   physicalQuantity: string;
   unit: string;
 };
@@ -178,6 +251,7 @@ type DailyCheckLineRecord = {
   ingredientId: string;
   name: string;
   recordedQuantity: number;
+  inventoryRevision: number;
   physicalQuantity: number;
   difference: number;
   unit: string;
@@ -239,6 +313,10 @@ function formatHistoryDateTime(date: Date) {
 }
 
 const wasteReasons: WasteReason[] = ['Spoiled', 'Expired', 'Spilled/Damaged', 'Other'];
+const formatSaleMoney = (amount: number) => `₱${amount.toLocaleString('en-PH', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})}`;
 
 const stockOutBatchPresets = [
   {
@@ -601,18 +679,22 @@ function DatePickerField({
   onChange,
   error,
   allowClear = false,
+  maxDate,
 }: {
   label: string;
   value: Date | null;
   onChange: (date: Date | null) => void;
   error?: string;
   allowClear?: boolean;
+  maxDate?: Date;
 }) {
   const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
   const [month, setMonth] = useState(() => value ?? new Date());
   const firstDay = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const nextMonthIsFuture = maxDate !== undefined &&
+    isFutureBusinessDate(new Date(month.getFullYear(), month.getMonth() + 1, 1), maxDate);
   const calendarDays: (number | null)[] = [
     ...Array.from({ length: firstDay }, () => null),
     ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
@@ -672,7 +754,14 @@ function DatePickerField({
               <Text style={styles.monthTitle}>
                 {month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </Text>
-              <Pressable accessibilityRole="button" accessibilityLabel="Next month" onPress={() => changeMonth(1)} style={styles.monthArrow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Next month"
+                accessibilityState={{ disabled: nextMonthIsFuture }}
+                disabled={nextMonthIsFuture}
+                onPress={() => changeMonth(1)}
+                style={[styles.monthArrow, nextMonthIsFuture && styles.buttonDisabled]}
+              >
                 <Text style={styles.monthArrowText}>›</Text>
               </Pressable>
             </View>
@@ -681,6 +770,8 @@ function DatePickerField({
                 <Text key={`${day}-${index}`} style={styles.weekday}>{day}</Text>
               ))}
               {calendarDays.map((day, index) => {
+                const isFuture = day !== null && maxDate !== undefined &&
+                  isFutureBusinessDate(new Date(month.getFullYear(), month.getMonth(), day), maxDate);
                 const isSelected =
                   day !== null &&
                   value?.getDate() === day &&
@@ -693,13 +784,19 @@ function DatePickerField({
                     key={`day-${day}`}
                     accessibilityRole="button"
                     accessibilityLabel={`${month.toLocaleDateString('en-US', { month: 'long' })} ${day}`}
+                    accessibilityState={{ disabled: isFuture, selected: isSelected }}
+                    disabled={isFuture}
                     onPress={() => {
                       onChange(new Date(month.getFullYear(), month.getMonth(), day));
                       setVisible(false);
                     }}
-                    style={[styles.calendarDayCell, isSelected && styles.calendarDaySelected]}
+                    style={[styles.calendarDayCell, isSelected && styles.calendarDaySelected, isFuture && styles.calendarDayDisabled]}
                   >
-                    <Text style={[styles.calendarDayText, isSelected && styles.calendarDayTextSelected]}>{day}</Text>
+                    <Text style={[
+                      styles.calendarDayText,
+                      isSelected && styles.calendarDayTextSelected,
+                      isFuture && styles.calendarDayTextDisabled,
+                    ]}>{day}</Text>
                   </Pressable>
                 );
               })}
@@ -761,8 +858,41 @@ export default function StaffWorkspace({
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [nearExpirationDays, setNearExpirationDays] = useState<number | null>(null);
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
+  const [recentSales, setRecentSales] = useState<StaffSaleRecord[]>([]);
+  const [dailySalesDate, setDailySalesDate] = useState(() => manilaBusinessDate());
+  const [dailySalesSummary, setDailySalesSummary] = useState<StaffDailySalesSummary | null>(null);
+  const [dailySalesLoading, setDailySalesLoading] = useState(false);
+  const [dailySalesError, setDailySalesError] = useState('');
+  const [dailySalesRefreshKey, setDailySalesRefreshKey] = useState(0);
+  const previousToday = useRef(formatLocalIsoDate(manilaBusinessDate()));
+  const [inventoryReportData, setInventoryReportData] = useState<InventoryReportData | null>(null);
+  const [inventoryReportLoading, setInventoryReportLoading] = useState(false);
+  const [inventoryReportError, setInventoryReportError] = useState('');
+  const [inventoryReportRefreshKey, setInventoryReportRefreshKey] = useState(0);
+  const [selectedInventoryReport, setSelectedInventoryReport] = useState<InventoryReportKey>('totalIngredientQuantity');
+  const [selectedInventoryCountId, setSelectedInventoryCountId] = useState<string | null>(null);
+  const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Set<string>>(() => new Set());
+  const [unresolvedSales, setUnresolvedSales] = useState<UnresolvedSale[]>([]);
+  const [unresolvedSalesLoading, setUnresolvedSalesLoading] = useState(false);
+  const [unresolvedSalesError, setUnresolvedSalesError] = useState('');
+  const [saleHistoryError, setSaleHistoryError] = useState('');
+  const [retryingSaleIds, setRetryingSaleIds] = useState<Set<string>>(() => new Set());
+  const inventoryRetryLocks = useRef(new Set<string>());
+  const [selectedSaleReceiptId, setSelectedSaleReceiptId] = useState<string | null>(null);
+  const [saleReceipt, setSaleReceipt] = useState<StaffSaleReceipt | null>(null);
+  const [saleReceiptLoading, setSaleReceiptLoading] = useState(false);
+  const [saleReceiptError, setSaleReceiptError] = useState('');
+  const [saleReceiptShareError, setSaleReceiptShareError] = useState('');
   const [backendLoading, setBackendLoading] = useState(true);
   const [backendError, setBackendError] = useState('');
+  const [pendingInventoryTransactions, setPendingInventoryTransactions] = useState<PendingInventoryTransaction[]>([]);
+  const [pendingInventoryTransactionsLoading, setPendingInventoryTransactionsLoading] = useState(true);
+  const [pendingInventoryStorageError, setPendingInventoryStorageError] = useState('');
+  const [pendingInventoryRetryingIds, setPendingInventoryRetryingIds] = useState<Set<string>>(() => new Set());
+  const [pendingInventoryRequestErrors, setPendingInventoryRequestErrors] = useState<Record<string, string>>({});
+  const [lastPendingInventoryRequestId, setLastPendingInventoryRequestId] = useState<string | null>(null);
+  const [forceNewInventoryRequestFor, setForceNewInventoryRequestFor] = useState<string | null>(null);
+  const pendingInventoryRequestLocks = useRef(new Set<string>());
   const [refreshing, setRefreshing] = useState(false);
   const alertRefreshLock = useRef(false);
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
@@ -771,7 +901,25 @@ export default function StaffWorkspace({
   const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
   const [currentDailyCheck, setCurrentDailyCheck] = useState<DailyInventoryCheck | null>(null);
   const [dailyCheckSubmitting, setDailyCheckSubmitting] = useState(false);
+  const [dailyCheckStarting, setDailyCheckStarting] = useState(false);
+  const [dailyCheckSaveFailed, setDailyCheckSaveFailed] = useState(false);
+  const [pendingDailyStockChecks, setPendingDailyStockChecks] = useState<PendingDailyStockCheck[]>([]);
+  const [dailyCheckStorageError, setDailyCheckStorageError] = useState('');
+  const [dailyCheckRetryErrors, setDailyCheckRetryErrors] = useState<Record<string, string>>({});
+  const dailyCheckRetryLocks = useRef(new Set<string>());
+  const [dailyCheckLeavePromptVisible, setDailyCheckLeavePromptVisible] = useState(false);
   const dailyCheckSubmissionLock = useRef(false);
+  const [pendingCountCorrections, setPendingCountCorrections] = useState<PendingInventoryCountCorrection[]>([]);
+  const [countCorrectionStorageError, setCountCorrectionStorageError] = useState('');
+  const [countCorrectionRetryErrors, setCountCorrectionRetryErrors] = useState<Record<string, string>>({});
+  const [countCorrectionMessages, setCountCorrectionMessages] = useState<Record<string, string>>({});
+  const countCorrectionRetryLocks = useRef(new Set<string>());
+  const [selectedCorrectionCountLineId, setSelectedCorrectionCountLineId] = useState<string | null>(null);
+  const [correctionActualQuantity, setCorrectionActualQuantity] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
+  const [correctionFormError, setCorrectionFormError] = useState('');
+  const countCorrectionSubmissionLock = useRef(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [selectedIngredientId, setSelectedIngredientId] = useState('');
@@ -810,7 +958,6 @@ export default function StaffWorkspace({
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
   const [menuInventoryRetrySale, setMenuInventoryRetrySale] = useState<{ id: string; reference: string } | null>(null);
-  const menuInventoryRetryLock = useRef(false);
   const [batterPreparationVisible, setBatterPreparationVisible] = useState(false);
   const [batterBatchReference, setBatterBatchReference] = useState('');
   const [batterPreparationError, setBatterPreparationError] = useState('');
@@ -842,6 +989,174 @@ export default function StaffWorkspace({
     expiration: true,
   });
 
+  const retryCountCorrectionRequest = async (request: PendingInventoryCountCorrection) => {
+    if (request.actorId !== user.id || request.branchId !== user.branchId || !user.branchId) return;
+    if (countCorrectionRetryLocks.current.has(request.requestId)) return;
+    countCorrectionRetryLocks.current.add(request.requestId);
+    setCountCorrectionRetryErrors((current) => {
+      const next = { ...current };
+      delete next[request.requestId];
+      return next;
+    });
+    try {
+      await requestInventoryCountCorrection({
+        countLineId: request.countLineId,
+        requestId: request.requestId,
+        correctedActualQuantity: request.correctedActualQuantity,
+        reason: request.reason,
+      });
+      setPendingCountCorrections(await pendingInventoryCountCorrectionStore.resolve(request.requestId));
+      setInventoryReportRefreshKey((current) => current + 1);
+      setDashboardMessage('Count correction request submitted to the Owner.');
+    } catch (error) {
+      if (error instanceof InventoryCountCorrectionSubmissionError) {
+        if (error.definitiveRejection) {
+          try {
+            setPendingCountCorrections(await pendingInventoryCountCorrectionStore.resolve(request.requestId));
+          } catch (storageError) {
+            setCountCorrectionStorageError(storageError instanceof Error
+              ? storageError.message
+              : 'The rejected correction request could not be removed from local recovery data.');
+            return;
+          }
+          setCountCorrectionMessages((current) => ({
+            ...current,
+            [request.countLineId]: `The server rejected this request: ${error.message}`,
+          }));
+          setInventoryReportRefreshKey((current) => current + 1);
+        } else {
+          setCountCorrectionRetryErrors((current) => ({
+            ...current,
+            [request.requestId]: `${error.message} The request remains saved so it can be safely retried.`,
+          }));
+        }
+      } else {
+        setCountCorrectionRetryErrors((current) => ({
+          ...current,
+          [request.requestId]: error instanceof Error ? error.message : 'Unable to submit the saved count correction request.',
+        }));
+      }
+    } finally {
+      countCorrectionRetryLocks.current.delete(request.requestId);
+    }
+  };
+
+  const retryDailyStockCheck = async (request: PendingDailyStockCheck) => {
+    if (request.actorId !== user.id || request.branchId !== user.branchId || !user.branchId) return;
+    if (dailyCheckRetryLocks.current.has(request.requestId)) return;
+    dailyCheckRetryLocks.current.add(request.requestId);
+    setDailyCheckRetryErrors((current) => {
+      const next = { ...current };
+      delete next[request.requestId];
+      return next;
+    });
+    try {
+      const saved = await submitDailyStockCheck({
+        branchId: request.branchId,
+        requestId: request.requestId,
+        checkDate: request.checkDate,
+        remarks: request.remarks,
+        lines: request.lines,
+      });
+      setPendingDailyStockChecks(await pendingDailyStockCheckStore.resolve(request.requestId));
+      const savedLines = saved.lines.map((line) => ({
+        ...line,
+        name: dailyCheckLines.find((entry) => entry.ingredientId === line.ingredientId)?.name ?? line.ingredientId,
+      }));
+      setCurrentDailyCheck({
+        reference: saved.reference,
+        checkDate: new Date(`${saved.checkDate}T00:00:00`),
+        submittedAt: new Date(),
+        branch: assignedBranch,
+        staff: staffName,
+        lines: savedLines,
+        remarks: request.remarks,
+        status: saved.status === 'pending_owner_review' ? 'pendingOwnerReview' : 'submitted',
+      });
+      setDailyCheckSaveFailed(false);
+      setDailyCheckModal(null);
+      setRoute('dailyCheckSuccess');
+      void refreshBackendData();
+    } catch (error) {
+      setDailyCheckRetryErrors((current) => ({
+        ...current,
+        [request.requestId]: error instanceof Error
+          ? `${error.message} The submission remains saved so it can be safely retried.`
+          : 'Unable to submit the saved daily count. The submission remains saved so it can be safely retried.',
+      }));
+      throw error;
+    } finally {
+      dailyCheckRetryLocks.current.delete(request.requestId);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    setPendingInventoryTransactionsLoading(true);
+    setPendingInventoryStorageError('');
+    pendingInventoryTransactionStore.load()
+      .then((requests) => {
+        if (active) setPendingInventoryTransactions(requests);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPendingInventoryStorageError(
+            error instanceof Error ? error.message : 'Unable to load saved inventory recovery data.',
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setPendingInventoryTransactionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id, user.branchId]);
+
+  useEffect(() => {
+    let active = true;
+    setDailyCheckStorageError('');
+    pendingDailyStockCheckStore.load()
+      .then((requests) => {
+        if (active) setPendingDailyStockChecks(requests);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setDailyCheckStorageError(error instanceof Error
+            ? error.message
+            : 'Unable to load saved daily count submissions.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id, user.branchId]);
+
+  useEffect(() => {
+    let active = true;
+    setCountCorrectionStorageError('');
+    pendingInventoryCountCorrectionStore.load()
+      .then((requests) => {
+        if (!active) return;
+        setPendingCountCorrections(requests);
+        for (const request of requests) {
+          if (request.actorId === user.id && request.branchId === user.branchId) {
+            void retryCountCorrectionRequest(request);
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setCountCorrectionStorageError(error instanceof Error
+            ? error.message
+            : 'Unable to load saved count correction requests.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id, user.branchId]);
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const refreshAtNextManilaDay = () => {
@@ -857,6 +1172,16 @@ export default function StaffWorkspace({
     timer = setTimeout(refreshAtNextManilaDay, Math.max(1000, nextMidnight - Date.now() + 50));
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const currentToday = formatLocalIsoDate(today);
+    if (previousToday.current === currentToday) return;
+    const previousDate = previousToday.current;
+    previousToday.current = currentToday;
+    setDailySalesDate((selectedDate) =>
+      formatLocalIsoDate(selectedDate) === previousDate ? today : selectedDate,
+    );
+  }, [today]);
 
   useEffect(() => {
     let active = true;
@@ -892,8 +1217,101 @@ export default function StaffWorkspace({
   }, [user?.branchId]);
 
   useEffect(() => {
+    if (route !== 'dashboard') return;
+    let active = true;
+    if (!user?.branchId) {
+      setUnresolvedSales([]);
+      setUnresolvedSalesError('Your account does not have an assigned branch.');
+      return () => {
+        active = false;
+      };
+    }
+    setUnresolvedSalesLoading(true);
+    setUnresolvedSalesError('');
+    Promise.all([loadUnresolvedSales(user.branchId), loadRecentStaffSales(user.branchId)])
+      .then(([unresolved, recent]) => {
+        if (active) {
+          setUnresolvedSales(unresolved);
+          setRecentSales(recent);
+          setSaleHistoryError('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          const message = error instanceof Error ? error.message : 'Unable to load branch sales.';
+          setUnresolvedSalesError(message);
+          setSaleHistoryError(message);
+        }
+      })
+      .finally(() => {
+        if (active) setUnresolvedSalesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, user?.branchId]);
+
+  useEffect(() => {
+    if (route !== 'dailySales') return;
+    let active = true;
+    const branchId = user?.branchId;
+    if (!branchId) {
+      setDailySalesSummary(null);
+      setDailySalesError(STAFF_DAILY_SALES_LOAD_ERROR);
+      setDailySalesLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setDailySalesLoading(true);
+    setDailySalesError('');
+    getStaffDailySalesLoadResult(() => loadStaffDailySales(branchId, dailySalesDate))
+      .then(({ summary, error }) => {
+        if (active) {
+          setDailySalesSummary(summary);
+          setDailySalesError(error);
+        }
+      })
+      .finally(() => {
+        if (active) setDailySalesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, user?.branchId, dailySalesDate, dailySalesRefreshKey]);
+
+  useEffect(() => {
+    if (route !== 'inventoryReport') return;
+    let active = true;
+    const branchId = user?.branchId;
+    if (!branchId) {
+      setInventoryReportData(null);
+      setInventoryReportError('Unable to load data. Please check your internet connection and try again.');
+      setInventoryReportLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setInventoryReportLoading(true);
+    setInventoryReportError('');
+    runInventoryReportLoad(() => loadStaffInventoryReports(branchId, user?.branch ?? ''))
+      .then(({ data, error }) => {
+        if (active) {
+          setInventoryReportData(data);
+          setInventoryReportError(error);
+        }
+      })
+      .finally(() => {
+        if (active) setInventoryReportLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, user?.branchId, user?.branch, inventoryReportRefreshKey]);
+
+  useEffect(() => {
     if (route !== 'menu' && route !== 'cart' && route !== 'checkout') return;
-    if (menuCatalogLoading) return;
+    if (route !== 'menu' && menuCatalogLoaded && menuCatalogBranchId === user?.branchId) return;
     let active = true;
     setMenuCatalogLoading(true);
     setMenuCatalogError('');
@@ -901,12 +1319,6 @@ export default function StaffWorkspace({
       setMenuCatalogError('Your account does not have an assigned branch. Contact the owner.');
       setMenuCatalogLoading(false);
       return;
-    }
-    if (menuCatalogLoaded && menuCatalogBranchId === user.branchId) {
-      setMenuCatalogLoading(false);
-      return () => {
-        active = false;
-      };
     }
     setMenuCatalog([]);
     setMenuAddons([]);
@@ -964,10 +1376,28 @@ export default function StaffWorkspace({
       setBackendError('Your account does not have an assigned branch. Contact the owner.');
       return;
     }
+    setUnresolvedSalesLoading(true);
+    const salesRefresh = Promise.all([
+      loadUnresolvedSales(user.branchId),
+      loadRecentStaffSales(user.branchId),
+    ])
+      .then(([unresolved, recent]) => {
+        setUnresolvedSales(unresolved);
+        setRecentSales(recent);
+        setUnresolvedSalesError('');
+        setSaleHistoryError('');
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Unable to refresh branch sales.';
+        setUnresolvedSalesError(message);
+        setSaleHistoryError(message);
+      })
+      .finally(() => setUnresolvedSalesLoading(false));
     try {
       const [inventory, history] = await Promise.all([
         loadInventory(user.branchId, manilaBusinessDate()),
         loadTransactionHistory(user.branchId),
+        salesRefresh,
       ]);
       setIngredients(inventory.items);
       setNearExpirationDays(inventory.nearExpirationDays);
@@ -975,6 +1405,154 @@ export default function StaffWorkspace({
       setBackendError('');
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'The saved record could not be refreshed.');
+    }
+  };
+
+  const submitPendingInventoryRequest = async (request: PendingInventoryTransaction) => {
+    if (!canRetryPendingInventoryTransaction(request, user.id, user.branchId ?? '')) {
+      throw new Error('This saved transaction belongs to a different Staff account or branch. Sign in to the original account and branch to retry it.');
+    }
+    return runInventoryTransactionRequestOnce(request.requestId, pendingInventoryRequestLocks.current, async () => {
+      setPendingInventoryRetryingIds((current) => new Set(current).add(request.requestId));
+      setPendingInventoryRequestErrors((current) => {
+        const next = { ...current };
+        delete next[request.requestId];
+        return next;
+      });
+      setLastPendingInventoryRequestId(request.requestId);
+      try {
+        const processing = await pendingInventoryTransactionStore.markProcessing(request.requestId);
+        setPendingInventoryTransactions(processing);
+        const saved = await recordInventoryTransactionsIdempotently(
+          request.branchId,
+          request.requestId,
+          request.transactions,
+        );
+        const reference = saved[0]?.reference;
+        if (!reference) throw new Error('The saved inventory transaction did not return a reference.');
+        const requestWithReference = { ...request, status: 'processing' as const, reference };
+        await pendingInventoryTransactionStore.save(requestWithReference);
+        try {
+          const resolved = await pendingInventoryTransactionStore.resolve(request.requestId);
+          setPendingInventoryTransactions(resolved);
+          setPendingInventoryStorageError('');
+          setLastPendingInventoryRequestId(null);
+          setForceNewInventoryRequestFor(null);
+        } catch (error) {
+          setPendingInventoryStorageError(
+            error instanceof Error
+              ? `The transaction was confirmed, but its local recovery copy could not be cleared: ${error.message}`
+              : 'The transaction was confirmed, but its local recovery copy could not be cleared.',
+          );
+          setPendingInventoryTransactions((current) => current.map((entry) =>
+            entry.requestId === request.requestId ? { ...entry, status: 'pending' } : entry,
+          ));
+        }
+        setPendingInventoryRequestErrors((current) => {
+          const next = { ...current };
+          delete next[request.requestId];
+          return next;
+        });
+        return saved;
+      } catch (error) {
+        try {
+          const pending = await pendingInventoryTransactionStore.save({ ...request, status: 'pending' });
+          setPendingInventoryTransactions(pending);
+        } catch (storageError) {
+          setPendingInventoryStorageError(
+            storageError instanceof Error
+              ? `The request remains unresolved and local recovery state could not be updated: ${storageError.message}`
+              : 'The request remains unresolved and local recovery state could not be updated.',
+          );
+        }
+        const message = error instanceof Error ? error.message : 'Unable to confirm the inventory transaction.';
+        setPendingInventoryRequestErrors((current) => ({ ...current, [request.requestId]: message }));
+        throw error;
+      } finally {
+        setPendingInventoryRetryingIds((current) => {
+          const next = new Set(current);
+          next.delete(request.requestId);
+          return next;
+        });
+      }
+    });
+  };
+
+  const submitNewInventoryRequest = async (
+    type: RetrySafeInventoryTransaction['type'],
+    transactions: RetrySafeInventoryTransaction[],
+  ) => {
+    if (!user.branchId) {
+      throw new Error('Your account does not have an assigned branch. Contact the owner.');
+    }
+    if (pendingInventoryTransactionsLoading) {
+      throw new Error('Saved inventory recovery requests are still loading. Please wait and try again.');
+    }
+    if (pendingInventoryStorageError !== '') {
+      throw new Error('Saved inventory recovery data is unavailable. Do not create another transaction until it can be recovered.');
+    }
+    const unresolved = pendingInventoryTransactions.filter((request) =>
+      request.actorId === user.id &&
+      request.branchId === user.branchId &&
+      sameInventoryTransactionWorkflow(request.transactionType, type),
+    );
+    const forcedNew = forceNewInventoryRequestFor !== null &&
+      unresolved.some((request) => request.requestId === forceNewInventoryRequestFor);
+    if (!forcedNew) {
+      const exactRetry = unresolved.find((request) =>
+        sameInventoryTransactionPayload(request.transactions, transactions),
+      );
+      if (exactRetry) {
+        setLastPendingInventoryRequestId(exactRetry.requestId);
+        const saved = await submitPendingInventoryRequest(exactRetry);
+        if (!saved) throw new Error('This transaction is already being retried.');
+        return saved;
+      }
+      const unresolvedDifferentPayload = unresolved.find((request) =>
+        request.requestId !== forceNewInventoryRequestFor,
+      );
+      if (unresolvedDifferentPayload) {
+        setLastPendingInventoryRequestId(unresolvedDifferentPayload.requestId);
+        throw new Error('A previous transaction of this type is unresolved. Retry it, or explicitly create this as a separate transaction.');
+      }
+    }
+
+    const request: PendingInventoryTransaction = {
+      requestId: crypto.randomUUID(),
+      actorId: user.id,
+      actorLabel: user.displayName || user.email,
+      branchId: user.branchId,
+      branchLabel: user.branch,
+      transactionType: type,
+      transactions: transactions.map((transaction) => ({ ...transaction })),
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      reference: null,
+    };
+    const pending = await pendingInventoryTransactionStore.save(request);
+    setPendingInventoryTransactions(pending);
+    setLastPendingInventoryRequestId(request.requestId);
+    setForceNewInventoryRequestFor(null);
+    const saved = await submitPendingInventoryRequest(request);
+    if (!saved) throw new Error('This transaction is already being saved.');
+    return saved;
+  };
+
+  const retryPendingInventoryRequest = async (request: PendingInventoryTransaction) => {
+    if (!canRetryPendingInventoryTransaction(request, user.id, user.branchId ?? '')) {
+      setPendingInventoryRequestErrors((current) => ({
+        ...current,
+        [request.requestId]: 'Sign in to the Staff account assigned to this branch to safely retry this transaction.',
+      }));
+      return;
+    }
+    try {
+      const saved = await submitPendingInventoryRequest(request);
+      if (!saved) return;
+      await refreshBackendData();
+      setDashboardMessage(`Inventory transaction ${saved[0]?.reference ?? ''} was confirmed.`);
+    } catch {
+      return;
     }
   };
 
@@ -1002,7 +1580,7 @@ export default function StaffWorkspace({
   };
 
   useEffect(() => {
-    if (route === 'alerts' && !backendLoading) {
+    if (route === 'alerts') {
       void refreshAlertsData();
     }
   }, [route]);
@@ -1239,6 +1817,19 @@ export default function StaffWorkspace({
   const dailyCheckValid =
     dailyCheckResults.length > 0 &&
     dailyCheckResults.every((line) => line.valid);
+  useEffect(() => {
+    if (
+      route !== 'dailyInventoryCheck' ||
+      dailyDiscrepancies.length === 0 ||
+      dailyCheckSubmitting ||
+      Platform.OS === 'web'
+    ) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setDailyCheckLeavePromptVisible(true);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [route, dailyDiscrepancies.length, dailyCheckSubmitting]);
   const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
   const parsedBatchCount = Number(batchCount);
   const usageDeductions: UsageDeduction[] = usageMode === 'manual'
@@ -1271,13 +1862,14 @@ export default function StaffWorkspace({
     [category, ingredients, normalizedSearch],
   );
   const alertDate = manilaBusinessDate();
-  const lowStockItems = ingredients.filter(
+  const branchInventoryItems = filterBranchInventoryAlertItems(ingredients);
+  const lowStockItems = branchInventoryItems.filter(
     (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'lowStock',
   );
-  const outOfStockItems = ingredients.filter(
+  const outOfStockItems = branchInventoryItems.filter(
     (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'outOfStock',
   );
-  const nearExpirationBatches = ingredients.flatMap((item) => {
+  const nearExpirationBatches = branchInventoryItems.flatMap((item) => {
     if (!item.expirationTracking) return [];
     return item.batches.flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
@@ -1288,7 +1880,7 @@ export default function StaffWorkspace({
         : [];
     });
   });
-  const expiredBatches = ingredients.flatMap((item) => {
+  const expiredBatches = branchInventoryItems.flatMap((item) => {
     if (!item.expirationTracking) return [];
     return item.batches.flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
@@ -1300,7 +1892,7 @@ export default function StaffWorkspace({
     });
   });
   const expiringItems = [...new Map(nearExpirationBatches.map(({ item }) => [item.id, item])).values()];
-  const inventoryAlerts: InventoryAlert[] = [
+  const inventoryAlerts: InventoryAlert[] = deduplicateInventoryAlerts([
     ...lowStockItems.map((item) => ({
       id: `low-${item.id}`,
       kind: 'lowStock' as const,
@@ -1344,7 +1936,7 @@ export default function StaffWorkspace({
       title: item.name,
       detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expired ${batch.expirationDate}`,
     })),
-  ];
+  ]);
   const alertTerm = alertSearch.trim().toLowerCase();
   const visibleAlerts = inventoryAlerts.filter((item) => {
     const preference = isStockAlert(item.kind) ? alertPreferences.lowStock : alertPreferences.expiration;
@@ -1360,10 +1952,44 @@ export default function StaffWorkspace({
   const visibleExpiringItems = expiringItems.filter(dashboardMatches);
 
   const navigate = (nextRoute: StaffTab) => {
+    if (route === 'dailyInventoryCheck' && dailyDiscrepancies.length > 0 && !dailyCheckSubmitting) {
+      setDailyCheckLeavePromptVisible(true);
+      return;
+    }
     setDailyCheckModal(null);
     setLogoutConfirmationVisible(false);
     setRoute(nextRoute);
     setDashboardMessage('');
+  };
+
+  const openDailySales = () => {
+    setDailySalesDate(manilaBusinessDate());
+    setDailySalesSummary(null);
+    setDailySalesError('');
+    setRoute('dailySales');
+  };
+
+  const openInventoryReporting = () => {
+    setSelectedInventoryReport('totalIngredientQuantity');
+    setSelectedInventoryCountId(null);
+    setExpandedInventoryCategories(new Set());
+    setInventoryReportData(null);
+    setInventoryReportError('');
+    setRoute('inventoryReporting');
+  };
+
+  const openInventoryReport = (report: InventoryReportKey) => {
+    setSelectedInventoryReport(report);
+    setSelectedInventoryCountId(null);
+    setExpandedInventoryCategories(new Set());
+    setInventoryReportData(null);
+    setInventoryReportError('');
+    setRoute('inventoryReport');
+  };
+
+  const openInventoryCountDetails = (count: InventoryCountRecord) => {
+    setSelectedInventoryCountId(count.id);
+    setRoute('inventoryCountDetails');
   };
 
   const addMenuProduct = (productId: string) => {
@@ -1428,31 +2054,113 @@ export default function StaffWorkspace({
       setMenuCart([]);
       setMenuTransactionReference(null);
       await refreshBackendData();
-      const inventoryFailed = sale.inventory_processing_status === 'failed';
-      setMenuInventoryRetrySale(inventoryFailed ? { id: sale.id, reference: sale.transaction_reference } : null);
+      setMenuInventoryRetrySale(shouldOfferInventoryRetry(sale.inventory_processing_status)
+        ? { id: sale.id, reference: sale.transaction_reference }
+        : null);
       setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
-      setRoute('dashboard');
+      openSaleReceipt(sale.id);
     } finally {
       menuSaleSubmissionLock.current = false;
     }
   };
 
-  const retryMenuSaleInventory = async () => {
-    if (!menuInventoryRetrySale || menuInventoryRetryLock.current) return;
-    menuInventoryRetryLock.current = true;
-    try {
-      const result = await processSaleInventory(menuInventoryRetrySale.id);
-      await refreshBackendData();
-      if (result.status === 'completed') {
-        setDashboardMessage(`Sale ${menuInventoryRetrySale.reference} inventory processing completed.`);
-        setMenuInventoryRetrySale(null);
-      } else {
-        setDashboardMessage(`Sale ${menuInventoryRetrySale.reference} was recorded but inventory processing failed again.`);
+  const retrySaleInventory = async (sale: Pick<UnresolvedSale, 'id' | 'transaction_reference'>) => {
+    await runInventoryRetryOnce(sale.id, inventoryRetryLocks.current, async () => {
+      setRetryingSaleIds((current) => new Set(current).add(sale.id));
+      try {
+        const result = await processSaleInventory(sale.id);
+        await refreshBackendData();
+        if (result.status === 'completed') {
+          setDashboardMessage(`Sale ${sale.transaction_reference} inventory processing completed.`);
+          setMenuInventoryRetrySale((current) => current?.id === sale.id ? null : current);
+        } else {
+          setDashboardMessage(`Sale ${sale.transaction_reference} was recorded but inventory processing failed again.`);
+        }
+      } catch (error) {
+        setDashboardMessage(error instanceof Error ? error.message : 'Inventory processing could not be retried.');
+        await refreshBackendData();
+      } finally {
+        setRetryingSaleIds((current) => {
+          const next = new Set(current);
+          next.delete(sale.id);
+          return next;
+        });
       }
+    });
+  };
+
+  const retryMenuSaleInventory = async () => {
+    if (!menuInventoryRetrySale) return;
+    await retrySaleInventory({
+      id: menuInventoryRetrySale.id,
+      transaction_reference: menuInventoryRetrySale.reference,
+    });
+  };
+
+  const openSaleReceipt = (saleId: string) => {
+    setSelectedSaleReceiptId(saleId);
+    setSaleReceipt(null);
+    setSaleReceiptError('');
+    setSaleReceiptShareError('');
+    setRoute('saleReceipt');
+  };
+
+  useEffect(() => {
+    if (route !== 'saleReceipt' || !selectedSaleReceiptId) return;
+    let active = true;
+    if (!user?.branchId) {
+      setSaleReceiptError('Your account does not have an assigned branch.');
+      return () => {
+        active = false;
+      };
+    }
+    setSaleReceiptLoading(true);
+    setSaleReceiptError('');
+    loadStaffSaleReceipt(selectedSaleReceiptId, user.branchId)
+      .then((receipt) => {
+        if (active) setSaleReceipt(receipt);
+      })
+      .catch((error: unknown) => {
+        if (active) setSaleReceiptError(error instanceof Error ? error.message : 'Unable to load the recorded sale receipt.');
+      })
+      .finally(() => {
+        if (active) setSaleReceiptLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, selectedSaleReceiptId, user?.branchId]);
+
+  const shareSaleReceipt = async () => {
+    if (!saleReceipt) return;
+    setSaleReceiptShareError('');
+    const text = formatStaffSaleReceipt(saleReceipt);
+    const fileName = `${saleReceipt.transactionReference.replace(/[^a-z0-9-]/gi, '-')}-receipt.txt`;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof document === 'undefined') throw new Error('Receipt sharing is unavailable in this browser.');
+        const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        return;
+      }
+      const directory = FileSystem.cacheDirectory;
+      if (!directory) throw new Error('A temporary storage location is unavailable for this receipt.');
+      if (!await Sharing.isAvailableAsync()) throw new Error('Receipt sharing is not available on this device.');
+      const uri = `${directory}${fileName}`;
+      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(uri, {
+        mimeType: 'text/plain',
+        dialogTitle: 'Share sale receipt',
+        UTI: 'public.plain-text',
+      });
     } catch (error) {
-      setDashboardMessage(error instanceof Error ? error.message : 'Inventory processing could not be retried.');
-    } finally {
-      menuInventoryRetryLock.current = false;
+      setSaleReceiptShareError(error instanceof Error ? error.message : 'Unable to share this receipt.');
     }
   };
 
@@ -1475,7 +2183,7 @@ export default function StaffWorkspace({
       setBatterPreparationVisible(false);
       setBatterBatchReference('');
       setDashboardMessage(
-        `Batter batch ${batch.batch_reference} is recorded: ${Number(batch.prepared_quantity)} ${batch.prepared_unit}.`,
+        `Batter batch ${batch.batch_reference} is recorded: ${PREPARED_BATTER_BATCH_BOTTLES} ${batch.prepared_unit}.`,
       );
       await refreshDashboardData();
     } catch (error) {
@@ -1492,22 +2200,42 @@ export default function StaffWorkspace({
     setRoute('ingredientDetails');
   };
 
-  const startDailyInventoryCheck = () => {
+  const startDailyInventoryCheck = async () => {
+    if (dailyCheckStarting) return;
+    if (!user?.branchId) {
+      setBackendError('Your account does not have an assigned branch.');
+      return;
+    }
     setFormError('');
-    const lines = ingredients.map((item) => ({
-      ingredientId: item.id,
-      name: item.name,
-      recordedQuantity: item.quantity,
-      physicalQuantity: '',
-      unit: item.unit,
-    }));
-    setDailyCheckLines(lines);
-    setDailyCheckRemarks('');
-    setDailyCheckAttempted(false);
-    setDailyCheckModal(null);
-    setCurrentDailyCheck(null);
-    dailyCheckSubmissionLock.current = false;
-    setRoute('dailyInventoryCheck');
+    setDailyCheckSaveFailed(false);
+    setDailyCheckStarting(true);
+    setBackendError('');
+    try {
+      const currentInventory = await loadInventory(user.branchId, manilaBusinessDate());
+      setIngredients(currentInventory.items);
+      setNearExpirationDays(currentInventory.nearExpirationDays);
+      const lines = currentInventory.items
+        .filter((item) => item.hasBranchInventory)
+        .map((item) => ({
+          ingredientId: item.id,
+          name: item.name,
+          recordedQuantity: item.quantity,
+          inventoryRevision: item.inventoryRevision,
+          physicalQuantity: '',
+          unit: item.unit,
+        }));
+      setDailyCheckLines(lines);
+      setDailyCheckRemarks('');
+      setDailyCheckAttempted(false);
+      setDailyCheckModal(null);
+      setCurrentDailyCheck(null);
+      dailyCheckSubmissionLock.current = false;
+      setRoute('dailyInventoryCheck');
+    } catch (error) {
+      setBackendError(error instanceof Error ? error.message : 'Unable to refresh stock before the count begins.');
+    } finally {
+      setDailyCheckStarting(false);
+    }
   };
 
   const validateDailyInventoryCheck = () => {
@@ -1521,61 +2249,119 @@ export default function StaffWorkspace({
   };
 
   const submitDailyInventoryCheck = async () => {
-    if (dailyCheckSubmissionLock.current || !validateDailyInventoryCheck()) return;
-    if (!user?.branchId) {
+    if (!validateDailyInventoryCheck()) return;
+    const branchId = user?.branchId;
+    if (!branchId) {
       setFormError('Your account does not have an assigned branch. Contact the owner.');
       return;
     }
-    dailyCheckSubmissionLock.current = true;
-    setDailyCheckSubmitting(true);
-    setFormError('');
-    const checkDate = manilaBusinessDate();
-    const lines = dailyCheckLines.map((line) => {
-      const physicalQuantity = Number(line.physicalQuantity);
-      return {
-        ingredientId: line.ingredientId,
-        name: line.name,
-        recordedQuantity: line.recordedQuantity,
-        physicalQuantity,
-        difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit),
-        unit: line.unit,
-      };
-    });
-    try {
-      const saved = await submitDailyStockCheck({
-        branchId: user.branchId,
+    await runDiscrepancySubmissionOnce(dailyCheckSubmissionLock, async () => {
+      setDailyCheckSubmitting(true);
+      setFormError('');
+      setDailyCheckSaveFailed(false);
+      setDailyCheckLeavePromptVisible(false);
+      const checkDate = manilaBusinessDate();
+      const lines = dailyCheckLines.map((line) => {
+        const physicalQuantity = Number(line.physicalQuantity);
+        return {
+          ingredientId: line.ingredientId,
+          name: line.name,
+          recordedQuantity: line.recordedQuantity,
+          inventoryRevision: line.inventoryRevision,
+          physicalQuantity,
+          difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit),
+          unit: line.unit,
+        };
+      });
+      const request: PendingDailyStockCheck = {
+        requestId: crypto.randomUUID(),
+        actorId: user.id,
+        branchId,
         checkDate: formatLocalIsoDate(checkDate),
         remarks: dailyCheckRemarks.trim(),
         lines: lines.map((line) => ({
           ingredientId: line.ingredientId,
           recordedQuantity: line.recordedQuantity,
+          inventoryRevision: line.inventoryRevision,
           physicalQuantity: line.physicalQuantity,
           unit: line.unit,
         })),
-      });
-      const savedLines = saved.lines.map((line) => ({
-        ...line,
-        name: dailyCheckLines.find((entry) => entry.ingredientId === line.ingredientId)?.name ?? line.ingredientId,
-      }));
-      const check: DailyInventoryCheck = {
-        reference: saved.reference,
-        checkDate: new Date(`${saved.checkDate}T00:00:00`),
-        submittedAt: new Date(),
-        branch: assignedBranch,
-        staff: staffName,
-        lines: savedLines,
-        remarks: dailyCheckRemarks.trim(),
-        status: saved.status === 'pending_owner_review' ? 'pendingOwnerReview' : 'submitted',
+        createdAt: new Date().toISOString(),
       };
-      setCurrentDailyCheck(check);
-      setDailyCheckModal(null);
-      setRoute('dailyCheckSuccess');
-      void refreshBackendData();
+      try {
+        setPendingDailyStockChecks(await pendingDailyStockCheckStore.save(request));
+        await retryDailyStockCheck(request);
+      } catch (error) {
+        setDailyCheckModal(null);
+        setFormError(error instanceof Error
+          ? error.message
+          : 'Unable to save. Please check your internet connection and try again.');
+        setDailyCheckSaveFailed(true);
+      } finally {
+        setDailyCheckSubmitting(false);
+      }
+    });
+  };
+
+  const submitCountCorrectionRequest = async () => {
+    if (countCorrectionSubmissionLock.current || correctionSubmitting) return;
+    const record = inventoryReportData?.physicalCounts.find(
+      (count) => count.id === selectedCorrectionCountLineId,
+    );
+    if (!record || record.submittedBy !== user.id || !user.branchId) {
+      setCorrectionFormError('This count cannot be corrected from the current Staff account or branch.');
+      return;
+    }
+    const correctedActualQuantity = Number(correctionActualQuantity);
+    if (!correctionActualQuantity.trim() || !Number.isFinite(correctedActualQuantity) || correctedActualQuantity < 0) {
+      setCorrectionFormError('Enter a corrected quantity of zero or greater.');
+      return;
+    }
+    const decimalPlaces = correctionActualQuantity.trim().split('.')[1]?.length ?? 0;
+    if (decimalPlaces > record.quantityPrecision) {
+      setCorrectionFormError(`This ingredient allows at most ${record.quantityPrecision} decimal places.`);
+      return;
+    }
+    const reason = correctionReason.trim();
+    if (!reason || reason.length > 1000) {
+      setCorrectionFormError('Enter a correction reason of 1 to 1000 characters.');
+      return;
+    }
+    if (record.validation || record.correctionRequests.some((request) => request.status === 'pending')) {
+      setCorrectionFormError('A correction is already pending or this count has been validated.');
+      return;
+    }
+
+    countCorrectionSubmissionLock.current = true;
+    setCorrectionSubmitting(true);
+    setCorrectionFormError('');
+    setCountCorrectionMessages((current) => {
+      const next = { ...current };
+      delete next[record.id];
+      return next;
+    });
+    const request: PendingInventoryCountCorrection = {
+      requestId: crypto.randomUUID(),
+      actorId: user.id,
+      branchId: user.branchId,
+      countLineId: record.id,
+      correctedActualQuantity,
+      reason,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      setPendingCountCorrections(await pendingInventoryCountCorrectionStore.save(request));
+      setSelectedCorrectionCountLineId(null);
+      setCorrectionActualQuantity('');
+      setCorrectionReason('');
+      await retryCountCorrectionRequest(request);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unable to submit the daily check.');
+      setCorrectionFormError(error instanceof Error
+        ? error.message
+        : 'Unable to save the count correction request for retry.');
     } finally {
-      setDailyCheckSubmitting(false);
-      dailyCheckSubmissionLock.current = false;
+      countCorrectionSubmissionLock.current = false;
+      setCorrectionSubmitting(false);
     }
   };
 
@@ -1836,14 +2622,22 @@ export default function StaffWorkspace({
       try {
         const wasteQuantity = Number(quantity);
         const receiptDate = transactionDate;
+        const wasteCategory = wasteReason === 'Spoiled' || wasteReason === 'Expired'
+          ? 'Spoilage'
+          : wasteReason === 'Spilled/Damaged'
+            ? 'Spillage'
+            : 'Other';
         if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
-        const saved = await recordInventoryTransactions(user.branchId, [{
+        const saved = await submitNewInventoryRequest(wasteReason === 'Spoiled' || wasteReason === 'Expired' ? 'spoilage' : 'waste', [{
           ingredientId: selectedIngredient.id,
           type: wasteReason === 'Spoiled' || wasteReason === 'Expired' ? 'spoilage' : 'waste',
           quantity: wasteQuantity,
+          unit: selectedIngredient.unit,
           transactionDate: manilaMidnightTimestamp(receiptDate),
-          reason: wasteReason,
+          reason: wasteCategory,
           notes: notes.trim(),
+          batchReference: null,
+          expirationDate: null,
         }]);
         const reference = saved[0]?.reference;
         if (!reference) throw new Error('The saved waste record did not return a transaction reference.');
@@ -1910,14 +2704,22 @@ export default function StaffWorkspace({
         const receiptDate = transactionDate;
         const draftDeductions = usageDeductions.map((deduction) => ({ ...deduction }));
         if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
-        const saved = await recordInventoryTransactions(user.branchId, draftDeductions.map((deduction) => ({
-          ingredientId: deduction.ingredientId,
-          type: usageMode === 'cookingBatch' ? 'usage' : 'stock_out',
-          quantity: deduction.quantity,
-          transactionDate: manilaMidnightTimestamp(receiptDate),
-          reason,
-          notes,
-        })));
+        const inventoryType = usageMode === 'cookingBatch' ? 'usage' : 'stock_out';
+        const saved = await submitNewInventoryRequest(inventoryType, draftDeductions.map((deduction) => {
+          const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
+          if (!ingredient) throw new Error('An inventory item in this transaction is no longer available.');
+          return {
+            ingredientId: deduction.ingredientId,
+            type: inventoryType,
+            quantity: deduction.quantity,
+            unit: ingredient.unit,
+            transactionDate: manilaMidnightTimestamp(receiptDate),
+            reason,
+            notes,
+            batchReference: null,
+            expirationDate: null,
+          };
+        }));
         const reference = saved[0]?.reference;
         if (!reference) throw new Error('The saved stock-out did not return a transaction reference.');
         const deductions = draftDeductions.map((deduction, index) => {
@@ -1982,13 +2784,15 @@ export default function StaffWorkspace({
     try {
       if (route !== 'stockIn') throw new Error('This transaction type is not supported on this screen.');
       if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
-      const saved = await recordInventoryTransactions(user.branchId, [{
+      const saved = await submitNewInventoryRequest('stock_in', [{
         ingredientId: selectedIngredient.id,
         type: 'stock_in',
         quantity: parsedQuantity,
+        unit: selectedIngredient.unit,
         transactionDate: formatLocalIsoDate(transactionDate),
         reason: 'Stock-In',
         notes: notes.trim(),
+        batchReference: null,
         expirationDate: expirationDate ? formatLocalIsoDate(expirationDate) : null,
       }]);
       const savedTransaction = saved[0];
@@ -2013,6 +2817,130 @@ export default function StaffWorkspace({
       movementSubmissionLock.current = false;
       setConfirming(false);
     }
+  };
+
+  const renderInventoryRecoveryControls = (type: RetrySafeInventoryTransaction['type']) => {
+    const request = pendingInventoryTransactions.find((entry) =>
+      entry.requestId === lastPendingInventoryRequestId &&
+      sameInventoryTransactionWorkflow(entry.transactionType, type),
+    );
+    if (!request) return null;
+    const retryable = canRetryPendingInventoryTransaction(request, user.id, user.branchId ?? '');
+    const requestError = pendingInventoryRequestErrors[request.requestId] ?? '';
+    const isConflict = requestError.toLowerCase().includes('different transaction payload');
+    return (
+      <View style={styles.inventoryRecoveryActions}>
+        {requestError !== '' ? (
+          <Text style={styles.inventoryRecoveryMessage} accessibilityRole="alert">{requestError}</Text>
+        ) : null}
+        {retryable && !isConflict ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={pendingInventoryRetryingIds.has(request.requestId)}
+            onPress={() => void retryPendingInventoryRequest(request)}
+            style={({ pressed }) => [
+              styles.inventoryRetryAction,
+              pressed && styles.pressed,
+              pendingInventoryRetryingIds.has(request.requestId) && styles.inventoryRetryDisabled,
+            ]}
+          >
+            <Text style={styles.inventoryRetryActionText}>
+              {pendingInventoryRetryingIds.has(request.requestId) ? 'Retrying…' : 'Retry saved transaction'}
+            </Text>
+          </Pressable>
+        ) : null}
+        {retryable && !isConflict ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setForceNewInventoryRequestFor(request.requestId);
+              setFormError('The unresolved request is preserved. Confirm again to create a separate transaction with a new request ID.');
+            }}
+            style={({ pressed }) => [styles.inventorySeparateAction, pressed && styles.pressed]}
+          >
+            <Text style={styles.inventorySeparateActionText}>Create as a separate transaction</Text>
+          </Pressable>
+        ) : null}
+        {!retryable ? (
+          <Text style={styles.inventoryRecoveryMessage}>
+            This request belongs to {request.actorLabel} at {request.branchLabel}. Sign in to that account and branch to retry it.
+          </Text>
+        ) : null}
+        {isConflict ? (
+          <Text style={styles.inventoryRecoveryMessage}>
+            The saved request key conflicts with a different payload. The original request is preserved; do not retry an edited transaction with this key.
+          </Text>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderPendingInventoryRequests = () => {
+    if (pendingInventoryTransactionsLoading) {
+      return <Text style={styles.emptyState}>Loading saved inventory recovery requests…</Text>;
+    }
+    if (pendingInventoryStorageError !== '') {
+      return (
+        <View style={styles.stockInErrorBanner} accessibilityRole="alert">
+          <Text style={styles.stockInErrorIcon}>!</Text>
+          <Text style={styles.stockInErrorText}>{pendingInventoryStorageError}</Text>
+        </View>
+      );
+    }
+    if (pendingInventoryTransactions.length === 0) return null;
+    return (
+      <View style={styles.unresolvedSalesList}>
+        {pendingInventoryTransactions.map((request) => {
+          const canRetry = canRetryPendingInventoryTransaction(request, user.id, user.branchId ?? '');
+          const retrying = pendingInventoryRetryingIds.has(request.requestId);
+          const conflict = (pendingInventoryRequestErrors[request.requestId] ?? '')
+            .toLowerCase()
+            .includes('different transaction payload');
+          const transactionLines = request.transactions.map((transaction) => {
+            const item = ingredients.find((entry) => entry.id === transaction.ingredientId);
+            return `${item?.name ?? transaction.ingredientId} · ${transaction.type === 'stock_in' ? '+' : '−'}${transaction.quantity} ${transaction.unit}`;
+          });
+          return (
+            <View key={request.requestId} style={styles.unresolvedSaleRow}>
+              <View style={styles.unresolvedSaleCopy}>
+                <Text style={styles.unresolvedSaleReference}>
+                  {request.transactionType.replace('_', ' ')} · {transactionLines.join(', ')}
+                </Text>
+                <Text style={styles.unresolvedSaleDate}>
+                  Saved {new Date(request.createdAt).toLocaleString('en-PH')}
+                  {request.reference ? ` · ${request.reference}` : ''}
+                </Text>
+                <Text style={styles.unresolvedSaleStatus}>
+                  {canRetry ? 'Confirmation not received' : `Saved for ${request.actorLabel} · ${request.branchLabel}`}
+                </Text>
+                {pendingInventoryRequestErrors[request.requestId] ? (
+                  <Text style={styles.inventoryRecoveryMessage}>
+                    {pendingInventoryRequestErrors[request.requestId]}
+                  </Text>
+                ) : null}
+              </View>
+              {canRetry && !conflict ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Retry saved ${request.transactionType.replace('_', ' ')} transaction`}
+                  accessibilityState={{ disabled: retrying }}
+                  disabled={retrying}
+                  onPress={() => void retryPendingInventoryRequest(request)}
+                  style={[styles.inventoryRetryAction, retrying && styles.inventoryRetryDisabled]}
+                >
+                  <Text style={styles.inventoryRetryActionText}>{retrying ? 'Retrying…' : 'Retry'}</Text>
+                </Pressable>
+              ) : null}
+              {!canRetry ? (
+                <Text style={styles.inventoryRecoveryMessage}>
+                  Sign in to the original Staff account and branch to safely retry this request.
+                </Text>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    );
   };
 
   const renderTopHeader = (title: string, subtitle?: string) => (
@@ -2062,11 +2990,115 @@ export default function StaffWorkspace({
         </Pressable>
       </View>
       <SearchBar value={dashboardSearch} onChangeText={setDashboardSearch} placeholder="Search inventory" />
-      {dashboardMessage !== '' && (
-        <Pressable onPress={() => setDashboardMessage('')} style={styles.infoBanner}>
-          <Text style={styles.infoBannerText}>{dashboardMessage}</Text>
-          <Text style={styles.bannerDismiss}>×</Text>
+      {(dashboardMessage !== '' || menuInventoryRetrySale !== null) && (
+        <View style={styles.infoBanner}>
+          <Text style={styles.infoBannerText}>
+            {dashboardMessage || `Sale ${menuInventoryRetrySale?.reference} is recorded; inventory processing needs attention.`}
+          </Text>
+          {menuInventoryRetrySale ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: retryingSaleIds.has(menuInventoryRetrySale.id) }}
+              disabled={retryingSaleIds.has(menuInventoryRetrySale.id)}
+              onPress={() => void retryMenuSaleInventory()}
+              style={styles.inventoryRetryAction}
+            >
+              <Text style={styles.inventoryRetryActionText}>
+                {retryingSaleIds.has(menuInventoryRetrySale.id) ? 'Retrying…' : 'Retry inventory'}
+              </Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss message"
+            onPress={() => setDashboardMessage('')}
+            style={styles.bannerDismissButton}
+          >
+            <Text style={styles.bannerDismiss}>×</Text>
+          </Pressable>
+        </View>
+      )}
+      {(pendingInventoryTransactionsLoading ||
+        pendingInventoryStorageError !== '' ||
+        pendingInventoryTransactions.length > 0) ? (
+        <>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={styles.sectionTitle}>Inventory transactions needing confirmation</Text>
+            <Text style={styles.sectionHint}>{pendingInventoryTransactions.length} saved</Text>
+          </View>
+          {renderPendingInventoryRequests()}
+        </>
+      ) : null}
+      <View style={styles.sectionHeadingRow}>
+        <Text style={styles.sectionTitle}>Sales needing inventory</Text>
+        <Text style={styles.sectionHint}>{unresolvedSales.length} sales</Text>
+      </View>
+      {unresolvedSalesLoading ? (
+        <Text style={styles.emptyState}>Loading inventory recovery records…</Text>
+      ) : unresolvedSalesError ? (
+        <Pressable accessibilityRole="button" onPress={() => void refreshBackendData()} style={styles.recoveryError}>
+          <Text style={styles.recoveryErrorText}>{unresolvedSalesError} · Tap to retry</Text>
         </Pressable>
+      ) : unresolvedSales.length ? (
+        <View style={styles.unresolvedSalesList}>
+          {unresolvedSales.map((sale) => {
+            const retrying = retryingSaleIds.has(sale.id);
+            return (
+              <View key={sale.id} style={styles.unresolvedSaleRow}>
+                <View style={styles.unresolvedSaleCopy}>
+                  <Text style={styles.unresolvedSaleReference}>{sale.transaction_reference}</Text>
+                  <Text style={styles.unresolvedSaleDate}>{new Date(sale.created_at).toLocaleString('en-PH')}</Text>
+                  <Text style={styles.unresolvedSaleStatus}>
+                    Inventory {sale.inventory_processing_status}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Retry inventory for ${sale.transaction_reference}`}
+                  accessibilityState={{ disabled: retrying }}
+                  disabled={retrying}
+                  onPress={() => void retrySaleInventory(sale)}
+                  style={[styles.inventoryRetryAction, retrying && styles.inventoryRetryDisabled]}
+                >
+                  <Text style={styles.inventoryRetryActionText}>{retrying ? 'Retrying…' : 'Retry'}</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ) : (
+        <Text style={styles.emptyState}>No sales need inventory recovery.</Text>
+      )}
+      <View style={styles.sectionHeadingRow}>
+        <Text style={styles.sectionTitle}>Recent sales receipts</Text>
+        <Text style={styles.sectionHint}>{recentSales.length} sales</Text>
+      </View>
+      {saleHistoryError ? (
+        <Text style={styles.recoveryErrorText}>{saleHistoryError}</Text>
+      ) : recentSales.length ? (
+        <View style={styles.unresolvedSalesList}>
+          {recentSales.slice(0, 5).map((sale) => (
+            <View key={`recent-${sale.id}`} style={styles.unresolvedSaleRow}>
+              <View style={styles.unresolvedSaleCopy}>
+                <Text style={styles.unresolvedSaleReference}>{sale.transaction_reference}</Text>
+                <Text style={styles.unresolvedSaleDate}>
+                  {new Date(sale.created_at).toLocaleString('en-PH')} · {sale.payment_method} · {formatSaleMoney(sale.total_amount)}
+                </Text>
+                <Text style={styles.unresolvedSaleStatus}>Inventory {sale.inventory_processing_status}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`View receipt for ${sale.transaction_reference}`}
+                onPress={() => openSaleReceipt(sale.id)}
+                style={styles.inventoryRetryAction}
+              >
+                <Text style={styles.inventoryRetryActionText}>Receipt</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyState}>No recorded sales yet.</Text>
       )}
       <View style={styles.summaryCard}>
         <View style={styles.summaryCopy}>
@@ -2077,7 +3109,7 @@ export default function StaffWorkspace({
                 ? '…'
                 : backendError !== '' && ingredients.length === 0
                   ? '—'
-                  : ingredients.length.toString().padStart(2, '0')}
+                  : branchInventoryItems.length.toString().padStart(2, '0')}
             </Text>
             <Text style={styles.summaryItems}>items tracked</Text>
           </View>
@@ -2734,6 +3766,9 @@ export default function StaffWorkspace({
   };
 
   const renderDailyInventoryCheck = () => {
+    const unresolvedDailyChecks = pendingDailyStockChecks.filter(
+      (request) => request.actorId === user.id && request.branchId === user.branchId,
+    );
     const discrepancyMessage = dailyDiscrepancies.length === 1
       ? `1 discrepancy found. Review ${dailyDiscrepancies[0].name}'s ${formatDailyDifference(
           dailyDiscrepancies[0].difference ?? 0,
@@ -2766,6 +3801,31 @@ export default function StaffWorkspace({
           showsVerticalScrollIndicator={false}
         >
           <Text style={styles.dailyCheckIntro}>{formatDate(today)} · Enter today's physical quantities.</Text>
+          {dailyCheckStorageError ? (
+            <Text style={styles.dailyFormError} accessibilityRole="alert">{dailyCheckStorageError}</Text>
+          ) : null}
+          {unresolvedDailyChecks.map((request) => (
+            <View key={request.requestId} style={styles.inventoryReportCorrectionPending}>
+              <Text style={styles.dailyFormError} accessibilityRole="alert">
+                A daily count is saved on this device and is awaiting confirmation.
+              </Text>
+              {dailyCheckRetryErrors[request.requestId] ? (
+                <Text style={styles.dailyFormError} accessibilityRole="alert">
+                  {dailyCheckRetryErrors[request.requestId]}
+                </Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={dailyCheckRetryLocks.current.has(request.requestId)}
+                onPress={() => void retryDailyStockCheck(request).catch(() => undefined)}
+                style={styles.inventoryReportAction}
+              >
+                <Text style={styles.inventoryReportActionText}>
+                  {dailyCheckRetryLocks.current.has(request.requestId) ? 'Submitting…' : 'Retry saved count'}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
           <View style={styles.dailyTableHeader}>
             <Text style={[styles.dailyColumnTitle, styles.dailyIngredientColumn]}>Ingredient</Text>
             <Text style={[styles.dailyColumnTitle, styles.dailyRecordedColumn]}>Recorded</Text>
@@ -2865,6 +3925,18 @@ export default function StaffWorkspace({
           {formError !== '' ? (
             <Text style={styles.dailyFormError} accessibilityRole="alert">{formError}</Text>
           ) : null}
+          {dailyCheckSaveFailed ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={dailyCheckSubmitting}
+              onPress={() => void submitDailyInventoryCheck()}
+              style={[styles.dailyRetryButton, dailyCheckSubmitting && styles.buttonDisabled]}
+            >
+              <Text style={styles.dailyRetryButtonText}>
+                {dailyCheckSubmitting ? 'Saving…' : 'Retry'}
+              </Text>
+            </Pressable>
+          ) : null}
 
           <View style={styles.dailyFormActions}>
             <Pressable
@@ -2950,6 +4022,7 @@ export default function StaffWorkspace({
               ['Date', `${formatDate(check.checkDate)} · ${time}`],
               ['Branch', check.branch],
               ['Submitted by', check.staff],
+              ['Employee account', user.id],
               [
                 'Flour difference',
                 flour
@@ -3016,6 +4089,466 @@ export default function StaffWorkspace({
     }
   };
 
+  const renderInventoryReportHeader = (
+    title: string,
+    backLabel: string,
+    onBack: () => void,
+  ) => (
+    <View style={styles.formHeader}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={backLabel}
+        onPress={onBack}
+        style={styles.backButton}
+      >
+        <Text style={styles.backGlyph}>‹</Text>
+      </Pressable>
+      <View style={styles.formHeaderCopy}>
+        <Text style={styles.formTitle}>{title}</Text>
+        <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+      </View>
+    </View>
+  );
+
+  const renderInventoryReportMetadata = (data: InventoryReportData) => (
+    <View style={styles.inventoryReportMetadata}>
+      <Text style={styles.inventoryReportMetadataText}>Branch: {data.branchName}</Text>
+      <Text style={styles.inventoryReportMetadataText}>
+        Data as of {formatHistoryDateTime(new Date(data.generatedAt))}
+      </Text>
+    </View>
+  );
+
+  const renderInventoryReportsList = () => (
+    <View style={styles.inventoryReportPage}>
+      {renderInventoryReportHeader('Inventory Reporting', 'Back to More', () => setRoute('more'))}
+      <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
+        <Text style={styles.inventoryReportIntro}>
+          Read-only inventory reports for {assignedBranch}.
+        </Text>
+        {(
+          Object.entries(inventoryReportTitles) as Array<[InventoryReportKey, string]>
+        ).map(([key, title], index) => (
+          <Pressable
+            key={key}
+            accessibilityRole="button"
+            onPress={() => openInventoryReport(key)}
+            style={({ pressed }) => [styles.inventoryReportLink, pressed && styles.pressed]}
+          >
+            <View style={styles.inventoryReportIndex}>
+              <Text style={styles.inventoryReportIndexText}>{index + 1}</Text>
+            </View>
+            <Text style={styles.inventoryReportLinkText}>{title}</Text>
+            <Text style={styles.moreNavigationChevron}>›</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
+  const renderInventoryReportState = () => inventoryReportLoading ? (
+    <View style={styles.inventoryReportState}>
+      <ActivityIndicator color={colors.pink} />
+      <Text style={styles.emptyState}>Loading report…</Text>
+    </View>
+  ) : inventoryReportError ? (
+    <View style={styles.inventoryReportState}>
+      <Text style={styles.inventoryReportErrorText}>{inventoryReportError}</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setInventoryReportRefreshKey((key) => key + 1)}
+        style={styles.dailySalesRetryButton}
+      >
+        <Text style={styles.dailySalesRetryText}>Retry</Text>
+      </Pressable>
+    </View>
+  ) : null;
+
+  const renderInventoryQuantityTable = (
+    items: InventoryReportData['ingredients'],
+    includeMinimum = false,
+    includeStatus = false,
+  ) => (
+    <ScrollView horizontal showsHorizontalScrollIndicator>
+      <View style={styles.inventoryReportTable}>
+        <View style={[styles.inventoryReportTableRow, styles.inventoryReportTableHeader]}>
+          <Text style={[styles.inventoryReportCell, styles.inventoryReportNameCell]}>Inventory item</Text>
+          <Text style={styles.inventoryReportCell}>Expected quantity</Text>
+          <Text style={styles.inventoryReportCell}>Unit</Text>
+          {includeMinimum ? <Text style={styles.inventoryReportCell}>Minimum stock</Text> : null}
+          {includeStatus ? <Text style={styles.inventoryReportCell}>Stock status</Text> : null}
+        </View>
+        {items.map((item) => {
+          const status = inventoryStockStatus(item.quantity, item.minimumStock);
+          return (
+            <View key={item.id} style={styles.inventoryReportTableRow}>
+              <Text style={[styles.inventoryReportCell, styles.inventoryReportNameCell]}>{item.name}</Text>
+              <Text style={styles.inventoryReportCell}>{formatQuantity(item.quantity)}</Text>
+              <Text style={styles.inventoryReportCell}>{item.unit}</Text>
+              {includeMinimum ? (
+                <Text style={styles.inventoryReportCell}>{formatQuantity(item.minimumStock)} {item.unit}</Text>
+              ) : null}
+              {includeStatus ? (
+                <View style={styles.inventoryReportStatusCell}>
+                  <Text style={[
+                    styles.inventoryReportStatus,
+                    status === 'Normal' ? styles.inventoryStatusNormal :
+                      status === 'Low Stock' ? styles.inventoryStatusLow : styles.inventoryStatusOut,
+                  ]}>{status}</Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </ScrollView>
+  );
+
+  const renderInventoryCountRecords = (
+    records: InventoryCountRecord[],
+    discrepancy: boolean,
+  ) => records.length === 0 ? (
+    <Text style={styles.inventoryReportEmpty}>No records to display.</Text>
+  ) : (
+    <View style={styles.inventoryReportRecordList}>
+      {records.map((record) => (
+        <Pressable
+          key={record.id}
+          accessibilityRole="button"
+          onPress={() => openInventoryCountDetails(record)}
+          style={({ pressed }) => [
+            styles.inventoryReportRecord,
+            discrepancy && (record.difference < 0 ? styles.inventoryReportShortage : styles.inventoryReportExcess),
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.inventoryReportRecordHeading}>
+            <Text style={styles.inventoryReportRecordTitle}>{record.ingredientName}</Text>
+            {discrepancy ? (
+              <Text style={[
+                styles.inventoryReportStatus,
+                record.adjustment ? styles.inventoryStatusNormal :
+                  record.difference < 0 ? styles.inventoryStatusOut : styles.inventoryStatusLow,
+              ]}>{record.adjustment ? 'Adjusted' : 'Pending Review'}</Text>
+            ) : (
+              <Text style={[
+                styles.inventoryReportStatus,
+                record.countStatus === 'Validated' ? styles.inventoryStatusNormal : styles.inventoryStatusLow,
+              ]}>{record.countStatus}</Text>
+            )}
+          </View>
+          <Text style={styles.inventoryReportRecordDetail}>Expected {formatDailyUnitQuantity(record.expectedQuantity, record.unit)}</Text>
+          <Text style={styles.inventoryReportRecordDetail}>
+            Actual {formatDailyUnitQuantity(record.actualQuantity, record.unit)}
+            {record.revisedActualQuantity !== null
+              ? ` · Revised actual ${formatDailyUnitQuantity(record.revisedActualQuantity, record.unit)}`
+              : ''}
+          </Text>
+          <Text style={[
+            styles.inventoryReportRecordDifference,
+            record.difference < 0 ? styles.inventoryReportDifferenceNegative : styles.inventoryReportDifferencePositive,
+          ]}>{formatDailyDifference(record.difference, record.unit)}</Text>
+          <Text style={styles.inventoryReportRecordDetail}>
+            {record.branchName} · {formatHistoryDateTime(new Date(record.submittedAt))}
+          </Text>
+          {discrepancy ? (
+            <>
+              <Text style={styles.inventoryReportRecordDetail}>Submitting employee account: {record.submittedBy}</Text>
+              <Text style={styles.inventoryReportRecordDetail}>Staff remarks: {record.remarks || '—'}</Text>
+            </>
+          ) : null}
+          <Text style={styles.inventoryReportRecordLink}>View original count and revision history ›</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+
+  const renderInventoryReportDetail = () => {
+    const data = inventoryReportData;
+    const title = inventoryReportTitles[selectedInventoryReport];
+    return (
+      <View style={styles.inventoryReportPage}>
+        {renderInventoryReportHeader(title, 'Back to Inventory Reporting', () => setRoute('inventoryReporting'))}
+        {renderInventoryReportState()}
+        {!inventoryReportLoading && !inventoryReportError && data ? (
+          <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
+            {renderInventoryReportMetadata(data)}
+            {selectedInventoryReport === 'totalIngredientQuantity' ? (
+              data.ingredients.length
+                ? renderInventoryQuantityTable(data.ingredients)
+                : <Text style={styles.inventoryReportEmpty}>No records to display.</Text>
+            ) : null}
+            {selectedInventoryReport === 'ingredientCategorySummary' ? (
+              data.categories.length ? (
+                <View style={styles.inventoryReportCategoryList}>
+                  {data.categories.map((group) => {
+                    const expanded = expandedInventoryCategories.has(group.category);
+                    return (
+                      <View key={group.category} style={styles.inventoryReportCategory}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded }}
+                          onPress={() => setExpandedInventoryCategories((current) => {
+                            const next = new Set(current);
+                            if (next.has(group.category)) next.delete(group.category);
+                            else next.add(group.category);
+                            return next;
+                          })}
+                          style={styles.inventoryReportCategoryHeading}
+                        >
+                          <View style={styles.inventoryReportCategoryCopy}>
+                            <Text style={styles.inventoryReportCategoryTitle}>{group.category}</Text>
+                            <Text style={styles.inventoryReportRecordDetail}>
+                              {group.ingredientCount} {group.ingredientCount === 1 ? 'ingredient' : 'ingredients'}
+                              {' · '}
+                              {group.totalsByUnit.map((total) =>
+                                `${formatQuantity(total.quantity)} ${total.unit}`,
+                              ).join(' + ') || 'No quantity totals'}
+                            </Text>
+                          </View>
+                          <Text style={styles.inventoryReportExpand}>{expanded ? '−' : '+'}</Text>
+                        </Pressable>
+                        {expanded ? group.ingredients.map((item) => (
+                          <View key={item.id} style={styles.inventoryReportCategoryItem}>
+                            <Text style={styles.inventoryReportRecordTitle}>{item.name}</Text>
+                            <Text style={styles.inventoryReportRecordDetail}>
+                              {formatDailyUnitQuantity(item.quantity, item.unit)}
+                            </Text>
+                          </View>
+                        )) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : <Text style={styles.inventoryReportEmpty}>No records to display.</Text>
+            ) : null}
+            {selectedInventoryReport === 'ingredientStockStatus' ? (
+              data.ingredients.length
+                ? renderInventoryQuantityTable(data.ingredients, true, true)
+                : <Text style={styles.inventoryReportEmpty}>No records to display.</Text>
+            ) : null}
+            {selectedInventoryReport === 'branchInventorySummary' ? (
+              <>
+                <View style={styles.inventoryReportCountBadge}>
+                  <Text style={styles.inventoryReportCountLabel}>Total inventory items</Text>
+                  <Text style={styles.inventoryReportCountValue}>{data.ingredients.length}</Text>
+                </View>
+                {data.ingredients.length
+                  ? renderInventoryQuantityTable(data.ingredients)
+                  : <Text style={styles.inventoryReportEmpty}>No records to display.</Text>}
+              </>
+            ) : null}
+            {selectedInventoryReport === 'inventoryDiscrepancy'
+              ? renderInventoryCountRecords(data.discrepancies, true)
+              : null}
+            {selectedInventoryReport === 'physicalInventoryCount'
+              ? renderInventoryCountRecords(data.physicalCounts, false)
+              : null}
+          </ScrollView>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderInventoryCountDetails = () => {
+    const record = inventoryReportData?.physicalCounts.find((count) => count.id === selectedInventoryCountId);
+    if (!record) {
+      return (
+        <View style={styles.inventoryReportPage}>
+          {renderInventoryReportHeader('Count details', 'Back to report', () => setRoute('inventoryReport'))}
+          <View style={styles.inventoryReportState}>
+            <Text style={styles.inventoryReportErrorText}>Count details are unavailable. Reload the report and try again.</Text>
+            <Pressable onPress={() => setRoute('inventoryReport')} style={styles.dailySalesRetryButton}>
+              <Text style={styles.dailySalesRetryText}>Back to report</Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.inventoryReportPage}>
+        {renderInventoryReportHeader('Physical count details', 'Back to report', () => setRoute('inventoryReport'))}
+        <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.inventoryReportMetadata}>
+            <Text style={styles.inventoryReportMetadataText}>Branch: {record.branchName}</Text>
+            <Text style={styles.inventoryReportMetadataText}>Submitted: {formatHistoryDateTime(new Date(record.submittedAt))}</Text>
+            <Text style={styles.inventoryReportMetadataText}>Submitting employee account: {record.submittedBy}</Text>
+            <Text style={styles.inventoryReportMetadataText}>Transaction reference: {record.reference}</Text>
+          </View>
+          <View style={styles.inventoryReportRecord}>
+            <Text style={styles.inventoryReportRecordTitle}>{record.ingredientName}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>Expected: {formatDailyUnitQuantity(record.expectedQuantity, record.unit)}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>Original actual: {formatDailyUnitQuantity(record.originalActualQuantity, record.unit)}</Text>
+            {record.revisedActualQuantity !== null ? (
+              <Text style={styles.inventoryReportRecordDetail}>Revised actual after Owner adjustment: {formatDailyUnitQuantity(record.revisedActualQuantity, record.unit)}</Text>
+            ) : null}
+            <Text style={styles.inventoryReportRecordDetail}>Difference: {formatDailyDifference(record.difference, record.unit)}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>Result: {record.result}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>Count status: {record.countStatus}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>Staff remarks: {record.remarks || '—'}</Text>
+            <Text style={styles.inventoryReportRecordDetail}>
+              Inventory revision snapshot: {record.inventoryRevision ?? 'Not recorded'}
+            </Text>
+          </View>
+          {record.adjustment ? (
+            <View style={styles.inventoryReportRecord}>
+              <Text style={styles.inventoryReportRecordTitle}>Owner adjustment history</Text>
+              <Text style={styles.inventoryReportRecordDetail}>Status: Adjusted</Text>
+              <Text style={styles.inventoryReportRecordDetail}>Adjustment reference: {record.adjustment.reference}</Text>
+              <Text style={styles.inventoryReportRecordDetail}>Adjusted by account: {record.adjustment.actorId}</Text>
+              <Text style={styles.inventoryReportRecordDetail}>Adjusted: {formatHistoryDateTime(new Date(record.adjustment.createdAt))}</Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Inventory: {formatDailyUnitQuantity(record.adjustment.beforeQuantity, record.unit)}
+                {' → '}{formatDailyUnitQuantity(record.adjustment.afterQuantity, record.unit)}
+              </Text>
+            </View>
+          ) : null}
+          {record.correctionRequests.length ? (
+            <View style={styles.inventoryReportRecord}>
+              <Text style={styles.inventoryReportRecordTitle}>Correction request history</Text>
+              {record.correctionRequests.map((request) => (
+                <View key={request.requestId} style={styles.inventoryReportCorrection}>
+                  <Text style={styles.inventoryReportRecordDetail}>
+                    {request.status.toUpperCase()} · corrected actual {formatDailyUnitQuantity(request.correctedActualQuantity, record.unit)}
+                  </Text>
+                  <Text style={styles.inventoryReportRecordDetail}>Staff reason: {request.reason}</Text>
+                  {request.decisionReason ? (
+                    <Text style={styles.inventoryReportRecordDetail}>Owner decision: {request.decisionReason}</Text>
+                  ) : null}
+                  {request.decidedAt ? (
+                    <Text style={styles.inventoryReportRecordDetail}>
+                      Decided: {formatHistoryDateTime(new Date(request.decidedAt))}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {record.validation ? (
+            <View style={styles.inventoryReportRecord}>
+              <Text style={styles.inventoryReportRecordTitle}>Owner Validate Count audit</Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Result: {record.validation.outcome === 'no_change' ? 'Resolved without inventory change' : 'Inventory adjusted'}
+              </Text>
+              <Text style={styles.inventoryReportRecordDetail}>Owner reason: {record.validation.reason}</Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Validated: {formatHistoryDateTime(new Date(record.validation.validatedAt))}
+              </Text>
+            </View>
+          ) : null}
+          {countCorrectionStorageError ? (
+            <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{countCorrectionStorageError}</Text>
+          ) : null}
+              {countCorrectionMessages[record.id] ? (
+                <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">
+                  {countCorrectionMessages[record.id]}
+                </Text>
+              ) : null}
+          {pendingCountCorrections.filter((request) => request.countLineId === record.id).map((request) => (
+            <View key={request.requestId} style={styles.inventoryReportCorrectionPending}>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Correction request saved on this device and awaiting confirmation.
+              </Text>
+              {countCorrectionRetryErrors[request.requestId] ? (
+                <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">
+                  {countCorrectionRetryErrors[request.requestId]}
+                </Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={countCorrectionRetryLocks.current.has(request.requestId)}
+                onPress={() => void retryCountCorrectionRequest(request)}
+                style={styles.inventoryReportAction}
+              >
+                <Text style={styles.inventoryReportActionText}>
+                  {countCorrectionRetryLocks.current.has(request.requestId) ? 'Submitting…' : 'Retry submission'}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
+          {record.submittedBy === user.id &&
+            !record.validation &&
+            !record.adjustment &&
+            !record.correctionRequests.some((request) => request.status === 'pending') &&
+            !pendingCountCorrections.some((request) => request.countLineId === record.id) &&
+            record.originalActualQuantity !== record.expectedQuantity ? (
+              selectedCorrectionCountLineId === record.id ? (
+                <View style={styles.inventoryReportRecord}>
+                  <Text style={styles.inventoryReportRecordTitle}>Request count correction</Text>
+                  <Text style={styles.inventoryReportRecordDetail}>
+                    Original expected and actual quantities remain unchanged. The Owner must decide this request before using Validate Count.
+                  </Text>
+                  <Text style={styles.fieldLabel}>Corrected actual quantity ({record.unit})</Text>
+                  <TextInput
+                    value={correctionActualQuantity}
+                    onChangeText={(value) => {
+                      setCorrectionActualQuantity(value);
+                      setCorrectionFormError('');
+                    }}
+                    keyboardType="decimal-pad"
+                    accessibilityLabel="Corrected actual quantity"
+                    editable={!correctionSubmitting}
+                    style={[styles.textInput, correctionFormError && styles.textInputError]}
+                  />
+                  <Text style={styles.fieldLabel}>Reason for correction</Text>
+                  <TextInput
+                    value={correctionReason}
+                    onChangeText={(value) => {
+                      setCorrectionReason(value);
+                      setCorrectionFormError('');
+                    }}
+                    accessibilityLabel="Reason for count correction"
+                    maxLength={1000}
+                    multiline
+                    editable={!correctionSubmitting}
+                    style={[
+                      styles.textInput,
+                      { minHeight: 74, textAlignVertical: 'top' },
+                      correctionFormError && styles.textInputError,
+                    ]}
+                  />
+                  {correctionFormError ? (
+                    <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{correctionFormError}</Text>
+                  ) : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={correctionSubmitting}
+                    onPress={() => void submitCountCorrectionRequest()}
+                    style={[styles.inventoryReportAction, correctionSubmitting && styles.confirmButtonDisabled]}
+                  >
+                    {correctionSubmitting
+                      ? <ActivityIndicator size="small" color={colors.white} />
+                      : <Text style={styles.inventoryReportActionText}>Submit correction request</Text>}
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={correctionSubmitting}
+                    onPress={() => setSelectedCorrectionCountLineId(null)}
+                    style={styles.inventoryReportBackButton}
+                  >
+                    <Text style={styles.inventoryReportBackText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setSelectedCorrectionCountLineId(record.id);
+                    setCorrectionActualQuantity(String(record.originalActualQuantity));
+                    setCorrectionReason('');
+                    setCorrectionFormError('');
+                  }}
+                  style={styles.inventoryReportAction}
+                >
+                  <Text style={styles.inventoryReportActionText}>Request count correction</Text>
+                </Pressable>
+              )
+            ) : null}
+        </ScrollView>
+      </View>
+    );
+  };
+
   const renderMore = () => (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.morePageContent} showsVerticalScrollIndicator={false}>
       {renderTopHeader('More', `${assignedBranch} / Staff`)}
@@ -3023,9 +4556,21 @@ export default function StaffWorkspace({
       <View style={styles.moreNavigationList}>
         {([
           {
+            icon: '▤',
+            title: 'Inventory Reporting',
+            description: 'Read-only branch inventory and count reports',
+            onPress: openInventoryReporting,
+          },
+          {
+            icon: '₱',
+            title: 'Daily Sales',
+            description: 'Confirmed sales for a selected business day',
+            onPress: openDailySales,
+          },
+          {
             icon: '☷',
             title: 'Daily inventory check',
-            description: 'Count, compare and submit for review',
+            description: dailyCheckStarting ? 'Refreshing current branch stock…' : 'Count, compare and submit for review',
             onPress: startDailyInventoryCheck,
           },
           {
@@ -3044,6 +4589,7 @@ export default function StaffWorkspace({
           <Pressable
             key={option.title}
             accessibilityRole="button"
+            disabled={option.title === 'Daily inventory check' && dailyCheckStarting}
             onPress={option.onPress}
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
@@ -3065,6 +4611,119 @@ export default function StaffWorkspace({
       >
         <Text style={styles.logoutButtonText}>Log out</Text>
       </Pressable>
+    </ScrollView>
+  );
+
+  const renderDailySales = () => (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.dailySalesContent}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.formHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to More"
+          onPress={() => setRoute('more')}
+          style={styles.backButton}
+        >
+          <Text style={styles.backGlyph}>‹</Text>
+        </Pressable>
+        <View style={styles.formHeaderCopy}>
+          <Text style={styles.formTitle}>Daily Sales</Text>
+          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+        </View>
+      </View>
+      <View style={styles.dailySalesControls}>
+        <View style={styles.dailySalesDateField}>
+          <DatePickerField
+            label="Business date"
+            value={dailySalesDate}
+            onChange={(date) => {
+              if (date) setDailySalesDate(date);
+            }}
+            maxDate={today}
+          />
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Refresh daily sales"
+          accessibilityState={{ disabled: dailySalesLoading }}
+          disabled={dailySalesLoading}
+          onPress={() => setDailySalesRefreshKey((key) => key + 1)}
+          style={[styles.dailySalesRefreshButton, dailySalesLoading && styles.buttonDisabled]}
+        >
+          <Text style={styles.dailySalesRefreshText}>Refresh</Text>
+        </Pressable>
+      </View>
+      {dailySalesLoading ? (
+        <View style={styles.dailySalesLoading}>
+          <ActivityIndicator color={colors.pink} />
+          <Text style={styles.emptyState}>Generating daily sales…</Text>
+        </View>
+      ) : dailySalesError ? (
+        <View style={styles.dailySalesError}>
+          <Text style={styles.dailySalesErrorText}>{dailySalesError}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setDailySalesRefreshKey((key) => key + 1)}
+            style={styles.dailySalesRetryButton}
+          >
+            <Text style={styles.dailySalesRetryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : dailySalesSummary ? (
+        <>
+          <View style={styles.dailySalesTotals}>
+            <View style={styles.dailySalesMetric}>
+              <Text style={styles.dailySalesMetricLabel}>Transactions</Text>
+              <Text style={styles.dailySalesTransactionCount}>{dailySalesSummary.transactionCount}</Text>
+            </View>
+            <View style={styles.dailySalesMetric}>
+              <Text style={styles.dailySalesMetricLabel}>Total sales</Text>
+              <Text style={styles.dailySalesTotal}>{formatSaleMoney(dailySalesSummary.totalSales)}</Text>
+            </View>
+          </View>
+          {dailySalesSummary.transactionCount === 0 ? (
+            <Text style={styles.dailySalesEmpty}>No sales recorded for this day.</Text>
+          ) : (
+            <>
+              <View style={styles.dailySalesSection}>
+                <Text style={styles.sectionTitle}>Sales per Payment Method</Text>
+                <View style={styles.dailySalesRows}>
+                  {dailySalesSummary.paymentMethods.map((payment) => (
+                    <View key={payment.paymentMethod} style={styles.dailySalesRow}>
+                      <View style={styles.dailySalesRowCopy}>
+                        <Text style={styles.dailySalesRowTitle}>{payment.paymentMethod}</Text>
+                        <Text style={styles.dailySalesRowDetail}>
+                          {payment.transactionCount} {payment.transactionCount === 1 ? 'transaction' : 'transactions'}
+                        </Text>
+                      </View>
+                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(payment.totalSales)}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+              <View style={styles.dailySalesSection}>
+                <Text style={styles.sectionTitle}>Products Sold</Text>
+                <View style={styles.dailySalesRows}>
+                  {dailySalesSummary.products.length ? dailySalesSummary.products.map((product) => (
+                    <View key={product.productId} style={styles.dailySalesRow}>
+                      <View style={styles.dailySalesRowCopy}>
+                        <Text style={styles.dailySalesRowTitle} numberOfLines={2}>{product.productName}</Text>
+                        <Text style={styles.dailySalesRowDetail}>Quantity sold: {formatQuantity(product.quantity)}</Text>
+                      </View>
+                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(product.totalSales)}</Text>
+                    </View>
+                  )) : (
+                    <Text style={styles.dailySalesEmpty}>No product details are available for this day.</Text>
+                  )}
+                </View>
+              </View>
+            </>
+          )}
+        </>
+      ) : null}
     </ScrollView>
   );
 
@@ -3328,6 +4987,7 @@ export default function StaffWorkspace({
             <Text style={styles.stockInErrorText}>{formError}</Text>
           </View>
         )}
+        {renderInventoryRecoveryControls('stock_in')}
         {successMessage !== '' ? (
           <View style={styles.successBanner} accessibilityRole="alert">
             <Text style={styles.successIcon}>✓</Text>
@@ -3437,6 +5097,7 @@ export default function StaffWorkspace({
             <Text style={styles.stockInErrorText}>{formError}</Text>
           </View>
         ) : null}
+        {renderInventoryRecoveryControls(reason === 'Spoiled' || reason === 'Expired' ? 'spoilage' : 'waste')}
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Ingredient *</Text>
           <Pressable
@@ -3668,6 +5329,9 @@ export default function StaffWorkspace({
             <Text style={styles.stockInErrorText}>{formError}</Text>
           </View>
         ) : <Text style={styles.formError} accessibilityRole="alert">{formError}</Text>)}
+        {route === 'stockOut'
+          ? renderInventoryRecoveryControls(usageMode === 'cookingBatch' ? 'usage' : 'stock_out')
+          : null}
         {route === 'stockOut' && usageMode === 'cookingBatch' ? (
           <>
             <View style={styles.fieldGroup}>
@@ -4166,6 +5830,37 @@ export default function StaffWorkspace({
           </Pressable>
         </View>
 
+        <View style={styles.sectionHeadingRow}>
+          <Text style={styles.sectionTitle}>Recorded sales</Text>
+          <Text style={styles.sectionHint}>Tap a receipt to reopen</Text>
+        </View>
+        {saleHistoryError ? (
+          <Pressable accessibilityRole="button" onPress={() => void refreshBackendData()} style={styles.recoveryError}>
+            <Text style={styles.recoveryErrorText}>{saleHistoryError} · Tap to retry</Text>
+          </Pressable>
+        ) : recentSales.length ? (
+          <View style={styles.unresolvedSalesList}>
+            {recentSales.map((sale) => (
+              <Pressable
+                key={`history-sale-${sale.id}`}
+                accessibilityRole="button"
+                accessibilityLabel={`View receipt for ${sale.transaction_reference}`}
+                onPress={() => openSaleReceipt(sale.id)}
+                style={({ pressed }) => [styles.unresolvedSaleRow, pressed && styles.pressed]}
+              >
+                <View style={styles.unresolvedSaleCopy}>
+                  <Text style={styles.unresolvedSaleReference}>{sale.transaction_reference}</Text>
+                  <Text style={styles.unresolvedSaleDate}>
+                    {new Date(sale.created_at).toLocaleString('en-PH')} · {sale.payment_method} · {formatSaleMoney(sale.total_amount)}
+                  </Text>
+                  <Text style={styles.unresolvedSaleStatus}>Inventory {sale.inventory_processing_status}</Text>
+                </View>
+                <Text style={styles.inventoryRetryActionText}>Receipt</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {filteredHistoryTransactions.length > 0 ? (
           <>
             <View style={styles.historyTransactionList}>
@@ -4452,6 +6147,89 @@ export default function StaffWorkspace({
     );
   };
 
+  const renderSaleReceipt = () => {
+    if (saleReceiptLoading) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <ActivityIndicator color={colors.pink} />
+          <Text style={styles.emptyState}>Loading recorded receipt…</Text>
+        </View>
+      );
+    }
+    if (saleReceiptError || !saleReceipt) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>Receipt unavailable</Text>
+          <Text style={styles.receiptErrorText}>{saleReceiptError || 'The recorded sale details could not be loaded.'}</Text>
+          <Pressable onPress={() => setRoute('dashboard')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to Dashboard</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.saleReceiptPage}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.formHeader}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to Dashboard"
+            onPress={() => setRoute('dashboard')}
+            style={styles.backButton}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Sale receipt</Text>
+            <Text style={styles.formSubtitle}>{saleReceipt.branchName} / Staff</Text>
+          </View>
+        </View>
+        <View style={styles.saleReceiptHeader}>
+          <Text style={styles.saleReceiptBusiness}>Gelo's Takoyaki</Text>
+          <Text style={styles.saleReceiptBranch}>{saleReceipt.branchName}</Text>
+          <Text style={styles.saleReceiptReference}>{saleReceipt.transactionReference}</Text>
+          <Text style={styles.saleReceiptDate}>{formatHistoryDateTime(new Date(saleReceipt.createdAt))}</Text>
+        </View>
+        <View style={styles.saleReceiptLines}>
+          {saleReceipt.lines.map((line) => (
+            <View key={`${line.kind}-${line.id}`} style={styles.saleReceiptLine}>
+              <View style={styles.saleReceiptLineCopy}>
+                <Text style={styles.saleReceiptLineName}>
+                  {line.name}{line.variantLabel ? ` · ${line.variantLabel}` : ''}
+                </Text>
+                <Text style={styles.saleReceiptLineMeta}>
+                  {line.quantity} × {formatSaleMoney(line.unitPrice)}
+                </Text>
+              </View>
+              <Text style={styles.saleReceiptLineTotal}>{formatSaleMoney(line.subtotal)}</Text>
+            </View>
+          ))}
+          <View style={styles.saleReceiptTotalRow}>
+            <Text style={styles.saleReceiptTotalLabel}>Total</Text>
+            <Text style={styles.saleReceiptTotalValue}>{formatSaleMoney(saleReceipt.totalAmount)}</Text>
+          </View>
+        </View>
+        <View style={styles.saleReceiptDetails}>
+          <DetailRow label="Payment method" value={saleReceipt.paymentMethod} />
+          <DetailRow label="Sale status" value={saleReceipt.saleStatus} />
+          <DetailRow label="Inventory processing" value={saleReceipt.inventoryProcessingStatus} />
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void shareSaleReceipt()}
+          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.saveButtonText}>Share receipt</Text>
+        </Pressable>
+        {saleReceiptShareError ? <Text style={styles.receiptErrorText}>{saleReceiptShareError}</Text> : null}
+      </ScrollView>
+    );
+  };
+
   let screenContent: React.ReactNode;
   switch (route) {
     case 'dashboard':
@@ -4513,6 +6291,21 @@ export default function StaffWorkspace({
     case 'transactionDetails':
       screenContent = renderTransactionDetails();
       break;
+    case 'saleReceipt':
+      screenContent = renderSaleReceipt();
+      break;
+    case 'dailySales':
+      screenContent = renderDailySales();
+      break;
+    case 'inventoryReporting':
+      screenContent = renderInventoryReportsList();
+      break;
+    case 'inventoryReport':
+      screenContent = renderInventoryReportDetail();
+      break;
+    case 'inventoryCountDetails':
+      screenContent = renderInventoryCountDetails();
+      break;
     case 'alerts':
       screenContent = renderAlerts();
       break;
@@ -4570,7 +6363,7 @@ export default function StaffWorkspace({
           <View style={styles.batterPreparationModal}>
             <Text style={styles.modalTitle}>Prepare batter</Text>
             <Text style={styles.modalSubtitle}>
-              This batch uses the configured recipe and adds the prepared quantity to inventory.
+              Every batch produces exactly {PREPARED_BATTER_BATCH_BOTTLES} bottles. Ingredient usage follows the Owner-configured recipe.
             </Text>
             <Text style={styles.fieldLabel}>Batch reference</Text>
             <TextInput
@@ -4689,6 +6482,10 @@ export default function StaffWorkspace({
                 <View style={styles.dailyModalSummary}>
                   {dailyDiscrepancies.length > 0 ? (
                     <>
+                      <Text style={styles.dailyModalSummaryText}>
+                        {assignedBranch} · {formatDate(today)} · {formatManilaTime(new Date())}
+                      </Text>
+                      <Text style={styles.dailyModalSummaryText}>Submitting employee account: {user.id}</Text>
                       {dailyDiscrepancies.map((line) => (
                         <React.Fragment key={line.ingredientId}>
                           <Text style={styles.dailyModalSummaryText}>
@@ -4746,6 +6543,7 @@ export default function StaffWorkspace({
                 </Text>
                 <View style={styles.dailyModalSummary}>
                   <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(today)}</Text>
+                  <Text style={styles.dailyModalSummaryText}>Submitting employee account: {user.id}</Text>
                   <Text style={styles.dailyModalSummaryEmphasis}>
                     {dailyCheckLines.length} ingredients counted · {dailyDiscrepancies.length}{' '}
                     {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}
@@ -4783,11 +6581,68 @@ export default function StaffWorkspace({
                       dailyCheckSubmitting && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>{dailyCheckSubmitting ? 'Submitting…' : 'Submit check'}</Text>
+                    <Text style={styles.dailyModalPrimaryText}>
+                      {dailyCheckSubmitting
+                        ? 'Saving…'
+                        : dailyDiscrepancies.length > 0
+                          ? 'Submit for Owner Review'
+                          : 'Submit count'}
+                    </Text>
                   </Pressable>
                 </View>
               </>
             )}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={dailyCheckLeavePromptVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDailyCheckLeavePromptVisible(false)}
+      >
+        <View style={styles.dailyModalBackdrop}>
+          <View style={styles.dailyModalCard}>
+            <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
+            <Text style={styles.dailyModalTitle}>Unsubmitted discrepancy</Text>
+            <Text style={styles.dailyModalSubtitle}>
+              You have {dailyDiscrepancies.length} unsubmitted {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}.
+              Submit {dailyDiscrepancies.length === 1 ? 'it' : 'them'} for Owner Review now?
+            </Text>
+            <View style={styles.dailyModalSummary}>
+              {dailyDiscrepancies.map((line) => (
+                <Text key={line.ingredientId} style={styles.dailyModalSummaryText}>
+                  {line.name}: {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} expected ·{' '}
+                  {formatDailyUnitQuantity(line.parsedQuantity, line.unit)} counted ·{' '}
+                  {formatDailyDifference(line.difference ?? 0, line.unit)}
+                </Text>
+              ))}
+              <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
+            </View>
+            <View style={styles.dailyModalActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={dailyCheckSubmitting}
+                onPress={() => setDailyCheckLeavePromptVisible(false)}
+                style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.dailyModalReviewText}>Keep editing</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={dailyCheckSubmitting}
+                onPress={() => void submitDailyInventoryCheck()}
+                style={({ pressed }) => [
+                  styles.dailyModalPrimaryButton,
+                  pressed && styles.pressed,
+                  dailyCheckSubmitting && styles.confirmButtonDisabled,
+                ]}
+              >
+                <Text style={styles.dailyModalPrimaryText}>
+                  {dailyCheckSubmitting ? 'Saving…' : 'Submit for Owner Review'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -5150,6 +7005,7 @@ function createStaffStyles(theme: AppTheme) {
   clearFiltersButton: { width: '100%', maxWidth: 300, minHeight: 45, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink, marginTop: 20 },
   clearFiltersText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   inventoryFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  receiptErrorText: { color: colors.red, fontFamily: font.regular, fontSize: 9, lineHeight: 14, textAlign: 'center', paddingHorizontal: 20, marginTop: 8 },
   detailBackFallback: { padding: 12 },
   detailBackLabel: { color: colors.pink, fontFamily: font.medium, fontSize: 10 },
   detailPage: { paddingHorizontal: 19, paddingTop: 18, paddingBottom: 25 },
@@ -5186,6 +7042,22 @@ function createStaffStyles(theme: AppTheme) {
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
   historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
   historyPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  saleReceiptPage: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  saleReceiptHeader: { alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.line },
+  saleReceiptBusiness: { color: colors.navy, fontFamily: font.bold, fontSize: 16 },
+  saleReceiptBranch: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 4 },
+  saleReceiptReference: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 12 },
+  saleReceiptDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
+  saleReceiptLines: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: colors.line },
+  saleReceiptLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 8 },
+  saleReceiptLineCopy: { flex: 1, minWidth: 0 },
+  saleReceiptLineName: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  saleReceiptLineMeta: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  saleReceiptLineTotal: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  saleReceiptTotalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 12, marginTop: 3, borderTopWidth: 1, borderTopColor: colors.line },
+  saleReceiptTotalLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+  saleReceiptTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12 },
+  saleReceiptDetails: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: 13, backgroundColor: '#EEEEEF', marginTop: 13, marginBottom: 12 },
   historyFilterPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
   historyDetailPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
   historySearchWrap: { marginTop: 13, marginBottom: -3 },
@@ -5288,7 +7160,26 @@ function createStaffStyles(theme: AppTheme) {
   clearSearch: { color: colors.muted, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 4 },
   infoBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: '#EFEEFA', marginBottom: 14 },
   infoBannerText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 10, lineHeight: 15 },
+  inventoryRetryAction: { paddingHorizontal: 6, paddingVertical: 4 },
+  inventoryRetryActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  inventoryRetryDisabled: { opacity: 0.55 },
+  inventoryRecoveryActions: { gap: 5, marginTop: 6, marginBottom: 8 },
+  inventoryRecoveryMessage: { color: colors.orange, fontFamily: font.medium, fontSize: 8, lineHeight: 12, marginTop: 3 },
+  inventorySeparateAction: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 4 },
+  inventorySeparateActionText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  bannerDismissButton: { paddingLeft: 4, paddingVertical: 2 },
   bannerDismiss: { color: colors.muted, fontFamily: font.medium, fontSize: 19, paddingHorizontal: 4 },
+  recoveryError: { paddingVertical: 9, paddingHorizontal: 11, borderRadius: 11, backgroundColor: '#FFF2C4', marginBottom: 12 },
+  recoveryErrorText: { color: colors.navy, fontFamily: font.medium, fontSize: 10, lineHeight: 15 },
+  unresolvedSalesList: { gap: 7, marginBottom: 15 },
+  unresolvedSaleRow: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 12, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
+  },
+  unresolvedSaleCopy: { flex: 1, minWidth: 0 },
+  unresolvedSaleReference: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  unresolvedSaleDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  unresolvedSaleStatus: { color: colors.orange, fontFamily: font.medium, fontSize: 8, marginTop: 2 },
   summaryCard: {
     minHeight: 170, overflow: 'hidden', justifyContent: 'center', paddingHorizontal: 17,
     borderRadius: 22, backgroundColor: colors.navy, marginBottom: 19, elevation: 5,
@@ -5636,6 +7527,126 @@ function createStaffStyles(theme: AppTheme) {
   formTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, lineHeight: 19 },
   formSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
   dailyCheckContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 18 },
+  dailySalesContent: { paddingBottom: 20 },
+  inventoryReportPage: { flex: 1 },
+  inventoryReportContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 22 },
+  inventoryReportIntro: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginBottom: 11 },
+  inventoryReportMetadata: {
+    paddingHorizontal: 11, paddingVertical: 9, borderRadius: 12, backgroundColor: colors.pale,
+    marginBottom: 11,
+  },
+  inventoryReportMetadataText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
+  inventoryReportLink: {
+    minHeight: 55, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
+    borderRadius: 12, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line,
+    marginBottom: 7,
+  },
+  inventoryReportIndex: {
+    width: 28, height: 28, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 9, backgroundColor: colors.pale, marginRight: 9,
+  },
+  inventoryReportIndexText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  inventoryReportLinkText: { flex: 1, color: colors.navy, fontFamily: font.semibold, fontSize: 9, lineHeight: 13 },
+  inventoryReportState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
+  inventoryReportErrorText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14, textAlign: 'center' },
+  inventoryReportEmpty: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', paddingVertical: 18 },
+  inventoryReportTable: { minWidth: 480, borderWidth: 1, borderColor: colors.line, borderRadius: 12, overflow: 'hidden' },
+  inventoryReportTableHeader: { backgroundColor: colors.pale, borderBottomWidth: 1, borderBottomColor: colors.line },
+  inventoryReportTableRow: {
+    minHeight: 43, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8,
+    borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.white,
+  },
+  inventoryReportCell: { width: 110, color: colors.navy, fontFamily: font.regular, fontSize: 8, paddingHorizontal: 5 },
+  inventoryReportNameCell: { width: 175, fontFamily: font.medium },
+  inventoryReportStatusCell: { width: 105, paddingHorizontal: 5 },
+  inventoryReportStatus: {
+    alignSelf: 'flex-start', overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 4,
+    borderRadius: 10, fontFamily: font.semibold, fontSize: 7,
+  },
+  inventoryStatusNormal: { color: '#237547', backgroundColor: '#E4F4EB' },
+  inventoryStatusLow: { color: '#97600B', backgroundColor: '#FFF0D0' },
+  inventoryStatusOut: { color: '#A6243C', backgroundColor: '#FCE3E9' },
+  inventoryReportCountBadge: {
+    minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 13, marginBottom: 10, borderRadius: 13, backgroundColor: colors.navy,
+  },
+  inventoryReportCountLabel: { color: colors.white, fontFamily: font.medium, fontSize: 9 },
+  inventoryReportCountValue: { color: colors.orange, fontFamily: font.bold, fontSize: 21 },
+  inventoryReportCategoryList: { gap: 7 },
+  inventoryReportCategory: { overflow: 'hidden', borderRadius: 12, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line },
+  inventoryReportCategoryHeading: {
+    minHeight: 57, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
+  },
+  inventoryReportCategoryCopy: { flex: 1, minWidth: 0 },
+  inventoryReportCategoryTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  inventoryReportExpand: { color: colors.pink, fontFamily: font.semibold, fontSize: 18, paddingHorizontal: 8 },
+  inventoryReportCategoryItem: {
+    minHeight: 41, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 11, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.white,
+  },
+  inventoryReportRecordList: { gap: 8 },
+  inventoryReportRecord: {
+    paddingHorizontal: 11, paddingVertical: 10, borderRadius: 12, backgroundColor: '#EEEEEF',
+    borderWidth: 1, borderColor: colors.line,
+  },
+  inventoryReportShortage: { backgroundColor: '#FFF1F2' },
+  inventoryReportExcess: { backgroundColor: '#FFF8EA' },
+  inventoryReportRecordHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 5 },
+  inventoryReportRecordTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  inventoryReportRecordDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginTop: 2 },
+  inventoryReportCorrection: { paddingTop: 5, marginTop: 5, borderTopWidth: 1, borderTopColor: colors.line },
+  inventoryReportCorrectionPending: { padding: 10, marginTop: 8, borderRadius: 11, backgroundColor: colors.yellow },
+  inventoryReportAction: {
+    minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
+    marginTop: 9, borderRadius: 11, backgroundColor: colors.pink,
+  },
+  inventoryReportActionText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+  inventoryReportBackButton: { minHeight: 36, alignItems: 'center', justifyContent: 'center', marginTop: 5 },
+  inventoryReportBackText: { color: colors.muted, fontFamily: font.medium, fontSize: 8 },
+  inventoryReportRecordDifference: { fontFamily: font.semibold, fontSize: 9, marginTop: 4 },
+  inventoryReportDifferenceNegative: { color: colors.red },
+  inventoryReportDifferencePositive: { color: '#97600B' },
+  inventoryReportRecordLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 7, marginTop: 6 },
+  dailySalesControls: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 9, paddingHorizontal: 14,
+    paddingTop: 13, paddingBottom: 13,
+  },
+  dailySalesDateField: { flex: 1, minWidth: 0 },
+  dailySalesRefreshButton: {
+    minHeight: 42, minWidth: 72, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 12, borderRadius: 11, backgroundColor: colors.pink,
+  },
+  dailySalesRefreshText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  dailySalesTotals: {
+    flexDirection: 'row', gap: 9, marginHorizontal: 14, marginBottom: 16,
+    padding: 14, borderRadius: 15, backgroundColor: colors.navy,
+  },
+  dailySalesMetric: { flex: 1, minWidth: 0 },
+  dailySalesMetricLabel: { color: '#D5D5E0', fontFamily: font.medium, fontSize: 8 },
+  dailySalesTransactionCount: { color: colors.white, fontFamily: font.bold, fontSize: 22, marginTop: 4 },
+  dailySalesTotal: { color: colors.orange, fontFamily: font.bold, fontSize: 18, marginTop: 6 },
+  dailySalesSection: { marginHorizontal: 14, marginBottom: 17 },
+  dailySalesRows: {
+    gap: 6, marginTop: 8, padding: 8, borderRadius: 13,
+    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
+  },
+  dailySalesRow: {
+    minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8,
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.line,
+  },
+  dailySalesRowCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
+  dailySalesRowTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 10 },
+  dailySalesRowDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  dailySalesRowAmount: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  dailySalesLoading: { minHeight: 160, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  dailySalesError: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 35 },
+  dailySalesErrorText: { color: colors.red, fontFamily: font.medium, fontSize: 10, lineHeight: 16, textAlign: 'center' },
+  dailySalesRetryButton: {
+    minHeight: 40, minWidth: 90, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 14, marginTop: 12, borderRadius: 11, backgroundColor: colors.pink,
+  },
+  dailySalesRetryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  dailySalesEmpty: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', padding: 15 },
   dailyCheckIntro: { color: colors.navy, fontFamily: font.medium, fontSize: 9, lineHeight: 14, marginBottom: 12 },
   dailyTableHeader: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingBottom: 6,
@@ -5683,6 +7694,11 @@ function createStaffStyles(theme: AppTheme) {
   },
   dailyDiscrepancyText: { flex: 1, color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
   dailyFormError: { color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 13, marginBottom: 9 },
+  dailyRetryButton: {
+    minHeight: 38, minWidth: 78, alignItems: 'center', justifyContent: 'center',
+    alignSelf: 'flex-start', paddingHorizontal: 13, borderRadius: 10, backgroundColor: colors.pink, marginTop: 1,
+  },
+  dailyRetryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   dailyFormActions: { gap: 8, marginTop: 3 },
   dailyPrimaryButton: {
     minHeight: 45, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
@@ -5938,8 +7954,10 @@ function createStaffStyles(theme: AppTheme) {
   calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   weekday: { width: '14.2857%', height: 34, color: colors.muted, fontFamily: font.medium, fontSize: 9, textAlign: 'center', textAlignVertical: 'center' },
   calendarDayCell: { width: '14.2857%', height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 19 },
+  calendarDayDisabled: { opacity: 0.35 },
   calendarDaySelected: { backgroundColor: colors.pink },
   calendarDayText: { color: colors.navy, fontFamily: font.regular, fontSize: 10 },
+  calendarDayTextDisabled: { color: colors.muted },
   calendarDayTextSelected: { color: colors.white, fontFamily: font.semibold },
   calendarCancel: { alignSelf: 'flex-end', paddingHorizontal: 13, paddingVertical: 9, marginTop: 8 },
   calendarCancelText: { color: colors.muted, fontFamily: font.medium, fontSize: 10 },

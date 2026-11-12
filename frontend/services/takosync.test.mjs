@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   calculatePreparedBatterConsumption,
+  filterStaffSaleHistory,
+  filterUnresolvedSales,
   findDuplicateSaleVariantIds,
   getStaffSaleFeedback,
   getOwnerSaleInventoryStatusLabel,
   isInventoryProcessingSuccessful,
   normalizeSalePayload,
+  runInventoryRetryOnce,
+  shouldOfferInventoryRetry,
   shouldIncludeOwnerSaleInSummary,
 } from './ownerSalesStatus.ts';
 
@@ -56,15 +60,97 @@ test('owner sales include completed sales regardless of inventory processing sta
   assert.equal(isInventoryProcessingSuccessful(sales[0]), true);
   assert.equal(isInventoryProcessingSuccessful(sales[1]), false);
   assert.equal(isInventoryProcessingSuccessful(sales[2]), false);
+  assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'pending' }), 'Pending');
+  assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'cancelled' }), 'Failed');
+});
+
+test('sale payload normalization tolerates missing arrays and empty identifiers', () => {
+  const normalized = normalizeSalePayload({
+    branchId: '  branch-a  ',
+    paymentMethod: ' Cash ',
+    totalAmount: 12.345,
+    items: [{ variantId: '  v-2  ', quantity: 1, unitPrice: 6.5 }, { variantId: '', quantity: 1, unitPrice: 0 }, undefined],
+    addons: [{ addonId: '  addon-b  ', unitPrice: 2.5 }, { addonId: '', unitPrice: 1.2, quantity: undefined }],
+  });
+
+  assert.deepEqual(normalized.branchId, 'branch-a');
+  assert.equal(normalized.paymentMethod, 'cash');
+  assert.equal(normalized.totalAmount, 12.35);
+  assert.deepEqual(normalized.items.map((item) => item.variantId), ['v-2']);
+  assert.deepEqual(normalized.addons.map((addon) => addon.addonId), ['addon-b']);
 });
 
 test('staff checkout feedback distinguishes recorded and inventory outcomes', () => {
   assert.match(getStaffSaleFeedback('SALE-1', 'completed'), /recorded successfully/);
-  assert.match(getStaffSaleFeedback('SALE-2', 'pending'), /being processed/);
-  assert.match(getStaffSaleFeedback('SALE-3', 'failed'), /inventory processing failed/);
+  assert.match(getStaffSaleFeedback('SALE-2', 'pending'), /recorded; inventory processing is pending/);
+  assert.match(getStaffSaleFeedback('SALE-3', 'failed'), /recorded, but inventory processing failed/);
+  assert.match(getStaffSaleFeedback('SALE-4', 'processing'), /recorded; inventory processing is in progress/);
 });
 
-test('duplicate checkout and retry attempts are detected before inventory writes', () => {
+test('Staff offers repeatable inventory recovery until processing is confirmed complete', () => {
+  for (const status of ['pending', 'processing', 'failed', null, undefined]) {
+    assert.equal(shouldOfferInventoryRetry(status), true, `${status} remains eligible for retry`);
+  }
+  assert.equal(shouldOfferInventoryRetry('completed'), false);
+});
+
+const recoverySales = [
+  { id: 'pending', transaction_reference: 'SALE-P', branch_id: 'branch-a', total_amount: 10, payment_method: 'Cash', status: 'completed', inventory_processing_status: 'pending', inventory_processing_error: null, created_at: '2026-11-12T10:00:00Z' },
+  { id: 'processing', transaction_reference: 'SALE-W', branch_id: 'branch-a', total_amount: 12, payment_method: 'Cash', status: 'completed', inventory_processing_status: 'processing', inventory_processing_error: null, created_at: '2026-11-12T10:01:00Z' },
+  { id: 'failed', transaction_reference: 'SALE-F', branch_id: 'branch-a', total_amount: 14, payment_method: 'Card', status: 'completed', inventory_processing_status: 'failed', inventory_processing_error: 'Recorded for support', created_at: '2026-11-12T10:02:00Z' },
+  { id: 'completed', transaction_reference: 'SALE-C', branch_id: 'branch-a', total_amount: 16, payment_method: 'Cash', status: 'completed', inventory_processing_status: 'completed', inventory_processing_error: null, created_at: '2026-11-12T10:03:00Z' },
+  { id: 'other-branch', transaction_reference: 'SALE-O', branch_id: 'branch-b', total_amount: 18, payment_method: 'Cash', status: 'completed', inventory_processing_status: 'failed', inventory_processing_error: null, created_at: '2026-11-12T10:04:00Z' },
+  { id: 'cancelled', transaction_reference: 'SALE-X', branch_id: 'branch-a', total_amount: 0, payment_method: 'Cash', status: 'cancelled', inventory_processing_status: 'failed', inventory_processing_error: null, created_at: '2026-11-12T10:05:00Z' },
+];
+
+test('persistent recovery retrieval includes pending and failed sales, excluding completed, cancelled, and other branches', () => {
+  const recoveredAfterRecreation = filterUnresolvedSales([...recoverySales], 'branch-a');
+  assert.deepEqual(recoveredAfterRecreation.map((sale) => sale.id), ['pending', 'processing', 'failed']);
+});
+
+test('receipt history includes every non-cancelled recorded sale for the assigned branch', () => {
+  const history = filterStaffSaleHistory(recoverySales, 'branch-a');
+  assert.deepEqual(history.map((sale) => sale.id), ['pending', 'processing', 'failed', 'completed']);
+});
+
+test('successful recovery refresh removes the completed sale while failed recovery remains visible', () => {
+  const failedAttempt = recoverySales.map((sale) =>
+    sale.id === 'failed' ? { ...sale, inventory_processing_status: 'failed' } : sale,
+  );
+  assert.deepEqual(filterUnresolvedSales(failedAttempt, 'branch-a').map((sale) => sale.id), ['pending', 'processing', 'failed']);
+
+  const successfulAttempt = recoverySales.map((sale) =>
+    sale.id === 'failed' ? { ...sale, inventory_processing_status: 'completed' } : sale,
+  );
+  assert.deepEqual(filterUnresolvedSales(successfulAttempt, 'branch-a').map((sale) => sale.id), ['pending', 'processing']);
+});
+
+test('concurrent retries for the same sale are coalesced and failed retries can be attempted again', async () => {
+  const locks = new Set();
+  let releaseRetry;
+  const retryResult = new Promise((resolve) => {
+    releaseRetry = resolve;
+  });
+  let attempts = 0;
+  const firstRetry = runInventoryRetryOnce('failed', locks, async () => {
+    attempts += 1;
+    return retryResult;
+  });
+  const overlappingRetry = await runInventoryRetryOnce('failed', locks, async () => {
+    attempts += 1;
+  });
+  assert.equal(overlappingRetry, null);
+  assert.equal(attempts, 1);
+  releaseRetry('failed');
+  assert.equal(await firstRetry, 'failed');
+  assert.equal(await runInventoryRetryOnce('failed', locks, async () => {
+    attempts += 1;
+    return 'completed';
+  }), 'completed');
+  assert.equal(attempts, 2);
+});
+
+test('duplicate menu variants are identified before sale submission', () => {
   const duplicateIds = findDuplicateSaleVariantIds([
     { variantId: 'v-1' },
     { variantId: 'v-2' },

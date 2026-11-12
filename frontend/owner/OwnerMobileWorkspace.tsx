@@ -13,28 +13,32 @@ import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
 import OwnerBusinessDaySettings from './OwnerBusinessDaySettings';
+import OwnerStaffAccounts from './OwnerStaffAccounts';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
-  authorizeOwnerDiscrepancyAdjustment,
+  decideOwnerInventoryCountCorrection,
   createProduct,
   loadOwnerActivityData,
   loadOwnerDiscrepancyReviews,
   loadOwnerInventory,
-  loadProducts,
+  loadProductManagement,
+  validateOwnerInventoryCountCorrection,
+  getOwnerSaleInventoryStatusLabel,
   updateProduct,
   type AppUser,
   type OwnerDiscrepancyReview,
-  type ProductMenuItem,
+  type ProductManagementItem,
   type OwnerSalesData,
 } from '../services/takosync';
+import { standardProductVariants } from '../services/productCatalog';
 import { inventoryTransactionLabel } from '../services/transactionLabels';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'Profile';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'Profile' | 'StaffAccounts';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
-type ProductRecord = ProductMenuItem;
+type ProductRecord = ProductManagementItem;
 
 const colors = {
   pink: '#F20D55',
@@ -197,13 +201,18 @@ export default function OwnerMobileWorkspace({
   const [productSearch, setProductSearch] = useState('');
   const [productEditorMode, setProductEditorMode] = useState<'add' | 'edit' | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductRecord | null>(null);
-  const [productForm, setProductForm] = useState({
+  const [productForm, setProductForm] = useState<{
+    product_name: string;
+    description: string;
+    variantPrices: Record<string, string>;
+    is_available: boolean;
+  }>({
     product_name: '',
     description: '',
-    price: '',
+    variantPrices: {},
     is_available: true,
   });
-  const [productFormErrors, setProductFormErrors] = useState<Partial<Record<'product_name' | 'description' | 'price', string>>>({});
+  const [productFormErrors, setProductFormErrors] = useState<Partial<Record<'product_name' | 'description' | 'variantPrices', string>>>({});
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState('');
   const [productSaving, setProductSaving] = useState(false);
@@ -213,8 +222,9 @@ export default function OwnerMobileWorkspace({
   const [discrepancyLoading, setDiscrepancyLoading] = useState(false);
   const [discrepancyError, setDiscrepancyError] = useState('');
   const [discrepancyFeedback, setDiscrepancyFeedback] = useState('');
-  const [discrepancyFilter, setDiscrepancyFilter] = useState<'Pending' | 'Adjusted'>('Pending');
+  const [discrepancyFilter, setDiscrepancyFilter] = useState<'Pending' | 'Approved' | 'Rejected' | 'Validated'>('Pending');
   const [selectedDiscrepancyId, setSelectedDiscrepancyId] = useState<string | null>(null);
+  const [discrepancyAction, setDiscrepancyAction] = useState<'approve' | 'reject' | 'validate' | null>(null);
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentError, setAdjustmentError] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -310,7 +320,7 @@ export default function OwnerMobileWorkspace({
   });
   const visibleDiscrepancies = discrepancyReviews.filter((review) => review.status === discrepancyFilter);
   const pendingDiscrepancyCount = discrepancyReviews.filter((review) => review.status === 'Pending').length;
-  const selectedDiscrepancy = discrepancyReviews.find((review) => review.countLineId === selectedDiscrepancyId) ?? null;
+  const selectedDiscrepancy = discrepancyReviews.find((review) => review.correctionRequestId === selectedDiscrepancyId) ?? null;
   const dashboardDiscrepancies = discrepancyReviewsLoaded
     ? discrepancyReviews.filter((review) => review.status === 'Pending')
       .map((review) => ({ ...review, id: review.countLineId }))
@@ -330,7 +340,7 @@ export default function OwnerMobileWorkspace({
       id: item.id,
       category: 'Sales' as const,
       type: 'Completed Sale',
-      detail: currency(Number(item.total_amount)),
+      detail: `${currency(Number(item.total_amount))} · Inventory: ${getOwnerSaleInventoryStatusLabel(item)}`,
       branchId: item.branch_id,
       reference: item.transaction_reference,
       date: item.created_at,
@@ -382,7 +392,7 @@ export default function OwnerMobileWorkspace({
     setProductsLoading(true);
     setProductsError('');
     try {
-      const nextProducts = await loadProducts();
+      const nextProducts = await loadProductManagement();
       setProductRecords(nextProducts);
     } catch (error) {
       setProductsError(error instanceof Error ? error.message : 'Unable to load products and menu items.');
@@ -417,15 +427,15 @@ export default function OwnerMobileWorkspace({
     void refreshDiscrepancyReviews();
   }, [page, branchId]);
 
-  const submitDiscrepancyAdjustment = async () => {
+  const submitDiscrepancyAction = async () => {
     if (!selectedDiscrepancy) return;
     const reason = adjustmentReason.trim();
     if (!reason) {
-      setAdjustmentError('An adjustment reason is required.');
+      setAdjustmentError('A decision or validation reason is required.');
       return;
     }
     if (reason.length > 1000) {
-      setAdjustmentError('The adjustment reason must be 1000 characters or fewer.');
+      setAdjustmentError('The reason must be 1000 characters or fewer.');
       return;
     }
 
@@ -433,17 +443,33 @@ export default function OwnerMobileWorkspace({
     setAdjustmentError('');
     setDiscrepancyFeedback('');
     try {
-      await authorizeOwnerDiscrepancyAdjustment({
-        countLineId: selectedDiscrepancy.countLineId,
-        reason,
-      });
-      setDiscrepancyFeedback('Inventory adjustment authorized and recorded.');
+      if (discrepancyAction === 'approve' || discrepancyAction === 'reject') {
+        await decideOwnerInventoryCountCorrection({
+          requestId: selectedDiscrepancy.correctionRequestId,
+          decision: discrepancyAction === 'approve' ? 'approved' : 'rejected',
+          reason,
+        });
+        setDiscrepancyFeedback(discrepancyAction === 'approve'
+          ? 'Correction request approved. Use Validate Count separately to authorize inventory changes.'
+          : 'Correction request rejected. The original count and decision were retained.');
+      } else if (discrepancyAction === 'validate') {
+        const validation = await validateOwnerInventoryCountCorrection({
+          requestId: selectedDiscrepancy.correctionRequestId,
+          reason,
+        });
+        setDiscrepancyFeedback(validation.outcome === 'no_change'
+          ? 'Count validated and discrepancy resolved without changing inventory.'
+          : 'Count validated and inventory adjustment recorded.');
+      } else {
+        throw new Error('Choose an Owner decision or Validate Count action.');
+      }
       setSelectedDiscrepancyId(null);
+      setDiscrepancyAction(null);
       setAdjustmentReason('');
       await refreshDiscrepancyReviews();
       await onRefresh();
     } catch (error) {
-      setAdjustmentError(error instanceof Error ? error.message : 'Unable to authorize this inventory adjustment.');
+      setAdjustmentError(error instanceof Error ? error.message : 'Unable to save the count decision.');
     } finally {
       setAdjustmentSubmitting(false);
     }
@@ -457,19 +483,40 @@ export default function OwnerMobileWorkspace({
     setProductForm({
       product_name: product?.product_name ?? '',
       description: product?.description ?? '',
-      price: product ? String(product.price) : '',
+      variantPrices: product
+        ? Object.fromEntries(product.variants.map((variant) => [variant.id, String(variant.price)]))
+        : Object.fromEntries(standardProductVariants.map((variant) => [variant.variant_code, ''])),
       is_available: product?.is_available ?? true,
     });
   };
 
   const submitProductForm = async () => {
-    const errors: Partial<Record<'product_name' | 'description' | 'price', string>> = {};
+    if (productSaving) return;
+    const errors: Partial<Record<'product_name' | 'description' | 'variantPrices', string>> = {};
     const name = productForm.product_name.trim();
     const description = productForm.description.trim();
-    const price = Number(productForm.price);
     if (!name) errors.product_name = 'Product name is required.';
     if (!description) errors.description = 'Product description is required.';
-    if (!Number.isFinite(price) || price < 0) errors.price = 'Enter a valid selling price greater than or equal to zero.';
+    const variants = productEditorMode === 'edit' && selectedProduct
+      ? selectedProduct.variants.map((variant) => ({
+        key: variant.id,
+        variant_code: variant.variant_code,
+        size_label: variant.size_label,
+        piece_count: variant.piece_count,
+        price: Number(productForm.variantPrices[variant.id]),
+      }))
+      : standardProductVariants.map((variant) => ({
+        ...variant,
+        key: variant.variant_code,
+        price: Number(productForm.variantPrices[variant.variant_code]),
+      }));
+    if (variants.length === 0 || variants.some((variant) =>
+      !productForm.variantPrices[variant.key]?.trim() ||
+      !Number.isFinite(variant.price) ||
+      variant.price < 0,
+    )) {
+      errors.variantPrices = 'Enter a valid selling price for every POS variant.';
+    }
     if (Object.keys(errors).length) {
       setProductFormErrors(errors);
       return;
@@ -481,31 +528,32 @@ export default function OwnerMobileWorkspace({
       const payload = {
         product_name: name,
         description,
-        price,
         is_available: productForm.is_available,
       };
-      const nextProduct = productEditorMode === 'edit' && selectedProduct
-        ? await updateProduct(selectedProduct.id, payload)
-        : await createProduct(payload);
+      if (productEditorMode === 'edit' && selectedProduct) {
+        await updateProduct(selectedProduct.id, {
+          ...payload,
+          variants: variants.map((variant) => ({ id: variant.key, price: variant.price })),
+        });
+      } else {
+        await createProduct({
+          ...payload,
+          variants: variants.map(({ variant_code, size_label, piece_count, price }) => ({
+            variant_code,
+            size_label,
+            piece_count,
+            price,
+          })),
+        });
+      }
 
-      setProductRecords((current) => {
-        const next = productEditorMode === 'edit' && selectedProduct
-          ? current.map((product) => (product.id === nextProduct.id ? nextProduct : product))
-          : [...current.filter((product) => product.id !== nextProduct.id), nextProduct].sort((a, b) => a.product_name.localeCompare(b.product_name));
-        return next;
-      });
       setProductFeedback({
         type: 'success',
         text: productEditorMode === 'edit' ? 'Product updated successfully.' : 'Product added successfully.',
       });
       setProductEditorMode(null);
-      setSelectedProduct(nextProduct);
-      setProductForm({
-        product_name: nextProduct.product_name,
-        description: nextProduct.description,
-        price: String(nextProduct.price),
-        is_available: nextProduct.is_available,
-      });
+      setSelectedProduct(null);
+      await refreshProducts();
     } catch (error) {
       setProductFeedback({
         type: 'error',
@@ -640,7 +688,7 @@ export default function OwnerMobileWorkspace({
             </View>
             <View style={styles.productFooterRow}>
               <View>
-                <Text style={styles.productPriceLabel}>Selling price</Text>
+                <Text style={styles.productPriceLabel}>4 PCS price</Text>
                 <Text style={styles.productPriceValue}>{currency(product.price)}</Text>
               </View>
               <View style={[styles.availabilityPill, product.is_available ? styles.availabilityAvailable : styles.availabilityUnavailable]}>
@@ -665,7 +713,7 @@ export default function OwnerMobileWorkspace({
           <Text style={styles.productDetailText}>{selectedProduct.description || 'No description provided.'}</Text>
           <View style={styles.productDetailGrid}>
             <View style={styles.detailStatBox}>
-              <Text style={styles.productDetailLabel}>Selling price</Text>
+              <Text style={styles.productDetailLabel}>4 PCS price</Text>
               <Text style={styles.productDetailValue}>{currency(selectedProduct.price)}</Text>
             </View>
             <View style={styles.detailStatBox}>
@@ -712,17 +760,42 @@ export default function OwnerMobileWorkspace({
             />
             {productFormErrors.description ? <Text style={styles.fieldError}>{productFormErrors.description}</Text> : null}
 
-            <Text style={styles.fieldLabel}>Selling price</Text>
-            <TextInput
-              value={productForm.price}
-              onChangeText={(value) => setProductForm((current) => ({ ...current, price: value }))}
-              placeholder="0.00"
-              keyboardType="decimal-pad"
-              placeholderTextColor={colors.muted}
-              style={[styles.textInput, productFormErrors.price && styles.textInputError]}
-              accessibilityLabel="Product selling price"
-            />
-            {productFormErrors.price ? <Text style={styles.fieldError}>{productFormErrors.price}</Text> : null}
+            <Text style={styles.fieldLabel}>POS variant prices</Text>
+            <Text style={styles.productDetailText}>
+              Set the price for each configured size. Staff POS uses these variant prices.
+            </Text>
+            <Text style={styles.productDetailText}>
+              New variants inherit the database default of visibility at all active branches. Editing preserves existing branch visibility.
+            </Text>
+            {(productEditorMode === 'edit' && selectedProduct
+              ? selectedProduct.variants.map((variant) => ({
+                key: variant.id,
+                label: `${variant.size_label} · ${variant.piece_count} pieces`,
+              }))
+              : standardProductVariants.map((variant) => ({
+                key: variant.variant_code,
+                label: `${variant.size_label} · ${variant.piece_count} pieces`,
+              }))).map((variant) => (
+                <View key={variant.key}>
+                  <Text style={styles.fieldLabel}>{variant.label}</Text>
+                  <TextInput
+                    value={productForm.variantPrices[variant.key] ?? ''}
+                    onChangeText={(value) => setProductForm((current) => ({
+                      ...current,
+                      variantPrices: { ...current.variantPrices, [variant.key]: value },
+                    }))}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.textInput, productFormErrors.variantPrices && styles.textInputError]}
+                    accessibilityLabel={`${variant.label} price`}
+                  />
+                </View>
+              ))}
+            {productEditorMode === 'edit' && selectedProduct?.variants.length === 0 ? (
+              <Text style={styles.fieldError}>No POS variants are configured for this product.</Text>
+            ) : null}
+            {productFormErrors.variantPrices ? <Text style={styles.fieldError}>{productFormErrors.variantPrices}</Text> : null}
 
             <Text style={styles.fieldLabel}>Availability</Text>
             <View style={styles.segmentedRow}>
@@ -1008,11 +1081,11 @@ export default function OwnerMobileWorkspace({
   const renderDiscrepancies = () => (
     <>
       <View style={styles.noticeCard}>
-        <Text style={styles.noticeTitle}>Owner-authorized inventory adjustments</Text>
-        <Text style={styles.noticeText}>Each adjustment requires a reason and explicit confirmation. The original count is retained. Approval is blocked if inventory changed after the count.</Text>
+        <Text style={styles.noticeTitle}>Count correction review</Text>
+        <Text style={styles.noticeText}>First approve or reject Staff requests. Approval does not change stock. Use Validate Count as a separate authorization; unchanged quantities are audited without a movement.</Text>
       </View>
       <View style={styles.alertTabs}>
-        {(['Pending', 'Adjusted'] as const).map((value) => {
+        {(['Pending', 'Approved', 'Rejected', 'Validated'] as const).map((value) => {
           const selected = discrepancyFilter === value;
           const count = discrepancyReviews.filter((review) => review.status === value).length;
           return (
@@ -1046,10 +1119,26 @@ export default function OwnerMobileWorkspace({
           <Text style={styles.listMeta}>Submitted by {item.staff} · {compactDate(item.submittedAt)}</Text>
           <View style={styles.quantityCompare}>
             <View><Text style={styles.compareLabel}>Expected</Text><Text style={styles.compareValue}>{item.expected} {item.unit}</Text></View>
-            <View><Text style={styles.compareLabel}>Counted</Text><Text style={styles.compareValue}>{item.actual} {item.unit}</Text></View>
-            <View><Text style={styles.compareLabel}>Difference</Text><Text style={[styles.compareValue, styles.lowText]}>{item.difference > 0 ? '+' : ''}{item.difference} {item.unit}</Text></View>
+            <View><Text style={styles.compareLabel}>Original actual</Text><Text style={styles.compareValue}>{item.actual} {item.unit}</Text></View>
+            <View><Text style={styles.compareLabel}>Corrected actual</Text><Text style={styles.compareValue}>{item.correctedActual} {item.unit}</Text></View>
           </View>
+          <Text style={styles.remarksText}>Staff correction reason: {item.correctionReason}</Text>
           {item.remarks ? <Text style={styles.remarksText}>Staff remarks: {item.remarks}</Text> : <Text style={styles.remarksText}>No staff remarks recorded.</Text>}
+          {item.decisionReason ? (
+            <View style={styles.adjustmentAudit}>
+              <Text style={styles.auditDetail}>Decision by {item.decisionOwner ?? 'Owner account unavailable'} · {item.decisionAt ? compactDate(item.decisionAt) : 'time unavailable'}</Text>
+              <Text style={styles.auditDetail}>Decision reason: {item.decisionReason}</Text>
+            </View>
+          ) : null}
+          {item.validationOutcome ? (
+            <View style={styles.adjustmentAudit}>
+              <Text style={styles.auditDetail}>
+                Validate Count: {item.validationOutcome === 'no_change' ? 'Resolved without inventory change' : 'Inventory adjustment authorized'}
+              </Text>
+              <Text style={styles.auditDetail}>Validation reason: {item.validationReason}</Text>
+              {item.validatedAt ? <Text style={styles.auditDetail}>Validated: {compactDate(item.validatedAt)}</Text> : null}
+            </View>
+          ) : null}
           {item.adjustment ? (
             <View style={styles.adjustmentAudit}>
               <Text style={styles.auditDetail}>Authorized by {item.adjustment.approvingOwner} · {compactDate(item.adjustment.approvedAt)}</Text>
@@ -1059,22 +1148,45 @@ export default function OwnerMobileWorkspace({
                 {' · '}stock {item.adjustment.beforeQuantity} → {item.adjustment.afterQuantity} {item.unit}
               </Text>
             </View>
-          ) : (
+          ) : null}
+          {item.status === 'Pending' ? (
+            <View style={styles.discrepancyActions}>
+              {(['approve', 'reject'] as const).map((action) => (
+                <Pressable
+                  key={action}
+                  accessibilityRole="button"
+                  disabled={adjustmentSubmitting}
+                  onPress={() => {
+                    setSelectedDiscrepancyId(item.correctionRequestId);
+                    setDiscrepancyAction(action);
+                    setAdjustmentReason('');
+                    setAdjustmentError('');
+                    setDiscrepancyFeedback('');
+                  }}
+                  style={({ pressed }) => [styles.primaryActionButton, styles.discrepancyActionButton, pressed && { opacity: 0.82 }]}
+                >
+                  <Text style={styles.primaryActionText}>{action === 'approve' ? 'Approve request' : 'Reject request'}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : item.status === 'Approved' ? (
             <Pressable
               accessibilityRole="button"
+              disabled={adjustmentSubmitting}
               onPress={() => {
-                setSelectedDiscrepancyId(item.countLineId);
+                setSelectedDiscrepancyId(item.correctionRequestId);
+                setDiscrepancyAction('validate');
                 setAdjustmentReason('');
                 setAdjustmentError('');
                 setDiscrepancyFeedback('');
               }}
               style={({ pressed }) => [styles.primaryActionButton, pressed && { opacity: 0.82 }]}
             >
-              <Text style={styles.primaryActionText}>Review and authorize adjustment</Text>
+              <Text style={styles.primaryActionText}>Validate Count</Text>
             </Pressable>
-          )}
+          ) : null}
         </View>
-      )) : <EmptyState text={discrepancyFilter === 'Pending' ? 'No pending discrepancies require review.' : 'No authorized discrepancy adjustments are recorded.'} />}
+      )) : <EmptyState text={`No ${discrepancyFilter.toLowerCase()} count correction requests.`} />}
       {discrepancyLoading && discrepancyReviewsLoaded ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing discrepancy records…</Text></View>
       ) : null}
@@ -1113,6 +1225,7 @@ export default function OwnerMobileWorkspace({
         { title: 'Discrepancy review', detail: discrepancyReviewsLoaded ? `${pendingDiscrepancyCount} pending count discrepancies` : 'Review pending inventory counts', page: 'Discrepancies' as const, icon: '!' },
         { title: 'Business records', detail: 'Sales, inventory movements, and counts', page: 'Records' as const, icon: '↻' },
         { title: 'Owner profile', detail: 'Account details and preferences', page: 'Profile' as const, icon: '●' },
+        { title: 'Staff accounts', detail: 'Create, assign, activate, and deactivate employee accounts', page: 'StaffAccounts' as const, icon: '!' },
       ].map((item) => (
         <Pressable key={item.page} accessibilityRole="button" onPress={() => setPage(item.page)} style={styles.moreCard}>
           <View style={styles.moreIcon}><Text style={styles.moreIconText}>{item.icon}</Text></View>
@@ -1171,6 +1284,7 @@ export default function OwnerMobileWorkspace({
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
     Profile: 'Owner profile',
+    StaffAccounts: 'Staff accounts',
   };
 
   return (
@@ -1196,7 +1310,7 @@ export default function OwnerMobileWorkspace({
         </View>
       </View>
 
-      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && page !== 'Ingredients' && page !== 'BusinessHours' && (
+      {page !== 'Sales' && page !== 'Reports' && page !== 'Profile' && page !== 'Ingredients' && page !== 'BusinessHours' && page !== 'StaffAccounts' && (
         <View style={styles.branchFilterBlock}>
           <Text style={styles.filterLabel}>BRANCH</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
@@ -1245,6 +1359,7 @@ export default function OwnerMobileWorkspace({
         {page === 'Discrepancies' && renderDiscrepancies()}
         {page === 'Records' && renderRecords()}
         {page === 'Profile' && renderProfile()}
+        {page === 'StaffAccounts' && <OwnerStaffAccounts onBack={() => setPage('More')} />}
       </ScrollView>
 
       <View style={styles.bottomBar}>
@@ -1279,18 +1394,30 @@ export default function OwnerMobileWorkspace({
         transparent
         animationType="fade"
         onRequestClose={() => {
-          if (!adjustmentSubmitting) setSelectedDiscrepancyId(null);
+          if (!adjustmentSubmitting) {
+            setSelectedDiscrepancyId(null);
+            setDiscrepancyAction(null);
+          }
         }}
       >
         <View style={styles.productModalBackdrop}>
           <View style={styles.productModalCard}>
             <View style={styles.productModalHeader}>
-              <Text style={styles.productModalTitle}>Confirm inventory adjustment</Text>
+              <Text style={styles.productModalTitle}>
+                {discrepancyAction === 'approve'
+                  ? 'Approve correction request'
+                  : discrepancyAction === 'reject'
+                    ? 'Reject correction request'
+                    : 'Validate Count'}
+              </Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close adjustment confirmation"
+                accessibilityLabel="Close count correction confirmation"
                 disabled={adjustmentSubmitting}
-                onPress={() => setSelectedDiscrepancyId(null)}
+                onPress={() => {
+                  setSelectedDiscrepancyId(null);
+                  setDiscrepancyAction(null);
+                }}
                 style={styles.closeActionButton}
               >
                 <Text style={styles.closeActionText}>×</Text>
@@ -1302,13 +1429,19 @@ export default function OwnerMobileWorkspace({
                   {selectedDiscrepancy.ingredient} · {selectedDiscrepancy.branch} · {selectedDiscrepancy.reference}
                 </Text>
                 <Text style={styles.modalSummary}>
-                  Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; physical count {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
-                  {'\n'}Adjustment: {selectedDiscrepancy.difference > 0 ? '+' : ''}{selectedDiscrepancy.difference} {selectedDiscrepancy.unit}.
+                  Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; original actual {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
+                  {'\n'}Corrected actual {selectedDiscrepancy.correctedActual} {selectedDiscrepancy.unit}.
                 </Text>
                 <Text style={styles.modalWarning}>
-                  Confirmation records this adjustment only if on-hand stock still matches the expected quantity. Otherwise, submit a new physical count.
+                  {discrepancyAction === 'approve'
+                    ? 'Approval only accepts the Staff correction request. It does not change inventory. The Owner must separately use Validate Count.'
+                    : discrepancyAction === 'reject'
+                      ? 'Rejection is retained in the audit history. Staff may submit another correction request.'
+                      : 'Validate Count is a separate authorization. It is rejected if this ingredient’s stock changed since the count began. If corrected actual equals expected, it records a no-change resolution.'}
                 </Text>
-                <Text style={styles.fieldLabel}>Reason for adjustment *</Text>
+                <Text style={styles.fieldLabel}>
+                  {discrepancyAction === 'validate' ? 'Validation reason *' : 'Decision reason *'}
+                </Text>
                 <TextInput
                   value={adjustmentReason}
                   onChangeText={(value) => {
@@ -1317,7 +1450,7 @@ export default function OwnerMobileWorkspace({
                   }}
                   placeholder="Explain why this adjustment is authorized"
                   placeholderTextColor={colors.muted}
-                  accessibilityLabel="Reason for discrepancy adjustment"
+                  accessibilityLabel="Reason for count correction decision"
                   maxLength={1000}
                   multiline
                   style={[styles.textInput, styles.textArea, adjustmentError && styles.textInputError]}
@@ -1326,7 +1459,7 @@ export default function OwnerMobileWorkspace({
                 <Pressable
                   accessibilityRole="button"
                   disabled={adjustmentSubmitting || !adjustmentReason.trim()}
-                  onPress={() => void submitDiscrepancyAdjustment()}
+                  onPress={() => void submitDiscrepancyAction()}
                   style={({ pressed }) => [
                     styles.primaryActionButton,
                     styles.modalPrimaryAction,
@@ -1336,12 +1469,21 @@ export default function OwnerMobileWorkspace({
                 >
                   {adjustmentSubmitting
                     ? <ActivityIndicator size="small" color={colors.white} />
-                    : <Text style={styles.primaryActionText}>Confirm and authorize adjustment</Text>}
+                    : <Text style={styles.primaryActionText}>
+                      {discrepancyAction === 'approve'
+                        ? 'Confirm approval'
+                        : discrepancyAction === 'reject'
+                          ? 'Confirm rejection'
+                          : 'Confirm Validate Count'}
+                    </Text>}
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   disabled={adjustmentSubmitting}
-                  onPress={() => setSelectedDiscrepancyId(null)}
+                  onPress={() => {
+                    setSelectedDiscrepancyId(null);
+                    setDiscrepancyAction(null);
+                  }}
                   style={styles.modalCancelAction}
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
@@ -1558,6 +1700,8 @@ function useStyles() {
     compareValue: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginTop: 4 },
     remarksText: { color: colors.ink, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginVertical: 8 },
     adjustmentAudit: { padding: 9, marginTop: 4, borderRadius: 10, backgroundColor: colors.paleGreen },
+    discrepancyActions: { flexDirection: 'row', gap: 8 },
+    discrepancyActionButton: { flex: 1 },
     auditDetail: { color: colors.ink, fontFamily: font.regular, fontSize: 7, lineHeight: 12, marginVertical: 2 },
     workflowUnavailable: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, paddingHorizontal: 2, marginVertical: 10 },
     moreCard: { minHeight: 65, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white },

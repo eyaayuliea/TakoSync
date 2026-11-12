@@ -456,9 +456,9 @@ export default function MenuWorkspace({
           ) : null}
           {saleError !== '' ? <Text style={styles.paymentError}>{saleError}</Text> : null}
           <View style={styles.checkoutUnavailableBox}>
-            <Text style={styles.checkoutUnavailableTitle}>Atomic transaction recording</Text>
+            <Text style={styles.checkoutUnavailableTitle}>Sale and inventory status</Text>
             <Text style={styles.checkoutMessage}>
-              Sale recording and configured inventory consumption succeed or fail together. Failed submissions preserve this cart.
+              A recorded sale may need inventory processing or recovery. The receipt keeps the sale details and inventory status separate.
             </Text>
           </View>
           <Pressable accessibilityRole="button" onPress={() => onSetPage('cart')} style={styles.checkoutBackButton}>

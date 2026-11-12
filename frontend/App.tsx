@@ -33,6 +33,7 @@ import {
   loadOwnerInventory,
   loadOwnerSalesData,
   signIn,
+  signInStaff,
   signOut,
   type AppUser,
   type OwnerSalesData,
@@ -139,7 +140,7 @@ function AppContent() {
   const styles = useAppStyles();
   const [screen, setScreen] = useState<Screen>('loading');
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
-  const [loginEmail, setLoginEmail] = useState('');
+  const [staffUsername, setStaffUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -533,15 +534,19 @@ function AppContent() {
   );
   const handleLogin = async () => {
     if (authLock.current) return;
-    if (!loginEmail.trim() || !password) {
-      setLoginError('Enter your registered email address and password to continue.');
+    if (!staffUsername.trim()) {
+      setLoginError('Please enter your username.');
+      return;
+    }
+    if (!password) {
+      setLoginError('Please enter your password.');
       return;
     }
     authLock.current = true;
     setAuthenticating(true);
     setLoginError('');
     try {
-      const user = await signIn(loginEmail, password, 'Staff');
+      const user = await signInStaff(staffUsername, password);
       setAuthenticatedUser(user);
       setScreen('staffWorkspace');
     } catch (error) {
@@ -566,7 +571,7 @@ function AppContent() {
     setOwnerLoading(false);
     setSalesLoading(false);
     setActivityLoading(false);
-    setLoginEmail('');
+    setStaffUsername('');
     setPassword('');
     setDashboardTab('Dashboard');
     setBranchFilter(null);
@@ -778,19 +783,19 @@ function AppContent() {
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
-                        <Text style={styles.loginLabel}>Email *</Text>
+                        <Text style={styles.loginLabel}>Username *</Text>
                         <TextInput
-                          value={loginEmail}
+                          value={staffUsername}
                           onChangeText={(value) => {
-                            setLoginEmail(value);
+                            setStaffUsername(value);
                             setLoginError('');
                           }}
                           style={styles.loginInput}
-                          placeholder="Enter your registered email address"
+                          placeholder="Enter your employee name"
                           placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
-                          autoCapitalize="none"
+                          autoCapitalize="words"
                           autoCorrect={false}
-                          accessibilityLabel="Username or email, required"
+                          accessibilityLabel="Username, required"
                           editable={!authenticating}
                           returnKeyType="next"
                         />
@@ -827,7 +832,7 @@ function AppContent() {
                           </Pressable>
                         </View>
                         <Text style={styles.loginHelper}>
-                          Use your registered Supabase email address. Owners should use the Owner Login screen.
+                          Use your employee name and employee ID. Owners should use the Owner Login screen.
                         </Text>
                         {!isSupabaseConfigured && (
                           <Text style={styles.errorText}>

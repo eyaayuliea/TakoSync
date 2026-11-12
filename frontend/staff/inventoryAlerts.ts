@@ -1,5 +1,20 @@
 export type InventoryAlertKind = 'lowStock' | 'outOfStock' | 'nearExpiration' | 'expired';
 
+export type BranchInventoryAlertItem = { hasBranchInventory: boolean };
+
+export function filterBranchInventoryAlertItems<T extends BranchInventoryAlertItem>(items: readonly T[]): T[] {
+  return items.filter((item) => item.hasBranchInventory);
+}
+
+export function deduplicateInventoryAlerts<T extends { id: string }>(alerts: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return alerts.filter((alert) => {
+    if (seen.has(alert.id)) return false;
+    seen.add(alert.id);
+    return true;
+  });
+}
+
 export function classifyStockAlert(quantity: number, minimumStock: number): InventoryAlertKind | null {
   if (quantity <= 0) return 'outOfStock';
   return minimumStock > 0 && quantity <= minimumStock ? 'lowStock' : null;

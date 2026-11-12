@@ -22,6 +22,7 @@ export type Database = {
       profiles: Table<{
         id: string;
         email: string;
+        username: string | null;
         full_name: string;
         role: 'owner' | 'staff';
         branch_id: string | null;
@@ -82,6 +83,9 @@ export type Database = {
         reason: string;
         notes: string;
         batch_id: string | null;
+        request_id: string | null;
+        request_line_index: number | null;
+        request_payload_hash: string | null;
         created_at: string;
       }>;
       daily_stock_checks: Table<{
@@ -306,6 +310,37 @@ export type Database = {
         approved_at: string;
         inventory_movement_id: string;
       }>;
+      inventory_count_correction_requests: Table<{
+        id: string;
+        request_id: string;
+        daily_stock_count_line_id: string;
+        daily_stock_check_id: string;
+        branch_id: string;
+        ingredient_id: string;
+        requested_by: string;
+        corrected_actual_quantity: number;
+        reason: string;
+        status: 'pending' | 'approved' | 'rejected';
+        decided_by: string | null;
+        decision_reason: string | null;
+        decided_at: string | null;
+        created_at: string;
+      }>;
+      inventory_count_validations: Table<{
+        id: string;
+        daily_stock_count_line_id: string;
+        correction_request_id: string;
+        branch_id: string;
+        ingredient_id: string;
+        expected_quantity: number;
+        original_actual_quantity: number;
+        corrected_actual_quantity: number;
+        outcome: 'adjusted' | 'no_change';
+        validated_by: string;
+        reason: string;
+        inventory_movement_id: string | null;
+        validated_at: string;
+      }>;
       business_day_settings: Table<{
         business_date: string;
         opening_time: string;
@@ -352,16 +387,37 @@ export type Database = {
         Args: { p_branch_id: string; p_transactions: Json };
         Returns: Database['public']['Tables']['inventory_movements']['Row'][];
       };
+      record_inventory_transactions_idempotent: {
+        Args: { p_branch_id: string; p_request_id: string; p_transactions: Json };
+        Returns: Database['public']['Tables']['inventory_movements']['Row'][];
+      };
       submit_daily_stock_check: {
-        Args: { p_branch_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
+        Args: { p_branch_id: string; p_request_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
         Returns: Json;
       };
       authorize_inventory_discrepancy_adjustment: {
         Args: { p_count_line_id: string; p_reason: string };
         Returns: Database['public']['Tables']['inventory_discrepancy_adjustments']['Row'];
       };
+      request_inventory_count_correction: {
+        Args: {
+          p_count_line_id: string;
+          p_request_id: string;
+          p_corrected_actual_quantity: number;
+          p_reason: string;
+        };
+        Returns: Database['public']['Tables']['inventory_count_correction_requests']['Row'];
+      };
+      decide_inventory_count_correction: {
+        Args: { p_request_id: string; p_decision: string; p_reason: string };
+        Returns: Database['public']['Tables']['inventory_count_correction_requests']['Row'];
+      };
+      validate_inventory_count_correction: {
+        Args: { p_request_id: string; p_reason: string };
+        Returns: Database['public']['Tables']['inventory_count_validations']['Row'];
+      };
       prepare_batter_batch: {
-        Args: { p_branch_id: string; p_batch_reference: string };
+        Args: { p_branch_id: string; p_batch_reference: string; p_prepared_quantity: number };
         Returns: Database['public']['Tables']['batter_preparation_batches']['Row'];
       };
       submit_sale: {

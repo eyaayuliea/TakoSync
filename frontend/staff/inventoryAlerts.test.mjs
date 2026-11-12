@@ -3,8 +3,35 @@ import test from 'node:test';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
+  deduplicateInventoryAlerts,
+  filterBranchInventoryAlertItems,
   inventoryAlertLabel,
 } from './inventoryAlerts.ts';
+
+test('branch alert candidates exclude items without an assigned-branch inventory row', () => {
+  const items = [
+    { id: 'branch-item', hasBranchInventory: true },
+    { id: 'other-branch-item', hasBranchInventory: false },
+  ];
+  assert.deepEqual(filterBranchInventoryAlertItems(items), [items[0]]);
+});
+
+test('branch-scoped Staff projections use only assigned-branch inventory rows', () => {
+  const items = [
+    { id: 'branch-item', hasBranchInventory: true },
+    { id: 'catalog-only-item', hasBranchInventory: false },
+  ];
+  assert.deepEqual(filterBranchInventoryAlertItems(items).map((item) => item.id), ['branch-item']);
+});
+
+test('duplicate item and batch alerts are emitted once', () => {
+  const alerts = [
+    { id: 'near-expiration-flour-batch-1', label: 'first' },
+    { id: 'near-expiration-flour-batch-1', label: 'duplicate' },
+    { id: 'near-expiration-flour-batch-2', label: 'different batch' },
+  ];
+  assert.deepEqual(deduplicateInventoryAlerts(alerts), [alerts[0], alerts[2]]);
+});
 
 test('stock alert classification distinguishes out of stock from low stock', () => {
   assert.equal(classifyStockAlert(0, 5), 'outOfStock');

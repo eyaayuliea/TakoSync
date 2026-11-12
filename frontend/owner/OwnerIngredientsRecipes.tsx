@@ -24,6 +24,10 @@ import {
   type RecipeIngredientRecord,
   type SharedRecipeRecord,
 } from '../services/takosync';
+import {
+  getConfiguredRecipeQuantity,
+  getPerBottleRecipeQuantity,
+} from '../services/batterRecipeQuantities';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 
 type Props = {
@@ -160,7 +164,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
         setSharedRecipeLines(currentShared.ingredientLines.map((line, index) => ({
           key: `${currentShared.id}-${index}`,
           ingredientId: line.ingredient_id,
-          quantity: String(line.quantity_required),
+          quantity: String(getPerBottleRecipeQuantity(line.quantity_required, currentShared.prepared_quantity)),
           unit: line.unit_of_measure,
         })));
       }
@@ -446,8 +450,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
     const preparedUnit = sharedRecipePreparedUnit.trim();
     if (!sharedRecipeCode.trim() || !sharedRecipeName.trim() || !Number.isFinite(yieldPieces) || yieldPieces <= 0
       || !Number.isFinite(preparedQuantity) || preparedQuantity <= 0 || !Number.isInteger(preparedQuantity)
-      || !availableUnits.includes(preparedUnit)) {
-      setSharedRecipeError('Enter a positive whole prepared quantity and yield with a configured unit.');
+      || preparedUnit !== 'bottle' || !availableUnits.includes(preparedUnit)) {
+      setSharedRecipeError('Prepared batter must use bottle units. Enter a positive whole prepared quantity and yield.');
       return;
     }
     const seen = new Set<string>();
@@ -466,7 +470,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
       seen.add(line.ingredientId);
       ingredientLines.push({
         ingredient_id: ingredient.id,
-        quantity_required: quantity,
+        quantity_required: getConfiguredRecipeQuantity(quantity, preparedQuantity),
         unit_of_measure: ingredient.unit,
         automatic_consumption_enabled: sharedRecipeAutomatic,
       });
@@ -497,11 +501,12 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
   const renderSharedRecipeEditor = () => (
     <View style={styles.recipeCard}>
       <Text style={styles.cardTitle}>Shared batter recipe</Text>
-      <Text style={styles.cardMeta}>Owner-configured yield used for completed-sale estimates. Staff do not record batter batches.</Text>
+      <Text style={styles.cardMeta}>Staff batches always produce five bottles. Ingredient quantities below are per bottle; recipe output and yield remain available for sales estimates.</Text>
       <TextInput value={sharedRecipeCode} onChangeText={setSharedRecipeCode} placeholder="Recipe code" style={styles.searchInput} />
       <TextInput value={sharedRecipeName} onChangeText={setSharedRecipeName} placeholder="Recipe name" style={styles.searchInput} />
       <TextInput value={sharedRecipeYield} onChangeText={setSharedRecipeYield} placeholder="Estimated pieces per recipe" keyboardType="decimal-pad" style={styles.searchInput} />
       <TextInput value={sharedRecipePreparedQuantity} onChangeText={setSharedRecipePreparedQuantity} placeholder="Prepared quantity per recipe" keyboardType="decimal-pad" style={styles.searchInput} />
+      <Text style={styles.cardMeta}>Quantity per bottle</Text>
       <TextInput value={sharedRecipePreparedUnit} onChangeText={setSharedRecipePreparedUnit} placeholder="Prepared quantity unit" style={styles.searchInput} />
       {sharedRecipeLines.map((line) => (
         <View key={line.key} style={styles.detailIngredientRow}>
