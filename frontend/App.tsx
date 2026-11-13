@@ -28,6 +28,7 @@ import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
+import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
   isBusinessSessionExpired,
@@ -76,49 +77,7 @@ type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
 type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
 
 function dateInputValue(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function parseLocalDate(value: string): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
-  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
-    ? date
-    : null;
-}
-
-function periodStart(period: ReportingPeriod, now = new Date()): Date {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  if (period === 'Custom') return start;
-  if (period === 'This Month') {
-    start.setDate(1);
-  } else if (period === 'This Week') {
-    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  }
-  return start;
-}
-
-function periodRange(
-  period: ReportingPeriod,
-  now = new Date(),
-  customStart?: string,
-  customEnd?: string,
-): { start: Date; end: Date } | null {
-  if (period === 'Custom') {
-    const start = customStart ? parseLocalDate(customStart) : null;
-    const end = customEnd ? parseLocalDate(customEnd) : null;
-    if (!start || !end || start > end) return null;
-    end.setDate(end.getDate() + 1);
-    return { start, end };
-  }
-  const start = periodStart(period, now);
-  const end = new Date(start);
-  if (period === 'Today') end.setDate(end.getDate() + 1);
-  else if (period === 'This Week') end.setDate(end.getDate() + 7);
-  else end.setMonth(end.getMonth() + 1);
-  return { start, end };
+  return manilaDateKey(date);
 }
 
 function formatCurrency(value: number): string {
@@ -263,7 +222,7 @@ function AppContent() {
     setSalesLoading(true);
     setOwnerSalesData(null);
     setSalesLoadError('');
-    const range = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const range = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
     if (!range) {
       setSalesLoading(false);
       setSalesLoadError('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.');
@@ -299,7 +258,7 @@ function AppContent() {
       return;
     }
     let active = true;
-    const range = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const range = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
     if (!range) {
       setOwnerActivityData(null);
       setActivityLoading(false);
@@ -354,7 +313,7 @@ function AppContent() {
     }];
   });
   const now = new Date();
-  const selectedDateRange = periodRange(reportingPeriod, now, requestedCustomStart, requestedCustomEnd);
+  const selectedDateRange = getManilaReportingRange(reportingPeriod, now, requestedCustomStart, requestedCustomEnd);
   const selectedBranchInventory = branchFilter
     ? branchInventory.filter((item) => item.branchId === branchFilter)
     : branchInventory;
@@ -479,7 +438,7 @@ function AppContent() {
       };
     });
   const highestBranchSales = Math.max(...branchSales.map((branch) => branch.total), 0);
-  const chartStart = selectedDateRange?.start ?? periodStart(reportingPeriod, now);
+  const chartStart = selectedDateRange?.start ?? getManilaReportingRange(reportingPeriod, now)?.start ?? now;
   const chartDayCount = selectedDateRange
     ? Math.max(0, Math.ceil((selectedDateRange.end.getTime() - selectedDateRange.start.getTime()) / 86_400_000))
     : 0;
@@ -487,7 +446,7 @@ function AppContent() {
   const chartBucketCount = reportingPeriod === 'This Week'
     ? 7
     : reportingPeriod === 'This Month'
-      ? now.getDate()
+      ? chartDayCount
       : reportingPeriod === 'Custom'
         ? Math.ceil(chartDayCount / chartIntervalDays)
         : 0;
@@ -499,24 +458,25 @@ function AppContent() {
         label: bucket.label,
         total: selectedSales.reduce((sum, sale) => {
           const date = new Date(sale.created_at);
-          return date.getHours() >= bucket.start && date.getHours() < bucket.end
+          const hour = manilaHour(date);
+          return hour >= bucket.start && hour < bucket.end
             ? sum + Number(sale.total_amount)
             : sum;
         }, 0),
       }))
     : Array.from({ length: chartBucketCount }, (_, index) => {
           const date = new Date(chartStart);
-          date.setDate(date.getDate() + index * chartIntervalDays);
+          date.setUTCDate(date.getUTCDate() + index * chartIntervalDays);
           const dayStart = date.getTime();
           const endDate = new Date(date);
-          endDate.setDate(endDate.getDate() + chartIntervalDays);
+          endDate.setUTCDate(endDate.getUTCDate() + chartIntervalDays);
           const dayEnd = endDate.getTime();
           return {
             label: reportingPeriod === 'This Week'
-              ? date.toLocaleDateString('en', { weekday: 'short' })
+              ? new Intl.DateTimeFormat('en', { timeZone: 'Asia/Manila', weekday: 'short' }).format(date)
               : reportingPeriod === 'Custom'
-                ? date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
-                : String(date.getDate()),
+                ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' }).format(date)
+                : manilaDateKey(date).slice(-2).replace(/^0/, ''),
             total: selectedSales.reduce((sum, sale) => {
               const time = new Date(sale.created_at).getTime();
               return time >= dayStart && time < dayEnd ? sum + Number(sale.total_amount) : sum;
@@ -650,8 +610,8 @@ function AppContent() {
     setOwnerLoadError('');
     setSalesLoadError('');
     setActivityLoadError('');
-    const salesRange = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
-    const activityRange = periodRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const salesRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+    const activityRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
     const [inventoryResult, salesResult, activityResult] = await Promise.allSettled([
       loadOwnerInventory(),
       salesRange

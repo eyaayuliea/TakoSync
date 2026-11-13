@@ -8,7 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:frontend": "node scripts/run-frontend-tests.mjs",
+    "test:edge": "node --test backend/supabase/functions/staff-auth/handler.test.mjs",
+    "test": "npm run typecheck && npm run test:frontend && npm run test:edge"
   },
   "dependencies": {
     "@expo-google-fonts/poppins": "^0.4.1",

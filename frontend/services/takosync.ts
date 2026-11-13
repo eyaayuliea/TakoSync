@@ -11,6 +11,7 @@ import {
   type ProductVariantPriceInput,
 } from './productCatalog';
 import {
+  getManilaReportingRange,
   readBusinessDaySettings,
   type BusinessDaySettings,
 } from './businessDaySettings';
@@ -719,15 +720,15 @@ export async function loadOwnerSalesData(input: {
     return sales;
   };
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const tomorrowStart = new Date(todayStart);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const todayRange = getManilaReportingRange('Today');
+  if (!todayRange) throw new Error('Unable to determine the current Manila business date.');
+  const todayStart = todayRange.start;
+  const tomorrowStart = todayRange.end;
   const rangeIncludesToday = input.start <= todayStart && input.end >= tomorrowStart;
   const durationDays = Math.max(1, Math.round((input.end.getTime() - input.start.getTime()) / 86_400_000));
   const previousEnd = new Date(input.start);
   const previousStart = new Date(previousEnd);
-  previousStart.setDate(previousStart.getDate() - durationDays);
+  previousStart.setUTCDate(previousStart.getUTCDate() - durationDays);
   const [sales, todaySales, previousSales] = await Promise.all([
     fetchSales(input.start, input.end),
     rangeIncludesToday ? Promise.resolve(null) : fetchSales(todayStart, tomorrowStart),
