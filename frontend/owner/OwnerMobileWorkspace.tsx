@@ -231,6 +231,15 @@ export default function OwnerMobileWorkspace({
   const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);
   const [logoutError, setLogoutError] = useState('');
 
+  useEffect(() => {
+    if (page !== 'Sales' && page !== 'Inventory') return;
+    // Refresh the shared Owner snapshot when entering monitoring pages so
+    // Staff-confirmed sales and their inventory movements are read together.
+    // The parent refresh is guarded against overlapping requests and loads
+    // sales, inventory, and activity through the existing RLS-backed services.
+    void onRefresh();
+  }, [page]);
+
   const branches = data?.branches ?? [];
   const branchNames = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
   const ingredients = useMemo(() => new Map((data?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient])), [data?.ingredients]);

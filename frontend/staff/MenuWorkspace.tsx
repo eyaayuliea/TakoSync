@@ -11,7 +11,12 @@ import {
 } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
 import type { MenuCartLine, MenuFilter, MenuProduct } from './menuPreviewData';
-import { calculateMenuCart, filterMenuProducts } from './menuPreviewData';
+import {
+  calculateMenuCart,
+  filterMenuProducts,
+  menuOrderValidationMessage,
+  shouldOfferCheckoutRetry,
+} from './menuPreviewData';
 
 type MenuPage = 'menu' | 'cart' | 'checkout';
 
@@ -24,6 +29,7 @@ type MenuWorkspaceProps = {
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
   onRemoveProduct: (productId: string) => void;
+  onCancelOrder: () => void;
   onSubmitSale: (input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>) => Promise<void>;
   catalog: StaffMenuCatalogItem[];
   addons: StaffMenuAddon[];
@@ -237,6 +243,7 @@ export default function MenuWorkspace({
   onIncreaseQuantity,
   onDecreaseQuantity,
   onRemoveProduct,
+  onCancelOrder,
   onSubmitSale,
   catalog,
   addons,
@@ -254,6 +261,7 @@ export default function MenuWorkspace({
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [saleSubmitting, setSaleSubmitting] = useState(false);
   const [saleError, setSaleError] = useState('');
+  const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
   const products: MenuProduct[] = useMemo(
     () => catalog.map((product) => ({
       id: product.id,
@@ -285,10 +293,20 @@ export default function MenuWorkspace({
   const parsedCash = Number(cashReceived);
   const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
   const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
+  const emptyOrderMessage = menuOrderValidationMessage(cartProducts.length);
+  const cancelOrder = () => {
+    if (saleSubmitting) return;
+    setCashReceived('');
+    setSelectedAddonIds([]);
+    setSaleError('');
+    onCancelOrder();
+    onSetPage('dashboard');
+  };
   const submitCheckout = async () => {
     if (!checkoutValid || saleSubmitting) return;
     setSaleSubmitting(true);
     setSaleError('');
+    setSaleRetryAvailable(false);
     try {
       await onSubmitSale({
         paymentMethod,
@@ -304,6 +322,7 @@ export default function MenuWorkspace({
       setSelectedAddonIds([]);
     } catch (error) {
       setSaleError(error instanceof Error ? error.message : 'The sale could not be recorded. Your cart was preserved.');
+      setSaleRetryAvailable(true);
     } finally {
       setSaleSubmitting(false);
     }
@@ -358,13 +377,19 @@ export default function MenuWorkspace({
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              disabled={cart.length === 0}
-              onPress={() => onSetPage('checkout')}
-              style={[styles.placeOrderButton, cart.length === 0 && styles.disabledButton]}
+              onPress={() => {
+                if (emptyOrderMessage !== '') return;
+                onSetPage('checkout');
+              }}
+              style={[styles.placeOrderButton, emptyOrderMessage !== '' && styles.disabledButton]}
             >
               <Text style={styles.placeOrderText}>Place order</Text>
             </Pressable>
           </View>
+          {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
+          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.checkoutBackButton}>
+            <Text style={styles.checkoutBackText}>Cancel order</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -454,7 +479,21 @@ export default function MenuWorkspace({
           {!checkoutValid && cartProducts.length > 0 ? (
             <Text style={styles.paymentError}>Complete the required payment information before confirming.</Text>
           ) : null}
-          {saleError !== '' ? <Text style={styles.paymentError}>{saleError}</Text> : null}
+          {saleError !== '' ? (
+            <View accessibilityRole="alert">
+              <Text style={styles.paymentError}>{saleError}</Text>
+              {shouldOfferCheckoutRetry(saleRetryAvailable, cartProducts.length) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={saleSubmitting}
+                  onPress={() => void submitCheckout()}
+                  style={styles.retryCheckoutButton}
+                >
+                  <Text style={styles.retryCheckoutText}>{saleSubmitting ? 'Retrying…' : 'Retry checkout'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
           <View style={styles.checkoutUnavailableBox}>
             <Text style={styles.checkoutUnavailableTitle}>Sale and inventory status</Text>
             <Text style={styles.checkoutMessage}>
@@ -472,6 +511,9 @@ export default function MenuWorkspace({
             style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
           >
             <Text style={styles.placeOrderText}>{saleSubmitting ? 'Recording…' : 'Confirm Transaction'}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" disabled={saleSubmitting} onPress={cancelOrder} style={styles.checkoutBackButton}>
+            <Text style={styles.checkoutBackText}>Cancel order</Text>
           </Pressable>
         </ScrollView>
         <View style={styles.totalFooter}>
@@ -609,6 +651,11 @@ const styles = StyleSheet.create({
     borderRadius: 12, backgroundColor: colors.pink, marginTop: 7,
   },
   retryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+  retryCheckoutButton: {
+    minHeight: 38, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 18, borderRadius: 12, backgroundColor: colors.pink, marginTop: 8,
+  },
+  retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   searchGlyph: { color: colors.secondary, fontSize: 23, marginRight: 7 },
   searchInput: { flex: 1, height: 42, color: colors.text, fontFamily: font.regular, fontSize: 10 },
   clearSearch: { color: colors.secondary, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 3 },

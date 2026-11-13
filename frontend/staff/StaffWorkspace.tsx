@@ -27,10 +27,12 @@ import type { MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
+  countInventoryAlertsByKind,
   deduplicateInventoryAlerts,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
   isStockAlert,
+  sortInventoryAlerts,
   type InventoryAlertKind,
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
@@ -81,6 +83,11 @@ import {
   type RetrySafeInventoryTransaction,
 } from '../services/inventoryTransactionRecovery';
 import {
+  canRetryPendingSaleCheckout,
+  createPendingSaleCheckoutStore,
+  type PendingSaleCheckout,
+} from '../services/saleCheckoutRecovery';
+import {
   getManilaBusinessDayRange,
   getStaffDailySalesLoadResult,
   isFutureBusinessDate,
@@ -94,6 +101,13 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
+import {
+  DEFAULT_STAFF_ALERT_PREFERENCES,
+  loadStaffAlertPreferences,
+  saveStaffAlertPreferences,
+  type StaffAlertPreferenceKey,
+  type StaffAlertPreferences,
+} from './alertPreferences';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -102,6 +116,8 @@ type InventoryReportKey =
   | 'branchInventorySummary'
   | 'inventoryDiscrepancy'
   | 'physicalInventoryCount';
+
+type StaffAlertTab = InventoryAlertKind;
 
 const inventoryReportTitles: Record<InventoryReportKey, string> = {
   totalIngredientQuantity: 'Total Ingredient Quantity Report',
@@ -172,6 +188,7 @@ const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const pendingInventoryTransactionStore = createPendingInventoryTransactionStore(AsyncStorage);
 const pendingInventoryCountCorrectionStore = createPendingInventoryCountCorrectionStore(AsyncStorage);
 const pendingDailyStockCheckStore = createPendingDailyStockCheckStore(AsyncStorage);
+const pendingSaleCheckoutStore = createPendingSaleCheckoutStore(AsyncStorage);
 
 function formatDate(date: Date) {
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -893,6 +910,11 @@ export default function StaffWorkspace({
   const [lastPendingInventoryRequestId, setLastPendingInventoryRequestId] = useState<string | null>(null);
   const [forceNewInventoryRequestFor, setForceNewInventoryRequestFor] = useState<string | null>(null);
   const pendingInventoryRequestLocks = useRef(new Set<string>());
+  const [pendingSaleCheckouts, setPendingSaleCheckouts] = useState<PendingSaleCheckout[]>([]);
+  const [pendingSaleCheckoutLoading, setPendingSaleCheckoutLoading] = useState(true);
+  const [pendingSaleCheckoutStorageError, setPendingSaleCheckoutStorageError] = useState('');
+  const [pendingSaleCheckoutErrors, setPendingSaleCheckoutErrors] = useState<Record<string, string>>({});
+  const pendingSaleCheckoutLocks = useRef(new Set<string>());
   const [refreshing, setRefreshing] = useState(false);
   const alertRefreshLock = useRef(false);
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
@@ -979,15 +1001,58 @@ export default function StaffWorkspace({
   const [selectedAlertIngredientId, setSelectedAlertIngredientId] = useState('');
   const [selectedAlertBatchReference, setSelectedAlertBatchReference] = useState('');
   const [selectedAlertKind, setSelectedAlertKind] = useState<InventoryAlertKind>('lowStock');
+  const [selectedAlertTab, setSelectedAlertTab] = useState<StaffAlertTab>('lowStock');
   const [ingredientDetailReturnRoute, setIngredientDetailReturnRoute] = useState<'inventory' | 'alerts'>('inventory');
   const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [logoutPending, setLogoutPending] = useState(false);
   const logoutSubmissionLock = useRef(false);
-  const [alertPreferences, setAlertPreferences] = useState({
-    lowStock: true,
-    expiration: true,
-  });
+  const [alertPreferences, setAlertPreferences] = useState<StaffAlertPreferences>(DEFAULT_STAFF_ALERT_PREFERENCES);
+  const [alertPreferencesHydrated, setAlertPreferencesHydrated] = useState(false);
+  const [alertPreferencesSaving, setAlertPreferencesSaving] = useState(false);
+  const [alertPreferencesError, setAlertPreferencesError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setAlertPreferencesHydrated(false);
+    setAlertPreferencesError('');
+    loadStaffAlertPreferences(AsyncStorage, user.id)
+      .then((preferences) => {
+        if (active) setAlertPreferences(preferences);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setAlertPreferencesError(error instanceof Error
+            ? error.message
+            : 'Unable to load alert preferences. Default alerts remain enabled.');
+        }
+      })
+      .finally(() => {
+        if (active) setAlertPreferencesHydrated(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id]);
+
+  const updateAlertPreference = async (key: StaffAlertPreferenceKey, value: boolean) => {
+    if (!alertPreferencesHydrated || alertPreferencesSaving) return;
+    const previous = alertPreferences;
+    const next = { ...previous, [key]: value };
+    setAlertPreferences(next);
+    setAlertPreferencesSaving(true);
+    setAlertPreferencesError('');
+    try {
+      await saveStaffAlertPreferences(AsyncStorage, user.id, next);
+    } catch (error: unknown) {
+      setAlertPreferences(previous);
+      setAlertPreferencesError(error instanceof Error
+        ? error.message
+        : 'Unable to save alert preferences. Your previous settings were restored.');
+    } finally {
+      setAlertPreferencesSaving(false);
+    }
+  };
 
   const retryCountCorrectionRequest = async (request: PendingInventoryCountCorrection) => {
     if (request.actorId !== user.id || request.branchId !== user.branchId || !user.branchId) return;
@@ -1107,6 +1172,29 @@ export default function StaffWorkspace({
       })
       .finally(() => {
         if (active) setPendingInventoryTransactionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id, user.branchId]);
+
+  useEffect(() => {
+    let active = true;
+    setPendingSaleCheckoutLoading(true);
+    setPendingSaleCheckoutStorageError('');
+    pendingSaleCheckoutStore.load()
+      .then((requests) => {
+        if (active) setPendingSaleCheckouts(requests);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPendingSaleCheckoutStorageError(error instanceof Error
+            ? error.message
+            : 'Unable to load saved checkout recovery data.');
+        }
+      })
+      .finally(() => {
+        if (active) setPendingSaleCheckoutLoading(false);
       });
     return () => {
       active = false;
@@ -1892,12 +1980,13 @@ export default function StaffWorkspace({
     });
   });
   const expiringItems = [...new Map(nearExpirationBatches.map(({ item }) => [item.id, item])).values()];
-  const inventoryAlerts: InventoryAlert[] = deduplicateInventoryAlerts([
+  const inventoryAlerts: InventoryAlert[] = sortInventoryAlerts(deduplicateInventoryAlerts([
     ...lowStockItems.map((item) => ({
       id: `low-${item.id}`,
       kind: 'lowStock' as const,
       ingredientId: item.id,
       batch: item.batches[0] ?? null,
+      quantity: item.quantity,
       title: item.name,
       detail: `${formatUnitQuantity(item.quantity, item.unit)} available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)} · ${formatUnitQuantity(Math.max(0, item.minimumStock - item.quantity), item.unit)} below threshold`,
       stockProgress: item.minimumStock > 0
@@ -1909,6 +1998,7 @@ export default function StaffWorkspace({
       kind: 'outOfStock' as const,
       ingredientId: item.id,
       batch: item.batches[0] ?? null,
+      quantity: item.quantity,
       title: item.name,
       detail: `No stock available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
       stockProgress: 0,
@@ -1924,27 +2014,33 @@ export default function StaffWorkspace({
         kind: 'nearExpiration' as const,
         ingredientId: item.id,
         batch,
+        daysRemaining,
         title: item.name,
         detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expires ${batch.expirationDate} · ${expiryText}`,
       };
     }),
-    ...expiredBatches.map(({ item, batch }) => ({
+    ...expiredBatches.map(({ item, batch, daysRemaining }) => ({
       id: `expired-${item.id}-${batch.reference}`,
       kind: 'expired' as const,
       ingredientId: item.id,
       batch,
+      daysRemaining,
       title: item.name,
       detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expired ${batch.expirationDate}`,
     })),
-  ]);
+  ]));
   const alertTerm = alertSearch.trim().toLowerCase();
-  const visibleAlerts = inventoryAlerts.filter((item) => {
+  const enabledAlerts = inventoryAlerts.filter((item) => {
     const preference = isStockAlert(item.kind) ? alertPreferences.lowStock : alertPreferences.expiration;
-    return preference &&
+    return preference;
+  });
+  const enabledAlertCounts = countInventoryAlertsByKind(enabledAlerts);
+  const enabledAlertCount = Object.values(enabledAlertCounts).reduce((total, count) => total + count, 0);
+  const visibleAlerts = enabledAlerts.filter((item) =>
       `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${inventoryAlertLabel(item.kind)} ${item.detail}`
         .toLowerCase()
-        .includes(alertTerm);
-  });
+        .includes(alertTerm),
+  );
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
@@ -2035,6 +2131,11 @@ export default function StaffWorkspace({
     });
   };
 
+  const cancelMenuOrder = () => {
+    setMenuCart([]);
+    setMenuTransactionReference(null);
+  };
+
   const submitMenuSale = async (
     input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>,
   ) => {
@@ -2046,11 +2147,34 @@ export default function StaffWorkspace({
     try {
       const transactionReference = menuTransactionReference
         ?? `SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-      const sale = await submitSale({
-        ...input,
-        branchId: user.branchId,
-        transactionReference,
-      });
+      let sale: Awaited<ReturnType<typeof submitSale>>;
+      try {
+        sale = await submitSale({
+          ...input,
+          branchId: user.branchId,
+          transactionReference,
+        });
+      } catch (error) {
+        try {
+          const saved = await pendingSaleCheckoutStore.save({
+            ...input,
+            branchId: user.branchId,
+            transactionReference,
+            requestId: transactionReference,
+            actorId: user.id,
+            actorLabel: staffName,
+            branchLabel: assignedBranch,
+            createdAt: new Date().toISOString(),
+          });
+          setPendingSaleCheckouts(saved);
+        } catch (storageError) {
+          setDashboardMessage(storageError instanceof Error
+            ? `${storageError.message} The checkout could not be saved for recovery.`
+            : 'The checkout could not be saved for recovery.');
+        }
+        throw error;
+      }
+      setPendingSaleCheckouts(await pendingSaleCheckoutStore.resolve(transactionReference));
       setMenuCart([]);
       setMenuTransactionReference(null);
       await refreshBackendData();
@@ -2061,6 +2185,43 @@ export default function StaffWorkspace({
       openSaleReceipt(sale.id);
     } finally {
       menuSaleSubmissionLock.current = false;
+    }
+  };
+
+  const retryPendingSaleCheckout = async (request: PendingSaleCheckout) => {
+    if (!user.branchId || !canRetryPendingSaleCheckout(request, user.id, user.branchId)) return;
+    if (pendingSaleCheckoutLocks.current.has(request.requestId)) return;
+    pendingSaleCheckoutLocks.current.add(request.requestId);
+    setPendingSaleCheckoutErrors((current) => {
+      const next = { ...current };
+      delete next[request.requestId];
+      return next;
+    });
+    try {
+      const sale = await submitSale({
+        transactionReference: request.transactionReference,
+        branchId: request.branchId,
+        paymentMethod: request.paymentMethod,
+        totalAmount: request.totalAmount,
+        items: request.items,
+        addons: request.addons,
+      });
+      setPendingSaleCheckouts(await pendingSaleCheckoutStore.resolve(request.requestId));
+      setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
+      setMenuInventoryRetrySale(shouldOfferInventoryRetry(sale.inventory_processing_status)
+        ? { id: sale.id, reference: sale.transaction_reference }
+        : null);
+      await refreshBackendData();
+      openSaleReceipt(sale.id);
+    } catch (error) {
+      setPendingSaleCheckoutErrors((current) => ({
+        ...current,
+        [request.requestId]: error instanceof Error
+          ? `${error.message} The original checkout remains saved for retry.`
+          : 'The original checkout remains saved for retry.',
+      }));
+    } finally {
+      pendingSaleCheckoutLocks.current.delete(request.requestId);
     }
   };
 
@@ -2943,6 +3104,55 @@ export default function StaffWorkspace({
     );
   };
 
+  const renderPendingSaleCheckouts = () => {
+    if (pendingSaleCheckoutLoading) {
+      return <Text style={styles.emptyState}>Loading saved checkout recovery requests…</Text>;
+    }
+    if (pendingSaleCheckoutStorageError !== '') {
+      return (
+        <View style={styles.stockInErrorBanner} accessibilityRole="alert">
+          <Text style={styles.stockInErrorIcon}>!</Text>
+          <Text style={styles.stockInErrorText}>{pendingSaleCheckoutStorageError}</Text>
+        </View>
+      );
+    }
+    const visibleRequests = pendingSaleCheckouts.filter((request) =>
+      request.actorId === user.id && request.branchId === user.branchId,
+    );
+    if (visibleRequests.length === 0) return null;
+    return (
+      <View style={styles.unresolvedSalesList}>
+        {visibleRequests.map((request) => {
+          const retrying = pendingSaleCheckoutLocks.current.has(request.requestId);
+          return (
+            <View key={request.requestId} style={styles.unresolvedSaleRow}>
+              <View style={styles.unresolvedSaleCopy}>
+                <Text style={styles.unresolvedSaleReference}>{request.transactionReference}</Text>
+                <Text style={styles.unresolvedSaleDate}>
+                  Saved {new Date(request.createdAt).toLocaleString('en-PH')} · {request.paymentMethod} · ₱{request.totalAmount.toLocaleString('en-PH')}
+                </Text>
+                <Text style={styles.unresolvedSaleStatus}>Confirmation not received; the original checkout is preserved.</Text>
+                {pendingSaleCheckoutErrors[request.requestId] ? (
+                  <Text style={styles.inventoryRecoveryMessage}>{pendingSaleCheckoutErrors[request.requestId]}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Retry saved checkout ${request.transactionReference}`}
+                accessibilityState={{ disabled: retrying }}
+                disabled={retrying}
+                onPress={() => void retryPendingSaleCheckout(request)}
+                style={[styles.inventoryRetryAction, retrying && styles.inventoryRetryDisabled]}
+              >
+                <Text style={styles.inventoryRetryActionText}>{retrying ? 'Retrying…' : 'Retry checkout'}</Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderTopHeader = (title: string, subtitle?: string) => (
     <View style={styles.pageHeader}>
       <Text style={styles.pageTitle}>{title}</Text>
@@ -2986,7 +3196,11 @@ export default function StaffWorkspace({
             <View style={styles.bellBase} />
             <View style={styles.bellClapper} />
           </View>
-          {inventoryAlerts.length > 0 ? <View style={styles.alertDot} /> : null}
+          {enabledAlertCount > 0 ? (
+            <View style={styles.alertCountBadge}>
+              <Text style={styles.alertCountText}>{enabledAlertCount > 99 ? '99+' : enabledAlertCount}</Text>
+            </View>
+          ) : null}
         </Pressable>
       </View>
       <SearchBar value={dashboardSearch} onChangeText={setDashboardSearch} placeholder="Search inventory" />
@@ -3018,6 +3232,15 @@ export default function StaffWorkspace({
           </Pressable>
         </View>
       )}
+      {(pendingSaleCheckoutLoading || pendingSaleCheckoutStorageError !== '' || pendingSaleCheckouts.length > 0) ? (
+        <>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={styles.sectionTitle}>Checkouts needing confirmation</Text>
+            <Text style={styles.sectionHint}>{pendingSaleCheckouts.filter((request) => request.actorId === user.id && request.branchId === user.branchId).length} saved</Text>
+          </View>
+          {renderPendingSaleCheckouts()}
+        </>
+      ) : null}
       {(pendingInventoryTransactionsLoading ||
         pendingInventoryStorageError !== '' ||
         pendingInventoryTransactions.length > 0) ? (
@@ -3118,7 +3341,7 @@ export default function StaffWorkspace({
               ? 'Loading stock alerts…'
               : backendError !== '' && ingredients.length === 0
                 ? 'Stock data unavailable'
-                : `${inventoryAlerts.length} stock alerts need attention`}
+                : `${enabledAlertCount} stock alerts need attention`}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -3667,10 +3890,14 @@ export default function StaffWorkspace({
   };
 
   const renderAlerts = () => {
-    const lowStockAlerts = visibleAlerts.filter((alert) => alert.kind === 'lowStock');
-    const outOfStockAlerts = visibleAlerts.filter((alert) => alert.kind === 'outOfStock');
-    const nearExpirationAlerts = visibleAlerts.filter((alert) => alert.kind === 'nearExpiration');
-    const expiredAlerts = visibleAlerts.filter((alert) => alert.kind === 'expired');
+    const selectedAlerts = visibleAlerts.filter((alert) => alert.kind === selectedAlertTab);
+    const visibleAlertCounts = countInventoryAlertsByKind(visibleAlerts);
+    const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
+      { kind: 'lowStock', label: 'Low Stock' },
+      { kind: 'outOfStock', label: 'Out of Stock' },
+      { kind: 'nearExpiration', label: 'Near Expiration' },
+      { kind: 'expired', label: 'Expired' },
+    ];
 
     return (
       <ScrollView
@@ -3696,6 +3923,29 @@ export default function StaffWorkspace({
           placeholder="Searching for something?"
           variant="alerts"
         />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.alertTabs}
+          accessibilityLabel="Alert categories"
+        >
+          {alertTabs.map((tab) => {
+            const count = visibleAlertCounts[tab.kind];
+            const selected = selectedAlertTab === tab.kind;
+            return (
+              <Pressable
+                key={tab.kind}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                onPress={() => setSelectedAlertTab(tab.kind)}
+                style={[styles.alertTab, selected && styles.alertTabSelected]}
+              >
+                <Text style={[styles.alertTabText, selected && styles.alertTabTextSelected]}>{tab.label}</Text>
+                <Text style={[styles.alertTabCount, selected && styles.alertTabCountSelected]}>{count}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
         {backendLoading ? (
           <View style={styles.alertState}>
             <ActivityIndicator size="small" color={colors.pink} />
@@ -3733,32 +3983,17 @@ export default function StaffWorkspace({
             <Text style={styles.alertStateTitle}>No active alerts are visible</Text>
             <Text style={styles.alertStateText}>Check alert visibility in Profile &amp; settings.</Text>
           </View>
+        ) : selectedAlerts.length === 0 ? (
+          <View style={styles.alertState}>
+            <Text style={styles.alertStateTitle}>No {inventoryAlertLabel(selectedAlertTab).toLowerCase()} alerts</Text>
+            <Text style={styles.alertStateText}>This alert category is currently clear for {assignedBranch}.</Text>
+          </View>
         ) : (
           <View style={styles.alertSections}>
-            {lowStockAlerts.length > 0 ? (
-              <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Low Stock</Text>
-                <View style={styles.alertCardList}>{lowStockAlerts.map(renderAlertCard)}</View>
-              </View>
-            ) : null}
-            {outOfStockAlerts.length > 0 ? (
-              <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Out of Stock</Text>
-                <View style={styles.alertCardList}>{outOfStockAlerts.map(renderAlertCard)}</View>
-              </View>
-            ) : null}
-            {nearExpirationAlerts.length > 0 ? (
-              <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Near Expiration</Text>
-                <View style={styles.alertCardList}>{nearExpirationAlerts.map(renderAlertCard)}</View>
-              </View>
-            ) : null}
-            {expiredAlerts.length > 0 ? (
-              <View style={styles.alertSection}>
-                <Text style={styles.alertSectionTitle}>Expired</Text>
-                <View style={styles.alertCardList}>{expiredAlerts.map(renderAlertCard)}</View>
-              </View>
-            ) : null}
+            <View style={styles.alertSection}>
+              <Text style={styles.alertSectionTitle}>{inventoryAlertLabel(selectedAlertTab)}</Text>
+              <View style={styles.alertCardList}>{selectedAlerts.map(renderAlertCard)}</View>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -4784,7 +5019,13 @@ export default function StaffWorkspace({
             <View style={styles.profileSettingsHeading}>
               <Text style={styles.profileSectionTitle}>Alert visibility</Text>
               <Text style={styles.profileSettingsValue}>
-                {appAlertsEnabled ? 'Enabled for stock and expiry' : 'Some in-app alerts are off'}
+                {!alertPreferencesHydrated
+                  ? 'Loading alert preferences…'
+                  : alertPreferencesSaving
+                    ? 'Saving alert preferences…'
+                    : appAlertsEnabled
+                      ? 'Enabled for stock and expiry'
+                      : 'Some in-app alerts are off'}
               </Text>
             </View>
             <View style={styles.profilePreferenceRow}>
@@ -4792,9 +5033,8 @@ export default function StaffWorkspace({
               <Switch
                 accessibilityLabel="Low-stock alerts"
                 value={alertPreferences.lowStock}
-                onValueChange={(value) =>
-                  setAlertPreferences((current) => ({ ...current, lowStock: value }))
-                }
+                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
+                onValueChange={(value) => { void updateAlertPreference('lowStock', value); }}
                 trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
                 thumbColor={alertPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
               />
@@ -4804,13 +5044,15 @@ export default function StaffWorkspace({
               <Switch
                 accessibilityLabel="Expiry alerts"
                 value={alertPreferences.expiration}
-                onValueChange={(value) =>
-                  setAlertPreferences((current) => ({ ...current, expiration: value }))
-                }
+                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
+                onValueChange={(value) => { void updateAlertPreference('expiration', value); }}
                 trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
                 thumbColor={alertPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
               />
             </View>
+            {alertPreferencesError ? (
+              <Text style={styles.profileAlertNote}>Alert preferences could not be saved or loaded: {alertPreferencesError}</Text>
+            ) : null}
             <Text style={styles.profileAlertNote}>These preferences control in-app alert visibility only; push delivery is not configured.</Text>
           </View>
 
@@ -6337,6 +6579,7 @@ export default function StaffWorkspace({
           onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
           onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
           onRemoveProduct={removeMenuProduct}
+          onCancelOrder={cancelMenuOrder}
           onSubmitSale={submitMenuSale}
           catalog={menuCatalog}
           addons={menuAddons}
@@ -7147,7 +7390,12 @@ function createStaffStyles(theme: AppTheme) {
   bellBody: { width: 14, height: 15, borderWidth: 1.7, borderColor: colors.navy, borderTopLeftRadius: 8, borderTopRightRadius: 8, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
   bellBase: { width: 18, height: 2, borderRadius: 1, backgroundColor: colors.navy, marginTop: 1 },
   bellClapper: { width: 4, height: 3, borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: colors.navy, marginTop: 1 },
-  alertDot: { position: 'absolute', top: 8, right: 9, width: 7, height: 7, borderRadius: 4, backgroundColor: colors.pink },
+  alertCountBadge: {
+    position: 'absolute', top: 3, right: 2, minWidth: 18, height: 18, paddingHorizontal: 4,
+    alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.pink,
+    borderWidth: 2, borderColor: colors.white,
+  },
+  alertCountText: { color: colors.white, fontFamily: font.bold, fontSize: 8, lineHeight: 10 },
   searchBar: {
     minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     borderRadius: 22, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 17,
@@ -7270,6 +7518,16 @@ function createStaffStyles(theme: AppTheme) {
   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
   alertsPageContent: { flexGrow: 1, paddingHorizontal: 18, paddingTop: 19, paddingBottom: 20, backgroundColor: colors.white },
   alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 22, lineHeight: 29 },
+  alertTabs: { gap: 7, paddingTop: 15, paddingBottom: 3 },
+  alertTab: {
+    minHeight: 36, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white,
+  },
+  alertTabSelected: { borderColor: colors.pink, backgroundColor: colors.pink },
+  alertTabText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  alertTabTextSelected: { color: colors.white },
+  alertTabCount: { minWidth: 17, marginLeft: 6, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 8, textAlign: 'center', color: colors.muted, backgroundColor: colors.pale },
+  alertTabCountSelected: { color: colors.pink, backgroundColor: colors.white },
   alertSections: { flex: 1, paddingTop: 17, gap: 19 },
   alertSection: { gap: 9 },
   alertSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, lineHeight: 18 },

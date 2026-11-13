@@ -3,9 +3,11 @@ import test from 'node:test';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
+  countInventoryAlertsByKind,
   deduplicateInventoryAlerts,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
+  sortInventoryAlerts,
 } from './inventoryAlerts.ts';
 
 test('branch alert candidates exclude items without an assigned-branch inventory row', () => {
@@ -52,4 +54,32 @@ test('alert labels match the four Staff alert categories', () => {
     ['lowStock', 'outOfStock', 'nearExpiration', 'expired'].map(inventoryAlertLabel),
     ['Low Stock', 'Out of Stock', 'Near Expiration', 'Expired'],
   );
+});
+
+test('stock alerts sort by lowest remaining quantity first', () => {
+  const alerts = [
+    { id: 'a', kind: 'lowStock', title: 'Rice', quantity: 4 },
+    { id: 'b', kind: 'outOfStock', title: 'Eggs', quantity: 0 },
+    { id: 'c', kind: 'lowStock', title: 'Flour', quantity: 2 },
+  ];
+  assert.deepEqual(sortInventoryAlerts(alerts).map((alert) => alert.id), ['b', 'c', 'a']);
+});
+
+test('expiration alerts sort by earliest remaining date first', () => {
+  const alerts = [
+    { id: 'later', kind: 'nearExpiration', title: 'Rice', daysRemaining: 4 },
+    { id: 'expired', kind: 'expired', title: 'Eggs', daysRemaining: -2 },
+    { id: 'soon', kind: 'nearExpiration', title: 'Flour', daysRemaining: 1 },
+  ];
+  assert.deepEqual(sortInventoryAlerts(alerts).map((alert) => alert.id), ['expired', 'soon', 'later']);
+});
+
+test('alert category counts preserve empty categories and sum to the badge count', () => {
+  const counts = countInventoryAlertsByKind([
+    { kind: 'lowStock' },
+    { kind: 'lowStock' },
+    { kind: 'expired' },
+  ]);
+  assert.deepEqual(counts, { lowStock: 2, outOfStock: 0, nearExpiration: 0, expired: 1 });
+  assert.equal(Object.values(counts).reduce((total, count) => total + count, 0), 3);
 });

@@ -445,3 +445,525 @@ The security review found no other privileged Edge Function operations in the re
 The Owner Staff-account-management authorization gap is **FIXED in source and covered by local Edge handler tests**. Existing mobile story classifications remain 31 COMPLETE and 8 PARTIALLY COMPLETE out of 39: Staff has 16 COMPLETE / 4 PARTIAL, and Owner has 15 COMPLETE / 4 PARTIAL. The weighted implementation estimate remains **89.7%** (31 complete plus half credit for 8 partial stories); it is not increased for documentation or test additions.
 
 This does not establish hosted deployment or end-to-end security. Full integration testing remains blocked on staging Supabase migration/RLS/function verification, real account/session tests, configured production-like catalog and recipes, and device smoke testing. The mobile app is **not yet ready for full integration testing against a verified backend**.
+
+## 17. Three-branch database verification batch - 2026-11-13
+
+### Implementation
+
+Added [202611130006_three_branch_rls_and_session_integration.test.sql](backend/supabase/tests/202611130006_three_branch_rls_and_session_integration.test.sql). It is a rollback-only pgTAP test using the real Branch 1, Branch 2, and Branch 3 rows and the existing tables, RLS policies, RPCs, and business-session functions. It covers inventory, batches, inventory movements, sales, sale items, physical counts, prepared-batter batches, discrepancy audit rows, direct-write privileges, and cross-branch transaction RPC denial.
+
+The test also exercises `business_session_status()` with the caller JWT claims for an active session, missing session identity, malformed session identity, an expired current-day schedule, a revoked Auth session, and an inactive Owner profile. Owner visibility is checked across all three branches. Adjustment audit rows are checked as Owner-only reads, and the unchecked adjustment bypass remains unavailable to authenticated clients.
+
+### Results and limitations
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd run test:frontend`: **passed — 20 files, 97 tests, 0 failures**.
+- `npm.cmd run test:edge`: **passed — 16 tests, 0 failures**.
+- `npm.cmd test`: **passed** with the same typecheck, frontend, and Edge Function results.
+- Existing Edge Function coverage confirms the actual handler contract: it calls `business_session_status()` using the authenticated caller token, requires an object result with `active === true`, fails closed for RPC errors and inactive status, and performs no privileged account operation before authorization.
+- SQL/pgTAP execution: **not run**. The repository includes the Supabase CLI package, but the Windows PowerShell policy blocks `npx`; invoking the local CLI shim reached the CLI but failed while writing `C:\Users\Jea\.supabase\telemetry.json`, and Docker Desktop is not running (`docker info` could not connect to the Docker engine). No database was started and no production or hosted database was touched.
+- Because the SQL test could not execute, the three-branch results in this batch are **prepared coverage, not passed database results**. The test must be run in a disposable local or staging Supabase environment before claiming live RLS verification.
+
+### Inventory reconciliation security assessment
+
+Source and existing SQL tests continue to show the intended workflow: Staff submits a snapshot count through `submit_daily_stock_check`; the RPC stores the submitted physical value and does not overwrite expected inventory. Correction requests are separate, idempotent, and Staff-owned. Owner decision and validation are separate guarded operations; validation records the original and corrected values, the approving Owner, reason, and movement reference. Direct adjustment audit writes, unchecked adjustment execution, and Staff approval paths are denied by privileges and function checks. These controls now have additional three-branch regression coverage in the new SQL file, but remain operationally unexecuted until Docker/Supabase is available.
+
+### Workflow review
+
+The Staff and Owner mobile services inspected for login/session, checkout, sales consumption, prepared batter, stock-in, waste/spillage, physical counts, discrepancy review, reports, Owner monitoring, configuration, and Staff account management call Supabase services/RPCs in source. The repository still cannot prove that hosted data contains the required accounts, products, branch visibility, prices, recipes, or deployed Edge Function. In-app alerts remain derived views rather than push notifications; refund/cancellation and branch-transfer workflows remain outside the implemented story set.
+
+### Progress and readiness
+
+No story classification is increased for adding tests. Staff remains **16 complete / 4 partial**, Owner remains **15 complete / 4 partial**, and the weighted mobile implementation estimate remains **89.7%** (31 complete plus half credit for 8 partial stories out of 39). The application is **not ready for staging integration sign-off** yet: the next gate is to start a disposable Supabase/Docker environment, apply all migrations and seed data, run the existing SQL tests plus the new three-branch test, then perform safe staging smoke tests with real Auth sessions and deployed `staff-auth`.
+
+## 18. Local Supabase execution attempt - 2026-11-13
+
+### Environment investigation
+
+- Docker Desktop 4.98.0 is installed at the user-level Docker Desktop path and the `desktop-linux` context is selected.
+- Starting the existing Docker Desktop executable and the supported `docker desktop start` command did not bring up the engine. `docker desktop status` reported that it could not retrieve status, and `docker info` reported that the `dockerDesktopLinuxEngine` named pipe was missing.
+- A supported `docker desktop restart` was attempted once. The engine remained unavailable.
+- Docker host logs report backend exit status `0x40010004` and repeatedly report `Docker Desktop is unable to start`.
+- The elevated local Supabase CLI invocation worked past the prior telemetry/configuration problem and reached the local target, then failed with the exact database error: `DbConnectError ... failed to connect to postgres ... 127.0.0.1:54322 ... ECONNREFUSED`. The CLI explicitly advised starting Docker and running `supabase start`.
+
+### Database execution result
+
+- Local Supabase successfully started: **No**.
+- Migrations applied: **0 of 31**.
+- Seed loaded: **No**.
+- SQL/pgTAP files executed: **0 of 10**.
+- Assertions executed: **0**. The new three-branch test contains 46 planned assertions, but none are counted as passed because the database never started.
+- No local database was created or modified, and no hosted or production Supabase target was used.
+
+The required database test execution stopped at the Docker prerequisite. The specific unblock action is to repair/start Docker Desktop until `docker info` shows a healthy Server section and the `dockerDesktopLinuxEngine` pipe is available; then run `supabase start`, `supabase db reset`, and `supabase db test` from `backend/supabase`.
+
+### Non-database regression result
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests, 0 failures**.
+- `npm.cmd run test:edge`: **passed — 16 tests, 0 failures**.
+- `git diff --check`: **passed**; only Git's line-ending warning for the existing Markdown file was emitted.
+
+### Security conclusions
+
+The three-branch RLS, correction-workflow, and database business-session behavior remain **not database-test verified** in this environment. The source implementation and local handler tests remain verified at their prior levels; they do not substitute for PostgreSQL execution. Overall mobile completion remains **89.7%**: Staff 16 complete / 4 partial, Owner 15 complete / 4 partial. No user-story functionality was changed or reclassified.
+
+## 19. Docker-free Supabase testing setup investigation - 2026-11-13
+
+### Safety and environment status
+
+- The repository has 31 migrations, 10 pgTAP test files, a local `seed.sql`, and `project_id = "takosync"` in [backend/supabase/config.toml](backend/supabase/config.toml).
+- The installed Supabase CLI is **3.0.0**.
+- The app environment contains only `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`; values were not printed. The configured host/ref is `lofltjhvivcjuyezxaif.supabase.co` / `lofltjhvivcjuyezxaif`.
+- No repository metadata identifies that ref as development, staging, or production. The local project metadata contains the ref but no project name or environment label.
+- A read-only `supabase projects list --output json` request could not reach `api.supabase.com` and returned `HttpClientError: Transport error`. Therefore the configured hosted project remains **unverified and unsafe to modify**.
+- No remote migrations, SQL, resets, tests, or hosted writes were executed. Docker was not used in this batch.
+
+### Docker-free options
+
+1. Direct PostgreSQL is the safest practical approach once a dedicated development project is confirmed: obtain its database connection details from the Supabase Dashboard, install only a PostgreSQL client plus a pgTAP runner, and run the existing files through `pg_prove` inside a transaction-safe disposable database. `psql` and `pg_prove` are not installed. Chocolatey is present, but no client was installed because there is no confirmed safe target and installing a full PostgreSQL package would be unnecessary at this stage.
+2. Supabase SQL Editor may run individual pgTAP scripts if the development project has the `pgtap` extension and the SQL Editor role can access the required `auth` and `public` objects. It is not a reliable whole-suite runner for this repository until a dedicated project is confirmed; scripts contain fixture inserts, role/JWT simulation, and rollback behavior that must be checked per script. Nothing was pasted or executed remotely.
+3. The CLI help confirms `supabase db test --remote[=<ref|branch|url>]`, but it targets a hosted database and requires database permissions. The command was not run because the linked project is unclassified. The CLI help does not establish that this path is Docker-free; it must be tested only after an explicitly approved development ref is supplied.
+
+### Required manual setup before remote execution
+
+Create or identify a separate Supabase **Development** project in the Dashboard and provide its project ref/URL explicitly. Confirm that it contains no data that must be preserved, or approve a non-destructive migration plan. Do not reuse `lofltjhvivcjuyezxaif` unless its environment role is independently confirmed. Then provide a database connection string or approved CLI authentication, without placing secrets in the repository or audit report. The next agent can compare `supabase_migrations.schema_migrations` with the 31 local migration files, preview the migration plan, and execute tests only after that confirmation.
+
+### Regression results for this setup batch
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests, 0 failures**.
+- `npm.cmd run test:edge`: **passed — 16 tests, 0 failures**.
+- `git diff --check`: **passed**.
+- SQL/pgTAP execution: **0 files, 0 assertions**. The 46 assertions in the three-branch test remain prepared but not executed.
+- Overall mobile completion remains **89.7%**. No user-story functionality changed, and no completion credit was added for unexecuted database tests.
+
+## 20. Docker-free development database preparation - 2026-11-13
+
+### Verified recommendation
+
+The safest practical Docker-free path is direct PostgreSQL execution against a newly created, dedicated Supabase Development project. After the project is explicitly confirmed and approved, use its private database connection with `psql` for migration/seed execution and `pg_prove` for the existing SQL files. This preserves the repository's pgTAP tests and produces assertion-level output. A SQL Editor is a fallback for individually reviewed scripts, but it is not yet established as a reliable whole-suite runner for these tests because they create Auth fixtures, switch to the `authenticated` role, set JWT claims, and rely on transaction rollback.
+
+The installed CLI is **3.0.0** and `supabase db test --help` confirms a `--remote[=<ref|branch|url>]` target. The help output does not prove that remote pgTAP execution is Docker-free, so `supabase db test --remote` was not claimed or run. The local default remains unavailable because the Docker engine is unavailable. No hosted SQL was executed.
+
+### Migration and schema safety review
+
+- All 31 migrations are timestamp ordered and appear intended for a clean database. No `drop table`, `truncate`, broad destructive delete, or `drop column` was identified in the migration set.
+- Several migrations intentionally replace constraints, triggers, and indexes; add enum values; create or replace functions; and perform data backfills or seed-like updates. These are safe to preview on a clean Development project, but should not be applied to an unclassified or shared database.
+- The schema depends on Supabase Auth objects such as `auth.users` and `auth.sessions`, the `authenticated` role, JWT claim settings, `pgcrypto`, and pgTAP. The test suite also needs a privileged database connection capable of creating fixtures and setting roles.
+- `seed.sql` assumes the migrated schema and exactly three branches. It inserts or upserts development reference data and must be used only on a new or explicitly approved empty Development database; it was not run.
+
+### Required Dashboard setup and approval gate
+
+Before any remote operation:
+
+1. Create a Supabase project named `TakoSync-Development`, or identify an existing project whose Dashboard name and owner confirm that it is dedicated to this work.
+2. From the project Overview, record the project reference and URL. Do not paste passwords, service-role keys, anon keys, or full connection strings into chat or the repository.
+3. Confirm that the project has no data to preserve and that its database is disposable for migration and pgTAP testing.
+4. In Database/Extensions, verify that the `pgtap` extension is available. If it is not available, stop and report that prerequisite rather than replacing the tests with mocks.
+5. Obtain the direct database connection details privately from the Dashboard Connect dialog. If direct connectivity is unavailable, use the documented session pooler details privately and record that limitation.
+6. Explicitly approve comparison, migration application, seed loading, and SQL test execution against that named Development project.
+
+The exact next confirmation needed is: “TakoSync-Development is dedicated and disposable, its project reference/URL are confirmed, and I approve non-destructive migration, seed, and pgTAP execution.” Only the reference/URL is needed in chat; credentials can remain in a local environment variable or local credential store.
+
+### Current verification boundary
+
+- Development project classification: **not confirmed**. The repository contains a configured hosted reference, but no environment label; the read-only project-list request failed with a Supabase API transport error.
+- Migrations applied remotely: **0 of 31**.
+- SQL/pgTAP files executed remotely: **0 of 10**.
+- Assertions executed: **0**; the new three-branch test has 46 planned assertions, not 46 passed assertions.
+- Frontend and Edge regressions: typecheck passed; `npm.cmd test` passed with 97 frontend tests and 16 Edge Function tests; `npm.cmd run test:edge` passed with 16 tests; `git diff --check` passed.
+- Mobile completion remains **89.7%** (Staff 16 complete / 4 partial; Owner 15 complete / 4 partial). No credit was added for prepared or unexecuted database tests.
+
+The remaining database-verification gate is: confirm the dedicated Development project, compare its migration history with the 31 local files without resetting it, install only the required PostgreSQL client/pgTAP runner if needed, apply migrations and seed only after approval, execute the prioritized three-branch test plus all existing pgTAP files, and preserve the actual assertion output and failures in the next audit update.
+
+## 21. Docker-free PostgreSQL test runner preparation - 2026-11-13
+
+### Local tool check
+
+- Node.js is available at version **24.21.0**.
+- The repository Supabase CLI package is present at version **3.0.0**. The CLI is not installed globally; the local shim is the supported invocation.
+- `psql`: **not installed**.
+- `pg_prove`: **not installed**.
+- PostgreSQL client libraries suitable for direct test execution: **not installed**. The application has `@supabase/supabase-js`, which is an API client and does not replace a PostgreSQL client or pgTAP runner.
+- npm is available through `npm.cmd`; PowerShell's `npm.ps1` execution-policy behavior remains unchanged and was not bypassed globally.
+
+No Docker command was run in this batch.
+
+### Runner created
+
+[scripts/test-supabase-remote.ps1](scripts/test-supabase-remote.ps1) was added as a fail-closed direct PostgreSQL runner. It:
+
+- requires `SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`, `SUPABASE_DEV_PROJECT_URL`, and private PostgreSQL connection variables;
+- requires the project name to be exactly `TakoSync-Development` and checks that the URL hostname matches the supplied project reference;
+- forces `PGSSLMODE=require` without printing credentials;
+- probes connectivity, pgTAP, `auth.users`, `auth.sessions`, and the `authenticated` role before running tests;
+- permits only `.test.sql` files in `backend/supabase/tests`;
+- supports the prioritized three-branch test by default and `-AllTests` for the complete reviewed set;
+- performs no migration, reset, seed, truncate, or other destructive operation; and
+- reports TAP `ok`/`not ok` assertion lines and propagates a failing exit code.
+
+Local runner validation succeeded for the prioritized file and all 10 files without contacting PostgreSQL. An unsafe path was rejected, and normal execution stopped at the missing Development project environment variable. These are runner safety results, not database test results.
+
+### SQL compatibility and migration preflight
+
+All 10 reviewed SQL tests are plain transactional pgTAP scripts. They contain no `psql` meta-commands or Supabase CLI-specific directives, so they are structurally compatible with `pg_prove`. Direct execution still requires the migrated schema, pgTAP, Supabase Auth tables, the `authenticated` role, privileged fixture setup, JWT claim simulation, and the exact three-branch seed assumptions. The tests use `begin`/`rollback`, so they are intended to leave their fixture changes rolled back when the connection permits the required role operations.
+
+The 10 files declare **258 planned assertions** in total, including **46** in the three-branch/session integration test. None has executed against PostgreSQL.
+
+The 31 migrations remain correctly timestamp ordered. The preflight found dependencies on `pgcrypto`, Supabase Auth schemas/roles, and later business-session, correction-workflow, and username-authentication functions. No table drop, truncate, schema drop, or column drop was found. One migration contains a scoped cleanup delete for private authorization state; constraint/index/trigger replacement, enum additions, function replacement, and data backfills still require a clean or explicitly approved Development database. No migration was applied.
+
+### Regression results and remaining requirement
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests, 0 failures**.
+- `npm.cmd run test:edge`: **passed — 16 tests, 0 failures**.
+- `git diff --check`: **passed**; only the existing Markdown line-ending warning was emitted.
+- SQL/pgTAP: **0 files and 0 assertions executed**.
+
+To execute the database tests, create or confirm the dedicated `TakoSync-Development` project, verify it is disposable and contains no data to preserve, confirm pgTAP is available, install a PostgreSQL client plus pgTAP runner without adding unrelated packages, and configure the runner's private environment variables locally. The project reference/URL and explicit approval to run non-destructive migrations, seed loading, and tests are still required. Credentials must remain outside tracked files and chat.
+
+Overall mobile completion remains **89.7%**: Staff 16 complete / 4 partial and Owner 15 complete / 4 partial. No completion credit was added for the unexecuted SQL suite or runner preparation.
+
+## 22. Windows Docker-free test tooling execution setup - 2026-11-13
+
+### Tool availability and package-manager findings
+
+The current Windows environment has Node.js **24.21.0**, local Supabase CLI package **3.0.0**, and Chocolatey **2.7.4**. `winget` and Scoop are not available. `psql`, `pg_prove`, Perl, and CPAN are not installed. No PostgreSQL server was installed and Docker was not started.
+
+The official PostgreSQL Windows page provides an EDB installer and a binary ZIP option; the ZIP is the appropriate server-free choice for this task because it supplies client binaries without creating a local PostgreSQL service. Use the official [PostgreSQL Windows downloads](https://www.postgresql.org/download/windows/) page, extract the ZIP to a user-owned tools directory, and add only its `bin` directory to the user PATH. Verify with `psql --version`.
+
+The maintained pgTAP tooling uses Perl and the `TAP::Parser::SourceHandler::pgTAP` module for pgTAP TAP execution. The [pgTAP project](https://github.com/theory/pgtap/) and its [pgTAP TAP parser handler](https://github.com/theory/tap-parser-sourcehandler-pgtap) document the required Perl harness. A practical Windows sequence after confirming the Development project is:
+
+    choco install strawberryperl
+    cpan TAP::Parser::SourceHandler::pgTAP
+    # Put the pgTAP distribution's pg_prove script on the user PATH.
+    psql --version
+    pg_prove --version
+
+The Chocolatey install was not executed because no Development database is confirmed and the tools are not yet needed for a safe remote run. The `pg_prove` installation path should be verified after installation; the project runner will stop rather than silently substitute another test framework.
+
+### Prerequisite checker and runner commands
+
+[scripts/check-supabase-test-prereqs.ps1](scripts/check-supabase-test-prereqs.ps1) performs a local, no-network check and reports installation guidance. Its actual result was **blocked** because `psql`, `pg_prove`, Perl, and CPAN are missing.
+
+[scripts/test-supabase-remote.ps1](scripts/test-supabase-remote.ps1) now accepts either an ephemeral `PGPASSWORD` or a private `PGPASSFILE`, validates the explicit `TakoSync-Development` project name and URL/reference pairing, requires SSL, and remains migration/reset/seed/destructive-operation free.
+
+After the dedicated project is confirmed and private connection variables are configured locally, run:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-supabase-test-prereqs.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-supabase-remote.ps1 -TestFile 202611130006_three_branch_rls_and_session_integration.test.sql
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-supabase-remote.ps1 -AllTests
+
+The runner requires these private values: `SUPABASE_DEV_PROJECT_NAME=TakoSync-Development`, the matching project reference and HTTPS URL, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and either `PGPASSWORD` or `PGPASSFILE`. None should be written to tracked files or pasted into chat.
+
+### Local validation results
+
+- Prerequisite checker: **expected blocked exit 1**, with missing-tool instructions; no network or Supabase access.
+- Validation-only mode for all 10 SQL files: **passed, exit 0**; no database access.
+- Missing configuration rejection: **passed**.
+- Unsafe path rejection: **passed**.
+- Unapproved project-name rejection: **passed before client/tool execution**.
+- TypeScript: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with only the existing Markdown line-ending warning.
+
+The Supabase CLI's `db test --remote` help previously exposed a remote target option, but that does not prove the route is Docker-free. On this Windows machine, invoking the local CLI is additionally blocked by its attempt to write telemetry under `C:\Users\Jea\.supabase`; no remote test command was run. Direct `psql` plus `pg_prove` remains the controlled route.
+
+### Remaining blockers
+
+No dedicated Development project has been confirmed, no PostgreSQL client/test runner has been installed, no migrations have been applied, and no SQL assertion has executed. The next manual action is to confirm the disposable `TakoSync-Development` project and approve non-destructive testing, then install the server-free PostgreSQL client and Perl/pgTAP runner. Mobile completion remains **89.7%**; preparation work does not change the Staff or Owner story classification.
+
+## 23. Windows client and pgTAP tools installed - 2026-11-13
+
+### Installed tools
+
+The requested server-free tools were installed outside the repository under `C:\Users\Jea\AppData\Local\TakoSyncTools`:
+
+- Official EDB PostgreSQL 15.20 Windows binary ZIP: client `psql` verified as **15.20**. Only `pgsql/bin`, `pgsql/lib`, and `pgsql/share` were extracted; no PostgreSQL server service was installed or started.
+- Official Strawberry Perl 5.42.3.1 64-bit portable ZIP: verified SHA-256 before extraction. Perl is available from the portable distribution.
+- `TAP::Parser::SourceHandler::pgTAP`: installed into the portable Perl environment and loaded successfully as version **3.37**.
+- `pg_prove`: available as version **3.37** through the installed pgTAP Perl environment.
+
+The PostgreSQL client directory and Perl `bin`/`site\bin` directories were added to the current user PATH only. No system PATH or application dependency was changed. A new PowerShell window may be required before PATH changes are visible to processes that were already running.
+
+To reverse the PATH change, remove these three user PATH entries, then optionally remove the user-local tools directory after closing processes that use it:
+
+    C:\Users\Jea\AppData\Local\TakoSyncTools\postgresql-15.20\pgsql\bin
+    C:\Users\Jea\AppData\Local\TakoSyncTools\strawberry-perl-5.42.3.1\perl\bin
+    C:\Users\Jea\AppData\Local\TakoSyncTools\strawberry-perl-5.42.3.1\perl\site\bin
+
+Updating either tool means downloading a verified newer portable archive into the same user-local tools area, switching the user PATH entries, and retaining the previous directory until the new versions pass the checks.
+
+### Commands and actual results
+
+- `psql --version`: **passed — PostgreSQL 15.20**.
+- `pg_prove --version`: **passed — pg_prove 3.37**.
+- Perl module load: **passed — TAP::Parser::SourceHandler::pgTAP 3.37**.
+- [check-supabase-test-prereqs.ps1](scripts/check-supabase-test-prereqs.ps1): **passed, exit 0** after the native Perl-stderr compatibility fix.
+- [test-supabase-remote.ps1](scripts/test-supabase-remote.ps1) `-ValidateOnly -AllTests`: **passed, exit 0** for all 10 SQL files; no database access.
+- Runner missing-configuration, unsafe-path, unapproved-target, and mutually exclusive selector checks: **passed**; each stopped before client execution.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with only the existing Markdown line-ending warning.
+
+Perl emitted a locale warning under the current `C.UTF-8`/Windows locale combination. It did not prevent module loading or `pg_prove`; the checker and runner now tolerate non-fatal native stderr while preserving actual exit codes and database failures.
+
+### SQL execution readiness
+
+The first independent command is:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-supabase-remote.ps1 -TestFile 202611130006_three_branch_rls_and_session_integration.test.sql
+
+The complete suite command is:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-supabase-remote.ps1 -AllTests
+
+Both commands first require private connection variables, validate that the target name is exactly `TakoSync-Development`, verify the project URL/reference pairing, require SSL, probe pgTAP/Auth prerequisites, and then run only the selected SQL files. They never apply migrations, reset, seed, truncate, or modify database structure. No SQL file has been executed and no assertion has passed against PostgreSQL.
+
+### Remaining manual gate
+
+Before the first real database integration test, confirm that `TakoSync-Development` is the dedicated disposable project, verify its reference and URL, confirm its database is empty or approved for non-destructive migration work, and configure `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and either `PGPASSWORD` or a private `PGPASSFILE` locally. Do not place credentials in the repository or chat. The migration-history comparison and migration/test execution remain blocked until that project confirmation and approval.
+
+Mobile completion remains **89.7%**. Tool installation and local runner validation add no user-story completion credit.
+
+## 24. Development target safety gate - 2026-11-13
+
+The installed-tool verification was repeated from the current repository state:
+
+- `psql --version`: **passed — PostgreSQL 15.20**.
+- `pg_prove --version`: **passed — pg_prove 3.37**.
+- Perl pgTAP module load: **passed — TAP::Parser::SourceHandler::pgTAP 3.37**.
+- The prerequisite checker returned **READY, exit 0** when the user-local tool directories were explicitly included in the process PATH. An already-running shell can retain an older PATH snapshot; opening a new PowerShell window makes the persistent user PATH entries available normally.
+- `-ValidateOnly -AllTests`: **passed** for all 10 SQL files without database access.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 97 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown line-ending warning.
+
+The local `.env` exposes only `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` names. No `SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`, `SUPABASE_DEV_PROJECT_URL`, or private `PG*` connection variables are configured. The linked Supabase metadata contains a reference but does not identify the project as Development, staging, or production.
+
+The prioritized `202611130006_three_branch_rls_and_session_integration.test.sql` was **not executed**. No PostgreSQL connection, migration, seed, reset, remote SQL, or assertion execution occurred. The 46 planned assertions remain 0 executed and 0 passed.
+
+Before the first real test, confirm in the Supabase Dashboard that the target is the dedicated disposable `TakoSync-Development` project, provide its non-secret project reference and HTTPS URL, confirm its schema is already migrated and its data is safe for test fixtures, and configure the private PostgreSQL connection variables locally. The runner will then verify URL/reference consistency, SSL, pgTAP, Auth schemas, and roles before executing only the prioritized test. Do not provide passwords or keys in chat.
+
+Mobile completion remains **89.7%**. No database verification credit was added.
+
+## 30. Staff ST-10 alert-category and ordering sprint - 2026-11-13
+
+### Selected requirement and verified gap
+
+ST-10 already had real branch-scoped inventory reads, configured minimum-stock and near-expiration calculations, alert detail views, navigation access, refresh-on-entry, and loading/error/empty states. The remaining source-level gaps were that the Alerts page rendered four sections instead of four selectable categories, the navigation exposed only a dot instead of an alert count, and derived records were not explicitly sorted globally by the required stock quantity or expiration date ordering.
+
+### Implementation
+
+- Added deterministic alert ordering: stock alerts sort by lowest remaining quantity first; near-expiration and expired alerts sort by earliest remaining date first, with a stable name tie-breaker.
+- Replaced the Staff dashboard alert dot with a numeric badge based on enabled branch alert records, capped at `99+` for compact mobile display.
+- Added four selectable Alerts tabs: Low Stock, Out of Stock, Near Expiration, and Expired.
+- Each tab displays its current count and a category-specific empty state. Search results continue to filter the selected category without changing the underlying badge count.
+- Preserved the existing assigned-branch filter, owner-configured threshold/window, duplicate suppression, detail screen, refresh-on-entry, pull-to-refresh, loading state, error state, and Retry action.
+- No push-notification or database changes were introduced; ST-10 acceptance criteria concern the in-app alert workflow and remain separate from notification delivery.
+
+### Acceptance criteria status after this sprint
+
+- Navigation access and numeric alert count: **implemented locally**.
+- Four alert categories as selectable tabs: **implemented locally**.
+- Low Stock, Out of Stock, Near Expiration, and Expired calculations: **implemented and locally tested**.
+- Required stock and expiration ordering: **implemented and locally tested**.
+- Alert details with ingredient, expected quantity, minimum stock, and expiration information: **existing implementation retained**.
+- Refresh after Stock-In, Waste/Spillage, confirmed sales, batter preparation, and authorized adjustments: **existing refresh paths retained; live database effects unverified**.
+- Assigned-branch isolation: **existing source filter retained and locally tested**.
+- Loading, empty, error, and Retry states: **existing implementation retained**.
+
+ST-10 remains **PARTIALLY COMPLETE** because hosted Supabase/RLS data, configured branch records, and Android-device behavior have not been verified. Push delivery remains outside this sprint and is not required to claim the in-app calculation/tab criteria above. Mobile completion remains **89.7%**; this source-level improvement does not complete the entire story or justify a weighted percentage increase.
+
+### Files changed in this sprint
+
+- `frontend/staff/inventoryAlerts.ts` — deterministic alert sorting helper.
+- `frontend/staff/inventoryAlerts.test.mjs` — stock/expiration ordering regression coverage.
+- `frontend/staff/StaffWorkspace.tsx` — alert count badge, four tabs, per-tab counts/empty states, and sorted alert projection.
+- `AUDIT_REPORT.md` — sprint evidence and verification boundaries.
+
+### Verification results
+
+- `npm.cmd run typecheck`: **passed**.
+- Targeted `node --test frontend/staff/inventoryAlerts.test.mjs`: **passed — 9 tests**.
+- `npm.cmd test`: **passed — 109 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed** after removing pre-existing trailing whitespace from `app.json`; the existing Markdown line-ending warning remains only.
+- Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
+- Android-device verification: **not performed**.
+
+## 25. Staff alert-preference persistence sprint - 2026-11-13
+
+### Implemented mobile scope
+
+The Staff profile/settings workflow was improved for the partial **ST-20 Staff profile and logout** story. Existing low-stock and expiry alert switches now:
+
+- load persisted preferences from device storage on the authenticated Staff user's profile;
+- use a user-scoped storage key so another Staff account on the same device does not inherit the previous account's settings;
+- preserve explicit disabled values and recover safely from missing or malformed local data;
+- disable switches while loading or saving to prevent duplicate/out-of-order writes;
+- restore the previous setting and show an error when device storage fails;
+- continue to control in-app visibility only. Push notification delivery remains unconfigured.
+
+This is a local mobile improvement only. It does not change Supabase schema, RLS, authorization, migrations, or business rules.
+
+### Files changed
+
+- `frontend/staff/alertPreferences.ts` — typed persistence, parsing, defaults, and user-scoped storage key.
+- `frontend/staff/alertPreferences.test.mjs` — three tests covering defaults/malformed data, per-user round-trip persistence, and storage failures.
+- `frontend/staff/StaffWorkspace.tsx` — hydration, save-state, failure handling, and persisted switch wiring.
+
+### Verification results
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 100 frontend tests and 16 Edge Function tests**. The frontend total increased from 97 to 100 because of the new alert-preference coverage.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown LF/CRLF warning only.
+- Database verification: **not performed**. No hosted project was contacted and no SQL assertion was executed.
+- Android/device verification: **not performed**.
+
+### Partial-story assessment after this sprint
+
+ST-20 is improved but remains **partial** because the user story's push-delivery and device-level behavior are not configured or verified. The other previously partial stories remain pending review or integration evidence:
+
+- Staff: ST-01 login and branch account access; ST-02 POS and sales recording; ST-10 low-stock and expiration alerts.
+- Owner: OM-01 owner login and account access; OM-02 owner dashboard; OM-08 products sold summary; OM-10 low-stock and expiration monitoring.
+
+The mobile completion estimate remains **89.7%**. Local persistence tests do not establish database, staging, or Android-device verification and therefore do not justify a percentage increase.
+
+## 26. Staff POS lifecycle sprint - 2026-11-13
+
+### ST-02 implementation completed in this sprint
+
+The Staff POS flow now explicitly handles the two order-lifecycle gaps found in the current implementation:
+
+- An empty cart keeps Place order unavailable and displays the exact required message: `Please add at least one item to the order.`
+- A visible Cancel order action clears the cart, transaction reference, cash-entry state, add-on selections, and checkout error state, then returns to the dashboard without invoking the sale service.
+
+The existing real catalog, availability checks, quantity controls, total calculation, payment validation, submission lock, backend `submit_sale` RPC, transaction-reference reuse, receipt loading, and inventory retry behavior were preserved.
+
+### Acceptance criteria status
+
+- Available product adds one unit and updates the cart total: **implemented in source; locally covered by cart calculation tests**.
+- Unavailable product cannot be added and is visibly labeled unavailable: **implemented in source; existing catalog/availability tests pass**.
+- Quantity changes and removal update the cart: **implemented in source; cart calculation test added**.
+- Empty order message: **implemented and locally tested**.
+- Payment method and cash validation: **implemented in source; existing checkout validation path retained**.
+- Saving state and duplicate-submit prevention: **implemented in source through `saleSubmitting` and the Staff submission lock; local service/handler coverage exists**.
+- Successful transaction reference, total, and payment details: **implemented through persisted receipt loading; database/device execution remains unverified**.
+- Cancel order clears provisional order state without creating a sale: **implemented in source; no remote sale call is made by the cancel handler**.
+- Failed save retry preserves the original transaction reference: **implemented in source and covered by existing service retry tests; hosted idempotency remains unverified**.
+
+ST-02 remains **PARTIALLY COMPLETE**. The remaining gap is operational verification against a confirmed Development database and Android device, including real catalog/branch configuration, atomic inventory consumption, receipt persistence, and duplicate-safe retry under actual Supabase behavior. No database, migration, seed, remote SQL, Docker, or production operation was performed.
+
+### Files changed in this sprint
+
+- `frontend/staff/MenuWorkspace.tsx` — required empty-order message and explicit cancel-order flow.
+- `frontend/staff/StaffWorkspace.tsx` — clears Staff cart and provisional transaction reference on cancellation.
+- `frontend/staff/menuPreviewData.ts` — shared empty-order validation message and cart validation helper.
+- `frontend/staff/menuPreviewData.test.mjs` — cart total and empty-order regression tests.
+
+### Regression results
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 102 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown LF/CRLF warning only.
+
+Mobile completion remains **89.7%**. This sprint improves ST-02 but does not provide enough database or device evidence to mark the story complete or change the established weighted completion percentage.
+
+## 27. Staff sales-to-Owner monitoring synchronization sprint - 2026-11-13
+
+### Implementation change
+
+The core Staff sales-to-inventory database contract was traced and preserved:
+
+- `submit_sale` validates the authenticated profile, branch, visible/current price, transaction reference, and payload total before creating one sale and its line records.
+- `process_sale_inventory` snapshots configured recipe consumption, uses one atomic inventory-ledger call, records processing status, and protects repeated processing with the sale reference/unique movement constraints.
+- Shared batter recipes consume prepared-batter output at the configured yield; they do not deduct the raw batter ingredients again. Batch preparation remains responsible for raw-ingredient usage and prepared-batter stock-in.
+- Owner sales and inventory services use RLS-backed reads and branch filters for presentation; the client is not treated as the security boundary.
+
+The concrete mobile improvement was in [OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx): entering the Owner Sales or Inventory page now invokes the existing guarded parent refresh. That refresh loads the Owner inventory, sales, and activity snapshots together through the existing service layer, reducing stale monitoring after a Staff checkout. It does not introduce a second RPC, mock data, polling loop, or authorization bypass.
+
+### Verification boundary
+
+The following are locally covered by the existing service and status tests: real RPC payload construction, branch context, sale reference reuse, ambiguous-save retry behavior, prepared-batter RPC invocation, recipe/yield calculations, Owner sale status labeling, cancellation exclusion, and retry locking. The new page-entry refresh wiring is source-verified by TypeScript but not Android-device tested.
+
+Database-dependent behavior remains **UNVERIFIED** because no dedicated Development database has been confirmed. No migration, seed, reset, remote SQL, Docker, or production operation was performed. Hosted confirmation is still required for atomic sale/inventory effects, RLS, recipe data, prepared-batter quantities, and cross-device Owner freshness.
+
+Mobile completion remains **89.7%**. This synchronization improvement does not complete all ST-02 acceptance criteria or add database/device evidence.
+
+## 29. Staff POS persistent checkout recovery sprint - 2026-11-13
+
+### Selected requirement
+
+The next highest-priority locally actionable ST-02 gap was recovery after the app is recreated. The prior sprint added an in-session Retry checkout action, but a failed or ambiguous checkout's cart and transaction reference existed only in component state. Closing and reopening the mobile app could therefore lose the exact retry payload before the Staff user could retry it.
+
+### Implementation
+
+- Added a typed, serialized AsyncStorage recovery store for pending Staff POS checkouts.
+- Failed `submitSale` calls save the exact transaction reference, branch, staff actor, payment method, total, sale items, add-ons, and timestamp. No credentials or privileged data are stored.
+- Successful `submitSale` calls resolve the matching recovery entry.
+- Recovery is explicit and user-triggered from the Staff dashboard after app recreation; it is not auto-submitted.
+- Recovery is limited to the original Staff actor and assigned branch, and overlapping retries are blocked.
+- A failed recovery remains stored with a retryable error. It reuses the original transaction reference, preserving the existing database idempotency contract.
+- Recovery persistence is narrowed to the actual `submitSale` failure. A later dashboard refresh failure cannot create a duplicate retry candidate for an already confirmed sale.
+- No database functions, RLS policies, branch rules, recipe rules, prepared-batter rules, or existing in-session retry behavior were changed.
+
+### Files changed
+
+- `frontend/services/saleCheckoutRecovery.ts` — typed persistent recovery store and actor/branch authorization helper.
+- `frontend/services/saleCheckoutRecovery.test.mjs` — recovery round-trip, same-reference, actor/branch restriction, and malformed-storage tests.
+- `frontend/staff/StaffWorkspace.tsx` — save failed checkout payloads, resolve confirmed entries, load recovery state, and render the explicit dashboard retry action.
+- `AUDIT_REPORT.md` — this sprint record.
+
+### Verification results
+
+- `npm.cmd run typecheck`: **passed**.
+- Targeted `node --test frontend/services/saleCheckoutRecovery.test.mjs`: **passed — 3 tests**.
+- `npm.cmd test`: **passed — 106 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown line-ending warning only.
+- Local implementation and recovery-contract tests: **verified**.
+- Supabase/PostgreSQL, three-branch RLS, atomic sale/inventory effects, and Android restart behavior: **UNVERIFIED**. No hosted project was contacted, no SQL was executed, and Docker was not used.
+
+### Story status
+
+ST-02 remains **PARTIALLY COMPLETE**. This sprint closes the app-recreation recovery gap locally, but it does not establish the required Development-database evidence for persisted sale creation, atomic recipe consumption, prepared-batter consumption, or server-side duplicate handling, and it does not replace Android-device verification. Mobile completion remains **89.7%**; preparation and local recovery tests do not justify a weighted percentage increase.
+
+## 28. Staff checkout retry action sprint - 2026-11-13
+
+### Selected criterion
+
+The highest-priority locally actionable gap was the ST-02 failed-save criterion: a failed checkout preserved the cart and transaction reference, but the Staff checkout screen did not provide an actionable Retry checkout control.
+
+### Implementation
+
+- Added a Retry checkout action beside checkout failure feedback.
+- The action is available only while a non-empty failed order remains preserved.
+- It is disabled while a retry is in progress, preventing overlapping submissions.
+- The existing Staff `menuTransactionReference` is not cleared on failure, so retrying submits the same reference to the existing idempotent `submit_sale` RPC.
+- Successful retry clears the error/retry state and follows the existing receipt and inventory-status flow.
+- No database function, RLS policy, branch check, recipe rule, or prepared-batter rule was changed.
+
+### Files changed in this sprint
+
+- `frontend/staff/MenuWorkspace.tsx` — checkout retry UI/state.
+- `frontend/staff/menuPreviewData.ts` — retry eligibility helper.
+- `frontend/staff/menuPreviewData.test.mjs` — retry eligibility regression tests.
+- `AUDIT_REPORT.md` — sprint evidence and verification boundaries.
+
+### Results and limitations
+
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed — 103 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed — 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown LF/CRLF warning only.
+- Local implementation and service-contract tests: **verified**.
+- Supabase/PostgreSQL, three-branch RLS, atomic recipe deduction, prepared-batter stock, and Android checkout retry: **UNVERIFIED**.
+
+ST-02 remains **PARTIALLY COMPLETE** until a confirmed Development database and Android device verify the complete persisted sale/inventory workflow. Overall mobile completion remains **89.7%**; this criterion improvement does not complete the full story or justify a weighted percentage change.

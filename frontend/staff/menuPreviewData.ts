@@ -14,6 +14,8 @@ export type MenuCartLine = {
   quantity: number;
 };
 
+export const EMPTY_MENU_ORDER_MESSAGE = 'Please add at least one item to the order.';
+
 export function filterMenuProducts(
   products: MenuProduct[],
   filter: MenuFilter,
@@ -39,4 +41,12 @@ export function calculateMenuCart(cart: MenuCartLine[], products: MenuProduct[])
       total: totals.total + product.price * line.quantity,
     };
   }, { count: 0, total: 0 });
+}
+
+export function menuOrderValidationMessage(cartProductCount: number): string {
+  return cartProductCount === 0 ? EMPTY_MENU_ORDER_MESSAGE : '';
+}
+
+export function shouldOfferCheckoutRetry(hasSaleError: boolean, cartProductCount: number): boolean {
+  return hasSaleError && cartProductCount > 0;
 }
