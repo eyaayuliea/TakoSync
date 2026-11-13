@@ -439,7 +439,7 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
   const businessSessionStatus = readBusinessSessionStatus(businessSession);
   if (!businessSessionStatus.active) {
     await signOut();
-    return null;
+    throw new Error('Your business session has expired. Sign in again when the next business date is available.');
   }
 
   const { data: profile, error } = await client
@@ -499,11 +499,15 @@ export async function signIn(
   const client = staffServiceClient(clientOverride);
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) throw new Error('Enter the email address registered with Supabase.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error('Enter a valid email address.');
+  }
+  if (!password) throw new Error('Enter your Supabase password.');
   let authResult;
   try {
     authResult = await client.auth.signInWithPassword({ email: normalizedEmail, password });
   } catch (error) {
-    if (error instanceof TypeError && /fetch|network/i.test(error.message)) {
+    if (error instanceof TypeError || (error instanceof Error && /fetch|network|connection|timeout/i.test(error.message))) {
       throw new Error(
         'Unable to reach Supabase. Start the local Supabase backend or check EXPO_PUBLIC_SUPABASE_URL in .env.',
       );
@@ -512,10 +516,16 @@ export async function signIn(
   }
   const { error } = authResult;
   if (error) {
-    if (error.message.toLowerCase().includes('invalid login credentials')) {
+    const authMessage = error.message.toLowerCase();
+    if (error.status === 0 || /fetch|network|connection|timeout/i.test(authMessage)) {
+      throw new Error(
+        'Unable to reach Supabase. Check your internet connection and EXPO_PUBLIC_SUPABASE_URL, then restart Expo.',
+      );
+    }
+    if (authMessage.includes('invalid login credentials') || authMessage.includes('invalid_credentials')) {
       throw new Error('Email or password is incorrect.');
     }
-    if (error.message.toLowerCase().includes('email not confirmed')) {
+    if (authMessage.includes('email not confirmed')) {
       throw new Error('Confirm this email address before signing in.');
     }
     throw new Error(error.message);
@@ -615,6 +625,21 @@ export async function saveStaffAccount(input: {
 export async function signOut(): Promise<void> {
   const { error } = await requireSupabase().auth.signOut();
   assertNoError(error);
+}
+
+export async function updateOwnerProfile(input: { fullName: string; newPassword?: string }): Promise<void> {
+  const name = input.fullName.trim();
+  if (!name) throw new Error('Owner name is required.');
+  const client = requireSupabase();
+  const user = await loadCurrentUser(client);
+  if (!user || user.role !== 'Owner') throw new Error('Only an authorized Owner can update this profile.');
+  const { error: profileError } = await client.from('profiles').update({ full_name: name }).eq('id', user.id);
+  assertNoError(profileError);
+  if (input.newPassword) {
+    if (input.newPassword.length < 8) throw new Error('New password must be at least 8 characters.');
+    const { error: authError } = await client.auth.updateUser({ password: input.newPassword });
+    assertNoError(authError);
+  }
 }
 
 export async function isBusinessSessionExpired(): Promise<boolean> {

@@ -11,6 +11,7 @@ import {
   Image,
   ImageBackground,
   Pressable,
+  Platform,
   ScrollView,
   SafeAreaView,
   StatusBar,
@@ -24,6 +25,7 @@ import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
+import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
 import {
@@ -128,6 +130,7 @@ function formatCurrency(value: number): string {
 }
 
 export default function App() {
+  if (Platform.OS === 'web') return <OwnerPortalWeb />;
   return (
     <ThemeProvider>
       <AppContent />
