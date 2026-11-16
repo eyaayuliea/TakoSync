@@ -4,6 +4,7 @@ import {
   OWNER_ALERT_EMPTY_MESSAGE,
   OWNER_ALERT_LOAD_ERROR,
   buildOwnerAlertSnapshot,
+  countOwnerAlertsWhenReady,
   classifyOwnerExpirationAlert,
   classifyOwnerStockAlert,
   countOwnerAlertCategories,
@@ -54,6 +55,13 @@ test('filters alerts for each branch and preserves all-branch monitoring', () =>
   assert.deepEqual(filterOwnerRecordsByBranch(records, 'branch-2').map((item) => item.id), ['two']);
   assert.deepEqual(filterOwnerRecordsByBranch(records, 'branch-3').map((item) => item.id), ['three']);
   assert.deepEqual(filterOwnerRecordsByBranch(records, null).map((item) => item.id), ['one', 'two', 'three']);
+});
+
+test('Owner alert counts fail closed while inventory refresh is loading or failed', () => {
+  const counts = { lowStock: 2, expiration: 3 };
+  assert.deepEqual(countOwnerAlertsWhenReady(counts, true, ''), { lowStock: 0, expiration: 0 });
+  assert.deepEqual(countOwnerAlertsWhenReady(counts, false, 'refresh failed'), { lowStock: 0, expiration: 0 });
+  assert.deepEqual(countOwnerAlertsWhenReady(counts, false, ''), counts);
 });
 
 test('builds deduplicated low-stock and expiration projections with consistent counts', () => {

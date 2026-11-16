@@ -21,6 +21,8 @@ function createFixture({
   ownerProfile = { id: 'owner-id', role: 'owner', active: true },
   staffProfiles = [staffAccount],
   callerUserId = 'owner-id',
+  authUserId = 'staff-id',
+  authLoginError = null,
   sessionResult = { data: { active: true }, error: null },
   userError = null,
 } = {}) {
@@ -84,7 +86,7 @@ function createFixture({
         auth: {
           signInWithPassword: async () => ({
             data: {
-              user: { id: 'staff-id' },
+                user: { id: authUserId },
               session: {
                 access_token: 'staff-access-token',
                 refresh_token: 'staff-refresh-token',
@@ -93,7 +95,7 @@ function createFixture({
                 token_type: 'bearer',
               },
             },
-            error: null,
+              error: authLoginError,
           }),
         },
       };
@@ -145,6 +147,9 @@ function createFixture({
       if (filters.id === 'owner-id') {
         profiles.push(ownerProfile);
         return { data: ownerProfile, error: null };
+      }
+      if (filters.username === "ownergelo'26") {
+        return { data: ownerProfile?.username === "ownergelo'26" ? ownerProfile : null, error: null };
       }
       if (filters.id === 'staff-id' && filters.role === undefined) {
         return { data: staffProfiles.find((profile) => profile.id === 'staff-id') ?? null, error: null };
@@ -352,6 +357,119 @@ test('Staff login still returns its Auth session', async () => {
 
   assert.equal(result.status, 200);
   assert.equal((await result.json()).session.access_token, 'staff-access-token');
+});
+
+function ownerLoginRequest(username, password) {
+  return new Request('https://function.test/staff-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'owner-login', username, password }),
+  });
+}
+
+test('Owner username login preserves apostrophes and returns the existing Auth session', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+    authUserId: 'owner-id',
+  });
+  const result = await fixture.handler(ownerLoginRequest("  OWNERGELO'26  ", 'owner-password'));
+
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.session.access_token, 'staff-access-token');
+});
+
+test('Owner login rejects unknown, inactive, Staff, and mismatched Auth identities', async () => {
+  const cases = [
+    { ownerProfile: { id: 'owner-id', username: 'different-owner', email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'owner-id' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: false }, authUserId: 'owner-id' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'staff', active: true }, authUserId: 'owner-id' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'another-id' },
+  ];
+  for (const options of cases) {
+    const fixture = createFixture(options);
+    const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'owner-password'));
+    assert.equal(result.status, options.authUserId === 'another-id' ? 500 : 200);
+    const body = await result.json();
+    if (options.authUserId === 'another-id') assert.equal(body.ok, false);
+    else assert.equal(body.code, 'invalid_credentials');
+  }
+});
+
+test('Owner login maps Supabase invalid credentials to a safe error', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+    authUserId: 'owner-id',
+    authLoginError: { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' },
+  });
+  const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'wrong-password'));
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { ok: false, code: 'invalid_credentials' });
+});
+
+test('Owner login diagnostic logs expose only safe stage metadata', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+    authUserId: 'owner-id',
+  });
+  const entries = [];
+  const originalInfo = console.info;
+  const originalError = console.error;
+  console.info = (...args) => entries.push({ level: 'info', args });
+  console.error = (...args) => entries.push({ level: 'error', args });
+  try {
+    const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'owner-password'));
+    assert.equal(result.status, 200);
+  } finally {
+    console.info = originalInfo;
+    console.error = originalError;
+  }
+
+  assert.deepEqual(
+    entries.find((entry) => entry.args[0] === '[staff-auth] Owner profile lookup succeeded').args[1],
+    { found: true, role: 'owner', active: true, hasEmail: true },
+  );
+  assert.deepEqual(
+    entries.find((entry) => entry.args[0] === '[staff-auth] Owner Auth identity check completed').args[1],
+    { sessionPresent: true, userIdMatchesProfile: true },
+  );
+  assert.doesNotMatch(JSON.stringify(entries), /owner-password|owner@example\.test|access_token|refresh_token|ownergelo/);
+});
+
+test('Owner Auth failure diagnostic logs only its code and HTTP status', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+    authUserId: 'owner-id',
+    authLoginError: { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' },
+  });
+  const entries = [];
+  const originalError = console.error;
+  console.error = (...args) => entries.push(args);
+  try {
+    const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'wrong-password'));
+    assert.equal(result.status, 200);
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.deepEqual(
+    entries.find((args) => args[0] === '[staff-auth] Owner Supabase Auth sign-in failed')[1],
+    { status: 400, code: 'invalid_credentials' },
+  );
+  assert.doesNotMatch(JSON.stringify(entries), /wrong-password|owner@example\.test|access_token|refresh_token|ownergelo/);
+});
+
+test('Owner login rejects missing username or password without authenticating', async () => {
+  for (const [username, password] of [['', 'owner-password'], ['ownergelo\'26', '']]) {
+    const fixture = createFixture({
+      ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+      authUserId: 'owner-id',
+    });
+    const result = await fixture.handler(ownerLoginRequest(username, password));
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), { ok: false, code: 'invalid_credentials' });
+  }
 });
 
 test('unknown action returns a 400 response', async () => {

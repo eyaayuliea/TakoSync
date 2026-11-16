@@ -38,6 +38,10 @@ function normalizeUsername(value: string) {
   return normalized.endsWith('_staff') ? normalized : `${normalized}_staff`;
 }
 
+function normalizeOwnerUsername(value: string) {
+  return value.normalize('NFKC').trim().toLocaleLowerCase();
+}
+
 function usernameHash(value: string) {
   let hash = 0x811c9dc5;
   for (const character of value) {
@@ -188,6 +192,95 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
       user: data.user,
     },
     mustChangePassword: profile.must_change_password === true,
+  });
+}
+
+async function loginOwner(
+  usernameValue: string,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+) {
+  const username = normalizeOwnerUsername(usernameValue);
+  if (!username || !password) return response({ ok: false, code: 'invalid_credentials' });
+
+  let profileResult;
+  try {
+    profileResult = await admin.from('profiles')
+      .select('id, email, role, active')
+      .eq('username', username)
+      .eq('role', 'owner')
+      .eq('active', true)
+      .maybeSingle();
+  } catch (error) {
+    console.error('[staff-auth] Owner profile lookup threw', {
+      code: error?.code ?? null,
+      status: error?.status ?? null,
+    });
+    throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
+  }
+  if (profileResult.error) {
+    console.error('[staff-auth] Owner profile lookup failed', {
+      code: profileResult.error.code ?? null,
+      status: profileResult.error.status ?? null,
+    });
+    throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
+  }
+
+  const profile = profileResult.data;
+  console.info('[staff-auth] Owner profile lookup succeeded', {
+    found: Boolean(profile),
+    role: profile?.role ?? null,
+    active: profile?.active ?? null,
+    hasEmail: typeof profile?.email === 'string' && Boolean(profile.email.trim()),
+  });
+  if (!profile || profile.role !== 'owner' || !profile.active || typeof profile.email !== 'string' || !profile.email.trim()) {
+    return response({ ok: false, code: 'invalid_credentials' });
+  }
+
+  let authResult;
+  try {
+    authResult = await auth.auth.signInWithPassword({ email: profile.email, password });
+  } catch (error) {
+    console.error('[staff-auth] Owner Supabase Auth sign-in threw', {
+      code: error?.code ?? null,
+      status: error?.status ?? null,
+    });
+    throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
+  }
+  if (authResult.error) {
+    console.error('[staff-auth] Owner Supabase Auth sign-in failed', {
+      status: authResult.error.status ?? null,
+      code: authResult.error.code ?? null,
+    });
+    const isInvalidCredentials =
+      authResult.error.code === 'invalid_credentials' ||
+      (authResult.error.status === 400 && authResult.error.message === 'Invalid login credentials');
+    if (isInvalidCredentials) return response({ ok: false, code: 'invalid_credentials' });
+    throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
+  }
+  console.info('[staff-auth] Owner Supabase Auth sign-in succeeded');
+  const sessionPresent = Boolean(authResult.data?.session);
+  const userIdMatchesProfile = Boolean(authResult.data?.user?.id && authResult.data.user.id === profile.id);
+  console.info('[staff-auth] Owner Auth identity check completed', {
+    sessionPresent,
+    userIdMatchesProfile,
+  });
+  if (!sessionPresent || !userIdMatchesProfile) {
+    try { await auth.auth.signOut(); } catch { /* best effort; do not expose account details */ }
+    throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
+  }
+
+  const session = authResult.data.session;
+  return response({
+    ok: true,
+    session: {
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_in: session.expires_in,
+      expires_at: session.expires_at,
+      token_type: session.token_type,
+    },
   });
 }
 
@@ -413,6 +506,9 @@ export function createStaffAuthHandler(options: HandlerOptions) {
       }
       if (body.action === 'login') {
         return await login(inputString(body.username), typeof body.password === 'string' ? body.password : '', auth, admin);
+      }
+      if (body.action === 'owner-login') {
+        return await loginOwner(inputString(body.username), typeof body.password === 'string' ? body.password : '', auth, admin);
       }
       if (body.action === 'provision-existing') {
         return await provisionExistingStaff(request, admin, url, anonKey, options.createClient);

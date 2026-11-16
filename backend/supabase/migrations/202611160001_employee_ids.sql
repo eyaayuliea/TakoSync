@@ -31,6 +31,8 @@ begin
       select 1 from public.profiles where employee_id = candidate
     );
   end loop;
+
+  return candidate;
 end;
 $$;
 
@@ -39,7 +41,10 @@ revoke all on function public.generate_employee_id() from public, anon, authenti
 update public.profiles
 set employee_id = public.generate_employee_id()
 where role = 'staff'
-  and employee_id is null;
+  and (
+    employee_id is null
+    or employee_id !~ '^EMP-[0-9]{4}-[0-9]{6}$'
+  );
 
 -- Owners are never employees. This is idempotent and prevents older bootstrap
 -- data from violating the new role/Employee ID invariant.

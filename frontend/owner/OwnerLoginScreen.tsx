@@ -15,11 +15,10 @@ import {
 import { isSupabaseConfigured, supabaseConfigurationError } from '../services/supabase';
 
 type FieldErrors = {
-  email?: string;
+  username?: string;
   password?: string;
 };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FONT = {
   regular: 'Poppins_400Regular',
   medium: 'Poppins_500Medium',
@@ -32,10 +31,10 @@ export default function OwnerLoginScreen({
   onLogin,
 }: {
   onBack: () => void;
-  onLogin: (email: string, password: string) => Promise<void>;
+  onLogin: (username: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loginError, setLoginError] = useState('');
@@ -59,16 +58,12 @@ export default function OwnerLoginScreen({
       return;
     }
 
-    const trimmedEmail = email.trim();
+    const trimmedUsername = username.trim();
     const nextErrors: FieldErrors = {};
-    if (!trimmedEmail) {
-      nextErrors.email = 'Email is required.';
-    } else if (!EMAIL_PATTERN.test(trimmedEmail)) {
-      nextErrors.email = 'Enter a valid email address.';
-    }
+    if (!trimmedUsername) nextErrors.username = 'Username is required.';
     if (!password) nextErrors.password = 'Password is required.';
 
-    setEmail(trimmedEmail);
+    setUsername(trimmedUsername);
     setFieldErrors(nextErrors);
     setLoginError('');
     if (Object.keys(nextErrors).length > 0) return;
@@ -76,7 +71,7 @@ export default function OwnerLoginScreen({
     submissionLock.current = true;
     setSubmitting(true);
     try {
-      await onLogin(trimmedEmail, password);
+      await onLogin(trimmedUsername, password);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
@@ -140,27 +135,26 @@ export default function OwnerLoginScreen({
                 )}
 
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Email *</Text>
+                  <Text style={styles.label}>Username *</Text>
                   <TextInput
-                    value={email}
+                    value={username}
                     onChangeText={(value) => {
-                      setEmail(value);
+                      setUsername(value);
                       clearFeedback();
                     }}
-                    style={[styles.input, fieldErrors.email && styles.inputInvalid]}
-                    placeholder="Enter your email"
+                    style={[styles.input, fieldErrors.username && styles.inputInvalid]}
+                    placeholder="Enter your username"
                     placeholderTextColor="#858591"
-                    keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
-                    autoComplete="email"
-                    textContentType="emailAddress"
-                    accessibilityLabel="Email, required"
+                    autoComplete="username"
+                    textContentType="username"
+                    accessibilityLabel="Username, required"
                     editable={!submitting}
                     returnKeyType="next"
                     onSubmitEditing={() => passwordInput.current?.focus()}
                   />
-                  {fieldErrors.email && <Text style={styles.fieldError}>{fieldErrors.email}</Text>}
+                  {fieldErrors.username && <Text style={styles.fieldError}>{fieldErrors.username}</Text>}
                 </View>
 
                 <View style={styles.fieldGroup}>

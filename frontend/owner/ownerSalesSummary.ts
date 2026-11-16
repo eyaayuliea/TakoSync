@@ -12,6 +12,7 @@ export type OwnerProductSummary = {
 export function summarizeOwnerProducts(items: readonly OwnerSaleItem[]): OwnerProductSummary[] {
   const grouped = new Map<string, OwnerProductSummary>();
   for (const item of items) {
+    if (item.inventory_processing_status && item.inventory_processing_status !== 'completed') continue;
     const quantity = Number(item.quantity);
     const total = Number(item.subtotal);
     if (!Number.isFinite(quantity) || quantity <= 0) continue;

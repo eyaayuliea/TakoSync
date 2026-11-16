@@ -86,6 +86,20 @@ export function countOwnerAlertCategories(lowStockCount: number, expirationCount
   return { lowStock: lowStockCount, expiration: expirationCount };
 }
 
+/**
+ * A refresh in progress or a failed refresh must not present an older alert
+ * count as if it were current. The records remain available to render only
+ * after the caller has a settled, successful inventory snapshot.
+ */
+export function countOwnerAlertsWhenReady(
+  counts: { lowStock: number; expiration: number },
+  loading: boolean,
+  error: string,
+) {
+  if (loading || error.trim() !== '') return countOwnerAlertCategories(0, 0);
+  return counts;
+}
+
 export function filterOwnerRecordsByBranch<T extends { branch_id: string }>(records: T[], branchId: string | null): T[] {
   return branchId ? records.filter((record) => record.branch_id === branchId) : records;
 }

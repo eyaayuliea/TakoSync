@@ -37,6 +37,17 @@ test('products sold excludes zero and invalid quantities', () => {
   assert.deepEqual(summary, []);
 });
 
+test('products sold excludes completed sales whose inventory processing is unresolved or failed', () => {
+  const summary = summarizeOwnerProducts([
+    item({ product_id: 'confirmed', product_name: 'Confirmed', quantity: 4, inventory_processing_status: 'completed' }),
+    item({ id: 'pending-line', product_id: 'pending', product_name: 'Pending', quantity: 20, inventory_processing_status: 'pending' }),
+    item({ id: 'failed-line', product_id: 'failed', product_name: 'Failed', quantity: 10, inventory_processing_status: 'failed' }),
+    item({ id: 'legacy-line', product_id: 'legacy', product_name: 'Legacy', quantity: 2 }),
+  ]);
+
+  assert.deepEqual(summary.map((product) => product.id), ['confirmed', 'legacy']);
+});
+
 test('empty products sold state uses the exact required message', () => {
   assert.equal(PRODUCTS_SOLD_EMPTY_MESSAGE, 'No sales recorded for this period.');
 });

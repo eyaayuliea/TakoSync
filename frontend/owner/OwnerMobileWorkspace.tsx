@@ -22,7 +22,10 @@ import {
   loadOwnerDiscrepancyReviews,
   loadOwnerInventory,
   loadProductManagement,
+  validateOwnerSubmittedInventoryCount,
   validateOwnerInventoryCountCorrection,
+  isOwnerDiscrepancyActionable,
+  isOwnerDiscrepancyValidatable,
   getOwnerSaleInventoryStatusLabel,
   updateProduct,
   type AppUser,
@@ -36,6 +39,7 @@ import {
   OWNER_ALERT_EMPTY_MESSAGE,
   OWNER_ALERT_LOAD_ERROR,
   buildOwnerAlertSnapshot,
+  countOwnerAlertsWhenReady,
   filterOwnerRecordsByBranch,
 } from './ownerAlerts';
 import { summarizeOwnerDashboardSales, summarizeOwnerInventoryStatus } from './ownerDashboardSummary';
@@ -388,7 +392,11 @@ export default function OwnerMobileWorkspace({
   const filteredInventory = inventoryRows.filter((item) =>
     `${item.name} ${item.category} ${item.branch}`.toLowerCase().includes(inventorySearch.trim().toLowerCase()),
   );
-  const alertCounts = alertSnapshot.counts;
+  const alertCounts = countOwnerAlertsWhenReady(
+    alertSnapshot.counts,
+    inventoryLoading,
+    inventoryError,
+  );
   const visibleProducts = productRecords.filter((product) =>
     `${product.product_name} ${product.description}`.toLowerCase().includes(productSearch.trim().toLowerCase()),
   );
@@ -464,10 +472,15 @@ export default function OwnerMobileWorkspace({
           ? 'Correction request approved. Use Validate Count separately to authorize inventory changes.'
           : 'Correction request rejected. The original count and decision were retained.');
       } else if (discrepancyAction === 'validate') {
-        const validation = await validateOwnerInventoryCountCorrection({
-          requestId: selectedDiscrepancy.correctionRequestId,
-          reason,
-        });
+        const validation = selectedDiscrepancy.validationTarget === 'count'
+          ? await validateOwnerSubmittedInventoryCount({
+            countLineId: selectedDiscrepancy.countLineId,
+            reason,
+          })
+          : await validateOwnerInventoryCountCorrection({
+            requestId: selectedDiscrepancy.correctionRequestId,
+            reason,
+          });
         setDiscrepancyFeedback(validation.outcome === 'no_change'
           ? 'Count validated and discrepancy resolved without changing inventory.'
           : 'Count validated and inventory adjustment recorded.');
@@ -1182,7 +1195,10 @@ export default function OwnerMobileWorkspace({
         <View key={item.countLineId} style={styles.discrepancyCard}>
           <View style={styles.discrepancyHeading}>
             <Text style={styles.listTitle}>{item.ingredient}</Text>
-            <StatusBadge label={item.status} tone={item.status === 'Pending' ? 'warning' : 'good'} />
+            <StatusBadge
+              label={item.validationTarget === 'correction_request' ? `Correction Request · ${item.status}` : item.status}
+              tone={item.status === 'Pending' ? 'warning' : 'good'}
+            />
           </View>
           <Text style={styles.listMeta}>{item.branch} · Ref {item.reference}</Text>
           <Text style={styles.listMeta}>Submitted by {item.staff} · {compactDate(item.submittedAt)}</Text>
@@ -1218,7 +1234,7 @@ export default function OwnerMobileWorkspace({
               </Text>
             </View>
           ) : null}
-          {item.status === 'Pending' ? (
+          {isOwnerDiscrepancyActionable(item) ? (
             <View style={styles.discrepancyActions}>
               {(['approve', 'reject'] as const).map((action) => (
                 <Pressable
@@ -1238,7 +1254,7 @@ export default function OwnerMobileWorkspace({
                 </Pressable>
               ))}
             </View>
-          ) : item.status === 'Approved' ? (
+          ) : isOwnerDiscrepancyValidatable(item) ? (
             <Pressable
               accessibilityRole="button"
               disabled={adjustmentSubmitting}
@@ -1253,6 +1269,12 @@ export default function OwnerMobileWorkspace({
             >
               <Text style={styles.primaryActionText}>Validate Count</Text>
             </Pressable>
+          ) : item.status === 'Pending' ? (
+            <Text style={styles.remarksText}>
+              {item.validationTarget === 'correction_request'
+                ? 'Correction request pending Owner decision.'
+                : 'Awaiting a Staff correction request before Owner approval can be recorded.'}
+            </Text>
           ) : null}
         </View>
       )) : <EmptyState text={`No ${discrepancyFilter.toLowerCase()} count correction requests.`} />}
@@ -1501,7 +1523,10 @@ export default function OwnerMobileWorkspace({
                 </Text>
                 <Text style={styles.modalSummary}>
                   Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; original actual {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
-                  {'\n'}Corrected actual {selectedDiscrepancy.correctedActual} {selectedDiscrepancy.unit}.
+                  {'\n'}Adjusted quantity {selectedDiscrepancy.correctedActual} {selectedDiscrepancy.unit}.
+                  {discrepancyAction === 'validate'
+                    ? `\nConfirm overwrite: expected quantity ${selectedDiscrepancy.expected} → ${selectedDiscrepancy.correctedActual} ${selectedDiscrepancy.unit}.`
+                    : ''}
                 </Text>
                 <Text style={styles.modalWarning}>
                   {discrepancyAction === 'approve'

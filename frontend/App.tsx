@@ -37,7 +37,7 @@ import {
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
-  signIn,
+  signInOwner,
   signInStaff,
   signOut,
   type AppUser,
@@ -539,10 +539,10 @@ function AppContent() {
     }
   };
 
-  const handleOwnerLogin = async (email: string, ownerPassword: string) => {
+  const handleOwnerLogin = async (username: string, ownerPassword: string) => {
     authOperationLock.current = true;
     try {
-      const user = await signIn(email, ownerPassword, 'Owner');
+      const user = await signInOwner(username, ownerPassword);
       setAuthenticatedUser(user);
       setScreen('dashboard');
     } finally {

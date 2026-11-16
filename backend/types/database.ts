@@ -331,7 +331,7 @@ export type Database = {
       inventory_count_validations: Table<{
         id: string;
         daily_stock_count_line_id: string;
-        correction_request_id: string;
+        correction_request_id: string | null;
         branch_id: string;
         ingredient_id: string;
         expected_quantity: number;
@@ -416,6 +416,10 @@ export type Database = {
       };
       validate_inventory_count_correction: {
         Args: { p_request_id: string; p_reason: string };
+        Returns: Database['public']['Tables']['inventory_count_validations']['Row'];
+      };
+      validate_submitted_inventory_count: {
+        Args: { p_count_line_id: string; p_reason: string };
         Returns: Database['public']['Tables']['inventory_count_validations']['Row'];
       };
       prepare_batter_batch: {

@@ -186,6 +186,7 @@ export type OwnerSaleItem = {
   quantity: number;
   unit_price: number;
   subtotal: number;
+  inventory_processing_status?: OwnerSale['inventory_processing_status'];
 };
 
 export type OwnerSalesData = {
@@ -232,6 +233,9 @@ export type OwnerDiscrepancyReview = {
   remarks: string;
   submittedAt: string;
   status: 'Pending' | 'Approved' | 'Rejected' | 'Validated';
+  canDecide: boolean;
+  canValidate: boolean;
+  validationTarget: 'count' | 'correction_request';
   decisionOwner: string | null;
   decisionReason: string | null;
   decisionAt: string | null;
@@ -249,6 +253,14 @@ export type OwnerDiscrepancyReview = {
     afterQuantity: number;
   } | null;
 };
+
+export function isOwnerDiscrepancyActionable(review: Pick<OwnerDiscrepancyReview, 'status' | 'canDecide'>): boolean {
+  return review.status === 'Pending' && review.canDecide;
+}
+
+export function isOwnerDiscrepancyValidatable(review: Pick<OwnerDiscrepancyReview, 'status' | 'canValidate'>): boolean {
+  return review.canValidate && review.status !== 'Validated' && review.status !== 'Rejected';
+}
 
 export type ProductMenuItem = {
   id: string;
@@ -629,6 +641,49 @@ export async function signInStaff(username: string, password: string, clientOver
   return user;
 }
 
+export async function signInOwner(username: string, password: string, clientOverride?: StaffServiceClient): Promise<AppUser> {
+  const normalizedUsername = username.normalize('NFKC').trim().toLocaleLowerCase();
+  if (!normalizedUsername) throw new Error('Please enter your username.');
+  if (!password) throw new Error('Please enter your password.');
+  const client = staffServiceClient(clientOverride);
+  let result;
+  try {
+    result = await client.functions.invoke('staff-auth', {
+      body: { action: 'owner-login', username: normalizedUsername, password },
+    });
+  } catch {
+    throw new Error('Unable to connect. Please check your internet connection and try again.');
+  }
+  if (result.error) {
+    throw new Error('Unable to connect. Please check your internet connection and try again.');
+  }
+  const data = result.data as {
+    ok?: boolean;
+    code?: 'invalid_credentials';
+    session?: Parameters<typeof client.auth.setSession>[0];
+  } | null;
+  if (!data?.ok) {
+    if (data?.code === 'invalid_credentials') throw new Error('Username or password is incorrect.');
+    throw new Error('Unable to connect. Please check your internet connection and try again.');
+  }
+  if (!data.session?.access_token || !data.session.refresh_token) {
+    throw new Error('Unable to connect. Please check your internet connection and try again.');
+  }
+  const { error: sessionError } = await client.auth.setSession(data.session);
+  assertNoError(sessionError);
+  const { error: authorizationError } = await client.rpc('authorize_business_session');
+  if (authorizationError) {
+    await client.auth.signOut();
+    throw new Error(authorizationError.message);
+  }
+  const user = await loadCurrentUser(client);
+  if (!user || user.role !== 'Owner') {
+    await client.auth.signOut();
+    throw new Error('This account does not have Owner access.');
+  }
+  return user;
+}
+
 export async function loadStaffAccounts(): Promise<StaffAccount[]> {
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', { body: { action: 'list' } });
   if (error) throw new Error('Unable to load Staff accounts.');
@@ -797,6 +852,7 @@ export async function loadOwnerSalesData(input: {
 
   const saleItems: OwnerSalesData['items'] = [];
   const productNames = new Map<string, string>();
+  const salesById = new Map(sales.map((sale) => [sale.id, sale]));
   const saleIds = sales.map((sale) => sale.id);
   for (let saleOffset = 0; saleOffset < saleIds.length; saleOffset += pageSize) {
     const saleIdBatch = saleIds.slice(saleOffset, saleOffset + pageSize);
@@ -810,6 +866,7 @@ export async function loadOwnerSalesData(input: {
       saleItems.push(...(data ?? []).map((item) => ({
         ...item,
         product_name: '',
+        inventory_processing_status: salesById.get(item.sale_id)?.inventory_processing_status,
       })));
       if ((data?.length ?? 0) < pageSize) break;
     }
@@ -1393,6 +1450,27 @@ export async function validateOwnerInventoryCountCorrection(input: {
   assertNoError(error);
   if (!data || data.outcome !== 'adjusted' && data.outcome !== 'no_change') {
     throw new Error('The Owner Validate Count result could not be confirmed.');
+  }
+  return data;
+}
+
+export async function validateOwnerSubmittedInventoryCount(input: {
+  countLineId: string;
+  reason: string;
+}, client?: StaffServiceClient) {
+  const countLineId = input.countLineId.trim();
+  const reason = input.reason.trim();
+  if (!countLineId) throw new Error('A count line ID is required.');
+  if (reason.length < 1 || reason.length > 1000) {
+    throw new Error('A validation reason of 1 to 1000 characters is required.');
+  }
+  const { data, error } = await staffServiceClient(client).rpc('validate_submitted_inventory_count', {
+    p_count_line_id: countLineId,
+    p_reason: reason,
+  });
+  assertNoError(error);
+  if (!data || data.daily_stock_count_line_id !== countLineId || data.outcome !== 'adjusted') {
+    throw new Error('The Owner submitted-count validation result could not be confirmed.');
   }
   return data;
 }
@@ -2407,6 +2485,29 @@ export async function loadOwnerActivityData(input: {
 export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
   const client = requireSupabase();
   const pageSize = 500;
+  const pendingChecks: Database['public']['Tables']['daily_stock_checks']['Row'][] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    let query = client.from('daily_stock_checks')
+      .select('id, reference, branch_id, submitted_by, check_date, remarks, status, created_at')
+      .eq('status', 'pending_owner_review')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (branchId) query = query.eq('branch_id', branchId);
+    const { data, error } = await query.range(offset, offset + pageSize - 1);
+    assertNoError(error);
+    pendingChecks.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+  const pendingCheckIds = pendingChecks.map((check) => check.id);
+  const pendingLines: Database['public']['Tables']['daily_stock_count_lines']['Row'][] = [];
+  for (let index = 0; index < pendingCheckIds.length; index += pageSize) {
+    const { data, error } = await client.from('daily_stock_count_lines')
+      .select('id, daily_stock_check_id, ingredient_id, recorded_quantity, physical_quantity, difference, unit, created_at, inventory_revision')
+      .in('daily_stock_check_id', pendingCheckIds.slice(index, index + pageSize))
+      .neq('difference', 0);
+    assertNoError(error);
+    pendingLines.push(...(data ?? []));
+  }
   const correctionRequests: Database['public']['Tables']['inventory_count_correction_requests']['Row'][] = [];
   for (let offset = 0; ; offset += pageSize) {
     let query = client.from('inventory_count_correction_requests')
@@ -2436,10 +2537,12 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
   const lineIds = [...new Set([
     ...correctionRequests.map((request) => request.daily_stock_count_line_id),
     ...adjustments.map((adjustment) => adjustment.daily_stock_count_line_id),
+    ...pendingLines.map((line) => line.id),
   ])];
   const checkIds = [...new Set([
     ...correctionRequests.map((request) => request.daily_stock_check_id),
     ...adjustments.map((adjustment) => adjustment.daily_stock_check_id),
+    ...pendingChecks.map((check) => check.id),
   ])];
   const lines: Database['public']['Tables']['daily_stock_count_lines']['Row'][] = [];
   for (let index = 0; index < lineIds.length; index += pageSize) {
@@ -2458,6 +2561,12 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     const { data, error } = await query;
     assertNoError(error);
     checks.push(...(data ?? []));
+  }
+  for (const check of pendingChecks) {
+    if (!checks.some((row) => row.id === check.id)) checks.push(check);
+  }
+  for (const line of pendingLines) {
+    if (!lines.some((row) => row.id === line.id)) lines.push(line);
   }
   const lineById = new Map(lines.map((line) => [line.id, line]));
   const checkById = new Map(checks.map((check) => [check.id, check]));
@@ -2490,6 +2599,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
   const ingredientIds = [...new Set([
     ...correctionRequests.map((request) => request.ingredient_id),
     ...adjustments.map((adjustment) => adjustment.ingredient_id),
+    ...pendingLines.map((line) => line.ingredient_id),
   ])];
   const ingredientNames = new Map<string, string>();
   for (let index = 0; index < ingredientIds.length; index += 10) {
@@ -2556,6 +2666,9 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       remarks: check.remarks,
       submittedAt: check.created_at,
       status: validation ? 'Validated' : request.status[0].toUpperCase() + request.status.slice(1) as OwnerDiscrepancyReview['status'],
+      canDecide: true,
+      canValidate: !validation && request.status === 'approved',
+      validationTarget: 'correction_request',
       decisionOwner: request.decided_by ? profilesById.get(request.decided_by) ?? 'Owner account unavailable' : null,
       decisionReason: request.decision_reason,
       decisionAt: request.decided_at,
@@ -2604,6 +2717,9 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       remarks: check.remarks,
       submittedAt: check.created_at,
       status: 'Validated',
+      canDecide: false,
+      canValidate: false,
+      validationTarget: 'count',
       decisionOwner: profilesById.get(adjustment.approved_by) || 'Owner account unavailable',
       decisionReason: adjustment.reason,
       decisionAt: adjustment.approved_at,
@@ -2620,6 +2736,43 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
         beforeQuantity: Number(movement.before_quantity),
         afterQuantity: Number(movement.after_quantity),
       },
+    });
+  }
+
+  for (const line of pendingLines) {
+    if (linesRepresentedByRequests.has(line.id)) continue;
+    const check = checkById.get(line.daily_stock_check_id);
+    if (!check) continue;
+    reviews.push({
+      correctionRequestId: `pending-count:${line.id}`,
+      countLineId: line.id,
+      checkId: check.id,
+      reference: check.reference,
+      branchId: check.branch_id,
+      branch: branchNames.get(check.branch_id) ?? 'Branch unavailable',
+      staffId: check.submitted_by,
+      staff: profilesById.get(check.submitted_by) || 'Staff account unavailable',
+      ingredientId: line.ingredient_id,
+      ingredient: ingredientNames.get(line.ingredient_id) ?? line.ingredient_id,
+      unit: line.unit,
+      expected: Number(line.recorded_quantity),
+      actual: Number(line.physical_quantity),
+      correctedActual: Number(line.physical_quantity),
+      difference: Number(line.difference),
+      correctionReason: 'No correction request submitted.',
+      remarks: check.remarks,
+      submittedAt: check.created_at,
+      status: 'Pending',
+      canDecide: false,
+      canValidate: true,
+      validationTarget: 'count',
+      decisionOwner: null,
+      decisionReason: null,
+      decisionAt: null,
+      validationOutcome: null,
+      validationReason: null,
+      validatedAt: null,
+      adjustment: null,
     });
   }
 

@@ -8,6 +8,7 @@ const {
   recordInventoryTransactionsIdempotently,
   decideOwnerInventoryCountCorrection,
   validateOwnerInventoryCountCorrection,
+  validateOwnerSubmittedInventoryCount,
   submitDailyStockCheck,
   submitSale,
 } = await import('./takosync.ts');
@@ -52,7 +53,7 @@ class RecordingSupabase {
           data: {
             id: 'sale-1', transaction_reference: args.p_transaction_reference, branch_id: args.p_branch_id,
             total_amount: args.p_total_amount, payment_method: args.p_payment_method, status: 'completed',
-            inventory_processing_status: 'pending', inventory_processing_error: null, created_at: '2026-11-13T01:00:00Z',
+            inventory_processing_status: 'completed', inventory_processing_error: null, created_at: '2026-11-13T01:00:00Z',
           },
           error: null,
         };
@@ -62,6 +63,8 @@ class RecordingSupabase {
         return { data: { request_id: args.p_request_id, status: args.p_decision }, error: null };
       case 'validate_inventory_count_correction':
         return { data: { request_id: args.p_request_id, outcome: 'adjusted' }, error: null };
+      case 'validate_submitted_inventory_count':
+        return { data: { daily_stock_count_line_id: args.p_count_line_id, outcome: 'adjusted' }, error: null };
       case 'submit_daily_stock_check':
         return {
           data: {
@@ -158,6 +161,26 @@ test('real Staff prepared batter and POS services call their production RPCs', a
   assert.equal(client.calls[2].args.p_sale_id, 'sale-1');
 });
 
+test('Staff sale submission refuses to present an unresolved inventory sale as completed', async () => {
+  const client = new RecordingSupabase();
+  const originalRpc = client.rpc.bind(client);
+  client.rpc = async (name, args) => {
+    const result = await originalRpc(name, args);
+    if (name === 'submit_sale') {
+      result.data = { ...result.data, inventory_processing_status: 'pending' };
+    }
+    return result;
+  };
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-INVENTORY-PENDING', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    /inventory processing is not complete.*retry the same checkout/i,
+  );
+  assert.equal(client.calls.filter((call) => call.name === 'submit_sale').length, 1);
+});
+
 test('real Staff daily count service replays the same request and never calls an inventory mutation RPC', async () => {
   const client = new RecordingSupabase();
   const input = {
@@ -214,6 +237,30 @@ test('Owner discrepancy actions reject missing reasons before calling Supabase',
   );
   await assert.rejects(
     validateOwnerInventoryCountCorrection({ requestId: 'correction-1', reason: '' }, clientForTests(client)),
+    /validation reason/,
+  );
+  assert.equal(client.calls.length, 0);
+});
+
+test('Owner can directly validate a submitted discrepancy without a correction request', async () => {
+  const client = new RecordingSupabase();
+  const result = await validateOwnerSubmittedInventoryCount({
+    countLineId: ' count-line-1 ',
+    reason: '  Confirmed against the physical count and branch stock.  ',
+  }, clientForTests(client));
+
+  assert.equal(result.daily_stock_count_line_id, 'count-line-1');
+  assert.equal(client.calls.at(-1).name, 'validate_submitted_inventory_count');
+  assert.deepEqual(client.calls.at(-1).args, {
+    p_count_line_id: 'count-line-1',
+    p_reason: 'Confirmed against the physical count and branch stock.',
+  });
+});
+
+test('Owner direct count validation rejects a missing reason before calling Supabase', async () => {
+  const client = new RecordingSupabase();
+  await assert.rejects(
+    validateOwnerSubmittedInventoryCount({ countLineId: 'count-line-1', reason: '   ' }, clientForTests(client)),
     /validation reason/,
   );
   assert.equal(client.calls.length, 0);
