@@ -1,21 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
 
 register('../../../../frontend/services/testTsLoader.mjs', import.meta.url);
 const { createStaffAuthHandler } = await import('./handler.ts');
 
 const staffAccount = {
   id: 'staff-id',
+  employee_id: 'EMP-2026-123456',
   username: 'ana_staff',
   full_name: 'Ana Cruz',
   branch_id: 'branch-id',
   active: true,
+  must_change_password: true,
   created_at: '2026-01-01T00:00:00.000Z',
 };
 
 function createFixture({
   ownerProfile = { id: 'owner-id', role: 'owner', active: true },
+  staffProfiles = [staffAccount],
+  callerUserId = 'owner-id',
   sessionResult = { data: { active: true }, error: null },
   userError = null,
 } = {}) {
@@ -44,11 +49,11 @@ function createFixture({
           auth: {
             getUser: async (token) => {
               calls.push({ kind: 'get-user', token });
-              if (token !== 'valid-token') {
+              if (token !== 'valid-token' && token !== 'staff-token') {
                 return { data: { user: null }, error: userError ?? { status: 401, code: 'invalid_token' } };
               }
               if (userError) return { data: { user: null }, error: userError };
-              return { data: { user: { id: 'owner-id' } }, error: null };
+              return { data: { user: { id: callerUserId } }, error: null };
             },
             admin: {
               createUser: async (input) => {
@@ -59,9 +64,10 @@ function createFixture({
                   error: null,
                 };
               },
-              updateUserById: async () => {
+              updateUserById: async (...args) => {
                 calls.push({ kind: 'account-auth-admin' });
                 authAdminOperations.push('update');
+                authAdminPayloads.push(args);
                 return { error: null };
               },
               deleteUser: async () => {
@@ -120,6 +126,7 @@ function createFixture({
         filters.role === 'staff' ||
         filters.username !== undefined ||
         filters.id === 'staff-id' ||
+        filters.id === 'created-staff-id' ||
         current.operation === 'update';
       if (isStaffAccountQuery) {
         accountOperations.push({ table, operation: current.operation });
@@ -139,8 +146,15 @@ function createFixture({
         profiles.push(ownerProfile);
         return { data: ownerProfile, error: null };
       }
+      if (filters.id === 'staff-id' && filters.role === undefined) {
+        return { data: staffProfiles.find((profile) => profile.id === 'staff-id') ?? null, error: null };
+      }
       if (filters.id === 'staff-id' && filters.role === 'staff') {
-        return { data: { ...staffAccount, email: 'staff@example.test', role: 'staff' }, error: null };
+        const profile = staffProfiles.find((item) => item.id === 'staff-id');
+        return { data: profile ? { ...profile, email: 'staff@example.test', role: 'staff' } : null, error: null };
+      }
+      if (filters.id === 'created-staff-id' && filters.role === 'staff') {
+        return { data: { id: 'created-staff-id', employee_id: 'EMP-2026-654321' }, error: null };
       }
       if (filters.username === 'ana_staff' && current.selectedFields.includes('email')) {
         return {
@@ -149,7 +163,10 @@ function createFixture({
         };
       }
       if (filters.role === 'staff' && resultShape === 'many') {
-        return { data: [staffAccount], error: null };
+        const rows = filters.active === undefined
+          ? staffProfiles
+          : staffProfiles.filter((profile) => profile.active === filters.active);
+        return { data: rows, error: null };
       }
       if (current.selectOptions?.count === 'exact') {
         return { count: 0, error: null };
@@ -164,16 +181,20 @@ function createFixture({
   }
 
   const handler = createStaffAuthHandler(options);
-  return { handler, calls, accountOperations, authAdminOperations, profiles, branches };
+  const authAdminPayloads = [];
+  return { handler, calls, accountOperations, authAdminOperations, authAdminPayloads, profiles, branches };
 }
 
 function request(action, account, authorization = 'Bearer valid-token') {
   const headers = { 'Content-Type': 'application/json' };
   if (authorization) headers.Authorization = authorization;
+  const body = action === 'change-password'
+    ? { action, newPassword: account?.newPassword }
+    : { action, ...(account ? { account } : {}) };
   return new Request('https://function.test/staff-auth', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ action, ...(account ? { account } : {}) }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -186,7 +207,7 @@ for (const action of ['list', 'create', 'update']) {
   test(`active Owner business session can ${action} Staff accounts`, async () => {
     const fixture = createFixture();
     const account = action === 'create'
-      ? { username: 'Ana Cruz', employeeId: 'EMP-001', branchId: 'branch-id' }
+      ? { username: 'Ana Cruz', branchId: 'branch-id' }
       : action === 'update'
         ? { id: 'staff-id', username: 'Ana Cruz', branchId: 'branch-id', active: true }
         : undefined;
@@ -231,7 +252,7 @@ test('inactive Owner is rejected before checking or operating on accounts', asyn
     ownerProfile: { id: 'owner-id', role: 'owner', active: false },
   });
   const result = await invoke(fixture, 'create', {
-    username: 'Ana Cruz', employeeId: 'EMP-001', branchId: 'branch-id',
+    username: 'Ana Cruz', branchId: 'branch-id',
   });
 
   assert.equal(result.status, 403);
@@ -262,7 +283,7 @@ for (const [description, status] of [
   test(`${description} business session is rejected before privileged account operations`, async () => {
     const fixture = createFixture({ sessionResult: { data: status, error: null } });
     const result = await invoke(fixture, 'create', {
-      username: 'Ana Cruz', employeeId: 'EMP-001', branchId: 'branch-id',
+      username: 'Ana Cruz', branchId: 'branch-id',
     });
 
     assert.equal(result.status, 403);
@@ -311,7 +332,7 @@ test('client-supplied session status cannot replace the caller-context RPC resul
 
 test('invalid create input returns 400 without touching account data', async () => {
   const fixture = createFixture();
-  const result = await invoke(fixture, 'create', { username: 'Ana Cruz', employeeId: 'EMP-001' });
+  const result = await invoke(fixture, 'create', { username: 'Ana Cruz' });
 
   assert.equal(result.status, 400);
   assert.equal(result.body.error, 'An assigned branch is required.');
@@ -341,4 +362,57 @@ test('unknown action returns a 400 response', async () => {
 
   assert.equal(result.status, 400);
   assert.equal(result.body.error, 'Unknown Staff authentication action.');
+});
+
+test('Staff password reset uses the stored Employee ID without changing the Auth UID', async () => {
+  const fixture = createFixture();
+  const result = await invoke(fixture, 'reset-password', { id: 'staff-id' });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.account.id, 'staff-id');
+  assert.equal(result.body.account.employee_id, 'EMP-2026-123456');
+  assert.equal(fixture.authAdminOperations.includes('update'), true);
+});
+
+test('bulk provisioning updates active Staff only and skips inactive former employees', async () => {
+  const fixture = createFixture({
+    staffProfiles: [
+      { ...staffAccount, id: 'staff-id', active: true },
+      { ...staffAccount, id: 'staff5-id', username: 'staff5_staff', active: false },
+      { ...staffAccount, id: 'staff6-id', username: 'staff6_staff', active: false },
+    ],
+  });
+  const result = await invoke(fixture, 'provision-existing');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.accounts.map((account) => account.id), ['staff-id', 'staff5-id', 'staff6-id']);
+  assert.deepEqual(fixture.authAdminOperations, ['update']);
+  assert.deepEqual(fixture.authAdminPayloads[0], ['staff-id', { password: 'EMP-2026-123456' }]);
+});
+
+test('inactive Staff cannot request a password reset', async () => {
+  const fixture = createFixture({
+    staffProfiles: [{ ...staffAccount, active: false }],
+  });
+  const result = await invoke(fixture, 'reset-password', { id: 'staff-id' });
+  assert.equal(result.status, 403);
+  assert.match(result.body.error, /Inactive Staff accounts/);
+  assert.deepEqual(fixture.authAdminOperations, []);
+});
+
+test('first-login password change uses Admin Auth and clears the profile flag', async () => {
+  const fixture = createFixture({ callerUserId: 'staff-id', staffProfiles: [{ ...staffAccount, role: 'staff' }] });
+  const result = await invoke(fixture, 'change-password', { newPassword: 'new-secure-password' }, 'Bearer staff-token');
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(fixture.authAdminPayloads[0][0], 'staff-id');
+  assert.deepEqual(fixture.authAdminPayloads[0][1], { password: 'new-secure-password' });
+  assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), true);
+});
+
+test('Owner bootstrap explicitly clears Employee ID and first-login state', () => {
+  const migration = readFileSync(new URL('../../migrations/202611160001_employee_ids.sql', import.meta.url), 'utf8');
+  const ownerScript = readFileSync(new URL('../../scripts/create-local-owner.sh', import.meta.url), 'utf8');
+  assert.match(migration, /set employee_id = null,\s+must_change_password = false/);
+  assert.match(ownerScript, /employee_id = null/);
+  assert.match(ownerScript, /must_change_password = false/);
 });

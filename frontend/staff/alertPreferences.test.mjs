@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFAULT_STAFF_ALERT_PREFERENCES,
+  getActiveStaffAlertPreferences,
   loadStaffAlertPreferences,
   parseStaffAlertPreferences,
   saveStaffAlertPreferences,
@@ -52,4 +53,14 @@ test('storage failures remain visible to the caller', async () => {
     () => saveStaffAlertPreferences(storage, 'staff-a', DEFAULT_STAFF_ALERT_PREFERENCES),
     /device storage unavailable/,
   );
+});
+
+test('alert visibility fails closed until the current staff account is hydrated', () => {
+  const savedPreferences = { lowStock: true, expiration: false };
+
+  assert.deepEqual(getActiveStaffAlertPreferences(savedPreferences, false), {
+    lowStock: false,
+    expiration: false,
+  });
+  assert.deepEqual(getActiveStaffAlertPreferences(savedPreferences, true), savedPreferences);
 });

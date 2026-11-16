@@ -13,68 +13,36 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
+  filterOwnerSalesByInventoryState,
   getOwnerSaleInventoryStatusLabel,
   loadOwnerSalesData,
   type OwnerSale,
   type OwnerSaleItem,
   type OwnerSalesData,
 } from '../services/takosync';
+import {
+  PRODUCTS_SOLD_EMPTY_MESSAGE,
+  summarizeOwnerProducts,
+} from './ownerSalesSummary';
+import {
+  getOwnerSalesDateRange,
+  type OwnerSalesDateRange,
+  type OwnerSalesPeriod,
+} from './ownerSalesPeriod';
+import { manilaDateKey } from '../services/businessDaySettings';
+import { refreshOwnerMonitoring } from './ownerSalesRefresh';
+import { resolveOwnerSalesSelection } from './ownerSalesSelection';
 
 type Branch = { id: string; name: string };
 type SalesMode = 'monitoring' | 'reports';
-type Period = 'Today' | 'Daily' | 'Weekly' | 'Monthly' | 'Custom';
-type DateRange = { start: Date; end: Date; startText: string; endText: string };
+type Period = OwnerSalesPeriod;
+type DateRange = OwnerSalesDateRange;
 type ProductSummary = { id: string; name: string; quantity: number; total: number };
 type PaymentSummary = { name: string; transactions: number; total: number };
+type InventoryFilter = 'all' | 'confirmed' | 'needs_processing';
 
 const periods: Period[] = ['Today', 'Daily', 'Weekly', 'Monthly', 'Custom'];
 const PAGE_SIZE = 10;
-
-function localDateText(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function parseLocalDate(value: string): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
-  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
-    ? date
-    : null;
-}
-
-function getDateRange(period: Period, fromText: string, toText: string): DateRange | null {
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  let end = new Date(start);
-  if (period === 'Today' || period === 'Daily') {
-    end.setDate(end.getDate() + 1);
-  } else if (period === 'Weekly') {
-    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-    end = new Date(start);
-    end.setDate(end.getDate() + 7);
-  } else if (period === 'Monthly') {
-    start.setDate(1);
-    end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-  } else {
-    const parsedStart = parseLocalDate(fromText);
-    const parsedEnd = parseLocalDate(toText);
-    if (!parsedStart || !parsedEnd || parsedStart > parsedEnd) return null;
-    return {
-      start: parsedStart,
-      end: new Date(parsedEnd.getFullYear(), parsedEnd.getMonth(), parsedEnd.getDate() + 1),
-      startText: fromText,
-      endText: toText,
-    };
-  }
-  return {
-    start,
-    end,
-    startText: localDateText(start),
-    endText: localDateText(new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1)),
-  };
-}
 
 function currency(value: number) {
   return new Intl.NumberFormat('en-PH', {
@@ -92,22 +60,6 @@ function compactDate(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   });
-}
-
-function summarizeProducts(items: OwnerSaleItem[]): ProductSummary[] {
-  const grouped = new Map<string, ProductSummary>();
-  for (const item of items) {
-    const existing = grouped.get(item.product_id) ?? {
-      id: item.product_id,
-      name: item.product_name,
-      quantity: 0,
-      total: 0,
-    };
-    existing.quantity += Number(item.quantity);
-    existing.total += Number(item.subtotal);
-    grouped.set(item.product_id, existing);
-  }
-  return [...grouped.values()].sort((a, b) => b.quantity - a.quantity || b.total - a.total);
 }
 
 function summarizePayments(sales: OwnerSale[]): PaymentSummary[] {
@@ -278,6 +230,7 @@ export default function OwnerSalesWorkspace({
   initialEndDate,
   onOpenReports,
   onBack,
+  onRefresh,
   availableWidth,
 }: {
   mode: SalesMode;
@@ -290,6 +243,7 @@ export default function OwnerSalesWorkspace({
   initialEndDate?: string;
   onOpenReports?: () => void;
   onBack?: () => void;
+  onRefresh?: () => Promise<void> | void;
   availableWidth: number;
 }) {
   const styles = useStyles();
@@ -299,9 +253,9 @@ export default function OwnerSalesWorkspace({
   const twoColumnWidth = medium ? (contentWidth - 12) / 2 : contentWidth;
   const detailLeftWidth = wide ? contentWidth * 0.62 - 8 : twoColumnWidth;
   const detailRightWidth = wide ? contentWidth * 0.38 - 8 : twoColumnWidth;
-  const today = localDateText(new Date());
+  const today = manilaDateKey(new Date());
   const [period, setPeriod] = useState<Period>(initialPeriod);
-  const [fromText, setFromText] = useState(() => initialStartDate ?? localDateText(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
+  const [fromText, setFromText] = useState(() => initialStartDate ?? `${today.slice(0, 7)}-01`);
   const [toText, setToText] = useState(() => initialEndDate ?? today);
   const [branchId, setBranchId] = useState<string | null>(initialBranchId);
   const [reportTitle, setReportTitle] = useState('Sales performance report');
@@ -315,6 +269,7 @@ export default function OwnerSalesWorkspace({
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'amount' | 'reference'>('date');
+  const [inventoryFilter, setInventoryFilter] = useState<InventoryFilter>('all');
   const [page, setPage] = useState(0);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
@@ -323,8 +278,30 @@ export default function OwnerSalesWorkspace({
   const [exportError, setExportError] = useState('');
   const compact = availableWidth < 620;
 
+  useEffect(() => {
+    const selection = resolveOwnerSalesSelection({
+      branchId: initialBranchId,
+      period: initialPeriod,
+      startDate: initialStartDate,
+      endDate: initialEndDate,
+    });
+    setBranchId(selection.branchId);
+    setPeriod(selection.period);
+    if (selection.startDate !== undefined) setFromText(selection.startDate);
+    if (selection.endDate !== undefined) setToText(selection.endDate);
+  }, [initialBranchId, initialEndDate, initialPeriod, initialStartDate]);
+
+  const refreshMonitoring = () => {
+    void refreshOwnerMonitoring(
+      mode === 'monitoring' ? onRefresh : undefined,
+      () => setRetry((value) => value + 1),
+    );
+  };
+
   const activeBranchId = mode === 'reports' && reportData ? reportBranchId : branchId;
-  const range = mode === 'reports' && reportData ? reportRange : getDateRange(period, fromText, toText);
+  const range = mode === 'reports' && reportData
+    ? reportRange
+    : getOwnerSalesDateRange(period, fromText, toText);
   const matchesInitialCustomRange = period !== 'Custom' ||
     (fromText === initialStartDate && toText === initialEndDate);
 
@@ -347,7 +324,7 @@ export default function OwnerSalesWorkspace({
       setError('');
       return undefined;
     }
-    const requestedRange = getDateRange(period, fromText, toText);
+    const requestedRange = getOwnerSalesDateRange(period, fromText, toText);
     if (!requestedRange) {
       setLiveData(null);
       setError('Enter valid start and end dates. The end date must not be before the start date.');
@@ -373,7 +350,7 @@ export default function OwnerSalesWorkspace({
   }, [branchId, fromText, initialBranchId, initialData, initialLoading, initialPeriod, initialEndDate, initialStartDate, matchesInitialCustomRange, mode, period, retry, toText]);
 
   const generateReport = async () => {
-    const requestedRange = getDateRange(period, fromText, toText);
+    const requestedRange = getOwnerSalesDateRange(period, fromText, toText);
     if (!requestedRange) {
       setReportData(null);
       setError('Enter valid dates in YYYY-MM-DD format. The end date must not be before the start date.');
@@ -399,8 +376,12 @@ export default function OwnerSalesWorkspace({
 
   const data = mode === 'monitoring' ? liveData : reportData;
   const sales = data?.sales ?? [];
+  const unresolvedSales = useMemo(
+    () => filterOwnerSalesByInventoryState(sales, 'needs_processing'),
+    [sales],
+  );
   const items = data?.items ?? [];
-  const products = useMemo(() => summarizeProducts(items), [items]);
+  const products = useMemo(() => summarizeOwnerProducts(items), [items]);
   const payments = useMemo(() => summarizePayments(sales), [sales]);
   const totalSales = sales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
   const previousSales = data?.previousSales ?? [];
@@ -457,10 +438,13 @@ export default function OwnerSalesWorkspace({
   }, [branches, productBySale, sales, sortBy]);
   const transactionRows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return allTransactionRows.filter((row) =>
+    const scopedRows = allTransactionRows.filter((row) =>
+      filterOwnerSalesByInventoryState([row.sale], inventoryFilter).length > 0,
+    );
+    return scopedRows.filter((row) =>
       !term || row.searchText.includes(term) || row.branch.toLowerCase().includes(term),
     );
-  }, [allTransactionRows, search]);
+  }, [allTransactionRows, inventoryFilter, search]);
   const pageCount = Math.max(1, Math.ceil(transactionRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const visibleRows = transactionRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
@@ -616,7 +600,7 @@ export default function OwnerSalesWorkspace({
               accessibilityRole="button"
               accessibilityLabel="Refresh sales data"
               disabled={loading}
-              onPress={() => setRetry((value) => value + 1)}
+              onPress={refreshMonitoring}
               style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed, loading && styles.disabled]}
             >
               {loading ? <ActivityIndicator size="small" color="#F20D55" /> : <Text style={styles.refreshText}>↻</Text>}
@@ -657,7 +641,7 @@ export default function OwnerSalesWorkspace({
         <View accessibilityRole="alert" style={styles.errorBanner}>
           <Text style={styles.errorText}>{error}</Text>
           {mode === 'monitoring' && (
-            <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)}>
+            <Pressable accessibilityRole="button" onPress={refreshMonitoring}>
               <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           )}
@@ -692,6 +676,16 @@ export default function OwnerSalesWorkspace({
         ) : null
       ) : (
         <>
+          {unresolvedSales.length > 0 && (
+            <View style={styles.reconciliationBanner}>
+              <Text style={styles.reconciliationTitle}>
+                {unresolvedSales.length} recorded sale{unresolvedSales.length === 1 ? '' : 's'} need inventory processing
+              </Text>
+              <Text style={styles.reconciliationText}>
+                These sales remain visible in the transaction list, but are not confirmed inventory outcomes until Staff retry processing.
+              </Text>
+            </View>
+          )}
           <View style={styles.bentoGrid}>
             <View style={[styles.heroCard, { width: medium ? contentWidth * 0.58 - 6 : contentWidth }]}>
               <Text style={styles.heroEyebrow}>RECORDED COMPLETED SALES</Text>
@@ -822,7 +816,7 @@ export default function OwnerSalesWorkspace({
                 )}
               </View>
               {products.length === 0 ? (
-                <Text style={styles.bodyText}>No product line items are available for completed sales in this period.</Text>
+                <Text style={styles.bodyText}>{PRODUCTS_SOLD_EMPTY_MESSAGE}</Text>
               ) : products.slice(0, showAllProducts ? undefined : 8).map((product, index) => {
                 const maximum = products[0]?.quantity ?? 0;
                 return (
@@ -909,6 +903,23 @@ export default function OwnerSalesWorkspace({
                     selected={sortBy === value}
                     onPress={() => {
                       setSortBy(value);
+                      setPage(0);
+                    }}
+                  />
+                ))}
+              </View>
+              <View style={styles.sortButtons}>
+                {([
+                  ['all', 'All recorded'],
+                  ['confirmed', 'Inventory confirmed'],
+                  ['needs_processing', 'Needs processing'],
+                ] as const).map(([value, label]) => (
+                  <ChoiceChip
+                    key={value}
+                    label={label}
+                    selected={inventoryFilter === value}
+                    onPress={() => {
+                      setInventoryFilter(value);
                       setPage(0);
                     }}
                   />
@@ -1081,6 +1092,9 @@ function useStyles() {
     errorBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: 12, marginBottom: 13, borderRadius: 12, backgroundColor: '#FCE9EB' },
     errorText: { flex: 1, color: '#C92F3C', fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 14 },
     retryText: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    reconciliationBanner: { padding: 12, marginBottom: 13, borderRadius: 12, borderWidth: 1, borderColor: '#F8D28A', backgroundColor: '#FFF8E7' },
+    reconciliationTitle: { color: '#8A5A00', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+    reconciliationText: { color: '#8A5A00', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 13, marginTop: 4 },
     reportMeta: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 5, marginBottom: 11 },
     reportMetaText: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 9 },
     loadingCard: { minHeight: 105, alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 16, borderWidth: 1, borderColor: '#EEEEF1', backgroundColor: '#FFFFFF' },

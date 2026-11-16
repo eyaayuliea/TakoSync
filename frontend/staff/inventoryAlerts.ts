@@ -44,6 +44,20 @@ export function countInventoryAlertsByKind<T extends { kind: InventoryAlertKind 
   }, { lowStock: 0, outOfStock: 0, nearExpiration: 0, expired: 0 });
 }
 
+/**
+ * Counts are only current when the latest alert query has settled successfully.
+ * Returning empty counts while loading or after an error prevents stale badges
+ * from presenting an older snapshot as current data.
+ */
+export function countInventoryAlertsWhenReady<T extends { kind: InventoryAlertKind }>(
+  alerts: readonly T[],
+  loading: boolean,
+  error: string,
+) {
+  if (loading || error.trim() !== '') return countInventoryAlertsByKind([]);
+  return countInventoryAlertsByKind(alerts);
+}
+
 export function classifyStockAlert(quantity: number, minimumStock: number): InventoryAlertKind | null {
   if (quantity <= 0) return 'outOfStock';
   return minimumStock > 0 && quantity <= minimumStock ? 'lowStock' : null;

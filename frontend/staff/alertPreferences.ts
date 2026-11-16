@@ -10,6 +10,17 @@ export const DEFAULT_STAFF_ALERT_PREFERENCES: StaffAlertPreferences = {
   expiration: true,
 };
 
+/**
+ * Alert visibility must not use the previous account's settings while the
+ * authenticated account's preferences are still being loaded.
+ */
+export function getActiveStaffAlertPreferences(
+  preferences: StaffAlertPreferences,
+  hydrated: boolean,
+): StaffAlertPreferences {
+  return hydrated ? preferences : { lowStock: false, expiration: false };
+}
+
 const STORAGE_KEY_PREFIX = 'takosync.staff-alert-preferences.v1';
 
 type AsyncStorageLike = {

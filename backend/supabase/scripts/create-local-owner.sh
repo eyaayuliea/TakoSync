@@ -79,7 +79,7 @@ if [[ -n "$existing_user_id" ]]; then
   existing_user_id_sql="$(sql_literal "$existing_user_id")"
   configured_count="$(
     "${psql_args[@]}" -Atc \
-      "select count(*) from public.profiles where id = ${existing_user_id_sql}::uuid and lower(email) = lower($owner_email_sql) and role = 'owner' and branch_id is null and active"
+      "select count(*) from public.profiles where id = ${existing_user_id_sql}::uuid and lower(email) = lower($owner_email_sql) and role = 'owner' and branch_id is null and active and employee_id is null and must_change_password = false"
   )"
   if [[ "$configured_count" == '1' ]]; then
     echo "Local Owner account is already configured: $owner_email"
@@ -152,7 +152,9 @@ updated_profile_id="$(
     set full_name = 'Local Test Owner',
         role = 'owner',
         branch_id = null,
-        active = true
+        active = true,
+        employee_id = null,
+        must_change_password = false
     where id = ${created_user_id_sql}::uuid
       and lower(email) = lower($owner_email_sql)
       and role = 'staff'

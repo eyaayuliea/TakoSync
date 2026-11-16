@@ -311,6 +311,149 @@ export async function runInventoryReportLoad(
   }
 }
 
+export type InventoryCountHistoryRecordInput = {
+  check: {
+    id: string;
+    reference: string;
+    submittedBy: string;
+    remarks: string;
+    status: string;
+    createdAt: string;
+  };
+  line: {
+    id: string;
+    ingredientId: string;
+    expectedQuantity: number | string;
+    actualQuantity: number | string;
+    difference: number | string;
+    unit: string;
+  };
+  ingredient: {
+    name: string;
+    category: string;
+  };
+  branchId: string;
+  branch: string;
+  staff: string;
+  corrections: Array<{
+    status: string;
+    correctedActualQuantity: number | string;
+    reason: string;
+    decisionReason: string | null;
+    decidedAt: string | null;
+  }>;
+  validation: {
+    correctedActualQuantity: number | string;
+    outcome: string;
+    reason: string;
+    validatedBy: string;
+    validatedAt: string;
+  } | null;
+};
+
+export type InventoryCountHistoryRecord = {
+  id: string;
+  reference: string;
+  type: 'Physical Inventory Count';
+  ingredientId: string;
+  ingredientName: string;
+  category: string;
+  quantity: number;
+  unit: string;
+  movement: number;
+  branchId: string;
+  branch: string;
+  staffId: string;
+  staff: string;
+  transactionDate: Date;
+  reason: string;
+  notes: string;
+  beforeQuantity: number;
+  afterQuantity: number;
+  batchReference: null;
+  physicalCount: {
+    checkId: string;
+    status: string;
+    expectedQuantity: number;
+    originalActualQuantity: number;
+    difference: number;
+    correctionHistory: Array<{
+      status: string;
+      correctedActualQuantity: number;
+      reason: string;
+      decisionReason: string | null;
+      decidedAt: string | null;
+    }>;
+    revisedActualQuantity: number | null;
+    validation: {
+      correctedActualQuantity: number;
+      outcome: string;
+      reason: string;
+      validatedBy: string;
+      validatedAt: string;
+    } | null;
+  };
+};
+
+export function buildInventoryCountHistoryRecords(
+  input: InventoryCountHistoryRecordInput[],
+): InventoryCountHistoryRecord[] {
+  return input
+    .map(({ check, line, ingredient, branchId, branch, staff, corrections, validation }) => {
+      const expectedQuantity = asNumber(line.expectedQuantity);
+      const originalActualQuantity = asNumber(line.actualQuantity);
+      const difference = asNumber(line.difference);
+      const revisedActualQuantity = validation
+        ? asNumber(validation.correctedActualQuantity)
+        : null;
+      return {
+        id: `physical-count-${line.id}`,
+        reference: check.reference,
+        type: 'Physical Inventory Count' as const,
+        ingredientId: line.ingredientId,
+        ingredientName: ingredient.name,
+        category: ingredient.category,
+        quantity: Math.abs(difference),
+        unit: line.unit,
+        movement: difference,
+        branchId,
+        branch,
+        staffId: check.submittedBy,
+        staff,
+        transactionDate: new Date(check.createdAt),
+        reason: 'Physical inventory count',
+        notes: check.remarks,
+        beforeQuantity: expectedQuantity,
+        afterQuantity: originalActualQuantity,
+        batchReference: null,
+        physicalCount: {
+          checkId: check.id,
+          status: check.status,
+          expectedQuantity,
+          originalActualQuantity,
+          difference,
+          correctionHistory: corrections.map((correction) => ({
+            status: correction.status,
+            correctedActualQuantity: asNumber(correction.correctedActualQuantity),
+            reason: correction.reason,
+            decisionReason: correction.decisionReason,
+            decidedAt: correction.decidedAt,
+          })),
+          revisedActualQuantity,
+          validation: validation ? {
+            correctedActualQuantity: asNumber(validation.correctedActualQuantity),
+            outcome: validation.outcome,
+            reason: validation.reason,
+            validatedBy: validation.validatedBy,
+            validatedAt: validation.validatedAt,
+          } : null,
+        },
+      };
+    })
+    .filter((record) => Number.isFinite(record.transactionDate.getTime()))
+    .sort((left, right) => right.transactionDate.getTime() - left.transactionDate.getTime());
+}
+
 export async function runDiscrepancySubmissionOnce<T>(
   lock: { current: boolean },
   submit: () => Promise<T>,

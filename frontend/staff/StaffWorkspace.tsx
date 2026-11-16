@@ -27,7 +27,7 @@ import type { MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
-  countInventoryAlertsByKind,
+  countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
@@ -103,6 +103,7 @@ import {
 import { formatStaffSaleReceipt } from './saleReceipt';
 import {
   DEFAULT_STAFF_ALERT_PREFERENCES,
+  getActiveStaffAlertPreferences,
   loadStaffAlertPreferences,
   saveStaffAlertPreferences,
   type StaffAlertPreferenceKey,
@@ -298,8 +299,8 @@ type WasteReceipt = {
   notes: string;
 };
 
-type HistoryTransactionType = InventoryTransactionLabel;
-type HistoryTypeFilter = 'All types' | InventoryTransactionLabel;
+type HistoryTransactionType = InventoryTransactionLabel | 'Physical Inventory Count';
+type HistoryTypeFilter = 'All types' | InventoryTransactionLabel | 'Physical Inventory Count';
 
 type HistoryTransaction = {
   id: string;
@@ -321,9 +322,35 @@ type HistoryTransaction = {
   beforeQuantity: number | null;
   afterQuantity: number | null;
   batchReference: string | null;
+  physicalCount?: {
+    checkId: string;
+    status: string;
+    expectedQuantity: number;
+    originalActualQuantity: number;
+    difference: number;
+    correctionHistory: Array<{
+      status: string;
+      correctedActualQuantity: number;
+      reason: string;
+      decisionReason: string | null;
+      decidedAt: string | null;
+    }>;
+    revisedActualQuantity: number | null;
+    validation: {
+      correctedActualQuantity: number;
+      outcome: string;
+      reason: string;
+      validatedBy: string;
+      validatedAt: string;
+    } | null;
+  };
 };
 
-const historyTypeFilters: HistoryTypeFilter[] = ['All types', ...Object.values(inventoryTransactionLabels)];
+const historyTypeFilters: HistoryTypeFilter[] = [
+  'All types',
+  ...Object.values(inventoryTransactionLabels),
+  'Physical Inventory Count',
+];
 
 function formatHistoryDateTime(date: Date) {
   return `${formatDate(manilaBusinessDate(date))} · ${formatManilaTime(date)}`;
@@ -2031,10 +2058,11 @@ export default function StaffWorkspace({
   ]));
   const alertTerm = alertSearch.trim().toLowerCase();
   const enabledAlerts = inventoryAlerts.filter((item) => {
-    const preference = isStockAlert(item.kind) ? alertPreferences.lowStock : alertPreferences.expiration;
+    const activeAlertPreferences = getActiveStaffAlertPreferences(alertPreferences, alertPreferencesHydrated);
+    const preference = isStockAlert(item.kind) ? activeAlertPreferences.lowStock : activeAlertPreferences.expiration;
     return preference;
   });
-  const enabledAlertCounts = countInventoryAlertsByKind(enabledAlerts);
+  const enabledAlertCounts = countInventoryAlertsWhenReady(enabledAlerts, backendLoading, backendError);
   const enabledAlertCount = Object.values(enabledAlertCounts).reduce((total, count) => total + count, 0);
   const visibleAlerts = enabledAlerts.filter((item) =>
       `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${inventoryAlertLabel(item.kind)} ${item.detail}`
@@ -3891,7 +3919,7 @@ export default function StaffWorkspace({
 
   const renderAlerts = () => {
     const selectedAlerts = visibleAlerts.filter((alert) => alert.kind === selectedAlertTab);
-    const visibleAlertCounts = countInventoryAlertsByKind(visibleAlerts);
+    const visibleAlertCounts = countInventoryAlertsWhenReady(visibleAlerts, backendLoading, backendError);
     const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
       { kind: 'lowStock', label: 'Low Stock' },
       { kind: 'outOfStock', label: 'Out of Stock' },
@@ -4985,6 +5013,10 @@ export default function StaffWorkspace({
 
           <View style={styles.profileInformationCard}>
             <View style={styles.profileInformationRow}>
+              <View style={styles.profileInformationCell}>
+                <Text style={styles.profileInformationLabel}>Employee ID</Text>
+                <Text style={styles.profileInformationValue} selectable>{user.employeeId ?? 'Unavailable'}</Text>
+              </View>
               <View style={styles.profileInformationCell}>
                 <Text style={styles.profileInformationLabel}>Email</Text>
                 <Text style={styles.profileInformationValue} numberOfLines={1}>{staffEmail}</Text>
@@ -6130,7 +6162,7 @@ export default function StaffWorkspace({
                         ? styles.historyTransactionPositive
                         : styles.historyTransactionNegative,
                     ]}>
-                      {transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
+                      {transaction.movement === 0 ? '' : transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
                     </Text>
                   </View>
                   <Text style={styles.historyTransactionMeta}>
@@ -6324,7 +6356,7 @@ export default function StaffWorkspace({
             styles.historyDetailSummaryQuantity,
             transaction.movement > 0 && styles.historyTransactionPositive,
           ]}>
-            {transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
+            {transaction.movement === 0 ? '' : transaction.movement > 0 ? '+' : '-'}{formatUnitQuantity(transaction.quantity, transaction.unit)}
           </Text>
           <Text style={styles.historyDetailSummaryReference}>
             {transaction.reference} · Recorded
@@ -6356,6 +6388,33 @@ export default function StaffWorkspace({
                 <DetailRow label="After waste" value={formatUnitQuantity(transaction.afterQuantity, transaction.unit)} />
               ) : null}
               <DetailRow label="Reason" value={transaction.reason} />
+            </>
+          ) : transaction.type === 'Physical Inventory Count' && transaction.physicalCount ? (
+            <>
+              <DetailRow label="Expected quantity" value={formatUnitQuantity(transaction.physicalCount.expectedQuantity, transaction.unit)} />
+              <DetailRow label="Original physical count" value={formatUnitQuantity(transaction.physicalCount.originalActualQuantity, transaction.unit)} />
+              <DetailRow label="Difference" value={formatDailyDifference(transaction.physicalCount.difference, transaction.unit)} />
+              <DetailRow label="Count status" value={transaction.physicalCount.status} />
+              <DetailRow label="Remarks" value={transaction.notes || '—'} />
+              {transaction.physicalCount.revisedActualQuantity !== null ? (
+                <DetailRow label="Revised actual quantity" value={formatUnitQuantity(transaction.physicalCount.revisedActualQuantity, transaction.unit)} />
+              ) : null}
+              {transaction.physicalCount.validation ? (
+                <>
+                  <DetailRow label="Validation outcome" value={transaction.physicalCount.validation.outcome} />
+                  <DetailRow label="Validated by" value={transaction.physicalCount.validation.validatedBy} />
+                  <DetailRow label="Validation reason" value={transaction.physicalCount.validation.reason} />
+                  <DetailRow label="Validated at" value={formatHistoryDateTime(new Date(transaction.physicalCount.validation.validatedAt))} />
+                </>
+              ) : null}
+              {transaction.physicalCount.correctionHistory.map((correction, index) => (
+                <View key={`${transaction.id}-correction-${index}`}>
+                  <DetailRow label={`Correction ${index + 1}`} value={`${correction.status} · ${formatUnitQuantity(correction.correctedActualQuantity, transaction.unit)}`} />
+                  <DetailRow label="Correction reason" value={correction.reason} />
+                  {correction.decisionReason ? <DetailRow label="Owner decision" value={correction.decisionReason} /> : null}
+                  {correction.decidedAt ? <DetailRow label="Decided at" value={formatHistoryDateTime(new Date(correction.decidedAt))} /> : null}
+                </View>
+              ))}
             </>
           ) : (
             <>

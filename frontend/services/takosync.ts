@@ -33,6 +33,8 @@ import {
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
   shouldIncludeOwnerSaleInSummary,
+  filterOwnerSalesByInventoryState,
+  validateSaleSubmission,
   type UnresolvedSale,
   type StaffSaleRecord,
 } from './ownerSalesStatus';
@@ -40,12 +42,14 @@ import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleRecei
 import { normalizeStaffUsername, staffLoginErrorMessage } from './staffAuthentication';
 import {
   buildInventoryReportData,
+  buildInventoryCountHistoryRecords,
   type InventoryReportCheck,
   type InventoryReportCountLine,
   type InventoryReportData,
   type InventoryReportMovement,
   type InventoryReportCorrectionRequest,
   type InventoryReportValidation,
+  type InventoryCountHistoryRecord,
 } from '../staff/inventoryReports';
 import type { RetrySafeInventoryTransaction } from './inventoryTransactionRecovery';
 import { indexBranchInventorySnapshot } from './inventoryCountSnapshot';
@@ -63,6 +67,8 @@ function staffServiceClient(client?: StaffServiceClient) {
 
 export type AppUser = {
   id: string;
+  employeeId: string | null;
+  mustChangePassword: boolean;
   role: 'Owner' | 'Staff';
   displayName: string;
   email: string;
@@ -128,10 +134,19 @@ export class InventoryCountCorrectionSubmissionError extends Error {
   }
 }
 
+export class SaleInventoryProcessingIncompleteError extends Error {
+  readonly saleRecorded = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SaleInventoryProcessingIncompleteError';
+  }
+}
+
 export type TransactionHistoryItem = {
   id: string;
   reference: string;
-  type: InventoryTransactionLabel;
+  type: InventoryTransactionLabel | InventoryCountHistoryRecord['type'];
   ingredientId: string;
   ingredientName: string;
   category: string;
@@ -148,6 +163,7 @@ export type TransactionHistoryItem = {
   beforeQuantity: number;
   afterQuantity: number;
   batchReference: string | null;
+  physicalCount?: InventoryCountHistoryRecord['physicalCount'];
 };
 
 export type OwnerSale = {
@@ -187,6 +203,7 @@ export {
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
   shouldIncludeOwnerSaleInSummary,
+  filterOwnerSalesByInventoryState,
 };
 
 export type { UnresolvedSale };
@@ -435,30 +452,35 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
   const session = sessionData.session;
   if (!session) return null;
 
+  const clearRejectedSession = async () => {
+    const { error } = await client.auth.signOut();
+    assertNoError(error);
+  };
+
   const { data: businessSession, error: businessSessionError } = await client.rpc('business_session_status');
   assertNoError(businessSessionError);
   const businessSessionStatus = readBusinessSessionStatus(businessSession);
   if (!businessSessionStatus.active) {
-    await signOut();
+    await clearRejectedSession();
     throw new Error('Your business session has expired. Sign in again when the next business date is available.');
   }
 
   const { data: profile, error } = await client
     .from('profiles')
-    .select('id, email, full_name, role, branch_id, active')
+    .select('id, employee_id, email, full_name, role, branch_id, active, must_change_password')
     .eq('id', session.user.id)
     .maybeSingle();
   assertNoError(error);
   if (!profile) {
-    await signOut();
+    await clearRejectedSession();
     throw new Error('No TakoSync profile exists for this account. Ask the owner to provision it.');
   }
   if (!profile.active) {
-    await signOut();
+    await clearRejectedSession();
     throw new Error('This account is inactive. Ask the owner to reactivate it.');
   }
   if (profile.role === 'staff' && !profile.branch_id) {
-    await signOut();
+    await clearRejectedSession();
     throw new Error('This staff account has no assigned branch. Ask the owner to assign one.');
   }
   let branch = 'All branches';
@@ -467,6 +489,7 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
       .from('branches')
       .select('city, code')
       .eq('id', profile.branch_id)
+      .eq('active', true)
       .maybeSingle();
     assertNoError(branchError);
     if (!branchRecord) {
@@ -478,6 +501,8 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
 
   return {
     id: profile.id,
+    employeeId: profile.employee_id,
+    mustChangePassword: profile.must_change_password === true,
     role: profile.role === 'owner' ? 'Owner' : 'Staff',
     displayName: profile.full_name || session.user.user_metadata.full_name || profile.email,
     email: profile.email || session.user.email || '',
@@ -540,7 +565,8 @@ export async function signIn(
   const user = await loadCurrentUser(client);
   if (!user) throw new Error('Supabase did not return an authenticated session.');
   if (user.role !== expectedRole) {
-    await signOut();
+    const { error: signOutError } = await client.auth.signOut();
+    assertNoError(signOutError);
     throw new Error(`This account does not have ${expectedRole} access.`);
   }
   return user;
@@ -548,11 +574,13 @@ export async function signIn(
 
 export type StaffAccount = {
   id: string;
+  employee_id: string;
   username: string;
   full_name: string;
   branch_id: string;
   branch_name?: string;
   active: boolean;
+  must_change_password?: boolean;
   created_at: string;
 };
 
@@ -608,10 +636,38 @@ export async function loadStaffAccounts(): Promise<StaffAccount[]> {
   return data.accounts as StaffAccount[];
 }
 
+export async function provisionExistingStaffAccounts(): Promise<StaffAccount[]> {
+  const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
+    body: { action: 'provision-existing' },
+  });
+  if (error) throw new Error('Unable to provision existing Staff credentials securely.');
+  if (!data?.ok || !Array.isArray(data.accounts)) {
+    throw new Error(data?.error ?? 'Unable to provision existing Staff credentials securely.');
+  }
+  return data.accounts as StaffAccount[];
+}
+
+export async function resetStaffPasswordToEmployeeId(id: string): Promise<StaffAccount> {
+  const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
+    body: { action: 'reset-password', account: { id } },
+  });
+  if (error) throw new Error('Unable to reset the Staff password securely.');
+  if (!data?.ok || !data.account) throw new Error(data?.error ?? 'Unable to reset the Staff password securely.');
+  return data.account as StaffAccount;
+}
+
+export async function changeStaffPassword(newPassword: string): Promise<void> {
+  if (newPassword.length < 8) throw new Error('New password must be at least 8 characters.');
+  const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
+    body: { action: 'change-password', newPassword },
+  });
+  if (error) throw new Error('Unable to change the Staff password securely.');
+  if (!data?.ok) throw new Error(data?.error ?? 'Unable to change the Staff password securely.');
+}
+
 export async function saveStaffAccount(input: {
   id?: string;
   username: string;
-  employeeId?: string;
   branchId: string;
   active: boolean;
 }): Promise<StaffAccount> {
@@ -1301,14 +1357,20 @@ export async function decideOwnerInventoryCountCorrection(input: {
   requestId: string;
   decision: 'approved' | 'rejected';
   reason: string;
-}) {
-  const { data, error } = await requireSupabase().rpc('decide_inventory_count_correction', {
-    p_request_id: input.requestId,
+}, client?: StaffServiceClient) {
+  const requestId = input.requestId.trim();
+  const reason = input.reason.trim();
+  if (!requestId) throw new Error('A correction request ID is required.');
+  if (reason.length < 1 || reason.length > 1000) {
+    throw new Error('A decision reason of 1 to 1000 characters is required.');
+  }
+  const { data, error } = await staffServiceClient(client).rpc('decide_inventory_count_correction', {
+    p_request_id: requestId,
     p_decision: input.decision,
-    p_reason: input.reason,
+    p_reason: reason,
   });
   assertNoError(error);
-  if (!data || data.request_id !== input.requestId || data.status !== input.decision) {
+  if (!data || data.request_id !== requestId || data.status !== input.decision) {
     throw new Error('The Owner correction decision could not be confirmed.');
   }
   return data;
@@ -1317,10 +1379,16 @@ export async function decideOwnerInventoryCountCorrection(input: {
 export async function validateOwnerInventoryCountCorrection(input: {
   requestId: string;
   reason: string;
-}) {
-  const { data, error } = await requireSupabase().rpc('validate_inventory_count_correction', {
-    p_request_id: input.requestId,
-    p_reason: input.reason,
+}, client?: StaffServiceClient) {
+  const requestId = input.requestId.trim();
+  const reason = input.reason.trim();
+  if (!requestId) throw new Error('A correction request ID is required.');
+  if (reason.length < 1 || reason.length > 1000) {
+    throw new Error('A validation reason of 1 to 1000 characters is required.');
+  }
+  const { data, error } = await staffServiceClient(client).rpc('validate_inventory_count_correction', {
+    p_request_id: requestId,
+    p_reason: reason,
   });
   assertNoError(error);
   if (!data || data.outcome !== 'adjusted' && data.outcome !== 'no_change') {
@@ -1353,12 +1421,52 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
     if (page.length < pageSize) break;
   }
 
+  const { data: checks, error: checksError } = await client.from('daily_stock_checks')
+    .select('id, reference, submitted_by, remarks, status, created_at')
+    .eq('branch_id', branchId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
+  assertNoError(checksError);
+  const countCheckRows = checks ?? [];
+  const checkIds = countCheckRows.map((check) => check.id);
+  const countLines: Array<{
+    id: string;
+    daily_stock_check_id: string;
+    ingredient_id: string;
+    recorded_quantity: number | string;
+    physical_quantity: number | string;
+    difference: number | string;
+    unit: string;
+  }> = [];
+  for (let offset = 0; offset < checkIds.length; offset += 50) {
+    const { data, error } = await client.from('daily_stock_count_lines')
+      .select('id, daily_stock_check_id, ingredient_id, recorded_quantity, physical_quantity, difference, unit')
+      .in('daily_stock_check_id', checkIds.slice(offset, offset + 50));
+    assertNoError(error);
+    countLines.push(...(data ?? []));
+  }
+  const lineIds = countLines.map((line) => line.id);
+  const [correctionsResult, validationsResult] = await Promise.all([
+    lineIds.length
+      ? client.from('inventory_count_correction_requests')
+        .select('daily_stock_count_line_id, corrected_actual_quantity, reason, status, decision_reason, decided_at')
+        .in('daily_stock_count_line_id', lineIds)
+      : Promise.resolve({ data: [], error: null }),
+    lineIds.length
+      ? client.from('inventory_count_validations')
+        .select('daily_stock_count_line_id, corrected_actual_quantity, outcome, reason, validated_by, validated_at')
+        .in('daily_stock_count_line_id', lineIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  assertNoError(correctionsResult.error);
+  assertNoError(validationsResult.error);
+
   const ingredients = new Map((ingredientsResult.data ?? []).map((row) => [row.id, row]));
   const categories = new Map((categoriesResult.data ?? []).map((row) => [row.id, row.name]));
   const profiles = new Map((profilesResult.data ?? []).map((row) => [row.id, row.full_name]));
   const batches = new Map((batchesResult.data ?? []).map((row) => [row.id, row.batch_reference]));
   const branch = branchLabel(branchResult.data.city, branchResult.data.code);
-  return transactions.flatMap((row) => {
+  const movementHistory = transactions.flatMap((row) => {
     const ingredient = ingredients.get(row.ingredient_id);
     if (!ingredient) return [];
     return {
@@ -1383,6 +1491,70 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
       batchReference: row.batch_id ? batches.get(row.batch_id) ?? null : null,
     };
   });
+  const checksById = new Map(countCheckRows.map((check) => [check.id, check]));
+  const correctionsByLineId = new Map<string, NonNullable<typeof correctionsResult.data>>();
+  for (const correction of correctionsResult.data ?? []) {
+    correctionsByLineId.set(correction.daily_stock_count_line_id, [
+      ...(correctionsByLineId.get(correction.daily_stock_count_line_id) ?? []),
+      correction,
+    ]);
+  }
+  const validationsByLineId = new Map((validationsResult.data ?? []).map((validation) => [
+    validation.daily_stock_count_line_id,
+    validation,
+  ]));
+  const countHistory = buildInventoryCountHistoryRecords(
+    countLines.flatMap((line) => {
+      const check = checksById.get(line.daily_stock_check_id);
+      const ingredient = ingredients.get(line.ingredient_id);
+      if (!check || !ingredient) return [];
+      return [{
+        check: {
+          id: check.id,
+          reference: check.reference,
+          submittedBy: check.submitted_by,
+          remarks: check.remarks,
+          status: check.status,
+          createdAt: check.created_at,
+        },
+        line: {
+          id: line.id,
+          ingredientId: line.ingredient_id,
+          expectedQuantity: line.recorded_quantity,
+          actualQuantity: line.physical_quantity,
+          difference: line.difference,
+          unit: line.unit,
+        },
+        ingredient: {
+          name: ingredient.name,
+          category: categories.get(ingredient.category_id) ?? 'Other',
+        },
+        branchId,
+        branch,
+        staff: profiles.get(check.submitted_by) ?? 'Unknown user',
+        corrections: (correctionsByLineId.get(line.id) ?? []).map((correction) => ({
+          status: correction.status,
+          correctedActualQuantity: correction.corrected_actual_quantity,
+          reason: correction.reason,
+          decisionReason: correction.decision_reason,
+          decidedAt: correction.decided_at,
+        })),
+        validation: (() => {
+          const validation = validationsByLineId.get(line.id);
+          return validation ? {
+            correctedActualQuantity: validation.corrected_actual_quantity,
+            outcome: validation.outcome,
+            reason: validation.reason,
+            validatedBy: validation.validated_by,
+            validatedAt: validation.validated_at,
+          } : null;
+        })(),
+      }];
+    }),
+  );
+  return [...movementHistory, ...countHistory].sort((left, right) =>
+    right.transactionDate.getTime() - left.transactionDate.getTime() || left.id.localeCompare(right.id),
+  );
 }
 
 async function fetchTransactionPage(
@@ -1504,6 +1676,7 @@ export async function prepareBatterBatch(branchId: string, batchReference: strin
 }
 
 export async function submitSale(input: SaleSubmission, client?: StaffServiceClient): Promise<OwnerSale> {
+  validateSaleSubmission(input);
   const normalized = normalizeSalePayload(input);
   const { data, error } = await staffServiceClient(client).rpc('submit_sale', {
     p_transaction_reference: input.transactionReference.trim(),
@@ -1538,8 +1711,31 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     throw new Error('Checkout status could not be confirmed. Your cart is preserved; retry the same checkout to safely confirm its status.');
   }
   if (!data) throw new Error('The sale service returned no saved transaction.');
+  if (data.transaction_reference !== input.transactionReference.trim()) {
+    throw new Error('The saved sale reference did not match this checkout. The cart was preserved for a safe retry.');
+  }
+  if (data.branch_id !== normalized.branchId) {
+    throw new Error('The saved sale branch did not match this checkout. The cart was preserved for a safe retry.');
+  }
+  if (data.payment_method.trim().toLowerCase() !== normalized.paymentMethod) {
+    throw new Error('The saved sale payment method did not match this checkout. The cart was preserved for a safe retry.');
+  }
+  if (Number(data.total_amount) !== normalized.totalAmount) {
+    throw new Error('The saved sale total did not match this checkout. The cart was preserved for a safe retry.');
+  }
+  if (typeof data.id !== 'string' || !data.id.trim() || typeof data.created_at !== 'string' || !data.created_at.trim()) {
+    throw new Error('The saved sale did not include a usable receipt identity. The cart was preserved for a safe retry.');
+  }
   if (data.status !== 'completed' && data.status !== 'pending') {
     throw new Error('The sale was not recorded correctly. Please check the checkout status.');
+  }
+  if (!['pending', 'processing', 'completed', 'failed'].includes(data.inventory_processing_status ?? '')) {
+    throw new Error('The saved sale did not include a confirmed inventory-processing status. The cart was preserved for a safe retry.');
+  }
+  if (data.inventory_processing_status !== 'completed') {
+    throw new SaleInventoryProcessingIncompleteError(
+      `Sale ${data.transaction_reference} was recorded, but inventory processing is not complete. Retry the same checkout to finish it safely.`,
+    );
   }
   return {
     id: data.id,

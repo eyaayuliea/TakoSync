@@ -796,6 +796,749 @@ ST-10 remains **PARTIALLY COMPLETE** because hosted Supabase/RLS data, configure
 - Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
 - Android-device verification: **not performed**.
 
+## 50. Owner OM-02 dashboard integration sprint - 2026-11-16
+
+### Source alignment and scope
+
+The repository documents located for this sprint were:
+
+- `docs/User_Story_v5.11.11.2026 - OWNER (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - STAFF (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - SUMMARY.pdf`
+- `docs/PROJECT_CHARTER_v5.09.11.2026.docx.pdf`
+- `docs/STICKER SHEET.pdf`
+
+The requested OM-02 dashboard requirements were compared against the live Owner mobile implementation: combined recorded sales for the selected period, three-branch sales summaries, inventory status, low-stock and expiration previews, recent activities, navigation, and refresh/error/empty behavior. The available PDF text-extraction/browser snapshot path did not expose reliable page text in this environment, so no page numbers or unsupported source claims are recorded here.
+
+### Existing implementation and verified gaps
+
+Before this sprint, the Owner workspace already loaded persisted sales, inventory, alerts, and activity records through the existing Supabase service layer. It already had period controls, three-branch cards, activity details, refresh handling, and the required dashboard load-error message.
+
+Two live-path gaps were found:
+
+1. The dashboard inventory summary did not expose separate Normal, Low Stock, and Out of Stock counts.
+2. Tapping a branch sales card updated the parent filter, but the Sales workspace did not synchronize its internal branch/period state from the incoming dashboard selection. A branch card could therefore open Sales with a stale or broader scope.
+
+### Implementation
+
+- Added `summarizeOwnerInventoryStatus`, used by the actual Owner dashboard, to classify valid inventory records as Normal, Low Stock, or Out of Stock using configured minimum levels and branch-scoped quantities.
+- Updated the dashboard inventory summary to display those three status counts while retaining tracked and expiration totals.
+- Added a small selection-contract helper and regression coverage for the branch/period selection passed from the dashboard.
+- Updated the Owner Sales workspace to synchronize its internal branch, period, and custom-date state whenever dashboard navigation supplies a new selection.
+- Existing Supabase queries, RLS boundaries, sales status filtering, refresh behavior, and Owner Web Portal code were not changed.
+
+### Files changed in this sprint
+
+- `frontend/owner/ownerDashboardSummary.ts` - inventory status classification used by the dashboard.
+- `frontend/owner/ownerDashboardSummary.test.mjs` - status-count regression coverage.
+- `frontend/owner/OwnerMobileWorkspace.tsx` - displays the live Normal/Low Stock/Out of Stock dashboard counts.
+- `frontend/owner/OwnerSalesWorkspace.tsx` - applies dashboard-selected branch and reporting period to Sales.
+- `frontend/owner/ownerSalesSelection.ts` - typed dashboard-to-Sales selection contract.
+- `frontend/owner/ownerSalesSelection.test.mjs` - branch/period propagation regression coverage.
+- `AUDIT_REPORT.md` - this sprint record.
+
+### Verification results
+
+- Focused Owner dashboard/selection tests: **passed - 7 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 145 frontend tests and 17 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 17 tests**.
+- `git diff --check`: **passed**.
+- Hosted Supabase/database/RLS verification: **not performed**. No remote project was contacted and no SQL, migration, seed, reset, or destructive operation was run.
+- Android-device verification: **not performed**.
+
+### OM-02 status and completion tracking
+
+OM-02 is **improved locally but remains PARTIALLY COMPLETE**. The dashboard now has the missing status-count presentation and branch/period navigation synchronization, but the complete story still requires verification with real Development Supabase records/RLS and on an Android device. The existing mobile baseline therefore remains unchanged: Staff **16 complete / 4 partial**, Owner **15 complete / 4 partial**, overall **31 complete / 8 partial**. Weighted completion remains **89.7%** using `(31 + 0.5 x 8) / 39`.
+
+## 49. Staff ST-19 physical-count transaction history integration - 2026-11-16
+
+### Source alignment
+
+The requested source set is present in `docs/`: the Staff Mobile User Stories PDF, Owner Mobile User Stories PDF, Summary PDF, Project Charter PDF, and Sticker Sheet PDF. The relevant ST-12 through ST-19 requirements supplied for this sprint were compared with the existing Staff implementation. The repository does not have a working local PDF text-extraction toolchain, so exact PDF page numbers remain unverified; the implementation follows the source criteria recorded in this sprint request and the existing database contracts.
+
+### Existing implementation and confirmed gap
+
+The Staff workspace already had the Inventory Reporting entry and six report views: Total Ingredient Quantity, Ingredient Category Summary, Ingredient Stock Status, Branch Inventory Summary, Inventory Discrepancy, and Physical Inventory Count. It also already loaded real branch inventory, count submissions, correction requests, Owner validations, and adjustment history. The existing `loadTransactionHistory` service, however, read only `inventory_transactions`/`inventory_movements`. Physical counts are stored separately in `daily_stock_checks` and `daily_stock_count_lines`, so ST-19 history omitted physical-count transactions and could not open their revision history.
+
+### Implementation
+
+- `frontend/services/takosync.ts` now loads assigned-branch physical checks and count lines alongside inventory movements, then loads correction-request and validation history for those lines.
+- `frontend/staff/inventoryReports.ts` now builds read-only physical-count history records with signed differences, expected/original actual quantities, correction decisions, revised actual quantity, validation outcome, and audit timestamps.
+- `frontend/staff/StaffWorkspace.tsx` now includes a `Physical Inventory Count` history filter and renders physical-count details, including correction and validation history. Zero-difference counts remain visible as `0` rather than a misleading negative movement.
+- `frontend/staff/inventoryReports.test.mjs` adds regression coverage for newest-first count history, zero-difference counts, and retained correction/validation history.
+
+No migration, RPC, RLS policy, remote database, Docker environment, or Owner Web Portal code was changed. The implementation reuses the existing persisted tables and authorization path, so branch isolation remains enforced by the existing database query/RLS contract.
+
+### Verification
+
+- Focused `node --test frontend/staff/inventoryReports.test.mjs`: **passed, 9 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed, 143 frontend tests and 17 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed, 17 tests**.
+- `git diff --check`: **passed**; only the repository's existing LF/CRLF normalization warnings were reported.
+- Local implementation and automated tests: **verified**.
+- Hosted Supabase/RLS integration: **not verified**; the Development runner still lacks private PostgreSQL connection variables and executed 0 SQL assertions.
+- Android-device verification: **not performed**.
+
+### Story status
+
+ST-19 is improved locally but remains **PARTIALLY COMPLETE** until the dedicated Development database verifies branch-scoped physical-count history and the Android Staff workflow is exercised. ST-12 through ST-18 were preserved because their report screens and service contracts already existed; this sprint did not claim them complete solely from local unit tests. Mobile completion remains **89.7%**.
+
+## 48. Confirmed Development integration gate - 2026-11-16
+
+The user confirmed that Supabase project reference `lofltjhvivcjuyezxaif` is the dedicated `TakoSync-Development` project. The local non-secret configuration matches that reference: `.env` resolves to host `lofltjhvivcjuyezxaif.supabase.co`, and `backend/supabase/.temp/project-ref` contains the same reference. No credentials or tokens were printed.
+
+### Safe execution results
+
+- `scripts/check-supabase-test-prereqs.ps1`: **passed**. Node.js 24.21.0, PostgreSQL client 15.20, Strawberry Perl 5.42.3, `pg_prove` 3.37, CPAN, and local Supabase CLI metadata 3.0.0 were found. The checker performed no network access.
+- `scripts/test-supabase-remote.ps1 -ValidateOnly -AllTests`: **passed**. The runner selected all 10 approved `.test.sql` files and exited before environment or database access.
+- `scripts/test-supabase-remote.ps1 -TestFile 202611130006_three_branch_rls_and_session_integration.test.sql`: **safe stop**. It exited because `SUPABASE_DEV_PROJECT_NAME` is missing, before opening a PostgreSQL connection.
+- Required runner configuration is still absent from the process environment: `SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`, `SUPABASE_DEV_PROJECT_URL`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and either `PGPASSWORD` or `PGPASSFILE`.
+
+### Integration status
+
+- SQL assertions executed: **0**.
+- Migrations applied remotely: **0**.
+- Owner/Staff authentication, three-branch RLS, sales persistence, recipe deductions, duplicate handling, prepared-batter workflows, stock operations, physical counts, discrepancy authorization, Owner monitoring, and reports: **not verified against Development**.
+- Android-device verification: **not performed**.
+- Confirmed database failures or fixes: **none**; the runner did not reach the database.
+
+### Manual unblock
+
+Configure the runner in a local ignored environment or private `PGPASSFILE` with the confirmed project identity and SSL PostgreSQL connection settings from the Development project. Do not paste credentials into chat or commit them. Then rerun the single approved three-branch test first; no migrations, resets, seeds, or destructive SQL are performed by the runner. Mobile completion remains **89.7%** (Staff 16 complete/4 partial; Owner 15 complete/4 partial; 31 complete/8 partial overall).
+
+## 47. Final Supabase integration gate - 2026-11-16
+
+The local configuration was rechecked before any remote operation. The sanitized project reference
+configured in `.env` and `backend/supabase/.temp/project-ref` is `lofltjhvivcjuyezxaif`; the local link
+matches it. This does **not** establish that the hosted project is the dedicated `TakoSync-Development`
+project. The repository has no configured `SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`,
+`SUPABASE_DEV_PROJECT_URL`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, or `PGPASSFILE`
+development-test configuration. The existing dashboard URL and project reference are therefore treated
+as unverified and unsafe to contact.
+
+Safe local checks only:
+
+- `scripts/check-supabase-test-prereqs.ps1`: tools found; no network access.
+- `scripts/test-supabase-remote.ps1 -ValidateOnly -AllTests`: passed validation for all 10 approved
+  `.test.sql` files; no PostgreSQL or remote database was accessed.
+- SQL/pgTAP assertions executed: **0**.
+- Hosted migrations applied: **0**.
+- Hosted RLS, Auth, branch isolation, sales/inventory, prepared-batter, discrepancy, and Owner monitoring
+  workflows: **not verified**.
+- Android-device workflows: **not verified**.
+
+Manual unblock required: confirm in the Supabase Dashboard, outside this repository, that reference
+`lofltjhvivcjuyezxaif` is the dedicated `TakoSync-Development` project. Then configure the runner's
+non-secret project name/reference/URL and private PostgreSQL connection variables through a local ignored
+environment or `PGPASSFILE`. Do not paste credentials into chat. Only after that confirmation may the
+existing runner be used for isolated migration/schema preflight and SQL execution; no completion percentage
+has changed.
+
+## 46. Staff ST-02 Owner sales reconciliation sprint - 2026-11-16
+
+### Selected business gap
+
+The existing Staff-to-Owner path already persisted sales through `submit_sale` and delegated recipe,
+prepared-batter, branch, and duplicate-safe inventory processing to the checked-in database contract.
+The missing user-facing capability was Owner reconciliation of the two outcomes represented by that
+contract: a sale can be recorded while inventory processing is still pending or has failed. The Owner
+Sales workspace treated every `status = completed` row as equivalent in the transaction list, without a
+dedicated way to isolate inventory-confirmed transactions from recorded sales needing Staff recovery.
+
+### Implementation
+
+- Added `filterOwnerSalesByInventoryState` to the existing sales-status service. It keeps the existing
+  recorded-sales behavior and provides explicit `all`, `confirmed`, and `needs_processing` scopes.
+- Integrated the scopes into the live Owner Sales transaction list as `All recorded`, `Inventory
+  confirmed`, and `Needs processing` filters.
+- Added a visible reconciliation notice whenever recorded sales still need inventory processing. The
+  affected transactions remain visible with their existing Pending, Processing, or Failed status and
+  error details; no sale is silently removed or presented as inventory-confirmed.
+- Preserved the existing Staff retry/idempotency path and Owner combined refresh behavior. No schema,
+  RPC, RLS policy, migration, credential, remote database, Docker, or Owner Web Portal change was made.
+
+### Files changed in this sprint
+
+- `frontend/services/ownerSalesStatus.ts` - inventory-state partitioning for Owner reconciliation.
+- `frontend/services/takosync.ts` - re-exports the service contract to the mobile workspace.
+- `frontend/services/takosync.test.mjs` - regression coverage for recorded, confirmed, and unresolved sale scopes.
+- `frontend/owner/OwnerSalesWorkspace.tsx` - integrated reconciliation banner and transaction filters.
+- `AUDIT_REPORT.md` - this sprint record.
+
+### Verification results
+
+- Focused `node --test frontend/services/takosync.test.mjs frontend/owner/ownerSalesRefresh.test.mjs`: **passed - 17 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 142 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed** with only existing LF-to-CRLF normalization warnings.
+- Hosted Supabase/pgTAP/RLS verification: **not performed**. No dedicated Development target was contacted and no SQL assertions are counted as executed.
+- Android-device verification: **not performed**.
+
+### Story status and completion
+
+ST-02 remains **PARTIALLY COMPLETE**. The mobile Owner now exposes the recorded-versus-inventory-confirmed
+state needed to operate the existing Staff recovery workflow, but real Supabase sale persistence,
+recipe-based deductions, prepared-batter consumption, duplicate safety, branch RLS, and Android behavior
+remain unverified. Mobile completion remains **89.7%**: Staff 16 complete / 4 partial, Owner 15 complete /
+4 partial, 31 complete / 8 partial out of 39.
+
+## 43. Staff ST-02 persisted-sale to inventory-monitoring confirmation sprint - 2026-11-16
+
+### Source/count reconciliation
+
+The source files located were:
+
+- `docs/User_Story_v5.11.11.2026 - STAFF (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - OWNER (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - SUMMARY.pdf`
+- `docs/PROJECT_CHARTER_v5.09.11.2026.docx.pdf`
+- `docs/STICKER SHEET.pdf`
+
+The current repository coverage matrix identifies OM-11 Inventory discrepancy review as an existing complete Owner story, not an additional partial story. The earlier report section that called OM-11 partial is a release-readiness qualification, not a change to the source story inventory. The denominator therefore remains 39: Staff 20 stories, Owner 19 stories, 31 complete and 8 partial.
+
+The PDFs were located and inspected, but reliable automated text/page extraction was unavailable because the embedded font encoding could not be decoded and no Poppler/OCR tool was installed. No source page number is invented here.
+
+### Existing workflow
+
+The Staff checkout already sends the validated cart to `submit_sale`; the database contract validates branch/menu/price/payload, preserves transaction-reference idempotency, records sale/items/add-ons, and invokes the existing inventory-processing workflow. Staff preserves the cart/reference on uncertain failure, and Owner reads completed sales and inventory-processing status through RLS-backed services.
+
+### Gap discovered
+
+The mobile `submitSale` service validated reference, branch, payment, total, and status, but it did not require the saved response to include a usable persisted sale ID/creation timestamp or a valid inventory-processing status. A malformed RPC response could therefore proceed toward receipt navigation and monitoring as if persistence had been confirmed.
+
+### Implementation
+
+- Require a non-empty persisted sale ID and `created_at` before returning success.
+- Require `inventory_processing_status` to be one of `pending`, `processing`, `completed`, or `failed`.
+- Preserve the existing cart and transaction reference by failing through the existing retry/recovery path when the response is incomplete.
+- Added integration regression coverage for the incomplete persisted-sale response.
+- No schema, RPC, RLS, branch rule, recipe rule, prepared-batter rule, migration, remote database, Docker, or production data was changed.
+
+### Files changed this sprint
+
+- `frontend/services/takosync.ts`
+- `frontend/services/takosync.staff.integration.test.mjs`
+- `AUDIT_REPORT.md`
+
+### Verification
+
+- Focused `node --test frontend/services/takosync.staff.integration.test.mjs frontend/services/takosync.test.mjs`: **passed - 23 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 137 frontend tests**.
+- `npm.cmd run test:edge`: **passed - 16 Edge Function tests**.
+- `git diff --check`: **passed**; only existing line-ending warnings were reported.
+- Hosted Supabase/RLS and Android verification: **not performed**. No dedicated Development target was configured or contacted.
+
+ST-02 remains **PARTIALLY COMPLETE** pending verified Development Supabase catalog/recipe/RLS/inventory execution and Android/device verification.
+
+## 45. Staff ST-02 Owner monitoring synchronization sprint - 2026-11-16
+
+### Scope and existing implementation
+
+This sprint continued the source-required Staff sale -> inventory -> Owner monitoring workflow. The
+repository already had the substantive database contract: Staff checkout calls `submit_sale`, the
+database validates the branch/menu/prices and transaction reference, records the sale and line items,
+and invokes the existing atomic/idempotent inventory-processing path for recipe consumption and
+prepared-batter rules. The Staff retry path preserves the cart and transaction reference. Those
+previously implemented behaviors were preserved rather than duplicated.
+
+### Gap discovered
+
+The Owner Sales workspace refreshed only its sales query. When it was used inside the Owner mobile
+monitoring workspace, a successful Staff sale could therefore appear in the refreshed sales list while
+the parent inventory snapshot remained stale until a separate dashboard refresh. This was a real
+cross-module monitoring gap, not a database authorization change.
+
+### Implementation
+
+- Added an optional shared refresh callback to `OwnerSalesWorkspace`.
+- Connected `OwnerMobileWorkspace` to pass its existing combined refresh callback into the Sales
+  workspace.
+- Sales refresh and Sales retry now use the combined Owner refresh when available, updating sales,
+  inventory, and activity data together. Standalone Sales usage retains its local sales-only fallback.
+- Added focused tests proving the shared callback is preferred and the standalone fallback remains
+  available.
+- No migrations, RPCs, RLS policies, credentials, remote databases, Docker, or production data were
+  changed.
+
+### Files changed this sprint
+
+- `frontend/owner/OwnerSalesWorkspace.tsx` - shared refresh prop and monitoring refresh behavior.
+- `frontend/owner/OwnerMobileWorkspace.tsx` - passes the existing combined Owner refresh callback.
+- `frontend/owner/ownerSalesRefresh.ts` - small refresh-selection helper used by the live workspace.
+- `frontend/owner/ownerSalesRefresh.test.mjs` - regression tests for shared and fallback refresh paths.
+- `AUDIT_REPORT.md` - this sprint record.
+
+### Verification
+
+- Focused `node --test frontend/owner/ownerSalesRefresh.test.mjs frontend/owner/ownerAlerts.test.mjs frontend/services/takosync.staff.integration.test.mjs`: **passed - 19 tests**.
+- `npm.cmd run typecheck`: **passed** as part of `npm.cmd test`.
+- `npm.cmd test`: **passed - 141 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 Edge Function tests**.
+- `git diff --check`: **passed** with exit code 0; Git emitted only existing LF-to-CRLF normalization warnings.
+- Hosted Supabase/RLS/pgTAP verification: **not performed**. No dedicated Development target was
+  contacted, and no SQL assertions are counted as executed.
+- Android-device verification: **not performed**.
+
+### Story status and completion
+
+ST-02 remains **PARTIALLY COMPLETE**. Local code now keeps Owner sales and inventory monitoring
+synchronized after a refresh, while the existing database path remains responsible for actual sale
+persistence and inventory deductions. Development Supabase execution is still required to verify
+recipe deductions, prepared-batter consumption, duplicate safety, and RLS with real records. Android
+verification is also outstanding. Mobile completion remains **89.7%**: Staff 16 complete / 4 partial,
+Owner 15 complete / 4 partial, 31 complete / 8 partial out of 39.
+
+## 44. Owner OM-10 alert projection and branch-consistency sprint - 2026-11-16
+
+### Source alignment and story reconciliation
+
+The repository source set contains the Staff Mobile, Owner Mobile, Summary, Project Charter, and Sticker Sheet PDFs. The current coverage matrix continues to define 39 mobile stories: 20 Staff stories and 19 Owner stories. OM-11 is already represented as the existing complete discrepancy-review story; it is not an additional story or denominator change.
+
+The PDFs were located, but reliable automated text/page extraction was unavailable because their embedded font encoding could not be decoded and no Poppler/OCR tool is installed in this environment. No page number is invented. The local OM-10 implementation target follows the current repository coverage entry and existing Owner screen terminology: two alert tabs, three-branch filtering, configured stock/expiration rules, and explicit loading/error/empty behavior.
+
+### Gap found
+
+Owner alerts were derived inline in `OwnerMobileWorkspace.tsx`, while dashboard previews and alert-tab counts used related but separate projections. That made duplicate inventory rows, inconsistent branch filtering, and count/display drift possible even though the underlying RLS-backed loader was shared. The screen also had no single tested projection covering all three branches and both alert categories.
+
+### Implementation
+
+- Added `buildOwnerAlertSnapshot` to `frontend/owner/ownerAlerts.ts`.
+- The projection de-duplicates inventory rows by branch and ingredient and batch rows by batch ID.
+- It applies the selected All/Branch 1/Branch 2/Branch 3 filter to both alert categories.
+- It uses configured minimum stock and expiration-window values.
+- It distinguishes `Low Stock` from `Out of Stock`, excludes non-expiring/non-positive batches, classifies `Near Expiration` and `Expired`, sorts stock by remaining quantity and expiration by earliest date, and returns counts from the same arrays rendered by the screen.
+- `OwnerMobileWorkspace.tsx` now uses this projection for alert tabs, badges, dashboard previews, and the alert indicator while retaining the existing refresh-on-entry and RLS-backed data loading.
+- Added regression tests for threshold boundaries, zero stock, duplicate suppression, ordering, configured expiration windows, all three branch filters, empty counts, and count consistency.
+
+### Verification
+
+- Targeted `node --test frontend/owner/ownerAlerts.test.mjs`: **passed - 8 tests**.
+- `npm.cmd run typecheck`: **passed** as part of the full `npm.cmd test` run.
+- `npm.cmd test`: **passed - 139 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed** with exit code 0; Git emitted existing LF-to-CRLF normalization warnings only.
+- Hosted Supabase/RLS verification: **not performed**; no dedicated Development project was contacted.
+- Android-device verification: **not performed**.
+
+### Story status and completion
+
+OM-10 remains **PARTIALLY COMPLETE**. The local alert projection and interaction rules are now more complete and consistently tested, but hosted Owner data/RLS behavior and Android rendering/refresh behavior remain unverified. Mobile completion remains **89.7%**: Staff 16 complete / 4 partial, Owner 15 complete / 4 partial, 31 complete / 8 partial out of 39. This implementation does not justify changing the story count or percentage.
+
+## 42. Owner OM-11 discrepancy review confirmation and refresh sprint - 2026-11-16
+
+### Source-aligned scope
+
+The source set reviewed for this sprint was:
+
+- `docs/User_Story_v5.11.11.2026 - STAFF (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - OWNER (MOBILE APP).pdf`
+- `docs/User_Story_v5.11.11.2026 - SUMMARY.pdf`
+- `docs/PROJECT_CHARTER_v5.09.11.2026.docx.pdf`
+- `docs/STICKER SHEET.pdf`
+
+The discrepancy workflow is identified in the current coverage record as **OM-11 Inventory discrepancy review**: Owner review of pending correction requests, reasoned approve/reject decisions, separate validation, authorized adjustment, and audit details. The PDFs were located and inspected, but their embedded font encoding prevents reliable automated text/page-number extraction; this report does not invent a source page number.
+
+### Existing workflow and verified gap
+
+The repository already contained the connected workflow and guarded database contracts:
+
+1. Staff submits a physical count through `submit_daily_stock_check`.
+2. Staff requests a correction through `request_inventory_count_correction`.
+3. Owner approves or rejects through `decide_inventory_count_correction`.
+4. Owner separately validates an approved request through `validate_inventory_count_correction`.
+5. The database records an authorized movement and audit rows, or a no-change validation.
+
+The Owner UI already rendered pending/approved/rejected/validated records and preserved the original count values. Two integration defects were found in the mobile service boundary:
+
+- `decideOwnerInventoryCountCorrection` and `validateOwnerInventoryCountCorrection` destructured the Supabase RPC result without awaiting it, so a successful Owner action could not be confirmed by the mobile client.
+- The global Owner refresh button refreshed sales/inventory/activity but did not refresh discrepancy-review records while the review page was open.
+
+### Implementation
+
+- Awaited both guarded Owner discrepancy RPC calls before validating their responses.
+- Added service-level request ID and 1-1000 character reason validation before an RPC is sent.
+- Added optional client injection for these two service methods so the real RPC payload contract is locally testable without changing production authorization.
+- Added a shared Owner refresh path that refreshes the Owner snapshot and discrepancy-review records together.
+- Preserved the separate approve/reject then Validate Count authorization sequence; no database policy, migration, RLS rule, or business rule was weakened.
+
+### Files changed
+
+- `frontend/services/takosync.ts` - awaited and validated Owner discrepancy RPC results.
+- `frontend/services/takosync.staff.integration.test.mjs` - guarded RPC payload, reason normalization, and preflight rejection tests.
+- `frontend/owner/OwnerMobileWorkspace.tsx` - refreshes discrepancy reviews with the global Owner refresh action.
+- `AUDIT_REPORT.md` - sprint record.
+
+### Verification results
+
+- Focused `node --test frontend/services/takosync.staff.integration.test.mjs`: **passed - 8 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 136 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed**, with existing line-ending warnings only.
+- Hosted Supabase/RLS verification: **not performed**; no Development target was confirmed and no remote database was contacted.
+- Android-device verification: **not performed**.
+
+OM-11 remains **PARTIALLY COMPLETE for release-readiness tracking**. The locally verified mobile workflow now correctly confirms Owner decisions and refreshes review data, but the complete story still requires execution against a dedicated Development Supabase database/RLS environment and Android verification. Mobile completion remains **89.7%**: 31 complete, 8 partial out of 39.
+
+## 38. Staff ST-10 stale alert-count fail-closed sprint - 2026-11-16
+
+### Selected requirement
+
+ST-10 requires Staff low-stock and expiration alerts to provide accurate counts and to handle loading and failure states without presenting stale data as current. The Staff Mobile User Stories PDF was located and inspected, but its embedded font encoding prevents reliable automated page-number extraction; no source page number is asserted here.
+
+### Gap discovered
+
+The Staff Alerts screen retained the previously loaded alert projection when a refresh failed. Its navigation badge, dashboard summary, and alert-tab counts were derived from that retained projection even while the error state and Retry action were displayed. This could make an older alert count appear current after a failed inventory refresh.
+
+### Implementation
+
+- Added `countInventoryAlertsWhenReady` to return zero counts while alert data is loading or has a non-empty error.
+- Updated the Staff navigation badge, dashboard alert summary, and alert-tab counts to use the fail-closed count helper.
+- Preserved the existing alert records, assigned-branch filtering, loading/error UI, and Retry action; no database, RLS, or business rule changes were made.
+- Added a regression test covering loading, error, and successful settled states.
+
+### Files changed
+
+- `frontend/staff/inventoryAlerts.ts` â€” fail-closed alert count helper.
+- `frontend/staff/StaffWorkspace.tsx` â€” badge, dashboard, and tab count integration.
+- `frontend/staff/inventoryAlerts.test.mjs` â€” stale-count regression coverage.
+- `AUDIT_REPORT.md` â€” sprint evidence.
+
+### Verification results
+
+- Targeted `node --test frontend/staff/inventoryAlerts.test.mjs`: **passed â€” 10 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed â€” 128 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed â€” 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown/CRLF warning only.
+- Hosted Supabase/RLS verification: **not performed**; no dedicated Development target was configured and no remote database was contacted.
+- Android-device verification: **not performed**.
+
+ST-10 remains **PARTIALLY COMPLETE**. The local stale-count failure mode is corrected and tested, but full story completion still requires real database/RLS verification of branch-scoped alert data and Android verification. Mobile completion remains **89.7%** because this fixes one acceptance-criteria gap without completing the full story.
+
+## 39. Owner OM-08 Manila reporting-period integration sprint - 2026-11-16
+
+### Selected requirement
+
+OM-08 requires Products Sold to use the same selected reporting period and branch selection as the other Owner summaries. The Owner Mobile User Stories PDF was located and inspected, but its embedded font encoding prevents reliable automated page-number extraction; no source page number is asserted here.
+
+### Gap discovered
+
+The Owner sales workspace reused the selected branch, but when its local period or branch controls triggered a fresh query, it built Today, Weekly, Monthly, and Custom ranges with device-local `Date` operations. The Owner dashboard and shared sales loader use the approved Asia/Manila business-day boundaries. On devices outside the Philippines, Products Sold could therefore query a different period than the dashboard.
+
+### Implementation
+
+- Added `ownerSalesPeriod.ts` as the single Sales-workspace adapter from its `Today`/`Daily`/`Weekly`/`Monthly`/`Custom` labels to the existing `getManilaReportingRange` utility.
+- Updated `OwnerSalesWorkspace.tsx` to use Manila calendar boundaries for initial values, monitoring refreshes, report generation, and displayed date labels.
+- Preserved the existing branch filter, completed-sale query, product aggregation, exact empty state, loading/error/Retry behavior, and read-only summary.
+- Enabled TypeScript `.ts` imports required by the existing no-emit test setup; no application dependency or database schema was changed.
+
+### Files changed
+
+- `frontend/owner/ownerSalesPeriod.ts` - shared period conversion and Manila-boundary range helper.
+- `frontend/owner/ownerSalesPeriod.test.mjs` - timezone-edge, custom-range, and invalid-range regression tests.
+- `frontend/owner/OwnerSalesWorkspace.tsx` - uses the shared Manila period helper.
+- `tsconfig.json` - permits `.ts` imports under the existing no-emit configuration.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/owner/ownerSalesPeriod.test.mjs frontend/owner/ownerSalesSummary.test.mjs`: **passed - 7 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 132 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed**, with the existing Markdown/CRLF warning only.
+- Hosted Supabase/RLS verification: **not performed**; no dedicated Development target was configured and no remote database was contacted.
+- Android-device verification: **not performed**.
+
+OM-08 remains **PARTIALLY COMPLETE**. Reporting-period consistency is now locally implemented and tested, but real sale/product joins, completed-sale filtering, branch RLS, hosted data, and Android behavior remain unverified. Mobile completion remains **89.7%** because the full story is not yet supported by hosted and device evidence.
+
+## 40. Staff ST-20 account-scoped alert preference hydration sprint - 2026-11-16
+
+### Selected requirement
+
+ST-20 covers the Staff profile/access settings, including alert visibility controls, theme selection, and confirmed logout. The Staff Mobile User Stories PDF was located and inspected, but its embedded font encoding prevents reliable automated page-number extraction; no source page number is asserted here.
+
+### Gap discovered
+
+Staff alert preferences were already persisted per authenticated user, and the profile screen already exposed the toggles. During an account change or session restoration, however, the previous account's in-memory preferences could remain active until the new account's AsyncStorage value finished loading. This could temporarily expose or hide alerts using another Staff account's settings.
+
+### Implementation
+
+- Added `getActiveStaffAlertPreferences`, which returns both alert categories disabled until the current account's preferences are hydrated.
+- Updated `StaffWorkspace` to use the account-scoped hydrated preferences when deriving visible alerts and counts.
+- Preserved the existing per-user storage key, optimistic save/rollback behavior, theme persistence, confirmation logout, and in-app alert navigation.
+- Added regression coverage for the fail-closed pre-hydration state and the hydrated state.
+- No notification package, push-delivery service, database schema, RLS policy, or remote operation was added.
+
+### Files changed
+
+- `frontend/staff/alertPreferences.ts` - account-scoped active preference helper.
+- `frontend/staff/alertPreferences.test.mjs` - hydration isolation regression test.
+- `frontend/staff/StaffWorkspace.tsx` - uses only hydrated current-user preferences.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/staff/alertPreferences.test.mjs frontend/staff/inventoryAlerts.test.mjs`: **passed - 14 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 133 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed**, with existing line-ending warnings only.
+- Hosted Supabase/RLS verification: **not performed**; no dedicated Development target was configured and no remote database was contacted.
+- Android notification permission/delivery and device verification: **not performed**.
+
+ST-20 remains **PARTIALLY COMPLETE**. Account-scoped preference behavior is now locally implemented and tested, but any source-required device notification delivery/permission behavior and Android verification remain pending. Mobile completion remains **89.7%** because this does not complete the full story.
+
+## 41. Owner OM-10 Manila expiration classification sprint - 2026-11-16
+
+### Story decision
+
+ST-20's locally verifiable profile, assigned-branch display, secure logout, return-to-login, and business-session expiry behavior were already implemented. The remaining source-required notification/device behavior cannot be verified or completed safely without the device/runtime setup. The next actionable story was therefore OM-10 low-stock and expiration monitoring.
+
+### Requirement and gap
+
+OM-10 requires Owner expiration alerts to identify Near Expiration and Expired batches using the configured alert window and recorded expiration dates across the three branches. The Owner Mobile User Stories PDF was located and inspected, but its embedded font encoding prevents reliable automated page-number extraction; no source page number is asserted here.
+
+The Owner alert projection already used the configured window, preserved batch information, sorted earliest first, applied branch selection, and exposed the required loading, empty, error, and Retry states. Its remaining local defect was that `daysUntil` used the device's local midnight. Owners outside Asia/Manila could therefore classify a batch one day early or late compared with the shared business-day/reporting rules.
+
+### Implementation
+
+- Added `daysUntilOwnerExpiration`, using the existing `manilaDateKey` utility and UTC date keys for calendar-day comparison.
+- Updated Owner Alerts to use Manila-based expiration classification.
+- Added timezone-boundary regression coverage around Manila midnight.
+- Preserved the existing two-tab UI, branch filtering, counts, batch reference, recorded expiration date, exact empty/error messages, Retry action, and RLS-backed data loading.
+- No database schema, RLS policy, migration, notification package, Docker, or remote operation was changed.
+
+### Files changed
+
+- `frontend/owner/ownerAlerts.ts` - Manila-based expiration-day helper.
+- `frontend/owner/ownerAlerts.test.mjs` - timezone-boundary regression test.
+- `frontend/owner/OwnerMobileWorkspace.tsx` - uses the shared expiration calculation.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/owner/ownerAlerts.test.mjs frontend/owner/ownerSalesPeriod.test.mjs`: **passed - 9 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 134 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed**, with existing line-ending warnings only.
+- Hosted Supabase/RLS verification: **not performed**; no dedicated Development target was configured and no remote database was contacted.
+- Android-device verification: **not performed**.
+
+OM-10 remains **PARTIALLY COMPLETE**. Manila-consistent expiration classification is locally implemented and tested, but hosted Owner data/RLS behavior and Android rendering/interaction remain unverified. Mobile completion remains **89.7%**.
+
+## 33. Owner OM-02 dashboard sales summary sprint - 2026-11-16
+
+### Existing implementation and gap
+
+The live Owner mobile dashboard already opened as the post-login Owner workspace, reused the selected reporting period, rendered branch sales cards, inventory/alert previews, recent activity, loading states, and Retry controls. The missing dashboard requirement was an explicit **Total Recorded Sales** card backed by a tested aggregation contract. Branch totals were also calculated inline without a reusable guarantee that only completed, finite, non-negative recorded sales were counted or that zero-sales branches remained visible.
+
+### Implementation
+
+- Added `ownerDashboardSummary.ts` for completed-sale filtering, combined totals, transaction counts, branch totals, and zero-sales branch preservation.
+- Replaced the previous “Sales today” dashboard card with `Total Recorded Sales`, using the selected reporting period and current Owner branch selection.
+- Reused the same summary contract for average transaction and branch-card totals, preserving branch-card navigation into Sales monitoring.
+- Made Recent Activities rows tappable and added an `ActivityDetail` route that receives the exact selected saved record, displays type/detail/branch/reference/amount/timestamp, and clears selection when returning to Dashboard or Records.
+- Added shared newest-first activity sorting and safe missing-record selection helpers.
+- No database schema, RLS policy, migration, remote data, Staff Mobile code, or Owner Web Portal code was changed.
+
+### OM-02 status
+
+- Dashboard first screen after Owner login: **existing implementation retained; source verified**.
+- Total Recorded Sales card: **implemented and locally tested**.
+- Period selection and recalculation: **existing parent/service flow retained; locally source-verified; hosted period query unverified**.
+- Three branch cards and zero-sales representation: **implemented in the summary contract; live branch data/RLS unverified**.
+- Inventory, low-stock, expiration, refresh, loading, exact retryable error message, Retry, and navigation: **implemented/retained; source verified; hosted Supabase and Android behavior unverified**.
+- Recent Activities required fields, newest-first ordering, tappable rows, exact-record detail selection, supported activity-type details, and return navigation: **implemented and locally tested; hosted data and Android interaction unverified**.
+
+OM-02 remains **PARTIALLY COMPLETE** pending hosted Supabase/RLS verification and Android-device verification.
+
+### Files changed
+
+- `frontend/owner/OwnerMobileWorkspace.tsx` - dashboard Total Recorded Sales card and shared sales summary usage.
+- `frontend/owner/ownerDashboardSummary.ts` - completed-sale and three-branch aggregation rules.
+- `frontend/owner/ownerDashboardSummary.test.mjs` - cross-branch totals, period-summary contract, invalid/unconfirmed exclusion, zero-sales branches, and selected-branch coverage.
+- `frontend/owner/ownerActivities.ts` - newest-first sorting and exact activity selection helpers.
+- `frontend/owner/ownerActivities.test.mjs` - activity sorting, exact selection, and missing-record coverage.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/owner/ownerDashboardSummary.test.mjs`: **passed - 3 tests**.
+- Targeted `node --test frontend/owner/ownerActivities.test.mjs frontend/owner/ownerDashboardSummary.test.mjs`: **passed - 5 tests**.
+- Targeted `node --test frontend/owner/ownerAlerts.test.mjs`: **passed - 5 tests**; OM-10 regression preserved.
+- Combined focused Owner OM-02/OM-10 run: **passed - 10 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 123 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed** (Git emitted only its existing LF/CRLF normalization warning for `AUDIT_REPORT.md`).
+- Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
+- Android-device verification: **not performed**.
+
+## 32. Owner OM-10 low-stock and expiration monitoring sprint - 2026-11-16
+
+### Existing implementation and verified gaps
+
+The Owner mobile workspace already used the RLS-backed `loadOwnerInventory` service, configured `minimum_stock` values, configured `near_expiration_days`, branch-scoped inventory/batch projections, and a shared Owner refresh callback. It also already had loading and Retry-capable error infrastructure.
+
+The alert page did not match OM-10: it exposed three tabs (`Low stock`, `Expiring soon`, and `Expired`) instead of the required two (`Low Stock` and `Expiration`), used non-required empty-state messages, did not explicitly label zero-quantity items as `Out of Stock` in the alert card, and did not refresh the shared Owner snapshot when entering Alerts. Expiration records were not explicitly sorted in the Owner projection.
+
+### Implementation
+
+- Added `ownerAlerts.ts` with directly testable Owner alert classification, exact required copy, two-tab counts, and non-mutating earliest-date sorting.
+- Changed Owner Alerts to exactly two tabs: `Low Stock` and `Expiration`.
+- Combined near-expiration and expired batches in the Expiration tab, retaining explicit `Near Expiration` and `Expired` status labels and earliest-expiration ordering.
+- Applied the configured minimum-stock boundary, including zero quantity as `Out of Stock`, and rendered ingredient, branch, expected quantity, and minimum stock level on low-stock cards.
+- Applied the exact `No alerts at the moment.` empty state for either tab.
+- Applied the exact required load-failure message while preserving the existing Retry action.
+- Refreshes the shared Owner inventory snapshot when entering Alerts, in addition to the existing Sales and Inventory page-entry refreshes.
+- Kept branch selection shared with the Owner workspace; the `All` chip and the three database-provided branch chips filter both alert tabs. No query, migration, RLS policy, or Owner Web Portal code was changed.
+
+### OM-10 status
+
+- Two required tabs and per-tab counts: **implemented and locally tested at the projection level**.
+- Low-stock threshold, zero-stock labeling, required card fields: **implemented and locally tested at the projection level**.
+- Near Expiration/Expired classification and earliest-date ordering: **implemented and locally tested at the projection level**.
+- Branch filtering: **existing shared Owner branch filter retained; source verified; hosted RLS behavior unverified**.
+- Loading, exact error copy, Retry, and exact empty state: **implemented/preserved; component-level device behavior unverified**.
+- Refresh after stock, sales, batter, and authorized adjustment records: **shared Owner refresh path retained and Alerts page-entry refresh added; end-to-end hosted verification unverified**.
+
+OM-10 remains **PARTIALLY COMPLETE**. Local tests verify the deterministic alert rules, but hosted Supabase/RLS behavior and Android rendering/interaction have not been tested.
+
+### Files changed
+
+- `frontend/owner/OwnerMobileWorkspace.tsx` - two-tab Owner alert UI, classifications, sorting, exact states, branch chip label, and Alerts refresh.
+- `frontend/owner/ownerAlerts.ts` - Owner alert rules and constants.
+- `frontend/owner/ownerAlerts.test.mjs` - regression tests for thresholds, zero stock, expiration window, expiry, sorting, counts, and required copy.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- `node --test frontend/owner/ownerAlerts.test.mjs`: **passed - 5 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- `npm.cmd test`: **passed - 118 frontend tests and 16 Edge Function tests**.
+- `npm.cmd run test:edge`: **passed - 16 tests**.
+- `git diff --check`: **passed** (Git emitted only its existing LF/CRLF normalization warning for `AUDIT_REPORT.md`).
+- Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
+- Android-device verification: **not performed**.
+
+Mobile completion remains **89.7%**: Staff 16 complete/4 partial, Owner 15 complete/4 partial, overall 31 complete/8 partial. OM-10 remains partial and preparation/local tests do not justify a weighted percentage change.
+
+## 34. Staff ST-01 Auth session lifecycle sprint - 2026-11-16
+
+### Source alignment and gap
+
+The repository source set identifies ST-01 as Staff login and branch-account access. The existing implementation validated credentials, restored a persisted session at launch, enforced the business-session check, and supported explicit logout. A gap remained after launch: the mobile shell did not subscribe to Supabase Auth state changes, so an externally revoked or ended Auth session could leave the Staff or Owner workspace visible until another protected request or the business-session timer noticed it.
+
+### Implementation
+
+- Added `shouldClearMobileSession` to centralize the fail-closed decision for unexpected Supabase `SIGNED_OUT` events.
+- Subscribed the native mobile app shell to Supabase Auth state changes when Supabase is configured.
+- Unexpected sign-out now clears Staff/Owner data, resets navigation state, and requires sign-in again with the message `Your session has ended. Please sign in again.`
+- Explicit logout remains responsible for its existing role-specific destination and is not overridden by the subscription.
+- No database schema, RLS policy, migration, credential, Staff branch rule, or Owner Web Portal code changed.
+
+### Files changed
+
+- `frontend/App.tsx` - mobile Auth state subscription and fail-closed navigation.
+- `frontend/services/authSessionEvents.ts` - typed event decision helper.
+- `frontend/services/authSessionEvents.test.mjs` - unexpected sign-out, explicit logout, and ordinary Auth event coverage.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/services/authSessionEvents.test.mjs frontend/owner/ownerActivities.test.mjs frontend/owner/ownerDashboardSummary.test.mjs frontend/owner/ownerAlerts.test.mjs`: **passed - 13 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- Hosted Supabase/Auth and RLS verification: **not performed**; no unknown project was contacted.
+- Android-device verification: **not performed**.
+
+ST-01 remains **PARTIALLY COMPLETE** because live Auth/Edge Function deployment, real account provisioning, branch authorization, and device behavior remain unverified. OM-01 receives the same defensive session handling but also remains partial. Mobile completion remains **89.7%**: Staff 16 complete/4 partial, Owner 15 complete/4 partial, overall 31 complete/8 partial.
+
+## 35. Staff ST-02 checkout validation sprint - 2026-11-16
+
+### Source alignment and gap
+
+The source set is `docs/User_Story_v5.11.11.2026 - STAFF (MOBILE APP).pdf`; the relevant ST-02 page number could not be recovered reliably because the PDF uses custom embedded font encoding and no usable text/OCR extractor is installed in this environment. The acceptance requirement used for this local change is the source-aligned checkout behavior: a Staff confirmation must validate the selected payment method and required order details before a sale is submitted.
+
+The existing React Native checkout constrained normal UI input, but `submitSale` accepted malformed runtime payloads at the shared service boundary. Invalid payment methods, empty orders, non-positive totals, invalid quantities, and invalid prices could therefore reach the database RPC instead of being rejected consistently before persistence.
+
+### Implementation
+
+- Added `validateSaleSubmission` to the shared sales-status service rules.
+- `submitSale` now validates transaction reference, assigned branch, Cash/Card payment method, positive total, product lines, and add-on lines before calling `submit_sale`.
+- Existing branch authorization, atomic RPC persistence, transaction-reference idempotency, retry recovery, recipe deduction, and prepared-batter behavior remain unchanged.
+- Added regression coverage for valid payloads and malformed checkout payload rejection.
+
+### Files changed
+
+- `frontend/services/ownerSalesStatus.ts` - checkout validation rules.
+- `frontend/services/takosync.ts` - validation before the sale RPC.
+- `frontend/services/takosync.test.mjs` - malformed checkout regression coverage.
+- `AUDIT_REPORT.md` - sprint evidence and verification boundaries.
+
+### Verification results
+
+- Targeted `node --test frontend/services/takosync.test.mjs frontend/services/authSessionEvents.test.mjs frontend/owner/ownerActivities.test.mjs`: **passed - 19 tests**.
+- `npm.cmd run typecheck`: **passed**.
+- Hosted Supabase/RLS verification: **not performed**. No remote project, migration, seed, reset, or destructive SQL was used.
+- Android-device verification: **not performed**.
+
+ST-02 remains **PARTIALLY COMPLETE** because real catalog/recipe data, atomic inventory consumption, persisted sale results, and duplicate-safe behavior still require a confirmed Development database and Android verification. Mobile completion remains **89.7%**: Staff 16 complete/4 partial, Owner 15 complete/4 partial, overall 31 complete/8 partial.
+
+## 36. Staff ST-02 add-on checkout integration correction - 2026-11-16
+
+### Trace finding
+
+The existing POS path in `MenuWorkspace.tsx` sends selected add-ons with `addonId` and `unitPrice` only. The existing `normalizeSalePayload` contract in `ownerSalesStatus.ts` intentionally supplies the database-compatible default quantity of `1` when an add-on quantity is omitted. The new ST-02 service validation added in the prior sprint incorrectly rejected that valid POS payload because it required `quantity` to be explicitly present.
+
+This was a real end-to-end defect: selecting an add-on in Staff checkout could fail locally before the production `submit_sale` RPC was called.
+
+### Correction
+
+- Updated add-on validation to use the existing default quantity of `1` when the POS omits quantity.
+- Preserved validation for invalid explicit quantities and prices.
+- Added an integration regression asserting that the actual RPC payload contains `quantity: 1` for an omitted POS add-on quantity.
+- No database function, RLS policy, migration, recipe rule, prepared-batter rule, or Owner monitoring query was changed.
+
+### Verification
+
+- Targeted `node --test frontend/services/takosync.test.mjs frontend/services/takosync.staff.integration.test.mjs`: **passed - 19 tests**.
+- The existing service-level validation remains integrated in `submitSale` before the `submit_sale` RPC.
+- Hosted Supabase/RLS and Android verification: **not performed**.
+
+ST-02 remains **PARTIALLY COMPLETE**. This correction restores valid add-on checkout behavior locally, but real sale persistence, recipe-based inventory deduction, prepared-batter consumption, branch RLS, and Owner synchronization still require a confirmed Development database and Android verification. Mobile completion remains **89.7%**.
+
+## 37. Staff ST-02 saved-sale response integrity sprint - 2026-11-16
+
+### Development environment gate
+
+No dedicated Development Supabase target is configured in the current process. The repository contains only client configuration variables (`EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`); the safe remote runner's required `SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`, `SUPABASE_DEV_PROJECT_URL`, and PostgreSQL connection variables are absent. No Supabase URL was contacted and no SQL was executed.
+
+### New local gap
+
+The existing `submitSale` service validated the outgoing payload but trusted the returned RPC row's reference, branch, payment method, and total. A malformed or mismatched response could therefore be treated as the Staff's successful sale and opened as a receipt.
+
+### Implementation
+
+- Added post-RPC integrity checks for transaction reference, branch, payment method, and total.
+- Mismatches now fail closed and preserve the checkout for the existing safe retry path.
+- Added a regression test that simulates a mismatched saved branch response.
+- No migration, RPC, RLS policy, recipe rule, or prepared-batter rule was changed.
+
+### Verification
+
+- Targeted `node --test frontend/services/takosync.staff.integration.test.mjs frontend/services/takosync.test.mjs`: **passed - 20 tests**.
+- Development Supabase integration tests: **not run; target not configured**.
+- Hosted RLS and Android verification: **not performed**.
+
+ST-02 remains **PARTIALLY COMPLETE**. Local checkout response integrity is stronger, but real Supabase persistence, inventory deduction, duplicate safety, branch RLS, Owner monitoring, and Android behavior remain outstanding. Mobile completion remains **89.7%**.
+
 ## 25. Staff alert-preference persistence sprint - 2026-11-13
 
 ### Implemented mobile scope
@@ -967,3 +1710,45 @@ The highest-priority locally actionable gap was the ST-02 failed-save criterion:
 - Supabase/PostgreSQL, three-branch RLS, atomic recipe deduction, prepared-batter stock, and Android checkout retry: **UNVERIFIED**.
 
 ST-02 remains **PARTIALLY COMPLETE** until a confirmed Development database and Android device verify the complete persisted sale/inventory workflow. Overall mobile completion remains **89.7%**; this criterion improvement does not complete the full story or justify a weighted percentage change.
+
+## 31. Owner OM-08 products-sold summary sprint - 2026-11-16
+
+### Requirements reviewed
+
+The existing Owner sales workspace already reused its selected period and branch controls, and `loadOwnerSalesData` queried only `sales.status = 'completed'` within the selected date range and branch before loading related sale items. The summary was read-only and already sorted by quantity. The verified gaps were the non-exact empty-state copy and the lack of an explicit zero/invalid-quantity exclusion in the aggregation contract.
+
+### Implementation
+
+- Extracted product aggregation into `ownerSalesSummary.ts` so the OM-08 rules are reusable and directly testable.
+- Repeated product lines are aggregated by product ID, quantities and amounts are summed, and results remain sorted highest quantity first with deterministic tie-breakers.
+- Zero, negative, and invalid quantities are excluded from the Products Sold list.
+- The empty state now displays exactly: `No sales recorded for this period.`
+- Existing period, branch, completed-sale query, loading, error, Retry, and read-only behavior were preserved.
+- No database query, RLS policy, migration, or Owner Web Portal code was changed.
+
+### OM-08 status
+
+- Same reporting period and branch selection: **existing implementation retained; source verified**.
+- Product quantity aggregation: **implemented and locally tested**.
+- Descending quantity ordering: **implemented and locally tested**.
+- Confirmed/recorded sales only: **existing service query uses completed sales; hosted verification pending**.
+- Zero-sales exclusion: **implemented and locally tested**.
+- Exact empty-state message: **implemented and locally tested**.
+- Read-only view: **preserved and locally tested at the summary-contract level**.
+
+OM-08 remains **PARTIALLY COMPLETE** until the dedicated Development Supabase project confirms real sale/sale-item/product joins, branch RLS, and reporting-period results, and Android behavior is exercised. Local tests do not replace hosted database or device verification.
+
+### Files changed
+
+- `frontend/owner/ownerSalesSummary.ts` — OM-08 aggregation rules and exact empty-state constant.
+- `frontend/owner/ownerSalesSummary.test.mjs` — aggregation, repeated lines, zero/invalid quantities, empty-state, sorting, and read-only regression tests.
+- `frontend/owner/OwnerSalesWorkspace.tsx` — uses the shared OM-08 helper and exact empty state.
+- `AUDIT_REPORT.md` — sprint evidence and verification boundaries.
+
+### Verification results
+
+- `npm.cmd run typecheck`: **passed**.
+- Targeted `node --test frontend/owner/ownerSalesSummary.test.mjs`: **passed — 4 tests**.
+- Full frontend and Edge Function regression results are recorded after the final run below.
+- Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
+- Android-device verification: **not performed**.

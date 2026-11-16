@@ -7,12 +7,35 @@ import {
   findDuplicateSaleVariantIds,
   getStaffSaleFeedback,
   getOwnerSaleInventoryStatusLabel,
+  filterOwnerSalesByInventoryState,
   isInventoryProcessingSuccessful,
   normalizeSalePayload,
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
   shouldIncludeOwnerSaleInSummary,
+  validateSaleSubmission,
 } from './ownerSalesStatus.ts';
+
+test('sale validation rejects malformed checkout payloads before persistence', () => {
+  const valid = {
+    transactionReference: 'SALE-1',
+    branchId: 'branch-a',
+    paymentMethod: 'Cash',
+    totalAmount: 10,
+    items: [{ variantId: 'variant-a', quantity: 1, unitPrice: 10 }],
+    addons: [],
+  };
+
+  assert.doesNotThrow(() => validateSaleSubmission(valid));
+  assert.doesNotThrow(() => validateSaleSubmission({
+    ...valid,
+    addons: [{ addonId: 'addon-a', unitPrice: 1.5 }],
+  }));
+  assert.throws(() => validateSaleSubmission({ ...valid, paymentMethod: 'Cheque' }), /Select Cash or Card/);
+  assert.throws(() => validateSaleSubmission({ ...valid, totalAmount: 0 }), /greater than zero/);
+  assert.throws(() => validateSaleSubmission({ ...valid, items: [] }), /at least one item/);
+  assert.throws(() => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 0, unitPrice: 10 }] }), /quantity greater than zero/);
+});
 
 test('sale retry payload normalization is order-independent but price-sensitive', () => {
   const first = normalizeSalePayload({
@@ -62,6 +85,12 @@ test('owner sales include completed sales regardless of inventory processing sta
   assert.equal(isInventoryProcessingSuccessful(sales[2]), false);
   assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'pending' }), 'Pending');
   assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'cancelled' }), 'Failed');
+});
+
+test('owner sales reconciliation separates recorded sales from inventory-confirmed sales', () => {
+  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'all').map((sale) => sale.inventory_processing_status), ['completed', 'pending', 'failed']);
+  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'confirmed').map((sale) => sale.inventory_processing_status), ['completed']);
+  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'needs_processing').map((sale) => sale.inventory_processing_status), ['pending', 'failed']);
 });
 
 test('sale payload normalization tolerates missing arrays and empty identifiers', () => {

@@ -22,12 +22,14 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
+import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
-import { isSupabaseConfigured, supabaseConfigurationError } from './services/supabase';
+import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
+import { shouldClearMobileSession } from './services/authSessionEvents';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
@@ -71,7 +73,7 @@ type PreviewInventoryItem = {
   lowStock: boolean;
   branch?: string;
 };
-type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace';
+type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace' | 'changePassword';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
 type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
@@ -89,7 +91,13 @@ function formatCurrency(value: number): string {
 }
 
 export default function App() {
-  if (Platform.OS === 'web') return <OwnerPortalWeb />;
+  if (
+    Platform.OS === 'web' &&
+    process.env.EXPO_PUBLIC_APP_MODE !== 'staff'
+  ) {
+    return <OwnerPortalWeb />;
+  }
+
   return (
     <ThemeProvider>
       <AppContent />
@@ -101,6 +109,7 @@ function AppContent() {
   const { colors, isDark, setMode } = useTheme();
   const styles = useAppStyles();
   const [screen, setScreen] = useState<Screen>('loading');
+  const [sessionInitialized, setSessionInitialized] = useState(!isSupabaseConfigured);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
   const [staffUsername, setStaffUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -108,6 +117,7 @@ function AppContent() {
   const [loginError, setLoginError] = useState('');
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
+  const authOperationLock = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const businessExpiryLock = useRef(false);
@@ -150,30 +160,37 @@ function AppContent() {
     ? Math.min(height, frameWidth * 2)
     : height;
   const visibleScreen =
-    (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
+    (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'changePassword') && authenticatedUser === null
       ? 'login'
       : screen;
 
   useEffect(() => {
-    if (screen !== 'loading' || !fontsLoaded) return;
-    const timer = setTimeout(() => setScreen('welcome'), 1500);
-    return () => clearTimeout(timer);
-  }, [screen, fontsLoaded]);
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured) {
+      setSessionInitialized(true);
+      setScreen('welcome');
+      return;
+    }
     let active = true;
     getCurrentUser()
       .then((user) => {
-        if (!active || !user) return;
+        if (!active) return;
+        if (!user) {
+          setScreen('welcome');
+          return;
+        }
         setAuthenticatedUser(user);
-        setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+         setScreen(user.role === 'Staff'
+           ? (user.mustChangePassword ? 'changePassword' : 'staffWorkspace')
+           : 'dashboard');
       })
       .catch((error: unknown) => {
         if (active) {
           setLoginError(error instanceof Error ? error.message : 'Unable to restore the saved session.');
           setScreen('login');
         }
+      })
+      .finally(() => {
+        if (active) setSessionInitialized(true);
       });
     return () => {
       active = false;
@@ -496,7 +513,7 @@ function AppContent() {
     `${item.name} ${item.branch}`.toLowerCase().includes(searchTerm),
   );
   const handleLogin = async () => {
-    if (authLock.current) return;
+    if (authLock.current || authOperationLock.current) return;
     if (!staffUsername.trim()) {
       setLoginError('Please enter your username.');
       return;
@@ -506,24 +523,31 @@ function AppContent() {
       return;
     }
     authLock.current = true;
+    authOperationLock.current = true;
     setAuthenticating(true);
     setLoginError('');
     try {
       const user = await signInStaff(staffUsername, password);
       setAuthenticatedUser(user);
-      setScreen('staffWorkspace');
+      setScreen(user.mustChangePassword ? 'changePassword' : 'staffWorkspace');
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
       authLock.current = false;
+      authOperationLock.current = false;
       setAuthenticating(false);
     }
   };
 
   const handleOwnerLogin = async (email: string, ownerPassword: string) => {
-    const user = await signIn(email, ownerPassword, 'Owner');
-    setAuthenticatedUser(user);
-    setScreen('dashboard');
+    authOperationLock.current = true;
+    try {
+      const user = await signIn(email, ownerPassword, 'Owner');
+      setAuthenticatedUser(user);
+      setScreen('dashboard');
+    } finally {
+      authOperationLock.current = false;
+    }
   };
 
   const clearSignedInState = useCallback(() => {
@@ -544,6 +568,17 @@ function AppContent() {
     setActivityLoadError('');
     setDashboardMessage('');
   }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (!shouldClearMobileSession(event, logoutLock.current || authOperationLock.current)) return;
+      clearSignedInState();
+      setLoginError('Your session has ended. Please sign in again.');
+      setScreen('welcome');
+    });
+    return () => data.subscription.unsubscribe();
+  }, [clearSignedInState]);
 
   useEffect(() => {
     if (!authenticatedUser) return;
@@ -639,6 +674,15 @@ function AppContent() {
     setScreen('welcome');
   };
 
+  const handleStaffPasswordChanged = async () => {
+    const user = await getCurrentUser();
+    if (!user || user.role !== 'Staff' || user.mustChangePassword) {
+      throw new Error('The new password could not be verified. Please sign in again.');
+    }
+    setAuthenticatedUser(user);
+    setScreen('staffWorkspace');
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
@@ -648,7 +692,7 @@ function AppContent() {
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
           <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
-            {visibleScreen === 'loading' && (
+            {visibleScreen === 'loading' && (!fontsLoaded || !sessionInitialized) && (
               <View style={styles.loadingScreen}>
                 <Image
                   source={require('../assets/takosync-logo.png')}
@@ -1471,6 +1515,13 @@ function AppContent() {
                 onLogout={handleStaffLogout}
                 user={authenticatedUser}
                 appVersion={appConfig.expo.version}
+              />
+            )}
+            {visibleScreen === 'changePassword' && authenticatedUser?.role === 'Staff' && (
+              <StaffChangePasswordScreen
+                employeeId={authenticatedUser.employeeId}
+                onChanged={handleStaffPasswordChanged}
+                onLogout={handleStaffLogout}
               />
             )}
           </View>

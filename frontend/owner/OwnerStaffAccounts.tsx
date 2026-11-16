@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import { loadBranches, loadStaffAccounts, saveStaffAccount, type StaffAccount } from '../services/takosync';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { loadBranches, loadStaffAccounts, provisionExistingStaffAccounts, resetStaffPasswordToEmployeeId, saveStaffAccount, type StaffAccount } from '../services/takosync';
 
 const colors = {
   pink: '#F20D55',
@@ -20,12 +20,13 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selected, setSelected] = useState<StaffAccount | null>(null);
+  const [createdAccount, setCreatedAccount] = useState<StaffAccount | null>(null);
   const [username, setUsername] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
   const [branchId, setBranchId] = useState('');
   const [active, setActive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
 
@@ -49,7 +50,6 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
   const reset = () => {
     setSelected(null);
     setUsername('');
-    setEmployeeId('');
     setBranchId(branches[0]?.id ?? '');
     setActive(true);
     setError('');
@@ -58,7 +58,6 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
   const edit = (account: StaffAccount) => {
     setSelected(account);
     setUsername(account.full_name || account.username);
-    setEmployeeId('');
     setBranchId(account.branch_id);
     setActive(account.active);
     setError('');
@@ -71,14 +70,14 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
     setError('');
     setFeedback('');
     try {
-      await saveStaffAccount({
+      const savedAccount = await saveStaffAccount({
         id: selected?.id,
         username,
-        employeeId: employeeId || undefined,
         branchId,
         active,
       });
       setFeedback(selected ? 'Staff account updated.' : 'Staff account created.');
+      if (!selected) setCreatedAccount(savedAccount);
       reset();
       await load();
     } catch (saveError) {
@@ -86,6 +85,51 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const resetPassword = async () => {
+    if (!selected || saving) return;
+    setSaving(true);
+    setError('');
+    setFeedback('');
+    try {
+      await resetStaffPasswordToEmployeeId(selected.id);
+      setFeedback('Initial password reset to the Employee ID.');
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Unable to reset the Staff password.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const provisionExisting = () => {
+    Alert.alert(
+      'Set Staff initial passwords?',
+      'This will set each existing Staff account password to its stored Employee ID. Auth users and UUIDs will not be recreated.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setProvisioning(true);
+              setError('');
+              setFeedback('');
+              try {
+                const nextAccounts = await provisionExistingStaffAccounts();
+                setAccounts(nextAccounts);
+                setFeedback('Existing Staff initial passwords were set to their Employee IDs.');
+              } catch (provisionError) {
+                setError(provisionError instanceof Error ? provisionError.message : 'Unable to provision existing Staff credentials.');
+              } finally {
+                setProvisioning(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -107,8 +151,12 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
         <Text style={styles.panelTitle}>{selected ? 'Edit Staff account' : 'New Staff account'}</Text>
         <Text style={styles.label}>Employee name / username</Text>
         <TextInput value={username} onChangeText={setUsername} editable={!saving} autoCapitalize="words" autoCorrect={false} style={styles.input} placeholder="Employee name" />
-        <Text style={styles.label}>Employee ID {selected ? '(optional password reset)' : '(initial password)'}</Text>
-        <TextInput value={employeeId} onChangeText={setEmployeeId} editable={!saving} secureTextEntry style={styles.input} placeholder={selected ? 'Leave blank to keep current password' : 'Employee ID'} />
+        <Text style={styles.label}>Employee ID {selected ? '(read-only)' : '(generated automatically)'}</Text>
+        {selected ? (
+          <Text style={styles.readOnlyValue} selectable>{selected.employee_id}</Text>
+        ) : (
+          <Text style={styles.hint}>A unique Employee ID and matching initial password are generated by Supabase.</Text>
+        )}
         <Text style={styles.label}>Assigned branch</Text>
         <View style={styles.branchList}>
           {branches.map((branch) => (
@@ -125,11 +173,25 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
         ) : null}
         <View style={styles.actions}>
           {selected ? <Pressable onPress={reset} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Cancel</Text></Pressable> : null}
+          {selected ? <Pressable onPress={() => void resetPassword()} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Reset initial password</Text></Pressable> : null}
           <Pressable onPress={() => void save()} disabled={saving || loading} style={[styles.primaryButton, (saving || loading) && styles.disabled]}>
             {saving ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryText}>{selected ? 'Save changes' : 'Create account'}</Text>}
           </Pressable>
         </View>
       </View>
+
+      {createdAccount ? (
+        <View style={styles.generatedCard}>
+          <Text style={styles.generatedTitle}>New Staff credentials</Text>
+          <Text style={styles.generatedLabel}>Employee ID / initial password</Text>
+          <Text style={styles.generatedValue} selectable>{createdAccount.employee_id}</Text>
+          <Text style={styles.generatedHint}>Long-press the value to copy it. Do not share it in logs or chat.</Text>
+        </View>
+      ) : null}
+
+      <Pressable onPress={provisionExisting} disabled={provisioning || loading} style={[styles.provisionButton, (provisioning || loading) && styles.disabled]}>
+        {provisioning ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.provisionText}>Set existing Staff initial passwords</Text>}
+      </Pressable>
 
       <Text style={styles.sectionTitle}>Existing Staff accounts</Text>
       {loading ? <ActivityIndicator color={colors.pink} /> : accounts.length === 0 ? <Text style={styles.empty}>No Staff accounts have been provisioned.</Text> : accounts.map((account) => (
@@ -157,6 +219,15 @@ function useStyles() {
     panelTitle: { color: colors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 12, marginBottom: 12 },
     label: { color: colors.navy, fontFamily: 'Poppins_500Medium', fontSize: 9, marginTop: 9, marginBottom: 5 },
     input: { minHeight: 42, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: colors.line, color: colors.ink, fontFamily: 'Poppins_400Regular', fontSize: 10 },
+    readOnlyValue: { minHeight: 42, padding: 12, borderRadius: 11, backgroundColor: '#F7F7F9', color: colors.ink, fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+    hint: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 9, lineHeight: 13 },
+    generatedCard: { padding: 15, borderRadius: 16, backgroundColor: '#FFF4D6', borderWidth: 1, borderColor: colors.orange, marginBottom: 22 },
+    generatedTitle: { color: colors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
+    generatedLabel: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 8 },
+    generatedValue: { color: colors.navy, fontFamily: 'Poppins_700Bold', fontSize: 15, marginTop: 4 },
+    generatedHint: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 12, marginTop: 8 },
+    provisionButton: { minHeight: 42, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: colors.orange, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+    provisionText: { color: colors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     branchList: { gap: 6 },
     branchButton: { padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.line },
     branchButtonSelected: { borderColor: colors.pink, backgroundColor: '#FFF0F4' },

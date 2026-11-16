@@ -2,7 +2,6 @@
 type AccountInput = {
   id?: string;
   username?: string;
-  employeeId?: string;
   branchId?: string;
   active?: boolean;
 };
@@ -54,6 +53,18 @@ function authAlias(username: string) {
 
 function inputString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isEmployeeId(value: unknown): value is string {
+  return typeof value === 'string' && /^EMP-[0-9]{4}-[0-9]{6}$/.test(value);
+}
+
+function temporaryPassword() {
+  return `TakoSync-${crypto.randomUUID()}-${crypto.randomUUID()}`;
+}
+
+function bearerToken(request: Request) {
+  return request.headers.get('Authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1] ?? '';
 }
 
 function getClients(options: HandlerOptions) {
@@ -138,7 +149,7 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
   const username = normalizeUsername(usernameValue);
   if (!username) return response({ ok: false, code: 'unknown_username' });
   const { data: profile, error } = await admin.from('profiles')
-    .select('id, email, role, active')
+    .select('id, email, role, active, must_change_password')
     .eq('username', username)
     .maybeSingle();
   if (error) throw error;
@@ -176,7 +187,78 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
       token_type: data.session.token_type,
       user: data.user,
     },
+    mustChangePassword: profile.must_change_password === true,
   });
+}
+
+async function provisionExistingStaff(
+  request: Request,
+  admin: ReturnType<HandlerOptions['createClient']>,
+  url: string,
+  anonKey: string,
+  createClient: HandlerOptions['createClient'],
+) {
+  await requireOwner(request, admin, url, anonKey, createClient);
+  const { data: profiles, error } = await admin.from('profiles')
+    .select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at')
+    .eq('role', 'staff')
+    .order('created_at');
+  if (error) throw error;
+
+  for (const profile of profiles ?? []) {
+    if (!profile.active) continue;
+    if (!isEmployeeId(profile.employee_id)) {
+      throw new HttpError(409, 'A Staff profile is missing a valid Employee ID. Apply the Employee ID migration first.');
+    }
+    const { error: passwordError } = await admin.auth.admin.updateUserById(profile.id, {
+      password: profile.employee_id,
+    });
+    if (passwordError) throw new HttpError(500, 'Unable to provision Staff credentials securely.');
+    const { error: flagError } = await admin.from('profiles')
+      .update({ must_change_password: true })
+      .eq('id', profile.id)
+      .eq('role', 'staff')
+      .eq('active', true);
+    if (flagError) throw new HttpError(500, 'Unable to mark the Staff password as requiring change.');
+  }
+
+  return response({ ok: true, accounts: profiles ?? [] });
+}
+
+async function resetStaffPassword(
+  request: Request,
+  input: AccountInput,
+  admin: ReturnType<HandlerOptions['createClient']>,
+  url: string,
+  anonKey: string,
+  createClient: HandlerOptions['createClient'],
+) {
+  await requireOwner(request, admin, url, anonKey, createClient);
+  const id = inputString(input.id);
+  if (!id) throw new HttpError(400, 'A Staff profile ID is required.');
+
+  const { data: profile, error } = await admin.from('profiles')
+    .select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at, role')
+    .eq('id', id)
+    .eq('role', 'staff')
+    .maybeSingle();
+  if (error) throw error;
+  if (!profile) throw new HttpError(404, 'The Staff account could not be found.');
+  if (!profile.active) throw new HttpError(403, 'Inactive Staff accounts cannot have their passwords reset.');
+  if (!isEmployeeId(profile.employee_id)) throw new HttpError(409, 'This Staff account has no valid Employee ID.');
+
+  const { error: passwordError } = await admin.auth.admin.updateUserById(profile.id, {
+    password: profile.employee_id,
+  });
+  if (passwordError) throw new HttpError(500, 'Unable to reset the Staff password securely.');
+  const { error: flagError } = await admin.from('profiles')
+    .update({ must_change_password: true })
+    .eq('id', profile.id)
+    .eq('role', 'staff')
+    .eq('active', true);
+  if (flagError) throw new HttpError(500, 'Unable to mark the Staff password as requiring change.');
+
+  return response({ ok: true, account: profile });
 }
 
 async function validateBranch(admin: ReturnType<HandlerOptions['createClient']>, branchId: string) {
@@ -187,7 +269,7 @@ async function validateBranch(admin: ReturnType<HandlerOptions['createClient']>,
 
 async function accountList(admin: ReturnType<HandlerOptions['createClient']>) {
   const [{ data: profiles, error: profileError }, { data: branches, error: branchError }] = await Promise.all([
-    admin.from('profiles').select('id, username, full_name, branch_id, active, created_at').eq('role', 'staff').order('created_at'),
+    admin.from('profiles').select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at').eq('role', 'staff').order('created_at'),
     admin.from('branches').select('id, name').eq('active', true).order('created_at'),
   ]);
   if (profileError) throw profileError;
@@ -209,7 +291,6 @@ async function saveAccount(
 ) {
   await requireOwner(request, admin, url, anonKey, createClient);
   const username = normalizeUsername(inputString(input.username));
-  const employeeId = inputString(input.employeeId);
   const branchId = inputString(input.branchId);
   if (!username) throw new HttpError(400, 'Employee name / username is required.');
   if (username.length > 120) throw new HttpError(400, 'Employee name / username is too long.');
@@ -217,8 +298,9 @@ async function saveAccount(
   await validateBranch(admin, branchId);
 
   if (input.id) {
+    if ('employeeId' in input) throw new HttpError(400, 'Employee IDs are generated and cannot be edited.');
     const { data: existing, error } = await admin.from('profiles')
-      .select('id, username, full_name, branch_id, active, email, role')
+      .select('id, employee_id, username, full_name, branch_id, active, email, role')
       .eq('id', input.id)
       .eq('role', 'staff')
       .maybeSingle();
@@ -233,20 +315,15 @@ async function saveAccount(
       .eq('role', 'staff').eq('branch_id', branchId).neq('id', existing.id);
     if (countError) throw countError;
     if ((count ?? 0) >= 2) throw new HttpError(409, 'Each branch can have at most two Staff accounts.');
-    if (employeeId) {
-      const { error: authError } = await admin.auth.admin.updateUserById(existing.id, { password: employeeId });
-      if (authError) throw authError;
-    }
     const { data: updated, error: updateError } = await admin.from('profiles')
       .update({ username, full_name: inputString(input.username), branch_id: branchId, active: input.active !== false, role: 'staff' })
       .eq('id', existing.id)
-      .select('id, username, full_name, branch_id, active, created_at')
+      .select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at')
       .single();
     if (updateError) throw updateError;
     return response({ ok: true, account: updated });
   }
 
-  if (!employeeId) throw new HttpError(400, 'Employee ID is required as the initial password.');
   const { data: duplicate, error: duplicateError } = await admin.from('profiles')
     .select('id').eq('username', username).maybeSingle();
   if (duplicateError) throw duplicateError;
@@ -258,21 +335,66 @@ async function saveAccount(
   if ((count ?? 0) >= 2) throw new HttpError(409, 'Each branch can have at most two Staff accounts.');
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email: authAlias(username),
-    password: employeeId,
+    password: temporaryPassword(),
     email_confirm: true,
     user_metadata: { full_name: inputString(input.username) },
   });
   if (createError || !created.user) throw createError ?? new Error('The Staff Auth account could not be created.');
-  const { data: profile, error: profileError } = await admin.from('profiles')
-    .update({ username, full_name: inputString(input.username), branch_id: branchId, active: input.active !== false, role: 'staff' })
+  const { data: generatedProfile, error: generatedProfileError } = await admin.from('profiles')
+    .select('id, employee_id, must_change_password')
     .eq('id', created.user.id)
-    .select('id, username, full_name, branch_id, active, created_at')
+    .eq('role', 'staff')
+    .single();
+  if (generatedProfileError || !isEmployeeId(generatedProfile?.employee_id)) {
+    throw new HttpError(500, 'The Staff profile Employee ID could not be generated.');
+  }
+  const { error: passwordError } = await admin.auth.admin.updateUserById(created.user.id, {
+    password: generatedProfile.employee_id,
+  });
+  if (passwordError) throw new HttpError(500, 'The Staff initial password could not be set securely.');
+  const { data: profile, error: profileError } = await admin.from('profiles')
+    .update({ username, full_name: inputString(input.username), branch_id: branchId, active: input.active !== false, role: 'staff', must_change_password: true })
+    .eq('id', created.user.id)
+    .select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at')
     .single();
   if (profileError) {
     await admin.auth.admin.deleteUser(created.user.id);
     throw profileError;
   }
   return response({ ok: true, account: profile });
+}
+
+async function changePassword(
+  request: Request,
+  newPassword: string,
+  admin: ReturnType<HandlerOptions['createClient']>,
+) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, 'Authentication is required.');
+  if (newPassword.length < 8) throw new HttpError(400, 'New password must be at least 8 characters.');
+
+  const { data: userData, error: userError } = await admin.auth.getUser(token);
+  if (userError || !userData?.user) throw new HttpError(401, 'Authentication is invalid or expired.');
+  const { data: profile, error: profileError } = await admin.from('profiles')
+    .select('id, role, active, employee_id, must_change_password')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile || profile.role !== 'staff' || !profile.active) {
+    throw new HttpError(403, 'Only an active Staff account may change this password.');
+  }
+  if (!profile.must_change_password) throw new HttpError(409, 'A first-login password change is not pending.');
+  if (newPassword === profile.employee_id) throw new HttpError(400, 'Choose a password different from your Employee ID.');
+
+  const { error: passwordError } = await admin.auth.admin.updateUserById(profile.id, { password: newPassword });
+  if (passwordError) throw new HttpError(500, 'Unable to update the Staff password securely.');
+  const { error: flagError } = await admin.from('profiles')
+    .update({ must_change_password: false })
+    .eq('id', profile.id)
+    .eq('role', 'staff')
+    .eq('active', true);
+  if (flagError) throw new HttpError(500, 'Password updated, but the first-login state could not be cleared.');
+  return response({ ok: true });
 }
 
 export function createStaffAuthHandler(options: HandlerOptions) {
@@ -291,6 +413,18 @@ export function createStaffAuthHandler(options: HandlerOptions) {
       }
       if (body.action === 'login') {
         return await login(inputString(body.username), typeof body.password === 'string' ? body.password : '', auth, admin);
+      }
+      if (body.action === 'provision-existing') {
+        return await provisionExistingStaff(request, admin, url, anonKey, options.createClient);
+      }
+      if (body.action === 'reset-password') {
+        const account = body.account && typeof body.account === 'object' && !Array.isArray(body.account)
+          ? body.account
+          : {};
+        return await resetStaffPassword(request, account, admin, url, anonKey, options.createClient);
+      }
+      if (body.action === 'change-password') {
+        return await changePassword(request, typeof body.newPassword === 'string' ? body.newPassword : '', admin);
       }
       if (body.action === 'list') {
         await requireOwner(request, admin, url, anonKey, options.createClient);

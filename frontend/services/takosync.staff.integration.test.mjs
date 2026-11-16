@@ -6,6 +6,8 @@ const {
   prepareBatterBatch,
   processSaleInventory,
   recordInventoryTransactionsIdempotently,
+  decideOwnerInventoryCountCorrection,
+  validateOwnerInventoryCountCorrection,
   submitDailyStockCheck,
   submitSale,
 } = await import('./takosync.ts');
@@ -56,6 +58,10 @@ class RecordingSupabase {
         };
       case 'process_sale_inventory':
         return { data: { status: 'completed', sale_id: args.p_sale_id }, error: null };
+      case 'decide_inventory_count_correction':
+        return { data: { request_id: args.p_request_id, status: args.p_decision }, error: null };
+      case 'validate_inventory_count_correction':
+        return { data: { request_id: args.p_request_id, outcome: 'adjusted' }, error: null };
       case 'submit_daily_stock_check':
         return {
           data: {
@@ -137,7 +143,8 @@ test('real Staff prepared batter and POS services call their production RPCs', a
   const batch = await prepareBatterBatch('branch-a', 'BAT-1', clientForTests(client));
   const sale = await submitSale({
     branchId: 'branch-a', transactionReference: 'SALE-1', paymentMethod: ' Cash ', totalAmount: 25,
-    items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 25 }], addons: [],
+    items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 25 }],
+    addons: [{ addonId: 'addon-1', unitPrice: 1.5 }],
   }, clientForTests(client));
   const processing = await processSaleInventory(sale.id, clientForTests(client));
 
@@ -147,6 +154,7 @@ test('real Staff prepared batter and POS services call their production RPCs', a
   assert.deepEqual(client.calls.map((call) => call.name), ['prepare_batter_batch', 'submit_sale', 'process_sale_inventory']);
   assert.equal(client.calls[0].args.p_prepared_quantity, 5);
   assert.equal(client.calls[1].args.p_branch_id, 'branch-a');
+  assert.deepEqual(client.calls[1].args.p_addons, [{ addon_id: 'addon-1', quantity: 1, unit_price: 1.5 }]);
   assert.equal(client.calls[2].args.p_sale_id, 'sale-1');
 });
 
@@ -177,6 +185,40 @@ test('real Staff daily count service replays the same request and never calls an
   assert.equal(sameDailyStockCheckPayload(restored, input), true);
 });
 
+test('Owner discrepancy actions use the guarded RPCs and normalize reasons', async () => {
+  const client = new RecordingSupabase();
+  await decideOwnerInventoryCountCorrection({
+    requestId: ' correction-1 ',
+    decision: 'approved',
+    reason: '  Reviewed against the submitted physical count.  ',
+  }, clientForTests(client));
+  await validateOwnerInventoryCountCorrection({
+    requestId: ' correction-1 ',
+    reason: '  Authorized after confirming the inventory revision.  ',
+  }, clientForTests(client));
+
+  assert.deepEqual(client.calls.map((call) => call.name), [
+    'decide_inventory_count_correction',
+    'validate_inventory_count_correction',
+  ]);
+  assert.equal(client.calls[0].args.p_request_id, 'correction-1');
+  assert.equal(client.calls[0].args.p_reason, 'Reviewed against the submitted physical count.');
+  assert.equal(client.calls[1].args.p_reason, 'Authorized after confirming the inventory revision.');
+});
+
+test('Owner discrepancy actions reject missing reasons before calling Supabase', async () => {
+  const client = new RecordingSupabase();
+  await assert.rejects(
+    decideOwnerInventoryCountCorrection({ requestId: 'correction-1', decision: 'rejected', reason: '   ' }, clientForTests(client)),
+    /decision reason/,
+  );
+  await assert.rejects(
+    validateOwnerInventoryCountCorrection({ requestId: 'correction-1', reason: '' }, clientForTests(client)),
+    /validation reason/,
+  );
+  assert.equal(client.calls.length, 0);
+});
+
 test('real Staff service errors preserve retryable checkout state for ambiguous failures', async () => {
   const client = new RecordingSupabase();
   client.failures.set('submit_sale', 'request timed out');
@@ -188,4 +230,44 @@ test('real Staff service errors preserve retryable checkout state for ambiguous 
     /Checkout status could not be confirmed.*retry the same checkout/,
   );
   assert.equal(client.calls[0].args.p_branch_id, 'branch-a');
+});
+
+test('real Staff sale service rejects a mismatched saved sale response', async () => {
+  const client = new RecordingSupabase();
+  const originalRpc = client.rpc.bind(client);
+  client.rpc = async (name, args) => {
+    const result = await originalRpc(name, args);
+    if (name === 'submit_sale') {
+      result.data = { ...result.data, branch_id: 'branch-b' };
+    }
+    return result;
+  };
+
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-MISMATCH', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    /saved sale branch did not match/,
+  );
+});
+
+test('real Staff sale service rejects an incomplete persisted-sale receipt response', async () => {
+  const client = new RecordingSupabase();
+  const originalRpc = client.rpc.bind(client);
+  client.rpc = async (name, args) => {
+    const result = await originalRpc(name, args);
+    if (name === 'submit_sale') {
+      result.data = { ...result.data, id: '', inventory_processing_status: undefined };
+    }
+    return result;
+  };
+
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-INCOMPLETE', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    /usable receipt identity/,
+  );
 });

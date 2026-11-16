@@ -4,6 +4,7 @@ import {
   classifyExpirationAlert,
   classifyStockAlert,
   countInventoryAlertsByKind,
+  countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
@@ -82,4 +83,18 @@ test('alert category counts preserve empty categories and sum to the badge count
   ]);
   assert.deepEqual(counts, { lowStock: 2, outOfStock: 0, nearExpiration: 0, expired: 1 });
   assert.equal(Object.values(counts).reduce((total, count) => total + count, 0), 3);
+});
+
+test('alert counts fail closed while loading or after a refresh error', () => {
+  const alerts = [{ kind: 'lowStock' }, { kind: 'expired' }];
+  const emptyCounts = { lowStock: 0, outOfStock: 0, nearExpiration: 0, expired: 0 };
+
+  assert.deepEqual(countInventoryAlertsWhenReady(alerts, true, ''), emptyCounts);
+  assert.deepEqual(countInventoryAlertsWhenReady(alerts, false, 'Unable to load alerts'), emptyCounts);
+  assert.deepEqual(countInventoryAlertsWhenReady(alerts, false, ' '), {
+    lowStock: 1,
+    outOfStock: 0,
+    nearExpiration: 0,
+    expired: 1,
+  });
 });

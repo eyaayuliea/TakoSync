@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildInventoryCategories,
+  buildInventoryCountHistoryRecords,
   buildInventoryCountReports,
   buildInventoryReportData,
   inventoryStockStatus,
@@ -177,6 +178,79 @@ test('correction history and no-change validation retain the original submitted 
   assert.equal(count?.validation?.outcome, 'no_change');
   assert.equal(count?.validation?.reason, 'Corrected quantity equals expected inventory');
   assert.equal(count?.countStatus, 'Validated');
+});
+
+test('physical count history records are newest-first and retain correction revision history', () => {
+  const records = buildInventoryCountHistoryRecords([
+    {
+      check: {
+        id: 'check-old',
+        reference: 'IC-OLD',
+        submittedBy: 'staff-1',
+        remarks: 'Short count',
+        status: 'pending_owner_review',
+        createdAt: '2026-11-11T08:00:00+08:00',
+      },
+      line: {
+        id: 'line-short',
+        ingredientId: 'flour',
+        expectedQuantity: 5,
+        actualQuantity: 3,
+        difference: -2,
+        unit: 'kg',
+      },
+      ingredient: { name: 'Flour', category: 'Dry Goods' },
+      branchId: 'branch-a',
+      branch: 'Manila 1',
+      staff: 'Staff One',
+      corrections: [{
+        status: 'approved',
+        correctedActualQuantity: 5,
+        reason: 'Recounted',
+        decisionReason: 'Verified',
+        decidedAt: '2026-11-12T09:00:00+08:00',
+      }],
+      validation: {
+        correctedActualQuantity: 5,
+        outcome: 'no_change',
+        reason: 'Corrected quantity equals expected inventory',
+        validatedBy: 'owner-1',
+        validatedAt: '2026-11-12T10:00:00+08:00',
+      },
+    },
+    {
+      check: {
+        id: 'check-new',
+        reference: 'IC-NEW',
+        submittedBy: 'staff-2',
+        remarks: '',
+        status: 'submitted',
+        createdAt: '2026-11-12T08:00:00+08:00',
+      },
+      line: {
+        id: 'line-match',
+        ingredientId: 'sugar',
+        expectedQuantity: 1,
+        actualQuantity: 1,
+        difference: 0,
+        unit: 'kg',
+      },
+      ingredient: { name: 'Sugar', category: 'Dry Goods' },
+      branchId: 'branch-a',
+      branch: 'Manila 1',
+      staff: 'Staff Two',
+      corrections: [],
+      validation: null,
+    },
+  ]);
+
+  assert.deepEqual(records.map((record) => record.reference), ['IC-NEW', 'IC-OLD']);
+  assert.equal(records[0].type, 'Physical Inventory Count');
+  assert.equal(records[0].quantity, 0);
+  assert.equal(records[0].movement, 0);
+  assert.equal(records[1].physicalCount.revisedActualQuantity, 5);
+  assert.equal(records[1].physicalCount.correctionHistory[0].decisionReason, 'Verified');
+  assert.equal(records[1].physicalCount.validation?.validatedBy, 'owner-1');
 });
 
 test('empty reports remain empty and data loading failures return retryable error state', async () => {

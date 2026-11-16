@@ -22,6 +22,8 @@ export type Database = {
       profiles: Table<{
         id: string;
         email: string;
+        employee_id: string | null;
+        must_change_password: boolean;
         username: string | null;
         full_name: string;
         role: 'owner' | 'staff';
