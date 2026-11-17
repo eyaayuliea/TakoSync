@@ -8,6 +8,7 @@ export type StaffRoute =
   | 'inventoryReporting'
   | 'inventoryReport'
   | 'inventoryCountDetails'
+  | 'inventoryDiscrepancySubmission'
   | 'inventory'
   | 'stocks'
   | 'stockIn'
@@ -45,11 +46,6 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
   if (route === 'cart' || route === 'checkout' || route === 'saleReceipt') return 'menu';
   if (
     route === 'dailySales' ||
-    route === 'inventoryReporting' ||
-    route === 'inventoryReport' ||
-    route === 'inventoryCountDetails' ||
-    route === 'dailyInventoryCheck' ||
-    route === 'dailyCheckSuccess' ||
     route === 'profileSettings'
   ) return 'more';
   if (
@@ -64,7 +60,16 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
     route === 'historyFilters' ||
     route === 'transactionDetails'
   ) return 'stocks';
-  if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
+  if (
+    route === 'ingredientDetails' ||
+    route === 'inventoryHistory' ||
+    route === 'inventoryReporting' ||
+    route === 'inventoryReport' ||
+    route === 'inventoryCountDetails' ||
+    route === 'inventoryDiscrepancySubmission' ||
+    route === 'dailyInventoryCheck' ||
+    route === 'dailyCheckSuccess'
+  ) return 'inventory';
   if (route === 'alerts' || route === 'alertDetails') return 'alerts';
   return route;
 }

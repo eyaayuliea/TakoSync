@@ -968,6 +968,7 @@ export default function StaffWorkspace({
   const [selectedInventoryReport, setSelectedInventoryReport] = useState<InventoryReportKey>('totalIngredientQuantity');
   const [selectedInventoryCountId, setSelectedInventoryCountId] = useState<string | null>(null);
   const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Set<string>>(() => new Set());
+  const [inventoryReportingReturnRoute, setInventoryReportingReturnRoute] = useState<'inventory' | 'more'>('inventory');
   const [unresolvedSales, setUnresolvedSales] = useState<UnresolvedSale[]>([]);
   const [unresolvedSalesLoading, setUnresolvedSalesLoading] = useState(false);
   const [unresolvedSalesError, setUnresolvedSalesError] = useState('');
@@ -998,6 +999,7 @@ export default function StaffWorkspace({
   const alertRefreshLock = useRef(false);
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
   const [dailyCheckRemarks, setDailyCheckRemarks] = useState('');
+  const [dailyCheckStartedAt, setDailyCheckStartedAt] = useState<Date | null>(null);
   const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);
   const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
   const [currentDailyCheck, setCurrentDailyCheck] = useState<DailyInventoryCheck | null>(null);
@@ -1005,6 +1007,7 @@ export default function StaffWorkspace({
   const [dailyCheckStarting, setDailyCheckStarting] = useState(false);
   const [dailyCheckSaveFailed, setDailyCheckSaveFailed] = useState(false);
   const [pendingDailyStockChecks, setPendingDailyStockChecks] = useState<PendingDailyStockCheck[]>([]);
+  const [dailyCheckSubmissionRequest, setDailyCheckSubmissionRequest] = useState<PendingDailyStockCheck | null>(null);
   const [dailyCheckStorageError, setDailyCheckStorageError] = useState('');
   const [dailyCheckRetryErrors, setDailyCheckRetryErrors] = useState<Record<string, string>>({});
   const dailyCheckRetryLocks = useRef(new Set<string>());
@@ -1199,7 +1202,11 @@ export default function StaffWorkspace({
   };
 
   const retryDailyStockCheck = async (request: PendingDailyStockCheck) => {
-    if (request.actorId !== user.id || request.branchId !== user.branchId || !user.branchId) return;
+    if (request.actorId !== user.id || request.branchId !== user.branchId || !user.branchId) {
+      const error = 'This saved count belongs to a different Staff account or branch.';
+      setDailyCheckRetryErrors((current) => ({ ...current, [request.requestId]: error }));
+      throw new Error(error);
+    }
     if (dailyCheckRetryLocks.current.has(request.requestId)) return;
     dailyCheckRetryLocks.current.add(request.requestId);
     setDailyCheckRetryErrors((current) => {
@@ -1216,6 +1223,9 @@ export default function StaffWorkspace({
         lines: request.lines,
       });
       setPendingDailyStockChecks(await pendingDailyStockCheckStore.resolve(request.requestId));
+      setDailyCheckSubmissionRequest((current) => (
+        current?.requestId === request.requestId ? null : current
+      ));
       const savedLines = saved.lines.map((line) => ({
         ...line,
         name: dailyCheckLines.find((entry) => entry.ingredientId === line.ingredientId)?.name ?? line.ingredientId,
@@ -2035,7 +2045,7 @@ export default function StaffWorkspace({
     dailyCheckResults.every((line) => line.valid);
   useEffect(() => {
     if (
-      route !== 'dailyInventoryCheck' ||
+      (route !== 'dailyInventoryCheck' && route !== 'inventoryDiscrepancySubmission') ||
       dailyDiscrepancies.length === 0 ||
       dailyCheckSubmitting ||
       Platform.OS === 'web'
@@ -2180,7 +2190,11 @@ export default function StaffWorkspace({
   const visibleExpiringItems = expiringItems.filter(dashboardMatches);
 
   const navigate = (nextRoute: StaffTab) => {
-    if (route === 'dailyInventoryCheck' && dailyDiscrepancies.length > 0 && !dailyCheckSubmitting) {
+    if (
+      (route === 'dailyInventoryCheck' || route === 'inventoryDiscrepancySubmission') &&
+      dailyDiscrepancies.length > 0 &&
+      !dailyCheckSubmitting
+    ) {
       setDailyCheckLeavePromptVisible(true);
       return;
     }
@@ -2197,12 +2211,13 @@ export default function StaffWorkspace({
     setRoute('dailySales');
   };
 
-  const openInventoryReporting = () => {
+  const openInventoryReporting = (returnRoute: 'inventory' | 'more' = 'inventory') => {
     setSelectedInventoryReport('totalIngredientQuantity');
     setSelectedInventoryCountId(null);
     setExpandedInventoryCategories(new Set());
     setInventoryReportData(null);
     setInventoryReportError('');
+    setInventoryReportingReturnRoute(returnRoute);
     setRoute('inventoryReporting');
   };
 
@@ -2520,9 +2535,11 @@ export default function StaffWorkspace({
         }));
       setDailyCheckLines(lines);
       setDailyCheckRemarks('');
+      setDailyCheckStartedAt(new Date());
       setDailyCheckAttempted(false);
       setDailyCheckModal(null);
       setCurrentDailyCheck(null);
+      setDailyCheckSubmissionRequest(null);
       dailyCheckSubmissionLock.current = false;
       setRoute('dailyInventoryCheck');
     } catch (error) {
@@ -2539,6 +2556,11 @@ export default function StaffWorkspace({
 
   const openDailyCheckReview = () => {
     if (!validateDailyInventoryCheck()) return;
+    if (dailyDiscrepancies.length > 0) {
+      setDailyCheckModal(null);
+      setRoute('inventoryDiscrepancySubmission');
+      return;
+    }
     setDailyCheckModal('review');
   };
 
@@ -2582,6 +2604,7 @@ export default function StaffWorkspace({
         })),
         createdAt: new Date().toISOString(),
       };
+      setDailyCheckSubmissionRequest(request);
       try {
         setPendingDailyStockChecks(await pendingDailyStockCheckStore.save(request));
         await retryDailyStockCheck(request);
@@ -2590,6 +2613,33 @@ export default function StaffWorkspace({
         setFormError(error instanceof Error
           ? error.message
           : 'Unable to save. Please check your internet connection and try again.');
+        setDailyCheckSaveFailed(true);
+      } finally {
+        setDailyCheckSubmitting(false);
+      }
+    });
+  };
+
+  const saveOrRetryDailyInventoryCheck = async () => {
+    const savedRequest = dailyCheckSubmissionRequest;
+    if (!dailyCheckSaveFailed || !savedRequest) {
+      await submitDailyInventoryCheck();
+      return;
+    }
+    if (!user.branchId || savedRequest.actorId !== user.id || savedRequest.branchId !== user.branchId) {
+      setFormError('This saved count belongs to a different Staff account or branch.');
+      return;
+    }
+    await runDiscrepancySubmissionOnce(dailyCheckSubmissionLock, async () => {
+      setDailyCheckSubmitting(true);
+      setFormError('');
+      setDailyCheckSaveFailed(false);
+      setDailyCheckLeavePromptVisible(false);
+      try {
+        setPendingDailyStockChecks(await pendingDailyStockCheckStore.save(savedRequest));
+        await retryDailyStockCheck(savedRequest);
+      } catch {
+        setFormError('Unable to save. Please check your internet connection and try again.');
         setDailyCheckSaveFailed(true);
       } finally {
         setDailyCheckSubmitting(false);
@@ -3613,13 +3663,28 @@ export default function StaffWorkspace({
     if (loadingOrError) return loadingOrError;
 
     const assignedItems = filterBranchInventoryAlertItems(ingredients);
-    if (assignedItems.length === 0) {
-      return (
-        <View style={styles.inventoryAssignedEmpty}>
-          <View style={styles.inventoryPageHeader}>
+    const inventoryHeader = (
+      <View style={styles.inventoryPageHeader}>
+        <View style={styles.inventoryHeaderRow}>
+          <View style={styles.inventoryHeaderCopy}>
             <Text style={styles.pageTitle}>Inventory</Text>
             <Text style={styles.pageSubtitle}>{assignedBranch} · Read only</Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Inventory reports"
+            onPress={() => openInventoryReporting('inventory')}
+            style={({ pressed }) => [styles.inventoryReportsButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.inventoryReportsButtonText}>Reports</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+    if (assignedItems.length === 0) {
+      return (
+        <View style={styles.inventoryAssignedEmpty}>
+          {inventoryHeader}
           <View style={styles.inventoryEmpty}>
             <CubeOutlineIcon />
             <Text style={styles.inventoryEmptyTitle}>
@@ -3641,16 +3706,8 @@ export default function StaffWorkspace({
         showsVerticalScrollIndicator={false}
         ItemSeparatorComponent={() => <View style={styles.inventoryCardSeparator} />}
         ListHeaderComponent={
-          <View style={styles.inventoryPageHeader}>
-            <View style={styles.inventoryHeaderRow}>
-              <View style={styles.inventoryHeaderCopy}>
-                <Text style={styles.pageTitle}>Inventory</Text>
-                <Text style={styles.pageSubtitle}>{assignedBranch}</Text>
-              </View>
-              <View style={styles.readOnlyPill}>
-                <Text style={styles.readOnlyPillText}>Read only</Text>
-              </View>
-            </View>
+          <>
+            {inventoryHeader}
             <View style={styles.inventorySearch}>
               <SearchBar
                 value={search}
@@ -3678,7 +3735,7 @@ export default function StaffWorkspace({
             <Text style={styles.inventoryCount}>
               {visibleIngredients.length} {visibleIngredients.length === 1 ? 'item' : 'items'} · Expected quantity
             </Text>
-          </View>
+          </>
         }
         renderItem={({ item }) => (
           <InventoryIngredientCard
@@ -4456,7 +4513,7 @@ export default function StaffWorkspace({
             <Pressable
               accessibilityRole="button"
               disabled={dailyCheckSubmitting}
-              onPress={() => void submitDailyInventoryCheck()}
+              onPress={() => void saveOrRetryDailyInventoryCheck()}
               style={[styles.dailyRetryButton, dailyCheckSubmitting && styles.buttonDisabled]}
             >
               <Text style={styles.dailyRetryButtonText}>
@@ -4505,6 +4562,7 @@ export default function StaffWorkspace({
     const flour = check.lines.find((line) => line.ingredientId === 'flour');
     const discrepancyCount = check.lines.filter((line) => line.difference !== 0).length;
     const time = formatManilaTime(check.submittedAt);
+    const hasDiscrepancies = discrepancyCount > 0;
     const auditText = flour
       ? `Flour's recorded balance remains ${formatUnitQuantity(flour.recordedQuantity, flour.unit)}. The ${formatUnitQuantity(flour.physicalQuantity, flour.unit)} physical count is an audit observation, not a stock adjustment.`
       : 'Physical counts are audit observations and do not adjust recorded stock balances.';
@@ -4514,14 +4572,14 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to More"
-            onPress={() => navigate('more')}
+            accessibilityLabel="Back to Inventory"
+            onPress={() => navigate('inventory')}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Daily inventory check'}</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -4532,16 +4590,47 @@ export default function StaffWorkspace({
         >
           <View style={styles.dailySuccessBanner} accessibilityRole="alert">
             <Text style={styles.dailySuccessIcon}>✓</Text>
-            <Text style={styles.dailySuccessText}>Daily inventory check saved successfully.</Text>
+            <Text style={styles.dailySuccessText}>
+              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Daily inventory check saved successfully.'}
+            </Text>
           </View>
           <View style={styles.dailySummaryCard}>
-            <Text style={styles.dailySummaryTitle}>Check submitted</Text>
+            <Text style={styles.dailySummaryTitle}>{hasDiscrepancies ? 'Pending Review' : 'Check submitted'}</Text>
             <Text style={styles.dailySummaryCount}>{check.lines.length} counted</Text>
             <Text style={styles.dailySummarySubtitle}>
               {discrepancyCount} {discrepancyCount === 1 ? 'discrepancy' : 'discrepancies'} ·{' '}
-              {discrepancyCount > 0 ? 'Pending owner review' : 'Submitted'}
+              {hasDiscrepancies ? 'Pending Review' : 'Submitted'}
             </Text>
           </View>
+
+          {hasDiscrepancies ? (
+            <View style={styles.inventoryReportRecord}>
+              <Text style={styles.inventoryReportRecordTitle}>Submitted discrepancies</Text>
+              {check.lines.filter((line) => line.difference !== 0).map((line) => (
+                <View key={line.ingredientId} style={styles.inventoryReportCorrection}>
+                  <Text style={styles.inventoryReportRecordDetail}>{line.name}</Text>
+                  <Text style={styles.inventoryReportRecordDetail}>
+                    Expected {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} · Actual{' '}
+                    {formatDailyUnitQuantity(line.physicalQuantity, line.unit)}
+                  </Text>
+                  <Text style={[
+                    styles.inventoryReportRecordDifference,
+                    line.difference < 0
+                      ? styles.inventoryReportDifferenceNegative
+                      : styles.inventoryReportDifferencePositive,
+                  ]}>
+                    {formatDailyDifference(line.difference, line.unit)}
+                  </Text>
+                </View>
+              ))}
+              <Text style={styles.inventoryReportRecordDetail}>
+                Staff remarks (read-only): {check.remarks || '—'}
+              </Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Count changes require a correction request in Override Inventory Count.
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.dailyReceiptDetails}>
             {[
@@ -4549,7 +4638,7 @@ export default function StaffWorkspace({
               ['Date', `${formatDate(check.checkDate)} · ${time}`],
               ['Branch', check.branch],
               ['Submitted by', check.staff],
-              ['Employee account', user.id],
+              ['Employee account', `${staffName} · Signed-in staff`],
               [
                 'Flour difference',
                 flour
@@ -4570,15 +4659,135 @@ export default function StaffWorkspace({
             <Text style={styles.dailyAuditIcon}>i</Text>
             <Text style={styles.dailyAuditText}>{auditText}</Text>
           </View>
+          {hasDiscrepancies ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSelectedInventoryReport('inventoryDiscrepancy');
+                setSelectedInventoryCountId(null);
+                setInventoryReportData(null);
+                setInventoryReportError('');
+                setInventoryReportingReturnRoute('inventory');
+                setRoute('inventoryReport');
+              }}
+              style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.dailyPrimaryButtonText}>View discrepancy records</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
-            onPress={() => navigate('menu')}
+            onPress={() => navigate('inventory')}
             style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailyPrimaryButtonText}>Back to POS</Text>
+            <Text style={styles.dailyPrimaryButtonText}>Back to Inventory</Text>
           </Pressable>
         </ScrollView>
       </>
+    );
+  };
+
+  const renderInventoryDiscrepancySubmission = () => {
+    const capturedAt = dailyCheckStartedAt ?? new Date();
+    return (
+      <View style={styles.inventoryReportPage}>
+        {renderInventoryReportHeader('Inventory Discrepancy', 'Back to physical count', () => {
+          if (dailyDiscrepancies.length > 0 && !dailyCheckSubmitting) {
+            setDailyCheckLeavePromptVisible(true);
+          } else {
+            setRoute('dailyInventoryCheck');
+          }
+        })}
+        <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.inventoryReportMetadata}>
+            <Text style={styles.inventoryReportMetadataText}>Branch: {assignedBranch}</Text>
+            <Text style={styles.inventoryReportMetadataText}>
+              Date &amp; time: {formatHistoryDateTime(capturedAt)}
+            </Text>
+            <Text style={styles.inventoryReportMetadataText}>
+              Employee account (read-only): {staffName} · Signed-in staff
+            </Text>
+          </View>
+          {dailyDiscrepancies.map((line) => (
+            <View
+              key={line.ingredientId}
+              style={[
+                styles.inventoryReportRecord,
+                line.difference !== null && line.difference < 0
+                  ? styles.inventoryReportShortage
+                  : styles.inventoryReportExcess,
+              ]}
+            >
+              <View style={styles.inventoryReportRecordHeading}>
+                <Text style={styles.inventoryReportRecordTitle}>
+                  {line.name} · Submitted physical count
+                </Text>
+                <Text style={[styles.inventoryReportStatus, styles.inventoryStatusLow]}>Not submitted</Text>
+              </View>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Expected: {formatDailyUnitQuantity(line.recordedQuantity, line.unit)}
+              </Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Actual: {formatDailyUnitQuantity(line.parsedQuantity, line.unit)}
+              </Text>
+              <Text style={[
+                styles.inventoryReportRecordDifference,
+                line.difference !== null && line.difference < 0
+                  ? styles.inventoryReportDifferenceNegative
+                  : styles.inventoryReportDifferencePositive,
+              ]}>
+                Difference: {formatDailyDifference(line.difference ?? 0, line.unit)}
+              </Text>
+              <Text style={styles.inventoryReportRecordDetail}>
+                Branch: {assignedBranch} · {formatHistoryDateTime(capturedAt)}
+              </Text>
+            </View>
+          ))}
+          <Text style={styles.fieldLabel}>Staff remarks (optional)</Text>
+          <TextInput
+            accessibilityLabel="Staff remarks"
+            value={dailyCheckRemarks}
+            onChangeText={setDailyCheckRemarks}
+            placeholder="Add remarks"
+            placeholderTextColor={colors.muted}
+            maxLength={1000}
+            multiline
+            editable={!dailyCheckSubmitting}
+            style={[styles.dailyRemarksInput, styles.inventoryDiscrepancyRemarks]}
+          />
+          <Text style={styles.inventoryReportRecordDetail}>
+            Remarks lock after submission. Count changes require a correction request in Override Inventory Count.
+          </Text>
+          {formError ? (
+            <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{formError}</Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={dailyCheckSubmitting}
+            onPress={() => void saveOrRetryDailyInventoryCheck()}
+            style={[
+              styles.dailyPrimaryButton,
+              dailyCheckSubmitting && styles.buttonDisabled,
+            ]}
+          >
+            {dailyCheckSubmitting ? (
+              <View style={styles.inventoryDiscrepancySaving}>
+                <ActivityIndicator size="small" color={colors.white} />
+                <Text style={styles.dailyPrimaryButtonText}>Saving…</Text>
+              </View>
+            ) : (
+              <Text style={styles.dailyPrimaryButtonText}>
+                {dailyCheckSaveFailed ? 'Retry submission' : 'Submit for Owner Review'}
+              </Text>
+            )}
+          </Pressable>
+          {dailyCheckSubmitting ? (
+            <Text style={styles.inventoryReportRecordDetail}>
+              Please wait. Buttons are disabled to prevent a duplicate submission.
+            </Text>
+          ) : null}
+        </ScrollView>
+      </View>
     );
   };
 
@@ -4648,7 +4857,11 @@ export default function StaffWorkspace({
 
   const renderInventoryReportsList = () => (
     <View style={styles.inventoryReportPage}>
-      {renderInventoryReportHeader('Inventory Reporting', 'Back to More', () => setRoute('more'))}
+      {renderInventoryReportHeader(
+        'Inventory Reporting',
+        inventoryReportingReturnRoute === 'inventory' ? 'Back to Inventory' : 'Back to More',
+        () => setRoute(inventoryReportingReturnRoute),
+      )}
       <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
         <Text style={styles.inventoryReportIntro}>
           Read-only inventory reports for {assignedBranch}.
@@ -5086,7 +5299,7 @@ export default function StaffWorkspace({
             icon: '▤',
             title: 'Inventory Reporting',
             description: 'Read-only branch inventory and count reports',
-            onPress: openInventoryReporting,
+            onPress: () => openInventoryReporting('more'),
           },
           {
             icon: '₱',
@@ -6880,6 +7093,9 @@ export default function StaffWorkspace({
     case 'inventoryCountDetails':
       screenContent = renderInventoryCountDetails();
       break;
+    case 'inventoryDiscrepancySubmission':
+      screenContent = renderInventoryDiscrepancySubmission();
+      break;
     case 'alerts':
       screenContent = renderAlerts();
       break;
@@ -7161,7 +7377,7 @@ export default function StaffWorkspace({
                   <Pressable
                     accessibilityRole="button"
                     disabled={dailyCheckSubmitting}
-                    onPress={submitDailyInventoryCheck}
+                    onPress={saveOrRetryDailyInventoryCheck}
                     style={({ pressed }) => [
                       styles.dailyModalPrimaryButton,
                       pressed && styles.pressed,
@@ -7213,12 +7429,12 @@ export default function StaffWorkspace({
                 onPress={() => setDailyCheckLeavePromptVisible(false)}
                 style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
               >
-                <Text style={styles.dailyModalReviewText}>Keep editing</Text>
+                <Text style={styles.dailyModalReviewText}>Keep reviewing</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 disabled={dailyCheckSubmitting}
-                onPress={() => void submitDailyInventoryCheck()}
+                onPress={() => void saveOrRetryDailyInventoryCheck()}
                 style={({ pressed }) => [
                   styles.dailyModalPrimaryButton,
                   pressed && styles.pressed,
@@ -7562,8 +7778,11 @@ function createStaffStyles(theme: AppTheme) {
   inventoryPageHeader: { marginBottom: 14 },
   inventoryHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   inventoryHeaderCopy: { flex: 1, minWidth: 0 },
-  readOnlyPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: '#FFF2C4' },
-  readOnlyPillText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  inventoryReportsButton: {
+    minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 9, borderRadius: 12,
+  },
+  inventoryReportsButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 10 },
   inventorySearch: { marginTop: 14 },
   inventoryFilterScroll: { flexGrow: 0, marginBottom: 17 },
   inventoryFilters: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 7, paddingRight: 8 },
@@ -8222,6 +8441,8 @@ function createStaffStyles(theme: AppTheme) {
   inventoryReportDifferenceNegative: { color: colors.red },
   inventoryReportDifferencePositive: { color: '#97600B' },
   inventoryReportRecordLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 7, marginTop: 6 },
+  inventoryDiscrepancyRemarks: { marginTop: 5, marginBottom: 8 },
+  inventoryDiscrepancySaving: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   dailySalesControls: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 9, paddingHorizontal: 14,
     paddingTop: 13, paddingBottom: 13,
