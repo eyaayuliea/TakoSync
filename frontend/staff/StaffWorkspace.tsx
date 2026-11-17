@@ -27,12 +27,16 @@ import type { MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
+  countInventoryAlertsForSnapshot,
   countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
   filterBatchesWithRemainingStock,
   filterBranchInventoryAlertItems,
+  getInventoryAlertScreenStatus,
+  inventoryAlertEmptyCopy,
   inventoryAlertLabel,
   isStockAlert,
+  runInventoryAlertsRefreshOnce,
   sortInventoryAlerts,
   type InventoryAlertKind,
 } from './inventoryAlerts';
@@ -148,6 +152,8 @@ const colors = {
   paleRed: '#FCE9EB',
   yellow: '#FFF2C4',
 } as const;
+
+const alertPink = '#EC1358';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -387,7 +393,10 @@ type InventoryAlert = {
   batch: IngredientBatch | null;
   title: string;
   detail: string;
-  stockProgress?: number;
+  quantity?: number;
+  minimumStock?: number;
+  unit?: string;
+  daysRemaining?: number;
 };
 
 function parseInventoryDate(value: string | null) {
@@ -478,17 +487,15 @@ function SearchBar({
   value,
   onChangeText,
   placeholder = 'Search ingredients',
-  variant = 'default',
 }: {
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
-  variant?: 'default' | 'alerts';
 }) {
   const styles = useStaffStyles();
   const { colors: themeColors } = useTheme();
   return (
-    <View style={[styles.searchBar, variant === 'alerts' && styles.alertSearchBar]}>
+    <View style={styles.searchBar}>
       <Text style={styles.searchGlyph}>⌕</Text>
       <TextInput
         value={value}
@@ -1069,12 +1076,14 @@ export default function StaffWorkspace({
   const [historyStaffPickerOpen, setHistoryStaffPickerOpen] = useState(false);
   const [historyDateError, setHistoryDateError] = useState('');
   const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] = useState('');
-  const [alertSearch, setAlertSearch] = useState('');
   const [selectedAlertIngredientId, setSelectedAlertIngredientId] = useState('');
-  const [selectedAlertBatchReference, setSelectedAlertBatchReference] = useState('');
   const [selectedAlertKind, setSelectedAlertKind] = useState<InventoryAlertKind>('lowStock');
   const [selectedAlertTab, setSelectedAlertTab] = useState<StaffAlertTab>('lowStock');
   const [ingredientDetailReturnRoute, setIngredientDetailReturnRoute] = useState<'inventory' | 'alerts'>('inventory');
+  const [alertSnapshotBranchId, setAlertSnapshotBranchId] = useState<string | null>(null);
+  const [alertDataError, setAlertDataError] = useState('');
+  const [alertErrorBranchId, setAlertErrorBranchId] = useState<string | null>(null);
+  const [alertRefreshing, setAlertRefreshing] = useState(false);
   const [logoutConfirmationVisible, setLogoutConfirmationVisible] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [logoutPending, setLogoutPending] = useState(false);
@@ -1083,6 +1092,17 @@ export default function StaffWorkspace({
   const [alertPreferencesHydrated, setAlertPreferencesHydrated] = useState(false);
   const [alertPreferencesSaving, setAlertPreferencesSaving] = useState(false);
   const [alertPreferencesError, setAlertPreferencesError] = useState('');
+
+  const applyInventorySnapshot = (
+    inventory: Awaited<ReturnType<typeof loadInventory>>,
+    branchId: string,
+  ) => {
+    setIngredients(inventory.items);
+    setNearExpirationDays(inventory.nearExpirationDays);
+    setAlertSnapshotBranchId(branchId);
+    setAlertDataError('');
+    setAlertErrorBranchId(null);
+  };
 
   useEffect(() => {
     let active = true;
@@ -1345,7 +1365,8 @@ export default function StaffWorkspace({
 
   useEffect(() => {
     let active = true;
-    if (!user?.branchId) {
+    const branchId = user?.branchId;
+    if (!branchId) {
       setBackendLoading(false);
       setBackendError('Your account does not have an assigned branch. Contact the owner.');
       return () => {
@@ -1355,18 +1376,31 @@ export default function StaffWorkspace({
     setBackendLoading(true);
     setBackendError('');
     setNearExpirationDays(null);
-    Promise.all([
-      loadInventory(user.branchId, manilaBusinessDate()),
-      loadTransactionHistory(user.branchId),
-    ])
-      .then(([inventory, history]) => {
+    Promise.allSettled([
+      loadInventory(branchId, manilaBusinessDate()),
+      loadTransactionHistory(branchId),
+    ] as const)
+      .then(([inventoryResult, historyResult]) => {
         if (!active) return;
-        setIngredients(inventory.items);
-        setNearExpirationDays(inventory.nearExpirationDays);
-        setBackendHistory(history);
-      })
-      .catch((error: unknown) => {
-        if (active) setBackendError(error instanceof Error ? error.message : 'Unable to load branch records.');
+        const errors: string[] = [];
+        if (inventoryResult.status === 'fulfilled') {
+          applyInventorySnapshot(inventoryResult.value, branchId);
+        } else {
+          const message = inventoryResult.reason instanceof Error
+            ? inventoryResult.reason.message
+            : 'Unable to load branch inventory.';
+          setAlertDataError(message);
+          setAlertErrorBranchId(branchId);
+          errors.push(message);
+        }
+        if (historyResult.status === 'fulfilled') {
+          setBackendHistory(historyResult.value);
+        } else {
+          errors.push(historyResult.reason instanceof Error
+            ? historyResult.reason.message
+            : 'Unable to load branch history.');
+        }
+        setBackendError(errors[0] ?? '');
       })
       .finally(() => {
         if (active) setBackendLoading(false);
@@ -1532,7 +1566,8 @@ export default function StaffWorkspace({
   };
 
   const refreshBackendData = async () => {
-    if (!user?.branchId) {
+    const branchId = user?.branchId;
+    if (!branchId) {
       setBackendError('Your account does not have an assigned branch. Contact the owner.');
       setBackendLoading(false);
       return;
@@ -1541,8 +1576,8 @@ export default function StaffWorkspace({
     setBackendError('');
     setUnresolvedSalesLoading(true);
     const salesRefresh = Promise.all([
-      loadUnresolvedSales(user.branchId),
-      loadRecentStaffSales(user.branchId),
+      loadUnresolvedSales(branchId),
+      loadRecentStaffSales(branchId),
     ])
       .then(([unresolved, recent]) => {
         setUnresolvedSales(unresolved);
@@ -1556,21 +1591,31 @@ export default function StaffWorkspace({
         setSaleHistoryError(message);
       })
       .finally(() => setUnresolvedSalesLoading(false));
-    try {
-      const [inventory, history] = await Promise.all([
-        loadInventory(user.branchId, manilaBusinessDate()),
-        loadTransactionHistory(user.branchId),
-        salesRefresh,
-      ]);
-      setIngredients(inventory.items);
-      setNearExpirationDays(inventory.nearExpirationDays);
-      setBackendHistory(history);
-      setBackendError('');
-    } catch (error) {
-      setBackendError(error instanceof Error ? error.message : 'The saved record could not be refreshed.');
-    } finally {
-      setBackendLoading(false);
+    const [inventoryResult, historyResult] = await Promise.allSettled([
+      loadInventory(branchId, manilaBusinessDate()),
+      loadTransactionHistory(branchId),
+      salesRefresh,
+    ] as const);
+    const errors: string[] = [];
+    if (inventoryResult.status === 'fulfilled') {
+      applyInventorySnapshot(inventoryResult.value, branchId);
+    } else {
+      const message = inventoryResult.reason instanceof Error
+        ? inventoryResult.reason.message
+        : 'Unable to refresh branch inventory.';
+      setAlertDataError(message);
+      setAlertErrorBranchId(branchId);
+      errors.push(message);
     }
+    if (historyResult.status === 'fulfilled') {
+      setBackendHistory(historyResult.value);
+    } else {
+      errors.push(historyResult.reason instanceof Error
+        ? historyResult.reason.message
+        : 'Unable to refresh branch history.');
+    }
+    setBackendError(errors[0] ?? '');
+    setBackendLoading(false);
   };
 
   const submitPendingInventoryRequest = async (request: PendingInventoryTransaction) => {
@@ -1730,22 +1775,28 @@ export default function StaffWorkspace({
     }
   };
 
-  const refreshAlertsData = async () => {
-    if (alertRefreshLock.current) return;
-    alertRefreshLock.current = true;
-    setRefreshing(true);
-    setBackendLoading(true);
-    try {
-      await refreshBackendData();
-    } finally {
-      setBackendLoading(false);
-      setRefreshing(false);
-      alertRefreshLock.current = false;
+  const refreshAlertsData = () => runInventoryAlertsRefreshOnce(alertRefreshLock, async () => {
+    setAlertRefreshing(true);
+    const hasCurrentSnapshot = alertSnapshotBranchId === user.branchId;
+    if (!hasCurrentSnapshot) {
+      setAlertDataError('');
+      setAlertErrorBranchId(null);
     }
-  };
+    try {
+      if (!user.branchId) throw new Error('Your account does not have an assigned branch. Contact the owner.');
+      const inventory = await loadInventory(user.branchId, manilaBusinessDate());
+      applyInventorySnapshot(inventory, user.branchId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to refresh branch alerts.';
+      setAlertDataError(message);
+      setAlertErrorBranchId(user.branchId ?? null);
+    } finally {
+      setAlertRefreshing(false);
+    }
+  });
 
   useEffect(() => {
-    if (route === 'alerts') {
+    if (route === 'alerts' && !backendLoading) {
       void refreshAlertsData();
     }
   }, [route]);
@@ -2058,11 +2109,10 @@ export default function StaffWorkspace({
       ingredientId: item.id,
       batch: item.batches[0] ?? null,
       quantity: item.quantity,
+      minimumStock: item.minimumStock,
+      unit: item.unit,
       title: item.name,
-      detail: `${formatUnitQuantity(item.quantity, item.unit)} available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)} · ${formatUnitQuantity(Math.max(0, item.minimumStock - item.quantity), item.unit)} below threshold`,
-      stockProgress: item.minimumStock > 0
-        ? Math.max(0, Math.min(1, item.quantity / item.minimumStock))
-        : 0,
+      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\nMinimum stock level: ${formatUnitQuantity(item.minimumStock, item.unit)}`,
     })),
     ...outOfStockItems.map((item) => ({
       id: `out-${item.id}`,
@@ -2070,37 +2120,39 @@ export default function StaffWorkspace({
       ingredientId: item.id,
       batch: item.batches[0] ?? null,
       quantity: item.quantity,
+      minimumStock: item.minimumStock,
+      unit: item.unit,
       title: item.name,
-      detail: `No stock available · Minimum ${formatUnitQuantity(item.minimumStock, item.unit)}`,
-      stockProgress: 0,
+      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\nMinimum stock level: ${formatUnitQuantity(item.minimumStock, item.unit)}`,
     })),
     ...nearExpirationBatches.map(({ item, batch, daysRemaining }) => {
       const expiryText = daysRemaining === 0
         ? 'Expires today'
-        : daysRemaining === 1
-          ? 'Expires tomorrow'
-          : `In ${daysRemaining} days`;
+        : `${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} remaining`;
       return {
-        id: `expiry-${item.id}-${batch.reference}`,
+        id: `expiry-${item.id}-${batch.reference}-${batch.receivedDate}`,
         kind: 'nearExpiration' as const,
         ingredientId: item.id,
         batch,
+        quantity: batch.quantityRemaining,
+        unit: item.unit,
         daysRemaining,
         title: item.name,
-        detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expires ${batch.expirationDate} · ${expiryText}`,
+        detail: `Batch ${batch.reference} · ${formatUnitQuantity(batch.quantityRemaining, item.unit)}\nExpires ${batch.expirationDate ?? 'Not recorded'}\n${expiryText}`,
       };
     }),
     ...expiredBatches.map(({ item, batch, daysRemaining }) => ({
-      id: `expired-${item.id}-${batch.reference}`,
+      id: `expired-${item.id}-${batch.reference}-${batch.receivedDate}`,
       kind: 'expired' as const,
       ingredientId: item.id,
       batch,
+      quantity: batch.quantityRemaining,
+      unit: item.unit,
       daysRemaining,
       title: item.name,
-      detail: `${formatUnitQuantity(batch.quantityRemaining, item.unit)} remaining · Expired ${batch.expirationDate}`,
+      detail: `Batch ${batch.reference} · ${formatUnitQuantity(batch.quantityRemaining, item.unit)}\nExpired ${batch.expirationDate ?? 'Not recorded'}\n${Math.abs(daysRemaining)} ${Math.abs(daysRemaining) === 1 ? 'day' : 'days'} past expiration`,
     })),
   ]));
-  const alertTerm = alertSearch.trim().toLowerCase();
   const enabledAlerts = inventoryAlerts.filter((item) => {
     const activeAlertPreferences = getActiveStaffAlertPreferences(alertPreferences, alertPreferencesHydrated);
     const preference = isStockAlert(item.kind) ? activeAlertPreferences.lowStock : activeAlertPreferences.expiration;
@@ -2108,11 +2160,19 @@ export default function StaffWorkspace({
   });
   const enabledAlertCounts = countInventoryAlertsWhenReady(enabledAlerts, backendLoading, backendError);
   const enabledAlertCount = Object.values(enabledAlertCounts).reduce((total, count) => total + count, 0);
-  const visibleAlerts = enabledAlerts.filter((item) =>
-      `${item.title} ${ingredients.find((ingredient) => ingredient.id === item.ingredientId)?.category ?? ''} ${inventoryAlertLabel(item.kind)} ${item.detail}`
-        .toLowerCase()
-        .includes(alertTerm),
+  const hasCurrentAlertSnapshot = Boolean(user.branchId) && alertSnapshotBranchId === user.branchId;
+  const alertRefreshError = user.branchId
+    ? alertErrorBranchId === user.branchId ? alertDataError : ''
+    : backendError;
+  const alertScreenStatus = getInventoryAlertScreenStatus(
+    hasCurrentAlertSnapshot,
+    backendLoading || alertRefreshing,
+    alertRefreshError,
   );
+  const alertCounts = countInventoryAlertsForSnapshot(enabledAlerts, hasCurrentAlertSnapshot);
+  const activeAlertCount = alertCounts
+    ? Object.values(alertCounts).reduce((total, count) => total + count, 0)
+    : null;
   const dashboardTerm = dashboardSearch.trim().toLowerCase();
   const dashboardMatches = (item: Ingredient) =>
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
@@ -2447,8 +2507,7 @@ export default function StaffWorkspace({
     setBackendError('');
     try {
       const currentInventory = await loadInventory(user.branchId, manilaBusinessDate());
-      setIngredients(currentInventory.items);
-      setNearExpirationDays(currentInventory.nearExpirationDays);
+      applyInventorySnapshot(currentInventory, user.branchId);
       const lines = currentInventory.items
         .filter((item) => item.hasBranchInventory)
         .map((item) => ({
@@ -2822,8 +2881,7 @@ export default function StaffWorkspace({
       try {
         const latestInventory = await loadInventory(user.branchId, manilaBusinessDate());
         if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;
-        setIngredients(latestInventory.items);
-        setNearExpirationDays(latestInventory.nearExpirationDays);
+        applyInventorySnapshot(latestInventory, user.branchId);
         if (!validateWasteForm(latestInventory.items)) return;
       } catch (error) {
         if (requestGeneration !== wasteReviewGeneration.current || routeRef.current !== 'waste') return;
@@ -3968,138 +4026,103 @@ export default function StaffWorkspace({
       );
     }
 
-    const stockAlert = isStockAlert(selectedAlertKind);
-    const alertLabel = inventoryAlertLabel(selectedAlertKind);
-    const batch = item.batches.find((candidate) => candidate.reference === selectedAlertBatchReference) ?? item.batches[0] ?? null;
-    const expirationDateValue = parseInventoryDate(batch?.expirationDateIso ?? batch?.expirationDate ?? null);
     const alertDate = manilaBusinessDate();
-    const daysRemaining = expirationDateValue ? daysBetweenDates(alertDate, expirationDateValue) : null;
-    const expirationStatus = daysRemaining === null
-      ? 'No valid expiration date'
-      : daysRemaining < 0
-        ? `Expired ${batch?.expirationDate}`
-        : daysRemaining === 0
-          ? 'Expires today'
-          : `Expires in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}`;
-    const receivedDate = batch?.receivedDate ?? getReceivedDate(item);
-    const stockGap = Math.max(0, item.minimumStock - item.quantity);
+    const relatedAlerts = enabledAlerts.filter((alert) => alert.ingredientId === item.id);
+    const detailKinds = [...new Set([selectedAlertKind, ...relatedAlerts.map((alert) => alert.kind)])];
+    const batches = [...item.batches].sort((left, right) => {
+      const leftDate = parseInventoryDate(left.expirationDateIso ?? left.expirationDate);
+      const rightDate = parseInventoryDate(right.expirationDateIso ?? right.expirationDate);
+      if (!leftDate) return rightDate ? 1 : 0;
+      if (!rightDate) return -1;
+      return leftDate.getTime() - rightDate.getTime();
+    });
 
     return (
-      <>
-        <View style={styles.formHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back to Alerts"
-            onPress={() => setRoute('alerts')}
-            style={styles.backButton}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Alert item details</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+      <ScrollView
+        style={[styles.scroll, styles.alertsScreen]}
+        contentContainerStyle={styles.alertDetailContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.alertLandingHeader}>
+          <Text style={styles.alertPageTitle}>Alert Details</Text>
+          <Text style={styles.alertBranchName}>
+            {assignedBranch} · {activeAlertCount === null ? '— active alerts' : `${activeAlertCount} active alerts`}
+          </Text>
+          <Text style={styles.alertBusinessDate}>Business date: {formatDate(alertDate)}</Text>
+        </View>
+        <Text style={styles.alertDetailName}>{item.name}</Text>
+        <View style={styles.alertDetailBadges}>
+          {detailKinds.map((kind) => {
+            const danger = kind === 'outOfStock' || kind === 'expired';
+            return (
+              <View
+                key={kind}
+                style={[styles.alertDetailBadge, danger && styles.alertDetailDangerBadge]}
+              >
+                <Text style={[styles.alertDetailBadgeIcon, danger && styles.alertDetailDangerText]}>
+                  {kind === 'nearExpiration' ? '◷' : danger ? '!' : '▲'}
+                </Text>
+                <Text style={[styles.alertDetailBadgeText, danger && styles.alertDetailDangerText]}>
+                  {inventoryAlertLabel(kind)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+        <View style={styles.alertDetailMetrics}>
+          <View style={styles.alertDetailMetric}>
+            <Text style={styles.alertDetailMetricLabel}>Expected quantity</Text>
+            <Text style={styles.alertDetailMetricValue}>{formatUnitQuantity(item.quantity, item.unit)}</Text>
+          </View>
+          <View style={styles.alertDetailMetric}>
+            <Text style={styles.alertDetailMetricLabel}>Minimum stock level</Text>
+            <Text style={styles.alertDetailMetricValue}>{formatUnitQuantity(item.minimumStock, item.unit)}</Text>
           </View>
         </View>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.alertDetailContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={[styles.alertDetailBadge, !stockAlert && styles.alertDetailExpiryBadge]}>
-            <Text style={styles.alertDetailBadgeIcon}>{stockAlert ? '!' : '▦'}</Text>
-            <Text style={styles.alertDetailBadgeText}>{alertLabel}</Text>
-          </View>
-
-          <View style={styles.alertDetailSummaryCard}>
-            <Text style={styles.alertDetailName}>{item.name}</Text>
-            <Text style={styles.alertDetailQuantity}>{formatUnitQuantity(item.quantity, item.unit)}</Text>
-            <Text style={styles.alertDetailSubtext}>{assignedBranch} · {item.category}</Text>
-          </View>
-
-          <View style={styles.alertDetailRows}>
-            {stockAlert ? (
-              <>
-                <DetailRow label="Current stock" value={formatUnitQuantity(item.quantity, item.unit)} />
-                <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />
-                <DetailRow label="Below minimum" value={formatUnitQuantity(stockGap, item.unit)} />
-                <DetailRow
-                  label="Status"
-                  value={selectedAlertKind === 'outOfStock'
-                    ? 'Out of Stock'
-                    : item.quantity < item.minimumStock ? 'Low stock' : 'At minimum'}
-                />
-                <DetailRow label="Received" value={receivedDate} />
-                <DetailRow label="Batch expires" value={batch?.expirationDate ?? 'Not recorded'} />
-                <DetailRow label="Last updated" value={item.lastUpdated} />
-              </>
-            ) : (
-              <>
-                <DetailRow label="Batch reference" value={batch?.reference ?? item.batchReference ?? item.receivedBatch.split('·')[0].trim()} />
-                <DetailRow label="Received date" value={receivedDate} />
-                <DetailRow label="Expiration date" value={batch?.expirationDate ?? 'Not recorded'} />
-                <DetailRow label="As of" value={formatDate(alertDate)} />
-                <DetailRow label="Batch quantity remaining" value={formatUnitQuantity(batch?.quantityRemaining ?? item.quantity, item.unit)} />
-                <DetailRow label="Status" value={expirationStatus} />
-                <DetailRow label="Minimum stock" value={formatUnitQuantity(item.minimumStock, item.unit)} />
-                <DetailRow label="Available stock" value={formatUnitQuantity(item.quantity, item.unit)} />
-              </>
-            )}
-          </View>
-
-          <View style={styles.alertDetailInfoBanner}>
-            <Text style={styles.alertDetailInfoIcon}>i</Text>
-            <Text style={styles.alertDetailInfoText}>
-              {selectedAlertKind === 'outOfStock'
-                ? 'No stock is currently available. Record a stock-in before using this ingredient.'
-                : selectedAlertKind === 'lowStock'
-                  ? 'Replenish before the next cooking batch. Alert clears when available stock reaches the minimum.'
-                  : selectedAlertKind === 'expired'
-                    ? 'Do not use this expired batch. Record the loss through the inventory waste workflow.'
-                    : 'Use the earliest valid batch first. This batch remains usable until its recorded expiration date.'}
-            </Text>
-          </View>
-
-          <View style={styles.alertDetailActions}>
-            {stockAlert ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setSelectedIngredientId(item.id);
-                  openForm('stockIn', 'more');
-                }}
-                style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}
-              >
-                <Text style={styles.alertDetailPrimaryText}>Record Stock-In</Text>
-              </Pressable>
-            ) : (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setSelectedIngredientId(item.id);
-                  setIngredientDetailReturnRoute('alerts');
-                  setRoute('ingredientDetails');
-                }}
-                style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}
-              >
-                <Text style={styles.alertDetailPrimaryText}>View ingredient inventory</Text>
-              </Pressable>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setRoute('alerts')}
-              style={({ pressed }) => [styles.alertDetailSecondary, pressed && styles.pressed]}
+        <Text style={styles.alertDetailBatchHeading}>Recorded batches</Text>
+        {batches.length > 0 ? batches.map((batch) => {
+          const expiration = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
+          const daysRemaining = expiration ? daysBetweenDates(alertDate, expiration) : null;
+          const expiryCopy = daysRemaining === null
+            ? null
+            : daysRemaining < 0
+              ? `${Math.abs(daysRemaining)} ${Math.abs(daysRemaining) === 1 ? 'day' : 'days'} past expiration`
+              : daysRemaining === 0
+                ? 'Expires today'
+                : `${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} remaining`;
+          return (
+            <View
+              key={`${batch.reference}-${batch.receivedDate}`}
+              style={styles.alertDetailBatch}
             >
-              <Text style={styles.alertDetailSecondaryText}>Back to Alerts</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </>
+              <Text style={styles.alertDetailBatchName}>Batch {batch.reference}</Text>
+              <Text style={styles.alertDetailBatchText}>
+                Quantity: {formatUnitQuantity(batch.quantityRemaining, item.unit)}
+                {batch.quantityRemaining <= 0 ? ' · Depleted' : ''}
+              </Text>
+              <Text style={styles.alertDetailBatchText}>
+                Expiration: {batch.expirationDate ?? 'Not recorded'}
+              </Text>
+              {expiryCopy ? <Text style={styles.alertDetailBatchText}>{expiryCopy}</Text> : null}
+            </View>
+          );
+        }) : (
+          <Text style={styles.alertDetailBatchEmpty}>No batches have been recorded.</Text>
+        )}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRoute('alerts')}
+          style={({ pressed }) => [styles.alertDetailBack, pressed && styles.pressed]}
+        >
+          <Text style={styles.alertDetailBackText}>Back</Text>
+        </Pressable>
+      </ScrollView>
     );
   };
 
   const renderAlertCard = (alert: InventoryAlert) => {
-    const stockAlert = isStockAlert(alert.kind);
     const alertLabel = inventoryAlertLabel(alert.kind);
+    const danger = alert.kind === 'outOfStock' || alert.kind === 'expired';
     return (
       <Pressable
         key={alert.id}
@@ -4107,7 +4130,6 @@ export default function StaffWorkspace({
         accessibilityLabel={`${alert.title}, ${alertLabel}. ${alert.detail}`}
         onPress={() => {
           setSelectedAlertIngredientId(alert.ingredientId);
-          setSelectedAlertBatchReference(alert.batch?.reference ?? '');
           setSelectedAlertKind(alert.kind);
           setRoute('alertDetails');
         }}
@@ -4115,37 +4137,48 @@ export default function StaffWorkspace({
       >
         <View style={styles.inventoryAlertTopline}>
           <Text style={styles.inventoryAlertName}>{alert.title}</Text>
-          <View style={[styles.inventoryAlertBadge, !stockAlert && styles.inventoryExpiryBadge]}>
-            {!stockAlert ? <Text style={styles.inventoryAlertBadgeIcon}>!</Text> : null}
-            <Text style={[styles.inventoryAlertBadgeText, !stockAlert && styles.inventoryExpiryBadgeText]}>
+          <View style={[styles.inventoryAlertBadge, danger && styles.inventoryDangerBadge]}>
+            <Text style={[
+              styles.inventoryAlertBadgeIcon,
+              danger && styles.inventoryDangerBadgeText,
+            ]}>{alert.kind === 'nearExpiration' ? '◷' : danger ? '!' : '▲'}</Text>
+            <Text style={[styles.inventoryAlertBadgeText, danger && styles.inventoryDangerBadgeText]}>
               {alertLabel}
             </Text>
           </View>
         </View>
         <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>
-        {stockAlert ? (
-          <View
-            style={styles.stockLevelTrack}
-            accessibilityRole="progressbar"
-            accessibilityLabel={`${alert.title} stock compared with minimum threshold`}
-            accessibilityValue={{ min: 0, max: 100, now: Math.round((alert.stockProgress ?? 0) * 100) }}
-          >
-            <View style={[styles.stockLevelFill, { width: `${Math.round((alert.stockProgress ?? 0) * 100)}%` }]} />
-          </View>
-        ) : null}
+        <Text style={styles.alertCardAction}>View alert details</Text>
       </Pressable>
     );
   };
 
   const renderAlerts = () => {
-    const selectedAlerts = visibleAlerts.filter((alert) => alert.kind === selectedAlertTab);
-    const visibleAlertCounts = countInventoryAlertsWhenReady(visibleAlerts, backendLoading, backendError);
+    const selectedAlerts = enabledAlerts.filter((alert) => alert.kind === selectedAlertTab);
     const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
       { kind: 'lowStock', label: 'Low Stock' },
       { kind: 'outOfStock', label: 'Out of Stock' },
       { kind: 'nearExpiration', label: 'Near Expiration' },
       { kind: 'expired', label: 'Expired' },
     ];
+    const alertTabRows = [alertTabs.slice(0, 2), alertTabs.slice(2)];
+    const emptyCopy = inventoryAlertEmptyCopy(selectedAlertTab);
+    const sortCopy = selectedAlertTab === 'nearExpiration' || selectedAlertTab === 'expired'
+      ? 'Sorted by earliest expiration date first'
+      : 'Sorted by lowest expected quantity first';
+    const categoryCopy = selectedAlertTab === 'lowStock'
+      ? 'At or below minimum, but above zero'
+      : selectedAlertTab === 'outOfStock'
+        ? 'Expected quantity is zero'
+        : selectedAlertTab === 'nearExpiration'
+          ? `Owner setting: expiration within the next ${nearExpirationDays ?? 0} days`
+          : `Recorded expiration date is before ${formatDate(alertDate)}`;
+    const activeAlertsCopy = activeAlertCount === null
+      ? '— active alerts'
+      : alertScreenStatus.status === 'stale' || alertScreenStatus.status === 'refreshing'
+        ? `${activeAlertCount} last known alerts`
+        : `${activeAlertCount} active alerts`;
+    const showLastKnownAlerts = alertScreenStatus.status === 'stale';
 
     return (
       <ScrollView
@@ -4155,54 +4188,52 @@ export default function StaffWorkspace({
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
+            refreshing={alertRefreshing}
             onRefresh={() => void refreshAlertsData()}
-            tintColor={colors.pink}
-            colors={[colors.pink]}
+            tintColor={alertPink}
+            colors={[alertPink]}
           />
         }
       >
-        <View style={styles.pageHeader}>
+        <View style={styles.alertLandingHeader}>
           <Text style={styles.alertPageTitle}>Alerts</Text>
+          <Text style={styles.alertBranchName}>{assignedBranch} · {activeAlertsCopy}</Text>
+          <Text style={styles.alertBusinessDate}>Business date: {formatDate(alertDate)}</Text>
         </View>
-        <SearchBar
-          value={alertSearch}
-          onChangeText={setAlertSearch}
-          placeholder="Searching for something?"
-          variant="alerts"
-        />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.alertTabs}
-          accessibilityLabel="Alert categories"
-        >
-          {alertTabs.map((tab) => {
-            const count = visibleAlertCounts[tab.kind];
-            const selected = selectedAlertTab === tab.kind;
-            return (
-              <Pressable
-                key={tab.kind}
-                accessibilityRole="tab"
-                accessibilityState={{ selected }}
-                onPress={() => setSelectedAlertTab(tab.kind)}
-                style={[styles.alertTab, selected && styles.alertTabSelected]}
-              >
-                <Text style={[styles.alertTabText, selected && styles.alertTabTextSelected]}>{tab.label}</Text>
-                <Text style={[styles.alertTabCount, selected && styles.alertTabCountSelected]}>{count}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        {backendLoading ? (
+        <View style={styles.alertTabsGrid} accessibilityLabel="Alert categories">
+          {alertTabRows.map((row, rowIndex) => (
+            <View key={rowIndex} style={styles.alertTabRow}>
+              {row.map((tab) => {
+                const count = alertCounts?.[tab.kind];
+                const selected = selectedAlertTab === tab.kind;
+                return (
+                  <Pressable
+                    key={tab.kind}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected }}
+                    onPress={() => setSelectedAlertTab(tab.kind)}
+                    style={[styles.alertTab, selected && styles.alertTabSelected]}
+                  >
+                    <Text style={[styles.alertTabText, selected && styles.alertTabTextSelected]}>
+                      {tab.label} · {count === undefined ? '—' : count}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+        {alertScreenStatus.status === 'loading' ? (
           <View style={styles.alertState}>
-            <ActivityIndicator size="small" color={colors.pink} />
-            <Text style={styles.alertStateText}>Loading alerts…</Text>
+            <ActivityIndicator size="small" color={alertPink} />
+            <Text style={styles.alertStateText}>Loading alerts...</Text>
           </View>
-        ) : backendError !== '' ? (
+        ) : alertScreenStatus.status === 'error' ? (
           <View style={styles.alertState}>
             <Text style={styles.alertStateTitle}>Unable to load alerts</Text>
-            <Text style={styles.alertStateText}>{backendError}</Text>
+            <Text style={styles.alertStateText}>
+              Unable to load data. Please check your internet connection and try again.
+            </Text>
             <Pressable
               accessibilityRole="button"
               onPress={() => void refreshAlertsData()}
@@ -4211,38 +4242,51 @@ export default function StaffWorkspace({
               <Text style={styles.alertRetryText}>Retry</Text>
             </Pressable>
           </View>
-        ) : alertTerm !== '' && visibleAlerts.length === 0 ? (
-          <View style={styles.alertState}>
-            <Text style={styles.alertStateTitle}>No matching alerts</Text>
-            <Text style={styles.alertStateText}>Try another ingredient, alert type, or detail.</Text>
-          </View>
-        ) : inventoryAlerts.length === 0 ? (
-          <View style={styles.alertEmptyCard}>
-            <View style={styles.alertEmptyIconCircle}>
-              <View style={styles.alertEmptyBellBody} />
-              <View style={styles.alertEmptyBellBase} />
-              <View style={styles.alertEmptyBellClapper} />
-            </View>
-            <Text style={styles.alertEmptyTitle}>No alerts at the moment.</Text>
-            <Text style={styles.alertEmptyText}>Stock and expiration alerts appear here.</Text>
-          </View>
-        ) : visibleAlerts.length === 0 ? (
-          <View style={styles.alertState}>
-            <Text style={styles.alertStateTitle}>No active alerts are visible</Text>
-            <Text style={styles.alertStateText}>Check alert visibility in Profile &amp; settings.</Text>
-          </View>
-        ) : selectedAlerts.length === 0 ? (
-          <View style={styles.alertState}>
-            <Text style={styles.alertStateTitle}>No {inventoryAlertLabel(selectedAlertTab).toLowerCase()} alerts</Text>
-            <Text style={styles.alertStateText}>This alert category is currently clear for {assignedBranch}.</Text>
-          </View>
         ) : (
-          <View style={styles.alertSections}>
-            <View style={styles.alertSection}>
-              <Text style={styles.alertSectionTitle}>{inventoryAlertLabel(selectedAlertTab)}</Text>
-              <View style={styles.alertCardList}>{selectedAlerts.map(renderAlertCard)}</View>
+          <>
+            {alertScreenStatus.status === 'stale' ? (
+              <View style={styles.alertStaleBanner} accessibilityRole="alert">
+                <Text style={styles.alertStaleText}>Showing last known alerts. {alertScreenStatus.message}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void refreshAlertsData()}
+                  style={({ pressed }) => [styles.alertStaleRetry, pressed && styles.pressed]}
+                >
+                  <Text style={styles.alertStaleRetryText}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : alertScreenStatus.status === 'refreshing' && !showLastKnownAlerts ? (
+              <View style={styles.alertRefreshingBanner}>
+                <ActivityIndicator size="small" color={alertPink} />
+                <Text style={styles.alertRefreshingText}>Loading alerts...</Text>
+              </View>
+            ) : null}
+            {selectedAlerts.length > 0 ? (
+              <>
+                <View style={styles.alertCategoryCopy}>
+                  <Text style={styles.alertSortText}>{sortCopy}</Text>
+                  <Text style={styles.alertCategoryDescription}>{categoryCopy}</Text>
+                </View>
+                <View style={styles.alertCardList}>{selectedAlerts.map(renderAlertCard)}</View>
+              </>
+            ) : (
+              <View style={styles.alertEmptyCard}>
+                <View style={styles.alertEmptyIconCircle}>
+                  <View style={styles.alertEmptyBellBody} />
+                  <View style={styles.alertEmptyBellBase} />
+                  <View style={styles.alertEmptyBellClapper} />
+                </View>
+                <Text style={styles.alertEmptyTitle}>{emptyCopy.title}</Text>
+                <Text style={styles.alertEmptyText}>{emptyCopy.message} for {assignedBranch}.</Text>
+              </View>
+            )}
+            <View style={styles.alertInfoNote}>
+              <Text style={styles.alertInfoText}>
+                Updates after Stock-In, Waste &amp; Spillage, sales, batter batches and authorized adjustments.
+              </Text>
+              <Text style={styles.alertInfoText}>Assigned branch only · Read-only alerts.</Text>
             </View>
-          </View>
+          </>
         )}
       </ScrollView>
     );
@@ -6888,9 +6932,12 @@ export default function StaffWorkspace({
           onRetryInventory={menuInventoryRetrySale ? () => void retryMenuSaleInventory() : undefined}
         />
       </View>
-      {route !== 'stockOut' && route !== 'usagePreview' ? (
-        <BottomNavigation active={route} onSelect={navigate} staffOnly />
-      ) : null}
+      <BottomNavigation
+        active={route}
+        onSelect={navigate}
+        staffOnly
+        staffAlertCount={activeAlertCount}
+      />
       <Modal
         visible={batterPreparationVisible}
         transparent
@@ -7462,7 +7509,6 @@ export default function StaffWorkspace({
                   onPress={() => {
                     setStockOutAlert(null);
                     setSelectedAlertIngredientId(alertIngredient.id);
-                    setSelectedAlertBatchReference('');
                     setSelectedAlertKind('lowStock');
                     setRoute('alertDetails');
                   }}
@@ -7707,9 +7753,6 @@ function createStaffStyles(theme: AppTheme) {
     minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     borderRadius: 22, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginBottom: 17,
   },
-  alertSearchBar: {
-    minHeight: 42, borderRadius: 13, backgroundColor: '#F5F5F7', borderColor: '#F5F5F7', marginBottom: 0,
-  },
   searchGlyph: { color: colors.muted, fontSize: 25, lineHeight: 29, width: 24, textAlign: 'center', marginRight: 7 },
   searchInput: { flex: 1, minHeight: 42, paddingVertical: 0, color: colors.ink, fontFamily: font.regular, fontSize: 11 },
   clearSearch: { color: colors.muted, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 4 },
@@ -7823,107 +7866,114 @@ function createStaffStyles(theme: AppTheme) {
   stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 13, borderRadius: 13, backgroundColor: '#F7F6FB', marginTop: 19 },
   stockTipIcon: { width: 17, height: 17, borderRadius: 9, overflow: 'hidden', color: colors.white, backgroundColor: colors.navy, fontFamily: font.semibold, fontSize: 11, textAlign: 'center', marginRight: 9 },
   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
-  alertsPageContent: { flexGrow: 1, paddingHorizontal: 18, paddingTop: 19, paddingBottom: 20, backgroundColor: colors.white },
+  alertsPageContent: {
+    flexGrow: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.white,
+  },
+  alertsScreen: { flex: 1, backgroundColor: colors.white },
+  alertLandingHeader: { marginBottom: 13 },
   alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 22, lineHeight: 29 },
-  alertTabs: { gap: 7, paddingTop: 15, paddingBottom: 3 },
+  alertBranchName: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 1 },
+  alertBusinessDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  alertTabsGrid: { gap: 7, marginBottom: 12 },
+  alertTabRow: { flexDirection: 'row', gap: 8 },
   alertTab: {
-    minHeight: 36, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
-    borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white,
+    flex: 1, minWidth: 0, minHeight: 34, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 7, borderRadius: 18, backgroundColor: '#F5F5F4',
   },
-  alertTabSelected: { borderColor: colors.pink, backgroundColor: colors.pink },
-  alertTabText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  alertTabSelected: { backgroundColor: '#0F1025' },
+  alertTabText: { color: colors.navy, fontFamily: font.medium, fontSize: 9, textAlign: 'center' },
   alertTabTextSelected: { color: colors.white },
-  alertTabCount: { minWidth: 17, marginLeft: 6, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 8, textAlign: 'center', color: colors.muted, backgroundColor: colors.pale },
-  alertTabCountSelected: { color: colors.pink, backgroundColor: colors.white },
-  alertSections: { flex: 1, paddingTop: 17, gap: 19 },
-  alertSection: { gap: 9 },
-  alertSectionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, lineHeight: 18 },
-  alertCardList: { gap: 9 },
-  alertsScreen: {
-    marginHorizontal: 8, marginTop: 7, borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    backgroundColor: colors.white, overflow: 'hidden',
-  },
+  alertCategoryCopy: { gap: 2, marginBottom: 9 },
+  alertSortText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12 },
+  alertCategoryDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12 },
+  alertCardList: { gap: 8 },
   inventoryAlertCard: {
-    minHeight: 80, justifyContent: 'center', paddingHorizontal: 13, paddingVertical: 11,
-    borderRadius: 13, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
-    elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
+    minHeight: 77, justifyContent: 'center', paddingHorizontal: 11, paddingVertical: 9,
+    borderRadius: 11, backgroundColor: '#FDFDFC', borderWidth: 1, borderColor: '#E3E3E6',
   },
   inventoryAlertTopline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  inventoryAlertName: { flex: 1, minWidth: 0, color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+  inventoryAlertName: { flex: 1, minWidth: 0, color: '#000000', fontFamily: font.semibold, fontSize: 11 },
   inventoryAlertBadge: {
-    flexShrink: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4,
-    borderRadius: 10, backgroundColor: '#FFF2C4',
+    flexShrink: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: 9, backgroundColor: '#FDE672',
   },
-  inventoryExpiryBadge: { backgroundColor: colors.red },
-  inventoryAlertBadgeIcon: { color: colors.white, fontFamily: font.bold, fontSize: 8, marginRight: 4 },
+  inventoryDangerBadge: { backgroundColor: '#FDEBEC' },
+  inventoryAlertBadgeIcon: { color: colors.navy, fontFamily: font.bold, fontSize: 8, marginRight: 4 },
+  inventoryDangerBadgeText: { color: '#F52F2E' },
   inventoryAlertBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
-  inventoryExpiryBadgeText: { color: colors.white },
-  inventoryAlertDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 6 },
-  stockLevelTrack: { height: 5, overflow: 'hidden', borderRadius: 3, backgroundColor: '#E8E8EB', marginTop: 9 },
-  stockLevelFill: { height: '100%', borderRadius: 3, backgroundColor: '#F0C419' },
+  inventoryAlertDetail: {
+    color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 5,
+  },
   alertEmptyCard: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 17, paddingVertical: 22,
+    flex: 1, minHeight: 220, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 17,
   },
   alertEmptyIconCircle: {
-    width: 68, height: 68, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 34, backgroundColor: '#F0F0F2', marginBottom: 15,
+    width: 38, height: 38, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 19, backgroundColor: '#E3E3E6', marginBottom: 11,
   },
   alertEmptyBellBody: {
-    position: 'absolute', top: 17, width: 19, height: 21, borderWidth: 1.7, borderColor: '#777783',
-    borderTopLeftRadius: 10, borderTopRightRadius: 10, borderBottomLeftRadius: 4, borderBottomRightRadius: 4,
+    position: 'absolute', top: 8, width: 13, height: 15, borderWidth: 1.5, borderColor: '#777783',
+    borderTopLeftRadius: 7, borderTopRightRadius: 7, borderBottomLeftRadius: 3, borderBottomRightRadius: 3,
   },
-  alertEmptyBellBase: { position: 'absolute', top: 39, width: 24, height: 2, borderRadius: 1, backgroundColor: '#777783' },
-  alertEmptyBellClapper: { position: 'absolute', top: 42, width: 5, height: 4, borderRadius: 3, backgroundColor: '#777783' },
-  alertEmptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, textAlign: 'center' },
-  alertEmptyText: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 5 },
-  alertState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  alertStateTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, textAlign: 'center' },
-  alertStateText: { color: colors.muted, fontFamily: font.regular, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 6 },
-  alertRetryButton: { minWidth: 90, alignItems: 'center', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 18, backgroundColor: colors.pink, marginTop: 13 },
-  alertRetryText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
-  alertDetailContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 20 },
+  alertEmptyBellBase: { position: 'absolute', top: 24, width: 17, height: 1.5, borderRadius: 1, backgroundColor: '#777783' },
+  alertEmptyBellClapper: { position: 'absolute', top: 26, width: 4, height: 3, borderRadius: 2, backgroundColor: '#777783' },
+  alertEmptyTitle: { color: '#000000', fontFamily: font.semibold, fontSize: 12, textAlign: 'center' },
+  alertEmptyText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, textAlign: 'center', marginTop: 5 },
+  alertState: { flex: 1, minHeight: 220, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  alertStateTitle: { color: '#000000', fontFamily: font.semibold, fontSize: 12, textAlign: 'center' },
+  alertStateText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, textAlign: 'center', marginTop: 6 },
+  alertRetryButton: {
+    minWidth: 90, minHeight: 40, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 16, borderRadius: 20, backgroundColor: alertPink, marginTop: 13,
+  },
+  alertRetryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  alertStaleBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, borderRadius: 9,
+    backgroundColor: '#FDE672', marginBottom: 10,
+  },
+  alertStaleText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
+  alertStaleRetry: { minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 9 },
+  alertStaleRetryText: { color: alertPink, fontFamily: font.semibold, fontSize: 9 },
+  alertRefreshingBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 10,
+  },
+  alertRefreshingText: { color: colors.muted, fontFamily: font.medium, fontSize: 9 },
+  alertInfoNote: { alignItems: 'center', gap: 2, marginTop: 'auto', paddingTop: 12 },
+  alertInfoText: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, textAlign: 'center' },
+  alertCardAction: {
+    color: colors.navy, fontFamily: font.medium, fontSize: 8, marginTop: 5,
+  },
+  alertDetailContent: { flexGrow: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12 },
+  alertDetailName: { color: '#000000', fontFamily: font.semibold, fontSize: 15, marginBottom: 6 },
+  alertDetailBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
   alertDetailBadge: {
-    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9,
-    paddingVertical: 5, borderRadius: 11, backgroundColor: '#FFF2C4', marginBottom: 10,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: 9, backgroundColor: '#FDE672',
   },
-  alertDetailExpiryBadge: { backgroundColor: '#FFF2C4' },
-  alertDetailBadgeIcon: { color: colors.orange, fontFamily: font.bold, fontSize: 10, marginRight: 5 },
+  alertDetailDangerBadge: { backgroundColor: '#FDEBEC' },
+  alertDetailBadgeIcon: { color: colors.navy, fontFamily: font.bold, fontSize: 8, marginRight: 4 },
+  alertDetailDangerText: { color: '#F52F2E' },
   alertDetailBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
-  alertDetailSummaryCard: {
-    minHeight: 112, justifyContent: 'center', paddingHorizontal: 15, paddingVertical: 13,
-    borderRadius: 16, backgroundColor: colors.navy, marginBottom: 12,
-    elevation: 4, shadowColor: colors.navy, shadowOpacity: 0.12, shadowRadius: 7,
-    shadowOffset: { width: 0, height: 3 },
+  alertDetailMetrics: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  alertDetailMetric: {
+    flex: 1, minWidth: 0, minHeight: 56, justifyContent: 'center',
+    paddingHorizontal: 9, paddingVertical: 7, borderRadius: 10, backgroundColor: '#F5F5F4',
   },
-  alertDetailName: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
-  alertDetailQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 27, lineHeight: 32, marginTop: 3 },
-  alertDetailSubtext: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 8, marginTop: 2 },
-  alertDetailRows: {
-    paddingHorizontal: 11, borderRadius: 13, backgroundColor: colors.white,
-    borderWidth: 1, borderColor: colors.line, marginBottom: 11,
+  alertDetailMetricLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 7 },
+  alertDetailMetricValue: { color: '#000000', fontFamily: font.semibold, fontSize: 12, marginTop: 3 },
+  alertDetailBatchHeading: { color: '#000000', fontFamily: font.semibold, fontSize: 10, marginBottom: 7 },
+  alertDetailBatch: {
+    paddingHorizontal: 9, paddingVertical: 8, borderRadius: 9,
+    backgroundColor: '#F5F5F4', marginBottom: 7,
   },
-  alertDetailInfoBanner: {
-    flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11,
-    backgroundColor: colors.yellow, marginBottom: 12,
+  alertDetailBatchName: { color: '#000000', fontFamily: font.semibold, fontSize: 8, marginBottom: 3 },
+  alertDetailBatchText: { color: colors.navy, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
+  alertDetailBatchEmpty: { color: colors.muted, fontFamily: font.regular, fontSize: 8, paddingVertical: 8 },
+  alertDetailBack: {
+    minHeight: 40, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 9, backgroundColor: '#EEEEEF', marginTop: 'auto',
   },
-  alertDetailInfoIcon: {
-    width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white,
-    backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10,
-    textAlign: 'center', lineHeight: 17, marginRight: 7,
-  },
-  alertDetailInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
-  alertDetailActions: { gap: 8 },
-  alertDetailPrimary: {
-    minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
-    borderRadius: 12, backgroundColor: colors.pink,
-  },
-  alertDetailPrimaryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  alertDetailSecondary: {
-    minHeight: 42, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12,
-    borderRadius: 12, backgroundColor: '#EEEEEF',
-  },
-  alertDetailSecondaryText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  alertDetailBackText: { color: '#000000', fontFamily: font.semibold, fontSize: 8 },
   morePageContent: { paddingHorizontal: 17, paddingTop: 16, paddingBottom: 18 },
   staffIdentityCard: {
     minHeight: 81, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15,

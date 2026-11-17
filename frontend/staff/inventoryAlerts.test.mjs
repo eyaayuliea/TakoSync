@@ -4,11 +4,15 @@ import {
   classifyExpirationAlert,
   classifyStockAlert,
   countInventoryAlertsByKind,
+  countInventoryAlertsForSnapshot,
   countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
   filterBatchesWithRemainingStock,
   filterBranchInventoryAlertItems,
+  getInventoryAlertScreenStatus,
+  inventoryAlertEmptyCopy,
   inventoryAlertLabel,
+  runInventoryAlertsRefreshOnce,
   sortInventoryAlerts,
 } from './inventoryAlerts.ts';
 
@@ -95,6 +99,17 @@ test('alert category counts preserve empty categories and sum to the badge count
   assert.equal(Object.values(counts).reduce((total, count) => total + count, 0), 3);
 });
 
+test('alert counts remain unknown until a branch snapshot has loaded', () => {
+  const alerts = [{ kind: 'lowStock' }];
+  assert.equal(countInventoryAlertsForSnapshot(alerts, false), null);
+  assert.deepEqual(countInventoryAlertsForSnapshot(alerts, true), {
+    lowStock: 1,
+    outOfStock: 0,
+    nearExpiration: 0,
+    expired: 0,
+  });
+});
+
 test('alert counts fail closed while loading or after a refresh error', () => {
   const alerts = [{ kind: 'lowStock' }, { kind: 'expired' }];
   const emptyCounts = { lowStock: 0, outOfStock: 0, nearExpiration: 0, expired: 0 };
@@ -107,4 +122,68 @@ test('alert counts fail closed while loading or after a refresh error', () => {
     nearExpiration: 0,
     expired: 1,
   });
+});
+
+test('alert screen loading, retry failure, and stale-data states do not discard a last good snapshot', () => {
+  assert.deepEqual(getInventoryAlertScreenStatus(false, true, ''), { status: 'loading' });
+  assert.deepEqual(getInventoryAlertScreenStatus(false, false, 'Connection failed'), {
+    status: 'error',
+    message: 'Connection failed',
+  });
+  assert.deepEqual(getInventoryAlertScreenStatus(true, true, ''), { status: 'refreshing' });
+  assert.deepEqual(getInventoryAlertScreenStatus(true, false, 'Connection failed'), {
+    status: 'stale',
+    message: 'Connection failed',
+  });
+  assert.deepEqual(getInventoryAlertScreenStatus(true, false, ''), { status: 'ready' });
+});
+
+test('each alert category has its own empty-state copy', () => {
+  assert.deepEqual(
+    ['lowStock', 'outOfStock', 'nearExpiration', 'expired'].map(inventoryAlertEmptyCopy),
+    [
+      {
+        title: 'No active alerts.',
+        message: 'There are no low-stock alerts',
+      },
+      {
+        title: 'No active alerts.',
+        message: 'There are no out-of-stock alerts',
+      },
+      {
+        title: 'No active alerts.',
+        message: 'There are no near-expiration alerts',
+      },
+      {
+        title: 'No active alerts.',
+        message: 'There are no expired alerts',
+      },
+    ],
+  );
+});
+
+test('alert refresh suppresses duplicate requests and releases the lock for retry', async () => {
+  const lock = { current: false };
+  let requests = 0;
+  const firstRequest = runInventoryAlertsRefreshOnce(lock, async () => {
+    requests += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+  assert.equal(await runInventoryAlertsRefreshOnce(lock, async () => {
+    requests += 1;
+  }), false);
+  assert.equal(await firstRequest, true);
+  assert.equal(requests, 1);
+  await assert.rejects(
+    runInventoryAlertsRefreshOnce(lock, async () => {
+      requests += 1;
+      throw new Error('offline');
+    }),
+    /offline/,
+  );
+  assert.equal(lock.current, false);
+  assert.equal(await runInventoryAlertsRefreshOnce(lock, async () => {
+    requests += 1;
+  }), true);
+  assert.equal(requests, 3);
 });

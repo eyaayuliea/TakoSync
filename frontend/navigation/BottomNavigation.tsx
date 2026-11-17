@@ -1,55 +1,28 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import {
+  activeStaffTab,
+  STAFF_NAVIGATION_TOUCH_TARGET,
+  staffDestinations,
+  type StaffRoute,
+  type StaffTab,
+} from './staffNavigation';
+
+export type { StaffRoute, StaffTab } from './staffNavigation';
+export { activeStaffTab };
 
 const colors = {
   pink: '#F20D55',
+  staffPink: '#EC1358',
   navy: '#101027',
   orange: '#FF9418',
   white: '#FFFFFF',
 } as const;
 
-export type StaffRoute =
-  | 'dashboard'
-  | 'menu'
-  | 'cart'
-  | 'checkout'
-  | 'saleReceipt'
-  | 'dailySales'
-  | 'inventoryReporting'
-  | 'inventoryReport'
-  | 'inventoryCountDetails'
-  | 'inventory'
-  | 'stocks'
-  | 'stockIn'
-  | 'stockOut'
-  | 'usagePreview'
-  | 'stockOutSuccess'
-  | 'waste'
-  | 'wasteSuccess'
-  | 'stockInSuccess'
-  | 'stockHistory'
-  | 'historyFilters'
-  | 'transactionDetails'
-  | 'ingredientDetails'
-  | 'inventoryHistory'
-  | 'alertDetails'
-  | 'dailyInventoryCheck'
-  | 'dailyCheckSuccess'
-  | 'profileSettings'
-  | 'alerts'
-  | 'more';
-
-export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'alerts' | 'more'>;
-
 type Destination = { route: StaffTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' };
 
-const staffDestinations: Destination[] = [
-  { route: 'menu', label: 'POS', icon: 'pos' },
-  { route: 'inventory', label: 'Inventory', icon: 'box' },
-  { route: 'stocks', label: 'Stock', icon: 'stock' },
-  { route: 'more', label: 'More', icon: 'more' },
-];
+const staffDestinationList: Destination[] = staffDestinations.map((destination) => ({ ...destination }));
 const ownerDestinations: Destination[] = [
   { route: 'dashboard', label: 'Dashboard', icon: 'home' },
   { route: 'menu', label: 'Menu', icon: 'menu' },
@@ -59,7 +32,15 @@ const ownerDestinations: Destination[] = [
   { route: 'more', label: 'More', icon: 'more' },
 ];
 
-function NavigationIcon({ name, color }: { name: Destination['icon']; color: string }) {
+function NavigationIcon({
+  name,
+  color,
+  outlinedBell,
+}: {
+  name: Destination['icon'];
+  color: string;
+  outlinedBell: boolean;
+}) {
   if (name === 'home') {
     return <Text style={{ color, fontSize: 20 }}>⌂</Text>;
   }
@@ -67,8 +48,11 @@ function NavigationIcon({ name, color }: { name: Destination['icon']; color: str
   if (name === 'pos') {
     return (
       <View style={[iconStyles.pos, { borderColor: color }]}>
-        <View style={[iconStyles.posScreen, { borderColor: color }]} />
-        <View style={[iconStyles.posStand, { backgroundColor: color }]} />
+        <View style={[iconStyles.posScreen, { borderColor: color }]}>
+          <View style={[iconStyles.posLine, { backgroundColor: color }]} />
+          <View style={[iconStyles.posLine, { backgroundColor: color }]} />
+          <View style={[iconStyles.posLineShort, { backgroundColor: color }]} />
+        </View>
       </View>
     );
   }
@@ -100,7 +84,14 @@ function NavigationIcon({ name, color }: { name: Destination['icon']; color: str
   }
 
   if (name === 'bell') {
-    return <Text style={{ color, fontSize: 18 }}>♧</Text>;
+    if (!outlinedBell) return <Text style={{ color, fontSize: 18 }}>♧</Text>;
+    return (
+      <View style={iconStyles.bell}>
+        <View style={[iconStyles.bellBody, { borderColor: color }]} />
+        <View style={[iconStyles.bellBase, { backgroundColor: color }]} />
+        <View style={[iconStyles.bellClapper, { backgroundColor: color }]} />
+      </View>
+    );
   }
 
   return (
@@ -112,59 +103,39 @@ function NavigationIcon({ name, color }: { name: Destination['icon']; color: str
   );
 }
 
-export function activeStaffTab(route: StaffRoute): StaffTab {
-  if (route === 'cart' || route === 'checkout') return 'menu';
-  if (route === 'saleReceipt') return 'menu';
-  if (
-    route === 'dailySales' ||
-    route === 'inventoryReporting' ||
-    route === 'inventoryReport' ||
-    route === 'inventoryCountDetails'
-  ) return 'more';
-  if (
-    route === 'stockIn' ||
-    route === 'stockOut' ||
-    route === 'usagePreview' ||
-    route === 'stockOutSuccess' ||
-    route === 'waste' ||
-    route === 'wasteSuccess' ||
-    route === 'stockInSuccess' ||
-    route === 'stockHistory' ||
-    route === 'historyFilters' ||
-    route === 'transactionDetails'
-  ) return 'stocks';
-  if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
-  if (route === 'dailyInventoryCheck' || route === 'dailyCheckSuccess') return 'more';
-  if (route === 'profileSettings') return 'more';
-  if (route === 'alerts' || route === 'alertDetails') return 'more';
-  return route;
-}
-
 export default function BottomNavigation({
   active,
   onSelect,
   showMenu = true,
   staffOnly = false,
+  staffAlertCount = null,
 }: {
   active: StaffRoute;
   onSelect: (route: StaffTab) => void;
   showMenu?: boolean;
   staffOnly?: boolean;
+  staffAlertCount?: number | null;
 }) {
   const { colors: themeColors } = useTheme();
   const styles = useNavigationStyles();
-  const selectedTab = activeStaffTab(active);
+  const selectedTab = staffOnly
+    ? activeStaffTab(active)
+    : active === 'alerts' || active === 'alertDetails'
+      ? 'more'
+      : activeStaffTab(active);
   const destinations = staffOnly
-    ? staffDestinations
+    ? staffDestinationList
     : (showMenu ? ownerDestinations : ownerDestinations.filter((destination) => destination.route !== 'menu'));
   return (
     <View style={styles.outer}>
-      <View style={styles.bar}>
+      <View style={[styles.bar, staffOnly && styles.staffBar]}>
         {destinations.map((destination) => {
           const selected = destination.route === selectedTab;
-          const iconColor = selected
-            ? colors.white
-            : themeColors.action;
+          const iconColor = staffOnly || selected ? colors.white : themeColors.action;
+          const showAlertBadge = staffOnly &&
+            destination.route === 'alerts' &&
+            staffAlertCount !== null &&
+            staffAlertCount > 0;
           return (
             <Pressable
               key={destination.route}
@@ -174,13 +145,29 @@ export default function BottomNavigation({
               onPress={() => onSelect(destination.route)}
               style={({ pressed }) => [
                 styles.item,
+                staffOnly && styles.staffItem,
+                staffOnly && selected && styles.staffItemSelected,
                 pressed && styles.pressed,
               ]}
             >
-              <View style={[styles.iconWrap, selected && styles.iconWrapSelected]}>
-                <NavigationIcon name={destination.icon} color={iconColor} />
+              <View style={[styles.iconWrap, staffOnly && styles.staffOuterIconWrap]}>
+                <View style={[staffOnly && styles.staffIconWrap, showAlertBadge && styles.staffBadgeAnchor]}>
+                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} />
+                  {showAlertBadge ? (
+                    <View style={[styles.staffAlertBadge, selected && styles.staffAlertBadgeSelected]}>
+                      <Text style={[styles.staffAlertBadgeText, selected && styles.staffAlertBadgeTextSelected]}>
+                        {(staffAlertCount ?? 0) > 99 ? '99+' : staffAlertCount}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
               </View>
-              <Text style={[styles.label, selected && styles.labelSelected]}>{destination.label}</Text>
+              <Text style={[
+                styles.label,
+                staffOnly && styles.staffLabel,
+                staffOnly && !selected && styles.staffInactiveLabel,
+                selected && styles.labelSelected,
+              ]}>{destination.label}</Text>
             </Pressable>
           );
         })}
@@ -213,12 +200,34 @@ function useNavigationStyles() {
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
   },
+  staffBar: {
+    minHeight: 56,
+    justifyContent: 'space-between',
+    gap: 3,
+    backgroundColor: '#0F1025',
+    elevation: 0,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+  },
   item: {
     flex: 1,
     minWidth: 0,
     height: 46,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  staffItem: {
+    height: STAFF_NAVIGATION_TOUCH_TARGET,
+    flexDirection: 'column',
+  },
+  staffItemSelected: {
+    flex: 1.65,
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 24,
+    backgroundColor: colors.staffPink,
   },
   iconWrap: {
     width: 42,
@@ -230,7 +239,46 @@ function useNavigationStyles() {
   iconWrapSelected: {
     backgroundColor: colors.pink,
   },
+  staffOuterIconWrap: { width: 20, height: 20 },
+  staffIconWrap: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  staffBadgeAnchor: {
+    position: 'relative',
+  },
+  staffAlertBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -7,
+    minWidth: 13,
+    height: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    borderRadius: 7,
+    backgroundColor: colors.staffPink,
+    borderWidth: 1,
+    borderColor: '#0F1025',
+  },
+  staffAlertBadgeSelected: {
+    backgroundColor: colors.white,
+    borderColor: colors.staffPink,
+  },
+  staffAlertBadgeText: {
+    color: colors.white,
+    fontSize: 6,
+    lineHeight: 8,
+    fontFamily: 'Poppins_700Bold',
+  },
+  staffAlertBadgeTextSelected: {
+    color: colors.staffPink,
+  },
   label: { color: colors.white, fontSize: 9, fontFamily: 'Poppins_500Medium', marginTop: 2 },
+  staffLabel: { fontSize: 8, marginTop: 0 },
+  staffInactiveLabel: { display: 'none' },
   labelSelected: { color: colors.white },
   pressed: { opacity: 0.76 },
   }, theme)), [theme]);
@@ -238,8 +286,12 @@ function useNavigationStyles() {
 
 const iconStyles = StyleSheet.create({
   pos: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-  posScreen: { width: 16, height: 11, borderWidth: 1.8, borderRadius: 2 },
-  posStand: { width: 10, height: 2, borderRadius: 1, marginTop: 3 },
+  posScreen: {
+    width: 13, height: 17, justifyContent: 'center', paddingHorizontal: 2,
+    borderWidth: 1.6, borderRadius: 2,
+  },
+  posLine: { width: 7, height: 1, marginBottom: 2 },
+  posLineShort: { width: 5, height: 1 },
   box: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   boxTopLeft: { position: 'absolute', top: 3, left: 3, width: 8, height: 8, borderLeftWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '45deg' }] },
   boxTopRight: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRightWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '-45deg' }] },

@@ -1,5 +1,65 @@
 export type InventoryAlertKind = 'lowStock' | 'outOfStock' | 'nearExpiration' | 'expired';
 
+export type InventoryAlertScreenStatus =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'refreshing' }
+  | { status: 'stale'; message: string }
+  | { status: 'ready' };
+
+export async function runInventoryAlertsRefreshOnce(
+  lock: { current: boolean },
+  refresh: () => Promise<void>,
+): Promise<boolean> {
+  if (lock.current) return false;
+  lock.current = true;
+  try {
+    await refresh();
+    return true;
+  } finally {
+    lock.current = false;
+  }
+}
+
+export function getInventoryAlertScreenStatus(
+  hasSnapshot: boolean,
+  loading: boolean,
+  error: string,
+): InventoryAlertScreenStatus {
+  const message = error.trim();
+  if (hasSnapshot) {
+    if (message) return { status: 'stale', message };
+    return loading ? { status: 'refreshing' } : { status: 'ready' };
+  }
+  if (message) return { status: 'error', message };
+  return { status: 'loading' };
+}
+
+export function inventoryAlertEmptyCopy(kind: InventoryAlertKind) {
+  switch (kind) {
+    case 'lowStock':
+      return {
+        title: 'No active alerts.',
+        message: 'There are no low-stock alerts',
+      };
+    case 'outOfStock':
+      return {
+        title: 'No active alerts.',
+        message: 'There are no out-of-stock alerts',
+      };
+    case 'nearExpiration':
+      return {
+        title: 'No active alerts.',
+        message: 'There are no near-expiration alerts',
+      };
+    case 'expired':
+      return {
+        title: 'No active alerts.',
+        message: 'There are no expired alerts',
+      };
+  }
+}
+
 export type BranchInventoryAlertItem = { hasBranchInventory: boolean };
 
 export function filterBranchInventoryAlertItems<T extends BranchInventoryAlertItem>(items: readonly T[]): T[] {
@@ -48,6 +108,13 @@ export function countInventoryAlertsByKind<T extends { kind: InventoryAlertKind 
     counts[alert.kind] += 1;
     return counts;
   }, { lowStock: 0, outOfStock: 0, nearExpiration: 0, expired: 0 });
+}
+
+export function countInventoryAlertsForSnapshot<T extends { kind: InventoryAlertKind }>(
+  alerts: readonly T[],
+  hasSnapshot: boolean,
+) {
+  return hasSnapshot ? countInventoryAlertsByKind(alerts) : null;
 }
 
 /**

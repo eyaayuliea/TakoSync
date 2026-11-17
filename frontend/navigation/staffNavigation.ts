@@ -1,0 +1,70 @@
+export type StaffRoute =
+  | 'dashboard'
+  | 'menu'
+  | 'cart'
+  | 'checkout'
+  | 'saleReceipt'
+  | 'dailySales'
+  | 'inventoryReporting'
+  | 'inventoryReport'
+  | 'inventoryCountDetails'
+  | 'inventory'
+  | 'stocks'
+  | 'stockIn'
+  | 'stockOut'
+  | 'usagePreview'
+  | 'stockOutSuccess'
+  | 'waste'
+  | 'wasteSuccess'
+  | 'stockInSuccess'
+  | 'stockHistory'
+  | 'historyFilters'
+  | 'transactionDetails'
+  | 'ingredientDetails'
+  | 'inventoryHistory'
+  | 'alertDetails'
+  | 'dailyInventoryCheck'
+  | 'dailyCheckSuccess'
+  | 'profileSettings'
+  | 'alerts'
+  | 'more';
+
+export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'alerts' | 'more'>;
+
+export const STAFF_NAVIGATION_TOUCH_TARGET = 48;
+
+export const staffDestinations = [
+  { route: 'menu', label: 'POS', icon: 'pos' },
+  { route: 'inventory', label: 'INVENTORY', icon: 'box' },
+  { route: 'stocks', label: 'STOCKS', icon: 'stock' },
+  { route: 'alerts', label: 'ALERTS', icon: 'bell' },
+  { route: 'more', label: 'MORE', icon: 'more' },
+] as const;
+
+export function activeStaffTab(route: StaffRoute): StaffTab {
+  if (route === 'cart' || route === 'checkout' || route === 'saleReceipt') return 'menu';
+  if (
+    route === 'dailySales' ||
+    route === 'inventoryReporting' ||
+    route === 'inventoryReport' ||
+    route === 'inventoryCountDetails' ||
+    route === 'dailyInventoryCheck' ||
+    route === 'dailyCheckSuccess' ||
+    route === 'profileSettings'
+  ) return 'more';
+  if (
+    route === 'stockIn' ||
+    route === 'stockOut' ||
+    route === 'usagePreview' ||
+    route === 'stockOutSuccess' ||
+    route === 'waste' ||
+    route === 'wasteSuccess' ||
+    route === 'stockInSuccess' ||
+    route === 'stockHistory' ||
+    route === 'historyFilters' ||
+    route === 'transactionDetails'
+  ) return 'stocks';
+  if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
+  if (route === 'alerts' || route === 'alertDetails') return 'alerts';
+  return route;
+}
