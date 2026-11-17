@@ -6,6 +6,12 @@ export function filterBranchInventoryAlertItems<T extends BranchInventoryAlertIt
   return items.filter((item) => item.hasBranchInventory);
 }
 
+export function filterBatchesWithRemainingStock<T extends { quantityRemaining: number }>(
+  batches: readonly T[],
+): T[] {
+  return batches.filter((batch) => batch.quantityRemaining > 0);
+}
+
 export function deduplicateInventoryAlerts<T extends { id: string }>(alerts: readonly T[]): T[] {
   const seen = new Set<string>();
   return alerts.filter((alert) => {

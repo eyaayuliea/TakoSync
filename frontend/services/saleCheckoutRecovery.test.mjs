@@ -37,6 +37,18 @@ test('pending sale recovery preserves the original reference and payload', async
   assert.deepEqual(await store.load(), []);
 });
 
+test('pending QR checkout recovery is accepted and Card checkout recovery is rejected', async () => {
+  const qrSale = { ...pendingSale, paymentMethod: 'QR' };
+  const qrStore = createPendingSaleCheckoutStore(memoryStorage());
+  await qrStore.save(qrSale);
+  assert.deepEqual(await qrStore.load(), [qrSale]);
+
+  const cardStore = createPendingSaleCheckoutStore(memoryStorage(JSON.stringify([
+    { ...pendingSale, paymentMethod: 'Card' },
+  ])));
+  await assert.rejects(() => cardStore.load(), /Saved checkout recovery data is invalid/);
+});
+
 test('pending sale recovery only permits the original staff branch', () => {
   assert.equal(canRetryPendingSaleCheckout(pendingSale, 'staff-1', 'branch-1'), true);
   assert.equal(canRetryPendingSaleCheckout(pendingSale, 'staff-2', 'branch-1'), false);

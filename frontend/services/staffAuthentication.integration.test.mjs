@@ -15,13 +15,14 @@ const session = {
 };
 
 class AuthFixture {
-  constructor({ profile, loginError = null, authorizationError = null } = {}) {
+  constructor({ profile, loginError = null, authorizationError = null, businessSessionActive = true } = {}) {
     this.profile = profile ?? {
       id: 'user-1', email: 'staff-1@auth.takosync.internal', full_name: 'Ana Cruz',
-      role: 'staff', branch_id: 'branch-2', active: true,
+      role: 'staff', branch_id: 'branch-2', active: true, must_change_password: true,
     };
     this.loginError = loginError;
     this.authorizationError = authorizationError;
+    this.businessSessionActive = businessSessionActive;
     this.loginArgs = [];
     this.signedOut = false;
     this.currentSession = null;
@@ -66,7 +67,10 @@ class AuthFixture {
 
   async rpc(name) {
     if (name === 'business_session_status') {
-      return { data: { active: true, milliseconds_until_expiration: 3600000 }, error: null };
+      return {
+        data: { active: this.businessSessionActive, milliseconds_until_expiration: this.businessSessionActive ? 3600000 : 0 },
+        error: null,
+      };
     }
     if (name === 'authorize_business_session') return { data: null, error: this.authorizationError };
     throw new Error(`Unexpected RPC: ${name}`);
@@ -77,9 +81,70 @@ test('Staff username login succeeds and returns the assigned branch', async () =
   const client = new AuthFixture();
   const user = await signInStaff('  Ana   Cruz ', 'EMP-001', client);
   assert.equal(user.role, 'Staff');
+  assert.equal(user.mustChangePassword, true);
   assert.equal(user.branchId, 'branch-2');
   assert.equal(user.branch, 'Cebu · Branch 2');
   assert.equal(client.currentSession.access_token, 'access-token');
+});
+
+test('Staff login forwards the Employee ID password unchanged', async () => {
+  const client = new AuthFixture();
+  await signInStaff('bien_staff', 'EMP-2026-123456', client);
+  assert.deepEqual(client.functionBody, {
+    action: 'login',
+    username: 'bien_staff',
+    password: 'EMP-2026-123456',
+  });
+});
+
+test('development mode rejects Staff login when the business session is closed', async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousBypass = process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
+  process.env.NODE_ENV = 'development';
+  process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = 'true';
+  try {
+    const client = new AuthFixture({ businessSessionActive: false });
+    await assert.rejects(
+      () => signInStaff('ana_staff', 'EMP-001', client),
+      /Your business session has expired/,
+    );
+    assert.equal(client.signedOut, true);
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousBypass === undefined) delete process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
+    else process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = previousBypass;
+  }
+});
+
+test('production mode still blocks Staff login when the business session is closed', async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousBypass = process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
+  process.env.NODE_ENV = 'production';
+  process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = 'true';
+  try {
+    const client = new AuthFixture({ businessSessionActive: false });
+    await assert.rejects(
+      () => signInStaff('ana_staff', 'EMP-001', client),
+      /Your business session has expired/,
+    );
+    assert.equal(client.signedOut, true);
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousBypass === undefined) delete process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
+    else process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = previousBypass;
+  }
+});
+
+test('Staff with a pending-password flag still proceeds directly to the Staff workspace path', async () => {
+  const client = new AuthFixture();
+  client.loginResult = { ok: true, session, mustChangePassword: true };
+  const user = await signInStaff('ana_staff', 'initial-password', client);
+  assert.equal(user.role, 'Staff');
+  assert.equal(user.mustChangePassword, true);
+  assert.equal(user.branchId, 'branch-2');
+  assert.equal(client.signedOut, false);
 });
 
 for (const [code, expected] of [

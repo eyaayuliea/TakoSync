@@ -165,7 +165,7 @@ test('Staff catalog gets current Owner names, variant labels, prices, and availa
     .filter((row) => row.branch_id === 'branch-a' && row.is_visible)
     .map((row) => row.product_variant_id));
   const catalog = buildStaffMenuProducts(
-    [{ ...product, is_available: true }],
+    [{ ...product, category: 'Flavors', is_available: true }],
     variants,
     visible,
   );
@@ -175,6 +175,7 @@ test('Staff catalog gets current Owner names, variant labels, prices, and availa
     ['Takoyaki Special', '8 PCS', 8, 89, true],
     ['Takoyaki Special', '10+1 PCS', 11, 120, true],
   ]);
+  assert.ok(catalog.every((item) => item.category === 'Flavors'));
 });
 
 test('product price edits update variant prices without overwriting branch or variant settings', async () => {

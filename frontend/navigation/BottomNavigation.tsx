@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 
 const colors = {
@@ -42,7 +42,15 @@ export type StaffRoute =
 
 export type StaffTab = Extract<StaffRoute, 'dashboard' | 'menu' | 'inventory' | 'stocks' | 'alerts' | 'more'>;
 
-const destinations: { route: StaffTab; label: string; icon: 'home' | 'menu' | 'box' | 'stock' | 'bell' | 'more' }[] = [
+type Destination = { route: StaffTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' };
+
+const staffDestinations: Destination[] = [
+  { route: 'menu', label: 'POS', icon: 'pos' },
+  { route: 'inventory', label: 'Inventory', icon: 'box' },
+  { route: 'stocks', label: 'Stock', icon: 'stock' },
+  { route: 'more', label: 'More', icon: 'more' },
+];
+const ownerDestinations: Destination[] = [
   { route: 'dashboard', label: 'Dashboard', icon: 'home' },
   { route: 'menu', label: 'Menu', icon: 'menu' },
   { route: 'inventory', label: 'Inventory', icon: 'box' },
@@ -51,27 +59,22 @@ const destinations: { route: StaffTab; label: string; icon: 'home' | 'menu' | 'b
   { route: 'more', label: 'More', icon: 'more' },
 ];
 
-function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['icon']; color: string }) {
+function NavigationIcon({ name, color }: { name: Destination['icon']; color: string }) {
   if (name === 'home') {
+    return <Text style={{ color, fontSize: 20 }}>⌂</Text>;
+  }
+
+  if (name === 'pos') {
     return (
-      <View style={iconStyles.home}>
-        <View style={[iconStyles.homeRoofLeft, { borderColor: color }]} />
-        <View style={[iconStyles.homeRoofRight, { borderColor: color }]} />
-        <View style={[iconStyles.homeBody, { borderColor: color }]}>
-          <View style={[iconStyles.homeDoor, { backgroundColor: color }]} />
-        </View>
+      <View style={[iconStyles.pos, { borderColor: color }]}>
+        <View style={[iconStyles.posScreen, { borderColor: color }]} />
+        <View style={[iconStyles.posStand, { backgroundColor: color }]} />
       </View>
     );
   }
 
   if (name === 'menu') {
-    return (
-      <View style={[iconStyles.menu, { borderColor: color }]}>
-        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
-        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
-        <View style={[iconStyles.menuLine, { backgroundColor: color }]} />
-      </View>
-    );
+    return <Text style={{ color, fontSize: 18 }}>☰</Text>;
   }
 
   if (name === 'box') {
@@ -97,13 +100,7 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
   }
 
   if (name === 'bell') {
-    return (
-      <View style={iconStyles.bell}>
-        <View style={[iconStyles.bellBody, { borderColor: color }]} />
-        <View style={[iconStyles.bellBase, { backgroundColor: color }]} />
-        <View style={[iconStyles.bellClapper, { backgroundColor: color }]} />
-      </View>
-    );
+    return <Text style={{ color, fontSize: 18 }}>♧</Text>;
   }
 
   return (
@@ -117,7 +114,7 @@ function NavigationIcon({ name, color }: { name: (typeof destinations)[number]['
 
 export function activeStaffTab(route: StaffRoute): StaffTab {
   if (route === 'cart' || route === 'checkout') return 'menu';
-  if (route === 'saleReceipt') return 'dashboard';
+  if (route === 'saleReceipt') return 'menu';
   if (
     route === 'dailySales' ||
     route === 'inventoryReporting' ||
@@ -139,7 +136,7 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
   if (route === 'ingredientDetails' || route === 'inventoryHistory') return 'inventory';
   if (route === 'dailyInventoryCheck' || route === 'dailyCheckSuccess') return 'more';
   if (route === 'profileSettings') return 'more';
-  if (route === 'alertDetails') return 'alerts';
+  if (route === 'alerts' || route === 'alertDetails') return 'more';
   return route;
 }
 
@@ -147,22 +144,23 @@ export default function BottomNavigation({
   active,
   onSelect,
   showMenu = true,
+  staffOnly = false,
 }: {
   active: StaffRoute;
   onSelect: (route: StaffTab) => void;
   showMenu?: boolean;
+  staffOnly?: boolean;
 }) {
   const { colors: themeColors } = useTheme();
   const styles = useNavigationStyles();
   const selectedTab = activeStaffTab(active);
-  const visibleDestinations = showMenu
-    ? destinations
-    : destinations.filter((destination) => destination.route !== 'menu');
-
+  const destinations = staffOnly
+    ? staffDestinations
+    : (showMenu ? ownerDestinations : ownerDestinations.filter((destination) => destination.route !== 'menu'));
   return (
     <View style={styles.outer}>
       <View style={styles.bar}>
-        {visibleDestinations.map((destination) => {
+        {destinations.map((destination) => {
           const selected = destination.route === selectedTab;
           const iconColor = selected
             ? colors.white
@@ -182,6 +180,7 @@ export default function BottomNavigation({
               <View style={[styles.iconWrap, selected && styles.iconWrapSelected]}>
                 <NavigationIcon name={destination.icon} color={iconColor} />
               </View>
+              <Text style={[styles.label, selected && styles.labelSelected]}>{destination.label}</Text>
             </Pressable>
           );
         })}
@@ -231,24 +230,16 @@ function useNavigationStyles() {
   iconWrapSelected: {
     backgroundColor: colors.pink,
   },
+  label: { color: colors.white, fontSize: 9, fontFamily: 'Poppins_500Medium', marginTop: 2 },
+  labelSelected: { color: colors.white },
   pressed: { opacity: 0.76 },
   }, theme)), [theme]);
 }
 
 const iconStyles = StyleSheet.create({
-  home: { width: 20, height: 20, alignItems: 'center', justifyContent: 'flex-end' },
-  homeRoofLeft: {
-    position: 'absolute', top: 2, left: 3, width: 10, height: 10,
-    borderLeftWidth: 2, borderTopWidth: 2, borderTopLeftRadius: 2, transform: [{ rotate: '45deg' }],
-  },
-  homeRoofRight: {
-    position: 'absolute', top: 2, right: 3, width: 10, height: 10,
-    borderRightWidth: 2, borderTopWidth: 2, borderTopRightRadius: 2, transform: [{ rotate: '-45deg' }],
-  },
-  homeBody: { width: 14, height: 11, borderWidth: 1.8, borderBottomWidth: 0, alignItems: 'center', justifyContent: 'flex-end' },
-  homeDoor: { width: 4, height: 6, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
-  menu: { width: 19, height: 19, borderWidth: 1.8, borderRadius: 4, alignItems: 'center', justifyContent: 'center', gap: 2 },
-  menuLine: { width: 10, height: 1.5, borderRadius: 1 },
+  pos: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+  posScreen: { width: 16, height: 11, borderWidth: 1.8, borderRadius: 2 },
+  posStand: { width: 10, height: 2, borderRadius: 1, marginTop: 3 },
   box: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   boxTopLeft: { position: 'absolute', top: 3, left: 3, width: 8, height: 8, borderLeftWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '45deg' }] },
   boxTopRight: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRightWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '-45deg' }] },

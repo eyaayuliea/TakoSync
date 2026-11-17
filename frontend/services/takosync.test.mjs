@@ -27,11 +27,13 @@ test('sale validation rejects malformed checkout payloads before persistence', (
   };
 
   assert.doesNotThrow(() => validateSaleSubmission(valid));
+  assert.doesNotThrow(() => validateSaleSubmission({ ...valid, paymentMethod: 'QR' }));
   assert.doesNotThrow(() => validateSaleSubmission({
     ...valid,
     addons: [{ addonId: 'addon-a', unitPrice: 1.5 }],
   }));
-  assert.throws(() => validateSaleSubmission({ ...valid, paymentMethod: 'Cheque' }), /Select Cash or Card/);
+  assert.throws(() => validateSaleSubmission({ ...valid, paymentMethod: 'Card' }), /Select Cash or QR/);
+  assert.throws(() => validateSaleSubmission({ ...valid, paymentMethod: 'Cheque' }), /Select Cash or QR/);
   assert.throws(() => validateSaleSubmission({ ...valid, totalAmount: 0 }), /greater than zero/);
   assert.throws(() => validateSaleSubmission({ ...valid, items: [] }), /at least one item/);
   assert.throws(() => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 0, unitPrice: 10 }] }), /quantity greater than zero/);

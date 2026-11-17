@@ -39,10 +39,11 @@ import {
   type StaffSaleRecord,
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
-import { normalizeStaffUsername, staffLoginErrorMessage } from './staffAuthentication';
+import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import {
   buildInventoryReportData,
   buildInventoryCountHistoryRecords,
+  inventoryExpirationStatus,
   type InventoryReportCheck,
   type InventoryReportCountLine,
   type InventoryReportData,
@@ -77,6 +78,12 @@ export type AppUser = {
   businessSessionMillisecondsRemaining: number;
 };
 
+type StaffLoginResponse = {
+  ok?: boolean;
+  code?: 'unknown_username' | 'incorrect_password' | 'inactive_account';
+  session?: Parameters<StaffServiceClient['auth']['setSession']>[0];
+};
+
 export type InventoryItem = {
   id: string;
   name: string;
@@ -91,16 +98,21 @@ export type InventoryItem = {
   lowStock: boolean;
   expiration: string | null;
   nearExpiry: boolean;
+  expirationStatus: 'Near Expiry' | 'Expired' | null;
   minimumStock: number;
   type: string;
   unitName: string;
   receivedBatch: string;
   batchReference?: string;
+  packageQuantity: number | null;
+  packageUnit: string | null;
+  packageLabel: string | null;
   batches: {
     reference: string;
     receivedDate: string;
     expirationDate: string | null;
     expirationDateIso: string | null;
+    quantityReceived: number;
     quantityRemaining: number;
   }[];
   lastUpdated: string;
@@ -325,7 +337,7 @@ export type SharedRecipeRecord = {
 export type SaleSubmission = {
   transactionReference: string;
   branchId: string;
-  paymentMethod: 'Cash' | 'Card';
+  paymentMethod: 'Cash' | 'QR';
   totalAmount: number;
   items: Array<{
     variantId: string;
@@ -602,29 +614,33 @@ export async function signInStaff(username: string, password: string, clientOver
   if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
   let result;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    result = await client.functions.invoke('staff-auth', {
-      body: { action: 'login', username: normalizedUsername, password },
-    });
+    result = await Promise.race([
+      client.functions.invoke('staff-auth', {
+        body: { action: 'login', username: normalizedUsername, password },
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new StaffLoginError('connection_failure')), 10_000);
+      }),
+    ]);
   } catch {
-    throw new Error('Unable to connect. Please check your internet connection and try again.');
+    throw new StaffLoginError('connection_failure');
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
   if (result.error) {
-    throw new Error('Unable to connect. Please check your internet connection and try again.');
+    throw new StaffLoginError('connection_failure');
   }
-  const data = result.data as {
-    ok?: boolean;
-    code?: 'unknown_username' | 'incorrect_password' | 'inactive_account';
-    session?: Parameters<typeof client.auth.setSession>[0];
-  } | null;
+  const data = result.data as StaffLoginResponse | null;
   if (!data?.ok) {
     if (data?.code === 'unknown_username' || data?.code === 'incorrect_password' || data?.code === 'inactive_account') {
-      throw new Error(staffLoginErrorMessage(data.code));
+      throw new StaffLoginError(data.code);
     }
-    throw new Error('Unable to connect. Please check your internet connection and try again.');
+    throw new StaffLoginError('connection_failure');
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
-    throw new Error('Unable to connect. Please check your internet connection and try again.');
+    throw new StaffLoginError('connection_failure');
   }
   const { error: sessionError } = await client.auth.setSession(data.session);
   assertNoError(sessionError);
@@ -1055,21 +1071,24 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
 }
 
 export async function loadInventory(branchId: string, businessDate = new Date()): Promise<StaffInventoryData> {
+  if (!branchId.trim()) throw new Error('An assigned branch is required to load inventory.');
   const client = requireSupabase();
-  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult, settingsResult] = await Promise.all([
+  const [inventoryResult, ingredientsResult, categoriesResult, batchesResult, packageSizesResult, settingsResult] = await Promise.all([
     client.from('branch_inventory')
       .select('ingredient_id, quantity, minimum_stock, updated_at, inventory_revision')
       .eq('branch_id', branchId),
     client.from('ingredients')
       .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active')
-      .eq('active', true)
       .order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
-      .select('ingredient_id, batch_reference, received_date, expiration_date, quantity_remaining')
+      .select('ingredient_id, batch_reference, received_date, expiration_date, quantity_received, quantity_remaining')
       .eq('branch_id', branchId)
-      .gt('quantity_remaining', 0)
-      .order('expiration_date', { ascending: true, nullsFirst: false }),
+      .order('expiration_date', { ascending: true, nullsFirst: false })
+      .order('received_date', { ascending: true })
+      .order('batch_reference', { ascending: true }),
+    client.from('ingredient_package_sizes')
+      .select('ingredient_id, package_quantity, package_unit, package_label'),
     client.from('owner_inventory_settings')
       .select('near_expiration_days')
       .eq('id', true)
@@ -1079,18 +1098,15 @@ export async function loadInventory(branchId: string, businessDate = new Date())
   assertNoError(ingredientsResult.error);
   assertNoError(categoriesResult.error);
   assertNoError(batchesResult.error);
+  assertNoError(packageSizesResult.error);
   assertNoError(settingsResult.error);
   if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
   const nearExpirationDays = settingsResult.data.near_expiration_days;
 
   const inventory = indexBranchInventorySnapshot(inventoryResult.data ?? []);
   const categories = new Map((categoriesResult.data ?? []).map((row) => [row.id, row.name]));
+  const packageSizes = new Map((packageSizesResult.data ?? []).map((row) => [row.ingredient_id, row]));
   const batches = new Map<string, NonNullable<typeof batchesResult.data>>();
-  const businessDayStart = new Date(
-    businessDate.getFullYear(),
-    businessDate.getMonth(),
-    businessDate.getDate(),
-  ).getTime();
   for (const batch of batchesResult.data ?? []) {
     batches.set(batch.ingredient_id, [...(batches.get(batch.ingredient_id) ?? []), batch]);
   }
@@ -1098,17 +1114,18 @@ export async function loadInventory(branchId: string, businessDate = new Date())
   const items = (ingredientsResult.data ?? []).map((ingredient) => {
     const stock = inventory.get(ingredient.id);
     const itemBatches = batches.get(ingredient.id) ?? [];
-    const nextBatch = itemBatches.find((batch) => batch.expiration_date);
+    const nextBatch = itemBatches.find((batch) => batch.expiration_date && Number(batch.quantity_remaining) > 0) ??
+      itemBatches.find((batch) => batch.expiration_date);
     const expirationDate = nextBatch?.expiration_date ?? null;
-    const expirationTime = expirationDate ? new Date(`${expirationDate}T00:00:00`).getTime() : null;
-    const daysUntilExpiration = expirationTime === null
-      ? null
-      : Math.ceil((expirationTime - businessDayStart) / 86_400_000);
+    const expirationStatus: InventoryItem['expirationStatus'] = ingredient.expiration_tracking
+      ? inventoryExpirationStatus(expirationDate, nearExpirationDays, businessDate)
+      : null;
     const minimumStock = Number(stock?.minimum_stock ?? 0);
     const quantity = Number(stock?.quantity ?? 0);
     const visual = ingredientVisuals[ingredient.id] ?? { emoji: '📦', tint: '#F2F2F4', type: categories.get(ingredient.category_id) ?? 'Ingredient' };
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
+    const packageSize = packageSizes.get(ingredient.id);
     return {
       id: ingredient.id,
       hasBranchInventory: stock !== undefined,
@@ -1122,10 +1139,8 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       threshold: minimumStock,
       lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
       expiration: formattedExpiration,
-      nearExpiry: ingredient.expiration_tracking &&
-        daysUntilExpiration !== null &&
-        daysUntilExpiration >= 0 &&
-        daysUntilExpiration <= nearExpirationDays,
+      nearExpiry: expirationStatus === 'Near Expiry',
+      expirationStatus,
       minimumStock,
       type: visual.type,
       unitName: ingredient.unit === 'kg'
@@ -1139,11 +1154,15 @@ export async function loadInventory(branchId: string, businessDate = new Date())
         ? `${firstBatch.batch_reference} · ${formatDate(firstBatch.received_date)}`
         : 'No active batch',
       batchReference: firstBatch?.batch_reference,
+      packageQuantity: packageSize ? Number(packageSize.package_quantity) : null,
+      packageUnit: packageSize?.package_unit ?? null,
+      packageLabel: packageSize?.package_label ?? null,
       batches: itemBatches.map((batch) => ({
         reference: batch.batch_reference,
         receivedDate: formatDate(batch.received_date) ?? '',
         expirationDate: formatDate(batch.expiration_date),
         expirationDateIso: batch.expiration_date,
+        quantityReceived: Number(batch.quantity_received),
         quantityRemaining: Number(batch.quantity_remaining),
       })),
       lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
@@ -1706,7 +1725,7 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   const client = requireSupabase();
   const [productsResult, variantsResult, visibilityResult, addonsResult] = await Promise.all([
     client.from('products')
-      .select('id, product_name, description, is_available'),
+      .select('id, product_name, description, is_available, category'),
     client.from('product_variants')
       .select('id, product_id, size_label, price, piece_count, is_available, active')
       .eq('active', true),

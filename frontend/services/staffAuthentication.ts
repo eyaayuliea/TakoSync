@@ -22,7 +22,18 @@ export function staffAuthAlias(username: string): string {
 export type StaffLoginErrorCode =
   | 'unknown_username'
   | 'incorrect_password'
-  | 'inactive_account';
+  | 'inactive_account'
+  | 'connection_failure';
+
+export class StaffLoginError extends Error {
+  readonly code: StaffLoginErrorCode;
+
+  constructor(code: StaffLoginErrorCode) {
+    super(staffLoginErrorMessage(code));
+    this.name = 'StaffLoginError';
+    this.code = code;
+  }
+}
 
 export function staffLoginErrorMessage(code: StaffLoginErrorCode): string {
   switch (code) {
@@ -32,5 +43,7 @@ export function staffLoginErrorMessage(code: StaffLoginErrorCode): string {
       return 'Incorrect password. Please try again.';
     case 'inactive_account':
       return 'This account is inactive. Please contact the owner.';
+    case 'connection_failure':
+      return 'Unable to connect. Please check your internet connection and try again.';
   }
 }

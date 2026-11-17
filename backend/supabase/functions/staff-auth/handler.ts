@@ -153,14 +153,54 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
   const username = normalizeUsername(usernameValue);
   if (!username) return response({ ok: false, code: 'unknown_username' });
   const { data: profile, error } = await admin.from('profiles')
-    .select('id, email, role, active, must_change_password')
+    .select('id, employee_id, username, email, full_name, role, branch_id, active, must_change_password')
     .eq('username', username)
     .maybeSingle();
   if (error) throw error;
   if (!profile || profile.role !== 'staff') return response({ ok: false, code: 'unknown_username' });
   if (!profile.active) return response({ ok: false, code: 'inactive_account' });
+  const { data: branch, error: branchError } = await admin.from('branches')
+    .select('id, city, code, active')
+    .eq('id', profile.branch_id)
+    .maybeSingle();
+  if (branchError) throw branchError;
+  if (!branch || !branch.active) throw new HttpError(403, 'The assigned Staff branch is inactive or unavailable.');
+  let authUserResult;
+  try {
+    authUserResult = await admin.auth.admin.getUserById(profile.id);
+  } catch (lookupError) {
+    console.error('[staff-auth] Staff Auth identity lookup threw', {
+      code: lookupError?.code ?? null,
+      status: lookupError?.status ?? null,
+    });
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  if (authUserResult.error || !authUserResult.data?.user) {
+    console.error('[staff-auth] Staff Auth identity lookup failed', {
+      code: authUserResult.error?.code ?? null,
+      status: authUserResult.error?.status ?? null,
+    });
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  const authUser = authUserResult.data.user;
+  const authEmail = typeof authUser.email === 'string' ? authUser.email.trim() : '';
+  if (authUser.id !== profile.id || !authEmail) {
+    console.error('[staff-auth] Staff Auth identity lookup returned an invalid identity', {
+      idMatchesProfile: authUser.id === profile.id,
+      hasEmail: Boolean(authEmail),
+    });
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  console.info('[staff-auth] Staff profile/Auth identity resolved', {
+    profileFound: true,
+    role: profile.role,
+    active: profile.active,
+    idMatchesProfile: authUser.id === profile.id,
+    profileHasEmail: typeof profile.email === 'string' && Boolean(profile.email.trim()),
+    authEmailResolved: true,
+  });
   const { data, error: authError } = await auth.auth.signInWithPassword({
-    email: profile.email || authAlias(username),
+    email: authEmail,
     password,
   });
   if (authError) {
@@ -192,6 +232,17 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
       user: data.user,
     },
     mustChangePassword: profile.must_change_password === true,
+    profile: {
+      id: profile.id,
+      employee_id: profile.employee_id,
+      email: profile.email,
+      full_name: profile.full_name,
+      role: profile.role,
+      branch_id: profile.branch_id,
+      active: profile.active,
+      must_change_password: profile.must_change_password === true,
+    },
+    branch: { id: branch.id, city: branch.city, code: branch.code },
   });
 }
 

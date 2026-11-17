@@ -29,6 +29,7 @@ import {
   classifyStockAlert,
   countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
+  filterBatchesWithRemainingStock,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
   isStockAlert,
@@ -94,9 +95,12 @@ import {
   STAFF_DAILY_SALES_LOAD_ERROR,
 } from '../services/staffDailySales';
 import {
+  displayInventoryCategory,
+  filterStaffInventoryItems,
   inventoryStockStatus,
   runDiscrepancySubmissionOnce,
   runInventoryReportLoad,
+  STAFF_INVENTORY_CATEGORIES,
   type InventoryCountRecord,
   type InventoryReportData,
 } from './inventoryReports';
@@ -157,6 +161,7 @@ type IngredientBatch = {
   receivedDate: string;
   expirationDate: string | null;
   expirationDateIso: string | null;
+  quantityReceived: number;
   quantityRemaining: number;
 };
 
@@ -173,18 +178,21 @@ type Ingredient = {
   hasBranchInventory: boolean;
   expiration: string | null;
   nearExpiry: boolean;
+  expirationStatus: 'Near Expiry' | 'Expired' | null;
   minimumStock: number;
   type: string;
   unitName: string;
   receivedBatch: string;
   batchReference?: string;
+  packageQuantity: number | null;
+  packageUnit: string | null;
+  packageLabel: string | null;
   batches: IngredientBatch[];
   lastUpdated: string;
   emoji: string;
   tint: string;
 };
 
-const categories = ['All', 'Seafood', 'Dry Goods', 'Dairy & eggs', 'Condiments', 'Produce'];
 const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const pendingInventoryTransactionStore = createPendingInventoryTransactionStore(AsyncStorage);
 const pendingInventoryCountCorrectionStore = createPendingInventoryCountCorrectionStore(AsyncStorage);
@@ -425,6 +433,18 @@ function formatUnitQuantity(quantity: number, unit: string) {
   return `${formatQuantity(quantity)} ${displayUnit}`;
 }
 
+function formatInventoryQuantity(quantity: number, precision: number) {
+  const maximumFractionDigits = Number.isInteger(precision)
+    ? Math.max(0, Math.min(3, precision))
+    : 2;
+  return quantity.toLocaleString('en-PH', { maximumFractionDigits });
+}
+
+function formatInventoryUnitQuantity(quantity: number, unit: string, precision: number) {
+  const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
+  return `${formatInventoryQuantity(quantity, precision)} ${displayUnit}`;
+}
+
 function roundDailyQuantity(quantity: number, unit: string) {
   const precision = unit === 'pcs' ? 1 : 100;
   return Math.round(quantity * precision) / precision;
@@ -532,22 +552,31 @@ function InventoryIngredientCard({
   onPress,
   statusOverride,
   showExpiration = false,
+  showInventoryStatuses = false,
   cardWidth,
 }: {
   item: Ingredient;
   onPress: () => void;
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
   showExpiration?: boolean;
+  showInventoryStatuses?: boolean;
   cardWidth?: number;
 }) {
   const styles = useStaffStyles();
+  const stockStatus = inventoryStockStatus(item.quantity, item.minimumStock);
   const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
+  const stockStatusTone = stockStatus === 'Normal' ? 'good' : 'low';
+  const expirationStatusTone = item.expirationStatus === 'Expired' ? 'low' : 'warning';
+  const categoryLabel = displayInventoryCategory(item.category);
+  const packInfo = item.packageQuantity !== null && item.packageUnit
+    ? `Pack: ${formatInventoryQuantity(item.packageQuantity, 3)} ${item.packageUnit}`
+    : null;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.name}, ${item.category}, ${item.quantity} ${item.unit}${showExpiration && item.expiration ? `, expires ${item.expiration}` : ''}, ${statusLabel}`}
+      accessibilityLabel={`${item.name}, ${categoryLabel}, ${formatInventoryUnitQuantity(item.quantity, item.unit, item.quantityPrecision)}, ${showInventoryStatuses ? stockStatus : statusLabel}${item.expirationStatus ? `, ${item.expirationStatus}` : ''}${showExpiration ? `, expiration ${item.expiration ?? 'Not recorded'}` : ''}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.inventoryCard,
@@ -558,14 +587,30 @@ function InventoryIngredientCard({
       <IngredientThumbnail item={item} small />
       <View style={styles.inventoryCardCopy}>
         <Text style={styles.inventoryIngredientName} numberOfLines={1}>{item.name}</Text>
-        <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{item.category}</Text>
+        <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{categoryLabel} · {item.unit}</Text>
+        {packInfo ? <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{packInfo}</Text> : null}
+        {showInventoryStatuses ? (
+          <Text style={styles.dashboardExpiration}>
+            {item.expirationStatus ? `${item.expirationStatus}: ` : item.expiration ? 'Expires: ' : 'Expiration: '}
+            {item.expiration ?? 'Not recorded'}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.inventoryQuantityColumn}>
-        <Text style={styles.inventoryQuantity}>{item.quantity} {item.unit}</Text>
-        {showExpiration && item.expiration ? (
+        <Text style={styles.inventoryQuantity}>{formatInventoryUnitQuantity(item.quantity, item.unit, item.quantityPrecision)}</Text>
+        {showExpiration && !showInventoryStatuses && item.expiration ? (
           <Text style={styles.dashboardExpiration}>Exp. {item.expiration}</Text>
         ) : null}
-        <StatusBadge label={statusLabel} tone={statusTone} alignRight />
+        {showInventoryStatuses ? (
+          <View style={styles.inventoryBadgeStack}>
+            <StatusBadge label={stockStatus} tone={stockStatusTone} alignRight />
+            {item.expirationStatus ? (
+              <StatusBadge label={item.expirationStatus} tone={expirationStatusTone} alignRight />
+            ) : null}
+          </View>
+        ) : (
+          <StatusBadge label={statusLabel} tone={statusTone} alignRight />
+        )}
       </View>
     </Pressable>
   );
@@ -886,7 +931,7 @@ export default function StaffWorkspace({
     paleRed: theme.isDark ? theme.colors.surfaceSecondary : '#FCE9EB',
     yellow: theme.isDark ? theme.colors.warning : '#FFF2C4',
   };
-  const [route, setRoute] = useState<StaffRoute>('dashboard');
+  const [route, setRoute] = useState<StaffRoute>('menu');
   const routeRef = useRef(route);
   routeRef.current = route;
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
@@ -1332,7 +1377,7 @@ export default function StaffWorkspace({
   }, [user?.branchId]);
 
   useEffect(() => {
-    if (route !== 'dashboard') return;
+    if (route !== 'menu') return;
     let active = true;
     if (!user?.branchId) {
       setUnresolvedSales([]);
@@ -1489,8 +1534,11 @@ export default function StaffWorkspace({
   const refreshBackendData = async () => {
     if (!user?.branchId) {
       setBackendError('Your account does not have an assigned branch. Contact the owner.');
+      setBackendLoading(false);
       return;
     }
+    setBackendLoading(true);
+    setBackendError('');
     setUnresolvedSalesLoading(true);
     const salesRefresh = Promise.all([
       loadUnresolvedSales(user.branchId),
@@ -1520,6 +1568,8 @@ export default function StaffWorkspace({
       setBackendError('');
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'The saved record could not be refreshed.');
+    } finally {
+      setBackendLoading(false);
     }
   };
 
@@ -1966,15 +2016,9 @@ export default function StaffWorkspace({
           newQuantity: (ingredient?.quantity ?? 0) - deductionQuantity,
         };
       });
-  const normalizedSearch = search.trim().toLowerCase();
   const visibleIngredients = useMemo(
-    () =>
-      ingredients.filter((item) => {
-        const matchesCategory = category === 'All' || item.category === category;
-        const matchesSearch = `${item.name} ${item.category}`.toLowerCase().includes(normalizedSearch);
-        return matchesCategory && matchesSearch;
-      }),
-    [category, ingredients, normalizedSearch],
+    () => filterStaffInventoryItems(ingredients, category, search),
+    [category, ingredients, search],
   );
   const alertDate = manilaBusinessDate();
   const branchInventoryItems = filterBranchInventoryAlertItems(ingredients);
@@ -1986,7 +2030,7 @@ export default function StaffWorkspace({
   );
   const nearExpirationBatches = branchInventoryItems.flatMap((item) => {
     if (!item.expirationTracking) return [];
-    return item.batches.flatMap((batch) => {
+    return filterBatchesWithRemainingStock(item.batches).flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
@@ -1997,7 +2041,7 @@ export default function StaffWorkspace({
   });
   const expiredBatches = branchInventoryItems.flatMap((item) => {
     if (!item.expirationTracking) return [];
-    return item.batches.flatMap((batch) => {
+    return filterBatchesWithRemainingStock(item.batches).flatMap((batch) => {
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
@@ -2131,11 +2175,13 @@ export default function StaffWorkspace({
       return;
     }
     setMenuCart((current) => {
-      if (current.some((line) => line.productId === productId)) return current;
+      const existing = current.find((line) => line.productId === productId);
       if (!menuTransactionReference) {
         setMenuTransactionReference(`SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`);
       }
-      return [...current, { productId, quantity: 1 }];
+      return existing
+        ? current.map((line) => line.productId === productId ? { ...line, quantity: line.quantity + 1 } : line)
+        : [...current, { productId, quantity: 1 }];
     });
   };
 
@@ -3216,7 +3262,7 @@ export default function StaffWorkspace({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Alerts"
-          onPress={() => navigate('alerts')}
+          onPress={() => navigate('more')}
           style={styles.alertButton}
         >
           <View style={styles.bellIcon}>
@@ -3396,9 +3442,9 @@ export default function StaffWorkspace({
       </View>
       <View style={styles.quickActions}>
         {[
-          { title: 'Stock-In', icon: '+', onPress: () => openForm('stockIn', 'dashboard') },
-          { title: 'Stock-Out', icon: '↗', onPress: () => openForm('stockOut', 'dashboard') },
-          { title: 'Waste', icon: '×', onPress: () => openForm('waste', 'dashboard') },
+          { title: 'Stock-In', icon: '+', onPress: () => openForm('stockIn', 'menu') },
+          { title: 'Stock-Out', icon: '↗', onPress: () => openForm('stockOut', 'menu') },
+          { title: 'Waste', icon: '×', onPress: () => openForm('waste', 'menu') },
           {
             title: 'Daily Check',
             icon: '✓',
@@ -3476,84 +3522,141 @@ export default function StaffWorkspace({
     </ScrollView>
   );
 
-  const renderInventory = () => (
-    <FlatList
-      style={styles.scroll}
-      contentContainerStyle={styles.inventoryListContent}
-      data={visibleIngredients}
-      keyExtractor={(item) => item.id}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      ItemSeparatorComponent={() => <View style={styles.inventoryCardSeparator} />}
-      ListHeaderComponent={
-        <View style={styles.inventoryPageHeader}>
-          <Text style={styles.pageTitle}>Inventory</Text>
-          <Text style={styles.pageSubtitle}>{assignedBranch} / Staff</Text>
-          <View style={styles.inventorySearch}>
-            <SearchBar value={search} onChangeText={setSearch} />
-          </View>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsHorizontalScrollIndicator={false}
-            style={styles.inventoryFilterScroll}
-            contentContainerStyle={styles.inventoryFilters}
-          >
-            {categories.map((filter) => (
-              <FilterChip
-                key={filter}
-                label={filter}
-                selected={filter === category}
-                onPress={() => setCategory(filter)}
-              />
-            ))}
-          </ScrollView>
-          <Text style={styles.inventoryCount}>
-            {visibleIngredients.length} {visibleIngredients.length === 1 ? 'ingredient' : 'ingredients'} · {assignedBranch}
-          </Text>
+  const renderInventoryLoadState = () => {
+    if (backendLoading) {
+      return (
+        <View style={styles.inventoryState}>
+          <ActivityIndicator color={colors.pink} />
+          <Text style={styles.inventoryEmptyMessage}>Loading inventory...</Text>
         </View>
-      }
-      renderItem={({ item }) => (
-        <InventoryIngredientCard
-          item={item}
-          onPress={() => {
-            setSelectedIngredientId(item.id);
-            setIngredientDetailReturnRoute('inventory');
-            setRoute('ingredientDetails');
-          }}
-        />
-      )}
-      ListEmptyComponent={
-        <View style={styles.inventoryEmpty}>
-          <CubeOutlineIcon />
-          <Text style={styles.inventoryEmptyTitle}>No ingredients found</Text>
+      );
+    }
+    if (backendError) {
+      return (
+        <View style={styles.inventoryState}>
           <Text style={styles.inventoryEmptyMessage}>
-            {search.trim()
-              ? `No results for '${search.trim()}'. Try a different name or clear your category filters.`
-              : `No results${category !== 'All' ? ` in '${category}'` : ''}. Try a different name or clear your category filters.`}
+            Unable to load data. Please check your internet connection and try again.
           </Text>
           <Pressable
             accessibilityRole="button"
-            onPress={() => {
-              setSearch('');
-              setCategory('All');
-            }}
+            onPress={() => void refreshBackendData()}
             style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.pressed]}
           >
-            <Text style={styles.clearFiltersText}>Clear filters</Text>
+            <Text style={styles.clearFiltersText}>Retry</Text>
           </Pressable>
         </View>
-      }
-      ListFooterComponent={
-        visibleIngredients.length > 0 ? (
-          <Text style={styles.demoNote}>Live branch inventory · Updates are saved to Supabase.</Text>
-        ) : null
-      }
-    />
-  );
+      );
+    }
+    return null;
+  };
+
+  const renderInventory = () => {
+    const loadingOrError = renderInventoryLoadState();
+    if (loadingOrError) return loadingOrError;
+
+    const assignedItems = filterBranchInventoryAlertItems(ingredients);
+    if (assignedItems.length === 0) {
+      return (
+        <View style={styles.inventoryAssignedEmpty}>
+          <View style={styles.inventoryPageHeader}>
+            <Text style={styles.pageTitle}>Inventory</Text>
+            <Text style={styles.pageSubtitle}>{assignedBranch} · Read only</Text>
+          </View>
+          <View style={styles.inventoryEmpty}>
+            <CubeOutlineIcon />
+            <Text style={styles.inventoryEmptyTitle}>
+              Your branch has no ingredients or supplies assigned.
+            </Text>
+            <Text style={styles.inventoryEmptyMessage}>Contact the owner to set up inventory.</Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <FlatList
+        style={styles.scroll}
+        contentContainerStyle={styles.inventoryListContent}
+        data={visibleIngredients}
+        keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        ItemSeparatorComponent={() => <View style={styles.inventoryCardSeparator} />}
+        ListHeaderComponent={
+          <View style={styles.inventoryPageHeader}>
+            <View style={styles.inventoryHeaderRow}>
+              <View style={styles.inventoryHeaderCopy}>
+                <Text style={styles.pageTitle}>Inventory</Text>
+                <Text style={styles.pageSubtitle}>{assignedBranch}</Text>
+              </View>
+              <View style={styles.readOnlyPill}>
+                <Text style={styles.readOnlyPillText}>Read only</Text>
+              </View>
+            </View>
+            <View style={styles.inventorySearch}>
+              <SearchBar
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Search ingredients or supplies..."
+              />
+            </View>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsHorizontalScrollIndicator={false}
+              style={styles.inventoryFilterScroll}
+              contentContainerStyle={styles.inventoryFilters}
+            >
+              {STAFF_INVENTORY_CATEGORIES.map((filter) => (
+                <FilterChip
+                  key={filter}
+                  label={filter}
+                  selected={filter === category}
+                  onPress={() => setCategory(filter)}
+                />
+              ))}
+            </ScrollView>
+            <Text style={styles.inventoryCount}>
+              {visibleIngredients.length} {visibleIngredients.length === 1 ? 'item' : 'items'} · Expected quantity
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <InventoryIngredientCard
+            item={item}
+            showExpiration
+            showInventoryStatuses
+            onPress={() => {
+              setSelectedIngredientId(item.id);
+              setIngredientDetailReturnRoute('inventory');
+              setRoute('ingredientDetails');
+            }}
+          />
+        )}
+        ListEmptyComponent={
+          <View style={styles.inventoryEmpty}>
+            <Text style={styles.inventoryEmptyTitle}>No items found.</Text>
+            <Text style={styles.inventoryEmptyMessage}>Try a different name or category.</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSearch('');
+                setCategory('All');
+              }}
+              style={({ pressed }) => [styles.clearFiltersButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.clearFiltersText}>Clear search</Text>
+            </Pressable>
+          </View>
+        }
+      />
+    );
+  };
 
   const renderIngredientDetails = () => {
+    const loadingOrError = renderInventoryLoadState();
+    if (loadingOrError) return loadingOrError;
     if (!selectedIngredient) {
       return (
         <View style={styles.inventoryFallback}>
@@ -3567,20 +3670,15 @@ export default function StaffWorkspace({
 
     const gap = selectedIngredient.minimumStock - selectedIngredient.quantity;
     const stockGap = gap > 0
-      ? `${gap} ${selectedIngredient.unit} below minimum`
+      ? `${formatInventoryQuantity(gap, selectedIngredient.quantityPrecision)} ${selectedIngredient.unit} below minimum`
       : gap < 0
-        ? `${Math.abs(gap)} ${selectedIngredient.unit} above minimum`
+        ? `${formatInventoryQuantity(Math.abs(gap), selectedIngredient.quantityPrecision)} ${selectedIngredient.unit} above minimum`
         : 'At minimum stock';
-    const statusLabel = selectedIngredient.lowStock
-      ? 'Low Stock'
-      : selectedIngredient.nearExpiry
-        ? 'Near Expiry'
-        : 'In Stock';
-    const statusTone = selectedIngredient.lowStock
-      ? 'low'
-      : selectedIngredient.nearExpiry
-        ? 'warning'
-        : 'good';
+    const statusLabel = inventoryStockStatus(selectedIngredient.quantity, selectedIngredient.minimumStock);
+    const statusTone = statusLabel === 'Normal' ? 'good' : 'low';
+    const recentMovements = historyTransactions
+      .filter((transaction) => transaction.ingredientId === selectedIngredient.id)
+      .slice(0, 3);
 
     return (
       <ScrollView
@@ -3607,18 +3705,38 @@ export default function StaffWorkspace({
           <IngredientThumbnail item={selectedIngredient} large />
           <View style={styles.ingredientSummaryCopy}>
             <Text style={styles.detailIngredientName}>{selectedIngredient.name}</Text>
-            <Text style={styles.detailIngredientCategory}>{selectedIngredient.category} · {selectedIngredient.type}</Text>
+            <Text style={styles.detailIngredientCategory}>
+              {displayInventoryCategory(selectedIngredient.category)} · {selectedIngredient.unit}
+            </Text>
             <StatusBadge label={statusLabel} tone={statusTone} />
+            {selectedIngredient.expirationStatus ? (
+              <StatusBadge
+                label={selectedIngredient.expirationStatus}
+                tone={selectedIngredient.expirationStatus === 'Expired' ? 'low' : 'warning'}
+              />
+            ) : null}
           </View>
         </View>
 
         <View style={styles.stockSummaryCard}>
-          <Text style={styles.stockSummaryQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit}</Text>
-          <Text style={styles.stockSummaryCaption}>Recorded available stock</Text>
+          <Text style={styles.stockSummaryQuantity}>
+            {formatInventoryUnitQuantity(
+              selectedIngredient.quantity,
+              selectedIngredient.unit,
+              selectedIngredient.quantityPrecision,
+            )}
+          </Text>
+          <Text style={styles.stockSummaryCaption}>Expected quantity</Text>
           <View style={styles.stockSummaryDivider} />
           <View style={styles.stockSummaryLine}>
             <Text style={styles.stockSummaryLabel}>Minimum stock</Text>
-            <Text style={styles.stockSummaryValue}>{selectedIngredient.minimumStock} {selectedIngredient.unit}</Text>
+            <Text style={styles.stockSummaryValue}>
+              {formatInventoryUnitQuantity(
+                selectedIngredient.minimumStock,
+                selectedIngredient.unit,
+                selectedIngredient.quantityPrecision,
+              )}
+            </Text>
           </View>
           <View style={styles.stockSummaryLine}>
             <Text style={styles.stockSummaryLabel}>Stock gap</Text>
@@ -3628,16 +3746,99 @@ export default function StaffWorkspace({
 
         <View style={styles.detailRows}>
           <DetailRow label="Branch" value={assignedBranch} />
-          <DetailRow label="Inventory unit" value={selectedIngredient.unitName} />
-          <DetailRow label="Received batch" value={selectedIngredient.receivedBatch} />
+          <DetailRow label="Category" value={displayInventoryCategory(selectedIngredient.category)} />
+          <DetailRow label="Unit of measurement" value={selectedIngredient.unitName} />
+          <DetailRow
+            label="Pack size"
+            value={selectedIngredient.packageQuantity !== null && selectedIngredient.packageUnit
+              ? `${selectedIngredient.packageLabel ? `${selectedIngredient.packageLabel} · ` : ''}${formatInventoryQuantity(selectedIngredient.packageQuantity, 3)} ${selectedIngredient.packageUnit}`
+              : 'Not recorded'}
+          />
           <DetailRow label="Expiration" value={selectedIngredient.expiration ?? 'Not recorded'} />
+          {selectedIngredient.expirationStatus ? (
+            <DetailRow label="Expiration status" value={selectedIngredient.expirationStatus} />
+          ) : null}
           <DetailRow label="Last updated" value={selectedIngredient.lastUpdated} />
+        </View>
+
+        <View style={styles.inventoryDetailSection}>
+          <Text style={styles.historyPlaceholderText}>Received batches</Text>
+          {selectedIngredient.batches.length > 0 ? selectedIngredient.batches.map((batch) => {
+            const expirationDate = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
+            const daysRemaining = expirationDate ? daysBetweenDates(manilaBusinessDate(), expirationDate) : null;
+            const alert = selectedIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
+              ? classifyExpirationAlert(daysRemaining, nearExpirationDays)
+              : null;
+            const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
+            return (
+              <View key={batch.reference} style={styles.inventoryBatchCard}>
+                <Text style={styles.inventoryBatchTitle}>Batch {batch.reference}</Text>
+                <DetailRow label="Received date" value={batch.receivedDate || 'Not recorded'} />
+                <DetailRow
+                  label="Received quantity"
+                  value={formatInventoryUnitQuantity(
+                    batch.quantityReceived,
+                    selectedIngredient.unit,
+                    selectedIngredient.quantityPrecision,
+                  )}
+                />
+                <DetailRow label="Expiration date" value={batch.expirationDate ?? 'Not recorded'} />
+                <DetailRow
+                  label="Remaining quantity"
+                  value={formatInventoryUnitQuantity(
+                    batch.quantityRemaining,
+                    selectedIngredient.unit,
+                    selectedIngredient.quantityPrecision,
+                  )}
+                />
+                {batchStatus ? (
+                  <StatusBadge label={batchStatus} tone={batchStatus === 'Expired' ? 'low' : 'warning'} />
+                ) : null}
+              </View>
+            );
+          }) : (
+            <Text style={styles.inventoryEmptyMessage}>No received batches recorded.</Text>
+          )}
+        </View>
+
+        <View style={styles.inventoryDetailSection}>
+          <Text style={styles.historyPlaceholderText}>Recent stock movements</Text>
+          {recentMovements.length > 0 ? recentMovements.map((transaction) => (
+            <View key={transaction.id} style={styles.historyActivityCard}>
+              <View style={styles.historyActivityCopy}>
+                <Text style={styles.historyActivityTitle}>{transaction.type} · {transaction.reference}</Text>
+                <Text style={styles.historyActivityDetail}>
+                  {formatHistoryDateTime(transaction.transactionDate)}
+                  {transaction.batchReference ? ` · Batch ${transaction.batchReference}` : ''}
+                </Text>
+                {transaction.afterQuantity !== null ? (
+                  <Text style={styles.historyActivityDetail}>
+                    Balance after: {formatInventoryUnitQuantity(
+                      transaction.afterQuantity,
+                      transaction.unit,
+                      selectedIngredient.quantityPrecision,
+                    )}
+                  </Text>
+                ) : null}
+              </View>
+              <Text style={styles.historyActivityAmount}>
+                {transaction.movement > 0 ? '+' : ''}
+                {formatInventoryUnitQuantity(
+                  transaction.movement,
+                  transaction.unit,
+                  selectedIngredient.quantityPrecision,
+                )}
+              </Text>
+            </View>
+          )) : (
+            <Text style={styles.inventoryEmptyMessage}>No recent stock movements.</Text>
+          )}
         </View>
 
         <View style={styles.permissionNotice}>
           <Text style={styles.permissionIcon}>i</Text>
           <Text style={styles.permissionText}>
-            Master ingredient information is read-only. Only the owner can add, edit or delete master records.
+            Inventory is read-only for Staff. Use the Stock tab for authorized stock movements; the Owner manages ingredient details.
           </Text>
         </View>
 
@@ -3653,6 +3854,8 @@ export default function StaffWorkspace({
   };
 
   const renderInventoryHistory = () => {
+    const loadingOrError = renderInventoryLoadState();
+    if (loadingOrError) return loadingOrError;
     const ingredientTransactions = historyTransactions.filter(
       (transaction) => transaction.ingredientId === selectedIngredient?.id,
     );
@@ -3683,9 +3886,26 @@ export default function StaffWorkspace({
             <Text style={styles.historyActivityDetail}>
               {formatHistoryDateTime(transaction.transactionDate)} · {transaction.reason || 'No reason'}
             </Text>
+            {transaction.batchReference ? (
+              <Text style={styles.historyActivityDetail}>Batch {transaction.batchReference}</Text>
+            ) : null}
+            {transaction.afterQuantity !== null ? (
+              <Text style={styles.historyActivityDetail}>
+                Balance after: {formatInventoryUnitQuantity(
+                  transaction.afterQuantity,
+                  transaction.unit,
+                  selectedIngredient?.quantityPrecision ?? 2,
+                )}
+              </Text>
+            ) : null}
           </View>
           <Text style={styles.historyActivityAmount}>
-            {transaction.movement > 0 ? '+' : ''}{formatUnitQuantity(transaction.movement, transaction.unit)}
+            {transaction.movement > 0 ? '+' : ''}
+            {formatInventoryUnitQuantity(
+              transaction.movement,
+              transaction.unit,
+              selectedIngredient?.quantityPrecision ?? 2,
+            )}
           </Text>
         </View>
       )) : (
@@ -3845,7 +4065,7 @@ export default function StaffWorkspace({
                 accessibilityRole="button"
                 onPress={() => {
                   setSelectedIngredientId(item.id);
-                  openForm('stockIn', 'alerts');
+                  openForm('stockIn', 'more');
                 }}
                 style={({ pressed }) => [styles.alertDetailPrimary, pressed && styles.pressed]}
               >
@@ -4308,10 +4528,10 @@ export default function StaffWorkspace({
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={() => navigate('dashboard')}
+            onPress={() => navigate('menu')}
             style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailyPrimaryButtonText}>Back to Dashboard</Text>
+            <Text style={styles.dailyPrimaryButtonText}>Back to POS</Text>
           </Pressable>
         </ScrollView>
       </>
@@ -6462,8 +6682,8 @@ export default function StaffWorkspace({
         <View style={styles.inventoryFallback}>
           <Text style={styles.inventoryEmptyTitle}>Receipt unavailable</Text>
           <Text style={styles.receiptErrorText}>{saleReceiptError || 'The recorded sale details could not be loaded.'}</Text>
-          <Pressable onPress={() => setRoute('dashboard')} style={styles.detailBackFallback}>
-            <Text style={styles.detailBackLabel}>Back to Dashboard</Text>
+          <Pressable onPress={() => setRoute('menu')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to POS</Text>
           </Pressable>
         </View>
       );
@@ -6478,8 +6698,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to Dashboard"
-            onPress={() => setRoute('dashboard')}
+            accessibilityLabel="Back to POS"
+            onPress={() => setRoute('menu')}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -6524,7 +6744,19 @@ export default function StaffWorkspace({
           onPress={() => void shareSaleReceipt()}
           style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
         >
-          <Text style={styles.saveButtonText}>Share receipt</Text>
+          <Text style={styles.saveButtonText}>Generate Receipt</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setSaleReceipt(null);
+            setSaleReceiptError('');
+            setSaleReceiptShareError('');
+            setRoute('menu');
+          }}
+          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.saveButtonText}>New Order</Text>
         </Pressable>
         {saleReceiptShareError ? <Text style={styles.receiptErrorText}>{saleReceiptShareError}</Text> : null}
       </ScrollView>
@@ -6533,9 +6765,6 @@ export default function StaffWorkspace({
 
   let screenContent: React.ReactNode;
   switch (route) {
-    case 'dashboard':
-      screenContent = renderDashboard();
-      break;
     case 'menu':
     case 'cart':
     case 'checkout':
@@ -6618,7 +6847,14 @@ export default function StaffWorkspace({
   return (
     <KeyboardAvoidingView style={styles.workspace} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.screenArea}>
-        {backendError !== '' && route !== 'menu' && route !== 'cart' && route !== 'checkout' && route !== 'alerts' ? (
+        {backendError !== '' &&
+        route !== 'menu' &&
+        route !== 'cart' &&
+        route !== 'checkout' &&
+        route !== 'inventory' &&
+        route !== 'ingredientDetails' &&
+        route !== 'inventoryHistory' &&
+        route !== 'alerts' ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Retry loading branch data"
@@ -6632,6 +6868,8 @@ export default function StaffWorkspace({
         <MenuWorkspace
           visible={route === 'menu' || route === 'cart' || route === 'checkout'}
           page={route === 'menu' || route === 'cart' || route === 'checkout' ? route : 'menu'}
+          staffName={staffName}
+          assignedBranch={assignedBranch}
           cart={menuCart}
           onSetPage={setRoute}
           onAddProduct={addMenuProduct}
@@ -6651,7 +6889,7 @@ export default function StaffWorkspace({
         />
       </View>
       {route !== 'stockOut' && route !== 'usagePreview' ? (
-        <BottomNavigation active={route} onSelect={navigate} />
+        <BottomNavigation active={route} onSelect={navigate} staffOnly />
       ) : null}
       <Modal
         visible={batterPreparationVisible}
@@ -7276,10 +7514,16 @@ function createStaffStyles(theme: AppTheme) {
   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },
   inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },
   inventoryPageHeader: { marginBottom: 14 },
+  inventoryHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  inventoryHeaderCopy: { flex: 1, minWidth: 0 },
+  readOnlyPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: '#FFF2C4' },
+  readOnlyPillText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
   inventorySearch: { marginTop: 14 },
   inventoryFilterScroll: { flexGrow: 0, marginBottom: 17 },
   inventoryFilters: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 7, paddingRight: 8 },
   inventoryCount: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginBottom: 10 },
+  inventoryAssignedEmpty: { flex: 1, paddingHorizontal: 17, paddingTop: 22 },
+  inventoryState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   inventoryCardSeparator: { height: 9 },
   inventoryCard: {
     minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
@@ -7292,6 +7536,7 @@ function createStaffStyles(theme: AppTheme) {
   inventoryIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 3 },
   inventoryQuantityColumn: { minWidth: 88, alignItems: 'flex-end', justifyContent: 'center', marginLeft: 8 },
   inventoryQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
+  inventoryBadgeStack: { alignItems: 'flex-end', gap: 4, marginTop: 4 },
   dashboardExpiration: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   inventoryChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
   inventoryChipText: { color: colors.navy },
@@ -7339,6 +7584,9 @@ function createStaffStyles(theme: AppTheme) {
   permissionNotice: { flexDirection: 'row', alignItems: 'flex-start', padding: 12, borderRadius: 13, backgroundColor: '#FFF5CB', marginBottom: 15 },
   permissionIcon: { width: 18, height: 18, overflow: 'hidden', borderRadius: 9, backgroundColor: colors.orange, color: colors.white, fontFamily: font.bold, fontSize: 11, textAlign: 'center', marginRight: 9 },
   permissionText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
+  inventoryDetailSection: { marginBottom: 16 },
+  inventoryBatchCard: { paddingHorizontal: 13, paddingTop: 12, paddingBottom: 4, borderRadius: 15, backgroundColor: '#EEEEEF', marginBottom: 9 },
+  inventoryBatchTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginBottom: 3 },
   historyButton: { minHeight: 47, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
   historyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
@@ -7423,7 +7671,7 @@ function createStaffStyles(theme: AppTheme) {
     borderRadius: 12, backgroundColor: colors.pink, marginTop: 4,
   },
   historyDetailButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
-  historyActivityCard: { flexDirection: 'row', alignItems: 'center', padding: 13, borderRadius: 15, backgroundColor: '#EEEEEF' },
+  historyActivityCard: { flexDirection: 'row', alignItems: 'center', padding: 13, borderRadius: 15, backgroundColor: '#EEEEEF', marginBottom: 8 },
   historyActivityMarker: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginRight: 10 },
   historyActivityGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 18 },
   historyActivityCopy: { flex: 1 },

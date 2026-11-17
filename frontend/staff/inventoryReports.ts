@@ -6,6 +6,19 @@ export type InventoryReportItem = Pick<
 >;
 
 export type InventoryStockStatus = 'Normal' | 'Low Stock' | 'Out of Stock';
+export type InventoryExpirationStatus = 'Near Expiry' | 'Expired' | null;
+
+export const STAFF_INVENTORY_CATEGORIES = [
+  'All',
+  'Seafood',
+  'Dairy',
+  'Meat',
+  'Vegetables',
+  'Condiments',
+  'Dry Goods',
+  'Supplies',
+  'Prepared',
+] as const;
 
 export type InventoryCategorySummary = {
   category: string;
@@ -129,6 +142,49 @@ export function inventoryStockStatus(quantity: number, minimumStock: number): In
   if (quantity <= 0) return 'Out of Stock';
   if (quantity <= minimumStock) return 'Low Stock';
   return 'Normal';
+}
+
+export function inventoryExpirationStatus(
+  expirationDate: string | null,
+  nearExpirationDays: number,
+  businessDate: Date,
+): InventoryExpirationStatus {
+  if (!expirationDate) return null;
+  const expirationTime = new Date(`${expirationDate}T00:00:00`).getTime();
+  if (!Number.isFinite(expirationTime)) return null;
+  const businessDayStart = new Date(
+    businessDate.getFullYear(),
+    businessDate.getMonth(),
+    businessDate.getDate(),
+  ).getTime();
+  const daysUntilExpiration = Math.ceil((expirationTime - businessDayStart) / 86_400_000);
+  if (daysUntilExpiration < 0) return 'Expired';
+  return daysUntilExpiration <= nearExpirationDays ? 'Near Expiry' : null;
+}
+
+export function displayInventoryCategory(category: string): string {
+  const normalized = category.trim().toLowerCase();
+  if (normalized === 'dairy' || normalized === 'dairy & eggs') return 'Dairy';
+  if (normalized === 'produce' || normalized === 'vegetables') return 'Vegetables';
+  if (normalized === 'prepared inventory' || normalized === 'prepared') return 'Prepared';
+  return category.trim() || 'Other';
+}
+
+export function filterStaffInventoryItems<T extends {
+  hasBranchInventory: boolean;
+  name: string;
+  category: string;
+}>(
+  items: readonly T[],
+  category: string,
+  search: string,
+): T[] {
+  const normalizedSearch = search.trim().toLowerCase();
+  return items.filter((item) =>
+    item.hasBranchInventory &&
+    (category === 'All' || displayInventoryCategory(item.category) === category) &&
+    item.name.toLowerCase().includes(normalizedSearch),
+  );
 }
 
 export function buildInventoryCategories(items: InventoryReportItem[]): InventoryCategorySummary[] {

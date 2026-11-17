@@ -6,6 +6,7 @@ import {
   countInventoryAlertsByKind,
   countInventoryAlertsWhenReady,
   deduplicateInventoryAlerts,
+  filterBatchesWithRemainingStock,
   filterBranchInventoryAlertItems,
   inventoryAlertLabel,
   sortInventoryAlerts,
@@ -25,6 +26,15 @@ test('branch-scoped Staff projections use only assigned-branch inventory rows', 
     { id: 'catalog-only-item', hasBranchInventory: false },
   ];
   assert.deepEqual(filterBranchInventoryAlertItems(items).map((item) => item.id), ['branch-item']);
+});
+
+test('expiration alerts ignore depleted batches while the inventory details can retain batch history', () => {
+  const batches = [
+    { reference: 'active', quantityRemaining: 2 },
+    { reference: 'depleted', quantityRemaining: 0 },
+  ];
+  assert.deepEqual(filterBatchesWithRemainingStock(batches), [batches[0]]);
+  assert.equal(batches.length, 2);
 });
 
 test('duplicate item and batch alerts are emitted once', () => {

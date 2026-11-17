@@ -16,8 +16,8 @@ export function validateSaleSubmission(input: {
     throw new Error('An assigned branch is required before confirming the sale.');
   }
   const paymentMethod = input.paymentMethod?.trim().toLowerCase();
-  if (paymentMethod !== 'cash' && paymentMethod !== 'card') {
-    throw new Error('Select Cash or Card before confirming the sale.');
+  if (paymentMethod !== 'cash' && paymentMethod !== 'qr') {
+    throw new Error('Select Cash or QR before confirming the sale.');
   }
   if (!Number.isFinite(input.totalAmount) || (input.totalAmount ?? 0) <= 0) {
     throw new Error('The sale total must be greater than zero.');

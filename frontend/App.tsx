@@ -22,7 +22,6 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
-import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
@@ -30,6 +29,7 @@ import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
 import { shouldClearMobileSession } from './services/authSessionEvents';
+import { StaffLoginError } from './services/staffAuthentication';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
@@ -73,7 +73,7 @@ type PreviewInventoryItem = {
   lowStock: boolean;
   branch?: string;
 };
-type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace' | 'changePassword';
+type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
 type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
@@ -115,6 +115,9 @@ function AppContent() {
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [loginSuccess, setLoginSuccess] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
   const authOperationLock = useRef(false);
@@ -160,7 +163,7 @@ function AppContent() {
     ? Math.min(height, frameWidth * 2)
     : height;
   const visibleScreen =
-    (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'changePassword') && authenticatedUser === null
+    (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
       ? 'login'
       : screen;
 
@@ -179,9 +182,7 @@ function AppContent() {
           return;
         }
         setAuthenticatedUser(user);
-         setScreen(user.role === 'Staff'
-           ? (user.mustChangePassword ? 'changePassword' : 'staffWorkspace')
-           : 'dashboard');
+         setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
       })
       .catch((error: unknown) => {
         if (active) {
@@ -514,12 +515,17 @@ function AppContent() {
   );
   const handleLogin = async () => {
     if (authLock.current || authOperationLock.current) return;
-    if (!staffUsername.trim()) {
-      setLoginError('Please enter your username.');
+    const trimmedUsername = staffUsername.trim();
+    setLoginError('');
+    setLoginSuccess(false);
+    setUsernameError('');
+    setPasswordError('');
+    if (!trimmedUsername) {
+      setUsernameError('Please enter your username.');
       return;
     }
     if (!password) {
-      setLoginError('Please enter your password.');
+      setPasswordError('Please enter your password.');
       return;
     }
     authLock.current = true;
@@ -529,8 +535,14 @@ function AppContent() {
     try {
       const user = await signInStaff(staffUsername, password);
       setAuthenticatedUser(user);
-      setScreen(user.mustChangePassword ? 'changePassword' : 'staffWorkspace');
+      setLoginSuccess(true);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      setScreen('staffWorkspace');
     } catch (error) {
+      setLoginSuccess(false);
+      if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
+        setPassword('');
+      }
       setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
       authLock.current = false;
@@ -560,6 +572,9 @@ function AppContent() {
     setActivityLoading(false);
     setStaffUsername('');
     setPassword('');
+    setLoginSuccess(false);
+    setUsernameError('');
+    setPasswordError('');
     setDashboardTab('Dashboard');
     setBranchFilter(null);
     setReportingPeriod('This Month');
@@ -591,7 +606,9 @@ function AppContent() {
         await signOut();
         if (!active) return;
         clearSignedInState();
-        setLoginError('Your business session has ended. Sign in again for the next business date.');
+        setLoginError(authenticatedUser.role === 'Staff'
+          ? 'Your session for the business day has ended. Please log in again.'
+          : 'Your business session has ended. Sign in again for the next business date.');
         setScreen(authenticatedUser.role === 'Owner' ? 'ownerLogin' : 'login');
       } catch (error) {
         if (active) {
@@ -672,15 +689,6 @@ function AppContent() {
     clearSignedInState();
     setLoginError('');
     setScreen('welcome');
-  };
-
-  const handleStaffPasswordChanged = async () => {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'Staff' || user.mustChangePassword) {
-      throw new Error('The new password could not be verified. Please sign in again.');
-    }
-    setAuthenticatedUser(user);
-    setScreen('staffWorkspace');
   };
 
   return (
@@ -790,22 +798,29 @@ function AppContent() {
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
+                        {loginSuccess && (
+                          <View style={styles.successBanner} accessibilityRole="alert">
+                            <Text style={styles.successText}>Login successful.</Text>
+                          </View>
+                        )}
                         <Text style={styles.loginLabel}>Username *</Text>
                         <TextInput
                           value={staffUsername}
                           onChangeText={(value) => {
                             setStaffUsername(value);
                             setLoginError('');
+                            setUsernameError('');
                           }}
                           style={styles.loginInput}
-                          placeholder="Enter your employee name"
+                          placeholder="Enter your username"
                           placeholderTextColor={isDark ? colors.secondaryText : '#777783'}
-                          autoCapitalize="words"
+                          autoCapitalize="none"
                           autoCorrect={false}
                           accessibilityLabel="Username, required"
                           editable={!authenticating}
                           returnKeyType="next"
                         />
+                        {usernameError !== '' && <Text style={styles.fieldError}>{usernameError}</Text>}
                         <Text style={[styles.loginLabel, styles.passwordLabel]}>Password *</Text>
                         <View style={styles.loginPasswordWrap}>
                           <TextInput
@@ -813,6 +828,7 @@ function AppContent() {
                             onChangeText={(value) => {
                               setPassword(value);
                               setLoginError('');
+                              setPasswordError('');
                             }}
                             style={styles.loginPasswordInput}
                             placeholder="Enter your password"
@@ -838,8 +854,9 @@ function AppContent() {
                             </View>
                           </Pressable>
                         </View>
+                        {passwordError !== '' && <Text style={styles.fieldError}>{passwordError}</Text>}
                         <Text style={styles.loginHelper}>
-                          Use your employee name and employee ID. Owners should use the Owner Login screen.
+                          Use your staff username and password. Owners should use the Owner Login screen.
                         </Text>
                         {!isSupabaseConfigured && (
                           <Text style={styles.errorText}>
@@ -855,7 +872,7 @@ function AppContent() {
                         >
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                             {authenticating && <ActivityIndicator size="small" color="#FFFFFF" />}
-                            <Text style={styles.loginButtonText}>{authenticating ? 'Signing in…' : 'Log In'}</Text>
+                            <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log In'}</Text>
                           </View>
                         </Pressable>
                       </View>
@@ -1517,13 +1534,6 @@ function AppContent() {
                 appVersion={appConfig.expo.version}
               />
             )}
-            {visibleScreen === 'changePassword' && authenticatedUser?.role === 'Staff' && (
-              <StaffChangePasswordScreen
-                employeeId={authenticatedUser.employeeId}
-                onChanged={handleStaffPasswordChanged}
-                onLogout={handleStaffLogout}
-              />
-            )}
           </View>
         </View>
       </View>
@@ -1606,6 +1616,7 @@ function useAppStyles() {
   },
   loginHeading: { color: '#FFFFFF', fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 22 },
   loginLabel: { color: '#FFFFFF', fontSize: 13, fontWeight: '600', marginBottom: 7 },
+  fieldError: { color: '#FFB4B2', fontSize: 12, lineHeight: 16, marginTop: 6 },
   passwordLabel: { marginTop: 16 },
   loginInput: {
     width: '100%',
@@ -1665,6 +1676,8 @@ function useAppStyles() {
   },
   loginButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   errorBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8DDE5', borderRadius: 10, padding: 11, marginBottom: 18 },
+  successBanner: { backgroundColor: '#DDEFD8', borderRadius: 10, padding: 11, marginBottom: 18 },
+  successText: { color: '#2F6326', fontSize: 12, lineHeight: 17, fontWeight: '600' },
   errorIcon: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: PINK, marginRight: 9 },
   errorIconText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', lineHeight: 18 },
   errorText: { flex: 1, color: '#711433', fontSize: 12, lineHeight: 17 },

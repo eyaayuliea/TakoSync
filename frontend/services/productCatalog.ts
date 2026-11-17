@@ -203,7 +203,7 @@ export async function updateOwnerProduct(
 }
 
 export function buildStaffMenuProducts(
-  products: Array<{ id: string; product_name: string; description: string; is_available: boolean }>,
+  products: Array<{ id: string; product_name: string; description: string; is_available: boolean; category?: string }>,
   variants: Array<{
     id: string;
     product_id: string;
@@ -229,7 +229,7 @@ export function buildStaffMenuProducts(
       productId: variant.product_id,
       name: product.product_name,
       description: product.description,
-      category: 'Menu' as const,
+      category: product.category ?? 'Menu',
       sizeLabel: variant.size_label,
       price: Number(variant.price),
       pieceCount: Number(variant.piece_count),

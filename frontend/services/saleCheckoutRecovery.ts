@@ -24,7 +24,7 @@ function isPendingSaleCheckout(value: unknown): value is PendingSaleCheckout {
     && typeof sale.actorLabel === 'string'
     && typeof sale.branchId === 'string'
     && typeof sale.branchLabel === 'string'
-    && (sale.paymentMethod === 'Cash' || sale.paymentMethod === 'Card')
+    && (sale.paymentMethod === 'Cash' || sale.paymentMethod === 'QR')
     && Number.isFinite(sale.totalAmount)
     && Array.isArray(sale.items)
     && sale.items.length > 0

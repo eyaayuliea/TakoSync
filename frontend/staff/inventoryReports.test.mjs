@@ -5,9 +5,13 @@ import {
   buildInventoryCountHistoryRecords,
   buildInventoryCountReports,
   buildInventoryReportData,
+  displayInventoryCategory,
+  filterStaffInventoryItems,
+  inventoryExpirationStatus,
   inventoryStockStatus,
   runDiscrepancySubmissionOnce,
   runInventoryReportLoad,
+  STAFF_INVENTORY_CATEGORIES,
 } from './inventoryReports.ts';
 
 const ingredientItems = [
@@ -85,6 +89,38 @@ test('stock status boundaries match Normal, Low Stock, and Out of Stock rules', 
   assert.equal(inventoryStockStatus(5, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(1, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(0, 5), 'Out of Stock');
+});
+
+test('expiration status uses the business date and owner-configured alert period', () => {
+  const businessDate = new Date(2026, 9, 27);
+  assert.equal(inventoryExpirationStatus(null, 3, businessDate), null);
+  assert.equal(inventoryExpirationStatus('2026-10-30', 3, businessDate), 'Near Expiry');
+  assert.equal(inventoryExpirationStatus('2026-10-31', 3, businessDate), null);
+  assert.equal(inventoryExpirationStatus('2026-10-26', 3, businessDate), 'Expired');
+});
+
+test('Staff inventory filters are branch-scoped and combine normalized categories with name search', () => {
+  const items = [
+    { id: 'cheese', name: 'Cheese', category: 'Dairy & eggs', hasBranchInventory: true },
+    { id: 'batter', name: 'Prepared Takoyaki Batter', category: 'Prepared Inventory', hasBranchInventory: true },
+    { id: 'cabbage', name: 'Cabbage', category: 'Produce', hasBranchInventory: true },
+    { id: 'other-branch', name: 'Cheese', category: 'Dairy & eggs', hasBranchInventory: false },
+  ];
+
+  assert.deepEqual(STAFF_INVENTORY_CATEGORIES, [
+    'All', 'Seafood', 'Dairy', 'Meat', 'Vegetables', 'Condiments', 'Dry Goods', 'Supplies', 'Prepared',
+  ]);
+  assert.equal(displayInventoryCategory('Prepared Inventory'), 'Prepared');
+  assert.equal(displayInventoryCategory('Produce'), 'Vegetables');
+  assert.deepEqual(
+    filterStaffInventoryItems(items, 'Dairy', 'cheese').map((item) => item.id),
+    ['cheese'],
+  );
+  assert.deepEqual(
+    filterStaffInventoryItems(items, 'Prepared', 'batter').map((item) => item.id),
+    ['batter'],
+  );
+  assert.deepEqual(filterStaffInventoryItems(items, 'Meat', 'cheese'), []);
 });
 
 test('counts and discrepancies are branch-scoped, newest-first, and exclude drafts', () => {

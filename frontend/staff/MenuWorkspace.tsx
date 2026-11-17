@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   ActivityIndicator,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,12 +11,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { ImageSourcePropType } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
-import type { MenuCartLine, MenuFilter, MenuProduct } from './menuPreviewData';
+import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
 import {
+  calculateSelectedAddonTotal,
   calculateMenuCart,
-  filterMenuProducts,
+  groupMenuProducts,
   menuOrderValidationMessage,
+  selectFlavorMenuProducts,
   shouldOfferCheckoutRetry,
 } from './menuPreviewData';
 
@@ -23,8 +28,10 @@ type MenuPage = 'menu' | 'cart' | 'checkout';
 type MenuWorkspaceProps = {
   visible: boolean;
   page: MenuPage;
+  staffName: string;
+  assignedBranch: string;
   cart: MenuCartLine[];
-  onSetPage: (page: MenuPage | 'dashboard') => void;
+  onSetPage: (page: MenuPage) => void;
   onAddProduct: (productId: string) => void;
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
@@ -44,7 +51,6 @@ type MenuWorkspaceProps = {
 const colors = {
   pink: '#F20D52',
   navy: '#111027',
-  orange: '#FF941F',
   background: '#F5F5F5',
   white: '#FFFFFF',
   text: '#171717',
@@ -62,6 +68,70 @@ const font = {
 } as const;
 
 const money = (value: number) => `₱${value.toLocaleString('en-PH')}`;
+
+type FlavorOption = {
+  id: string;
+  label: string;
+  productName: string;
+  comboName?: string;
+  image: ImageSourcePropType;
+};
+
+const flavorOptions: FlavorOption[] = [
+  {
+    id: 'octobits',
+    label: 'Octobits',
+    productName: 'Octobits Takoyaki',
+    comboName: 'Octobits / Cheese',
+    image: require('../../assets/OCTOBITS.png'),
+  },
+  {
+    id: 'cheese',
+    label: 'Cheese',
+    productName: 'Cheese Takoyaki',
+    image: require('../../assets/CHEESE.png'),
+  },
+  {
+    id: 'crab',
+    label: 'Crab',
+    productName: 'Crab Takoyaki',
+    comboName: 'Crab / Cheese',
+    image: require('../../assets/CRAB.png'),
+  },
+  {
+    id: 'bacon',
+    label: 'BaconBits',
+    productName: 'BaconBits Takoyaki',
+    comboName: 'Bacon / Cheese',
+    image: require('../../assets/BACON.png'),
+  },
+];
+
+const productArtwork: Record<string, ImageSourcePropType[]> = {
+  'Octobits Takoyaki': [require('../../assets/OCTOBITS.png')],
+  'Cheese Takoyaki': [require('../../assets/CHEESE.png')],
+  'Crab Takoyaki': [require('../../assets/CRAB.png')],
+  'BaconBits Takoyaki': [require('../../assets/BACON.png')],
+  'Octobits / Cheese': [require('../../assets/OCTOBITS.png'), require('../../assets/CHEESE.png')],
+  'Bacon / Cheese': [require('../../assets/BACON.png'), require('../../assets/CHEESE.png')],
+  'Crab / Cheese': [require('../../assets/CRAB.png'), require('../../assets/CHEESE.png')],
+};
+
+function ProductArtwork({ name }: { name: string }) {
+  const images = productArtwork[name] ?? [];
+  return (
+    <View style={styles.productArtwork}>
+      {images.map((source, index) => (
+        <Image
+          key={`${name}-${index}`}
+          source={source}
+          resizeMode="contain"
+          style={images.length === 1 ? styles.singleProductImage : styles.comboProductImage}
+        />
+      ))}
+    </View>
+  );
+}
 
 function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
   return (
@@ -90,16 +160,9 @@ function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
   );
 }
 
-function ScreenHeader({
-  title,
-  onBack,
-  search,
-  onSearchChange,
-}: {
+function ScreenHeader({ title, onBack }: {
   title: string;
   onBack: () => void;
-  search?: string;
-  onSearchChange?: (value: string) => void;
 }) {
   return (
     <View style={styles.header}>
@@ -114,74 +177,51 @@ function ScreenHeader({
         </Pressable>
         <Text style={styles.headerTitle}>{title}</Text>
       </View>
-      {onSearchChange ? (
-        <View style={styles.search}>
-          <Text style={styles.searchGlyph}>⌕</Text>
-          <TextInput
-            accessibilityLabel="Search menu"
-            value={search}
-            onChangeText={onSearchChange}
-            placeholder="Search menu"
-            placeholderTextColor={colors.secondary}
-            style={styles.searchInput}
-            returnKeyType="search"
-            autoCapitalize="none"
-          />
-          {search ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Clear menu search"
-              onPress={() => onSearchChange('')}
-            >
-              <Text style={styles.clearSearch}>×</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
 
-function MenuProductCard({
-  product,
-  selected,
+function SizeOptionCard({
+  productName,
+  variant,
   onAdd,
+  onViewInfo,
 }: {
-  product: MenuProduct;
-  selected: boolean;
+  productName: string;
+  variant: MenuProduct;
   onAdd: () => void;
+  onViewInfo: () => void;
 }) {
-  const available = product.isAvailable;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${product.name}, ${money(product.price)}, ${available ? 'available' : 'unavailable'}${selected ? ', added to cart' : ', add to cart'}`}
-      accessibilityState={{ selected }}
-      disabled={selected || !available}
-      onPress={onAdd}
-      style={({ pressed }) => [
-        styles.productCard,
-        selected && styles.productCardSelected,
-        !available && styles.productCardUnavailable,
-        pressed && styles.pressed,
-      ]}
-    >
-      <View style={styles.productCopy}>
-        <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
-        <Text style={styles.productType} numberOfLines={2}>{product.description || 'No description available'}</Text>
+    <View style={[styles.sizeOptionCard, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+      <View style={styles.sizeOptionHeader}>
+        <Text style={styles.sizeOptionLabel}>{variant.sizeLabel}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`View information for ${productName}`}
+          onPress={onViewInfo}
+          style={styles.sizeInfoButton}
+        >
+          <Text style={styles.sizeInfoButtonText}>i</Text>
+        </Pressable>
       </View>
-      <View style={styles.productPriceColumn}>
-        <Text style={styles.productPrice}>{money(product.price)}</Text>
-        <Text style={[styles.productAction, selected && styles.productActionSelected, !available && styles.unavailableText]}>
-          {!available ? 'Unavailable' : selected ? 'Added' : 'Add'}
-        </Text>
-      </View>
-      {selected ? (
-        <View style={styles.selectedCheck}>
-          <Text style={styles.selectedCheckText}>✓</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${variant.isAvailable ? 'Add' : 'Unavailable'} ${productName}, ${variant.sizeLabel}, ${money(variant.price)}`}
+        accessibilityState={{ disabled: !variant.isAvailable }}
+        disabled={!variant.isAvailable}
+        onPress={onAdd}
+        style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
+      >
+        <Text style={styles.sizeOptionPrice}>{money(variant.price)}</Text>
+        <View style={styles.availabilityLine}>
+          <View style={[styles.availabilityDot, !variant.isAvailable && styles.availabilityDotOff]} />
+          <Text style={[styles.availabilityLabel, !variant.isAvailable && styles.unavailableText]}>
+            {variant.isAvailable ? 'Available' : 'Unavailable'}
+          </Text>
         </View>
-      ) : null}
-    </Pressable>
+      </Pressable>
+    </View>
   );
 }
 
@@ -234,9 +274,62 @@ function CartItemCard({
   );
 }
 
+function CurrentOrderLine({
+  product,
+  quantity,
+  onIncrease,
+  onDecrease,
+  onRemove,
+}: {
+  product: MenuProduct;
+  quantity: number;
+  onIncrease: () => void;
+  onDecrease: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <View style={styles.currentOrderLine}>
+      <View style={styles.currentOrderCopy}>
+        <Text style={styles.currentOrderName} numberOfLines={1}>{product.name}</Text>
+        <Text style={styles.currentOrderUnit}>{money(product.price)} each</Text>
+      </View>
+      <Text style={styles.currentOrderLineTotal}>{money(product.price * quantity)}</Text>
+      <View style={styles.currentOrderQuantity}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${product.name} quantity`}
+          onPress={onDecrease}
+          style={styles.currentOrderQuantityButton}
+        >
+          <Text style={styles.currentOrderQuantityText}>−</Text>
+        </Pressable>
+        <Text style={styles.currentOrderQuantityValue}>{quantity}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${product.name} quantity`}
+          onPress={onIncrease}
+          style={styles.currentOrderQuantityButton}
+        >
+          <Text style={styles.currentOrderQuantityText}>+</Text>
+        </Pressable>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${product.name}`}
+        onPress={onRemove}
+        style={styles.currentOrderRemove}
+      >
+        <Text style={styles.currentOrderRemoveText}>×</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export default function MenuWorkspace({
   visible,
   page,
+  staffName,
+  assignedBranch,
   cart,
   onSetPage,
   onAddProduct,
@@ -254,23 +347,34 @@ export default function MenuWorkspace({
   onDismissFeedback,
   onRetryInventory,
 }: MenuWorkspaceProps) {
-  const [filter, setFilter] = useState<MenuFilter>('All');
-  const [search, setSearch] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card'>('Cash');
+  const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [saleSubmitting, setSaleSubmitting] = useState(false);
   const [saleError, setSaleError] = useState('');
   const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
+  const [infoProducts, setInfoProducts] = useState<MenuProductGroup[] | null>(null);
+  const selectedFlavor = flavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? flavorOptions[0];
   const products: MenuProduct[] = useMemo(
     () => catalog.map((product) => ({
       id: product.id,
+      productId: product.productId,
+      productName: product.name,
+      sizeLabel: product.sizeLabel,
+      pieceCount: product.pieceCount,
+      category: product.category,
       name: `${product.name} - ${product.sizeLabel}`,
-      description: `${product.category} · ${product.description}`,
+      description: product.description,
       price: product.price,
       isAvailable: product.isAvailable,
     })),
     [catalog],
+  );
+  const productGroups = useMemo(() => groupMenuProducts(products), [products]);
+  const selectedProductGroups = useMemo(
+    () => selectFlavorMenuProducts(productGroups, selectedFlavor.productName, selectedFlavor.comboName),
+    [productGroups, selectedFlavor],
   );
 
   useEffect(() => {
@@ -282,14 +386,21 @@ export default function MenuWorkspace({
   }, [catalogLoading, catalogError, products]);
 
   const totals = calculateMenuCart(cart, products);
-  const selectedAddons = addons.filter((addon) => selectedAddonIds.includes(addon.id) && addon.isAvailable);
-  const addonsTotal = selectedAddons.reduce((total, addon) => total + addon.price, 0);
+  const requestedAddonNames = ['japanese mayo', 'takoyaki sauce', 'flakes'];
+  const activeAddons = addons.filter((addon) => addon.isAvailable);
+  const displayAddons = activeAddons.filter((addon) =>
+    [...requestedAddonNames, 'japanese white sauce'].includes(addon.name.trim().toLowerCase()));
+  const selectedAddons = displayAddons.filter((addon) => selectedAddonIds.includes(addon.id));
+  const missingAddonNames = requestedAddonNames.filter((name) =>
+    !activeAddons.some((addon) => addon.name.trim().toLowerCase() === name));
+  const hasJapaneseWhiteSauce = activeAddons.some((addon) =>
+    addon.name.trim().toLowerCase() === 'japanese white sauce');
+  const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
   const checkoutTotal = totals.total + addonsTotal;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
     const product = products.find((item) => item.id === line.productId);
     return product ? [{ product, quantity: line.quantity }] : [];
   }), [cart, products]);
-  const visibleProducts = filterMenuProducts(products, filter, search);
   const parsedCash = Number(cashReceived);
   const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
   const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
@@ -300,8 +411,28 @@ export default function MenuWorkspace({
     setSelectedAddonIds([]);
     setSaleError('');
     onCancelOrder();
-    onSetPage('dashboard');
+    onSetPage('menu');
   };
+  const clearCurrentOrder = () => {
+    if (totals.count === 0 && selectedAddonIds.length === 0) return;
+    Alert.alert('Clear current order?', 'This will remove all items and selected add-ons.', [
+      { text: 'Keep order', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: () => {
+          onCancelOrder();
+          setSelectedAddonIds([]);
+          setCashReceived('');
+          setSaleError('');
+          setSaleRetryAvailable(false);
+        },
+      },
+    ]);
+  };
+  const branchSegments = assignedBranch.split(' · ');
+  const branchName = branchSegments[0] || assignedBranch;
+  const branchCode = branchSegments.slice(1).join(' · ') || assignedBranch;
   const submitCheckout = async () => {
     if (!checkoutValid || saleSubmitting) return;
     setSaleSubmitting(true);
@@ -383,7 +514,7 @@ export default function MenuWorkspace({
               }}
               style={[styles.placeOrderButton, emptyOrderMessage !== '' && styles.disabledButton]}
             >
-              <Text style={styles.placeOrderText}>Place order</Text>
+            <Text style={styles.placeOrderText}>Proceed to Payment</Text>
             </Pressable>
           </View>
           {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
@@ -415,7 +546,7 @@ export default function MenuWorkspace({
             <Text style={styles.totalLabel}>Total</Text>
             <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
-          <Text style={styles.paymentLabel}>Add-ons (provisional menu selection)</Text>
+          <Text style={styles.paymentLabel}>Add-ons</Text>
           {addons.length === 0 ? (
             <Text style={styles.paymentMessage}>No add-ons are currently available.</Text>
           ) : addons.map((addon) => {
@@ -443,10 +574,10 @@ export default function MenuWorkspace({
           ) : null}
           <Text style={styles.paymentLabel}>Payment method</Text>
           <Text style={styles.paymentMessage}>
-            Cash and Card are recorded with the sale after the atomic backend transaction succeeds.
+            The selected payment method is recorded with the sale after the transaction is saved.
           </Text>
           <View style={styles.paymentOptions}>
-            {(['Cash', 'Card'] as const).map((method) => (
+            {(['Cash', 'QR'] as const).map((method) => (
               <Pressable
                 key={method}
                 accessibilityRole="button"
@@ -474,7 +605,7 @@ export default function MenuWorkspace({
               {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - checkoutTotal)}</Text> : null}
             </View>
           ) : (
-            <Text style={styles.paymentMessage}>Card payment confirmation requires the approved sales service.</Text>
+            <Text style={styles.paymentMessage}>QR is recorded as the selected payment method; payment is not automatically verified.</Text>
           )}
           {!checkoutValid && cartProducts.length > 0 ? (
             <Text style={styles.paymentError}>Complete the required payment information before confirming.</Text>
@@ -519,7 +650,7 @@ export default function MenuWorkspace({
         <View style={styles.totalFooter}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(totals.total)}</Text>
+            <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
           <View style={styles.footerActions}>
             <Text style={styles.previewNotice}>No order was placed</Text>
@@ -530,14 +661,58 @@ export default function MenuWorkspace({
   }
 
   return (
-    <View style={styles.screen}>
-      <ScreenHeader
-        title="Menu"
-        onBack={() => onSetPage('dashboard')}
-        search={search}
-        onSearchChange={setSearch}
-      />
-      <View style={styles.menuPanel}>
+    <View style={styles.posScreen}>
+      <View style={styles.posHeader}>
+        <Text style={styles.posHeaderTitle}>POS · {branchName}</Text>
+        <Text style={styles.posHeaderStaff} numberOfLines={1}>{staffName} · {branchCode}</Text>
+      </View>
+      <ScrollView
+        horizontal
+        style={styles.flavorSelector}
+        contentContainerStyle={styles.flavorSelectorContent}
+        showsHorizontalScrollIndicator={false}
+      >
+        {flavorOptions.map((flavor) => {
+          const selected = flavor.id === selectedFlavor.id;
+          return (
+            <Pressable
+              key={flavor.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${flavor.label} flavor`}
+              accessibilityState={{ selected }}
+              onPress={() => setSelectedFlavorId(flavor.id)}
+              style={styles.flavorOption}
+            >
+              <View style={[styles.flavorImageFrame, selected && styles.flavorImageFrameSelected]}>
+                <Image source={flavor.image} resizeMode="cover" style={styles.flavorImage} />
+              </View>
+              <Text style={[styles.flavorLabel, selected && styles.flavorLabelSelected]}>{flavor.label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      <View style={styles.selectedProductBar}>
+        <View style={styles.selectedProductCopy}>
+          <Text style={styles.selectedProductTitle} numberOfLines={1}>{selectedFlavor.productName}</Text>
+          <Text style={styles.selectedProductSubtitle}>Choose a size to add to your order</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`View menu information for ${selectedFlavor.productName}`}
+          accessibilityState={{ disabled: selectedProductGroups.length === 0 }}
+          disabled={selectedProductGroups.length === 0}
+          onPress={() => setInfoProducts(selectedProductGroups)}
+          style={({ pressed }) => [styles.viewMenuButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.viewMenuText}>View Menu</Text>
+        </Pressable>
+      </View>
+      <ScrollView
+        style={styles.posProductScroll}
+        contentContainerStyle={styles.posProductList}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {feedbackMessage !== '' ? (
           <View style={styles.feedbackBanner} accessibilityRole="alert">
             <Pressable onPress={onDismissFeedback} style={styles.feedbackMessagePressable}>
@@ -551,71 +726,219 @@ export default function MenuWorkspace({
             ) : null}
           </View>
         ) : null}
-        <ScrollView
-          horizontal
-          style={styles.categoryScroll}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryList}
-        >
-          <Text style={styles.catalogLabel}>Live product catalog</Text>
-        </ScrollView>
-        <View style={styles.filterTabs}>
-          {(['All', 'Available', 'Unavailable'] as const).map((item) => {
-            const selected = filter === item;
-            return (
-              <Pressable
-                key={item}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => setFilter(item)}
-                style={[styles.filterTab, selected && styles.filterTabSelected]}
-              >
-                <Text style={[styles.filterTabText, selected && styles.filterTabTextSelected]}>{item}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <ScrollView
-          style={styles.productScroll}
-          contentContainerStyle={styles.productList}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={styles.productSectionTitle}>{filter}</Text>
-          {catalogLoading ? (
-            <View style={styles.stateCard}><ActivityIndicator color={colors.pink} /><Text style={styles.emptyCopy}>Loading menu…</Text></View>
-          ) : catalogError ? (
-            <View style={styles.stateCard}><Text style={styles.emptyTitle}>Unable to load menu</Text><Text style={styles.emptyCopy}>{catalogError}</Text><Pressable onPress={onRetryCatalog} style={styles.retryButton}><Text style={styles.retryText}>Retry</Text></Pressable></View>
-          ) : visibleProducts.length === 0 ? (
-            <View style={styles.emptyCard}><Text style={styles.emptyTitle}>{products.length === 0 ? 'No products available' : 'No matching products'}</Text><Text style={styles.emptyCopy}>{products.length === 0 ? 'The branch product catalog is empty.' : 'Try another search or filter.'}</Text></View>
-          ) : null}
-          {visibleProducts.map((product) => (
-            <MenuProductCard
-              key={product.id}
-              product={product}
-              selected={cart.some((line) => line.productId === product.id)}
-              onAdd={() => product.isAvailable && onAddProduct(product.id)}
-            />
-          ))}
-        </ScrollView>
-        <View style={styles.cartSummaryOuter}>
+        {catalogLoading ? (
+          <View style={styles.stateCard}>
+            <ActivityIndicator color={colors.pink} />
+            <Text style={styles.emptyCopy}>Loading menu…</Text>
+          </View>
+        ) : catalogError ? (
+          <View style={styles.stateCard}>
+            <Text style={styles.emptyTitle}>Unable to load menu</Text>
+            <Text style={styles.emptyCopy}>{catalogError}</Text>
+            <Pressable onPress={onRetryCatalog} style={styles.retryButton}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : selectedProductGroups.length === 0 ? (
+          <View style={styles.stateCard}>
+            <Text style={styles.emptyTitle}>
+              {products.length === 0 ? 'No products available' : 'No menu for this flavor'}
+            </Text>
+            <Text style={styles.emptyCopy}>
+              {products.length === 0
+                ? 'The assigned branch has no visible products in the live catalog.'
+                : 'This product is not available in the assigned branch catalog.'}
+            </Text>
+          </View>
+        ) : (
+          <>
+            {selectedProductGroups.map((group, index) => (
+              <View key={group.id} style={styles.sizeGroup}>
+                <View style={styles.sizeGroupHeading}>
+                  <Text style={styles.sizeGroupTitle}>{index === 0 ? 'REGULAR' : 'COMBO + CHEESE'}</Text>
+                  <Text style={styles.sizeGroupProduct} numberOfLines={1}>{group.name}</Text>
+                </View>
+                <View style={styles.sizeOptionRow}>
+                  {group.variants.map((variant) => (
+                    <SizeOptionCard
+                      key={variant.id}
+                      productName={group.name}
+                      variant={variant}
+                      onAdd={() => onAddProduct(variant.id)}
+                      onViewInfo={() => setInfoProducts([group])}
+                    />
+                  ))}
+                </View>
+              </View>
+            ))}
+            <View style={styles.addonSection}>
+              <Text style={styles.addonSectionTitle}>Add-ons</Text>
+              {displayAddons.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.addonPills}
+                >
+                  {displayAddons.map((addon) => {
+                    const selected = selectedAddonIds.includes(addon.id);
+                    return (
+                      <Pressable
+                        key={addon.id}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: selected }}
+                        onPress={() => setSelectedAddonIds((current) => selected
+                          ? current.filter((id) => id !== addon.id)
+                          : [...current, addon.id])}
+                        style={[styles.addonPill, selected && styles.addonPillSelected]}
+                      >
+                        <Text style={[styles.addonPillText, selected && styles.addonPillTextSelected]}>
+                          {addon.name} · +{money(addon.price)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : (
+                <Text style={styles.addonUnavailableText}>No add-ons are configured in the live catalog.</Text>
+              )}
+              {missingAddonNames.length > 0 ? (
+                <Text style={styles.addonUnavailableText}>
+                  Not configured in the live catalog: {missingAddonNames.map((name) =>
+                    name.replace(/\b\w/g, (letter) => letter.toUpperCase())).join(', ')}.
+                  {hasJapaneseWhiteSauce && missingAddonNames.includes('japanese mayo')
+                    ? ' Japanese white sauce is listed separately; it is not labeled as Japanese Mayo.'
+                    : ''}
+                </Text>
+              ) : null}
+            </View>
+          </>
+        )}
+      </ScrollView>
+      <View style={styles.currentOrderPanel}>
+        <View style={styles.currentOrderHeader}>
+          <View style={styles.currentOrderHeadingCopy}>
+            <Text style={styles.currentOrderTitle}>Current Order</Text>
+            <Text style={styles.currentOrderCount}>{totals.count} {totals.count === 1 ? 'item' : 'items'}</Text>
+          </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`View cart, ${totals.count} items, ${money(totals.total)}`}
-            onPress={() => onSetPage('cart')}
-            style={({ pressed }) => [styles.cartSummaryButton, pressed && styles.pressed]}
+            accessibilityLabel="Clear current order"
+            disabled={totals.count === 0 && selectedAddonIds.length === 0}
+            onPress={clearCurrentOrder}
+            style={styles.clearOrderButton}
           >
-            <View style={styles.cartCount}>
-              <Text style={styles.cartCountText}>{totals.count}</Text>
-            </View>
-            <View style={styles.cartSummaryCopy}>
-              <Text style={styles.cartSummaryTitle}>View your cart</Text>
-              <Text style={styles.cartSummarySubtitle}>Gelo's Takoyaki · preview</Text>
-            </View>
-            <Text style={styles.cartSummaryTotal}>{money(totals.total)}</Text>
+            <Text style={[
+              styles.clearOrderText,
+              totals.count === 0 && selectedAddonIds.length === 0 && styles.clearOrderDisabled,
+            ]}>Clear</Text>
           </Pressable>
         </View>
+        {cartProducts.length > 0 || selectedAddons.length > 0 ? (
+          <ScrollView
+            style={styles.currentOrderItems}
+            contentContainerStyle={styles.currentOrderItemsContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {cartProducts.map(({ product, quantity }) => (
+              <CurrentOrderLine
+                key={product.id}
+                product={product}
+                quantity={quantity}
+                onIncrease={() => onIncreaseQuantity(product.id)}
+                onDecrease={() => onDecreaseQuantity(product.id)}
+                onRemove={() => onRemoveProduct(product.id)}
+              />
+            ))}
+            {selectedAddons.map((addon) => (
+              <View key={addon.id} style={styles.currentAddonLine}>
+                <Text style={styles.currentAddonName} numberOfLines={1}>{addon.name}</Text>
+                <Text style={styles.currentAddonPrice}>{money(addon.price)}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${addon.name}`}
+                  onPress={() => setSelectedAddonIds((current) => current.filter((id) => id !== addon.id))}
+                  style={styles.currentOrderRemove}
+                >
+                  <Text style={styles.currentOrderRemoveText}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        ) : (
+          <Text style={styles.currentOrderEmpty}>Your order is empty. Select a size to begin.</Text>
+        )}
+        <View style={styles.currentOrderTotalRow}>
+          <Text style={styles.currentOrderTotalLabel}>Total</Text>
+          <Text style={styles.currentOrderTotalValue}>{money(checkoutTotal)}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Proceed to Payment"
+          disabled={cartProducts.length === 0 || catalogLoading || Boolean(catalogError)}
+          onPress={() => {
+            if (cartProducts.length > 0) onSetPage('checkout');
+          }}
+          style={({ pressed }) => [
+            styles.proceedPaymentButton,
+            (cartProducts.length === 0 || catalogLoading || Boolean(catalogError)) && styles.proceedPaymentDisabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.proceedPaymentText}>Proceed to Payment</Text>
+        </Pressable>
       </View>
+      <Modal
+        visible={infoProducts !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setInfoProducts(null)}
+      >
+        <View style={styles.infoModalBackdrop}>
+          <View style={styles.infoModalCard}>
+            <ScrollView
+              style={styles.infoModalScroll}
+              contentContainerStyle={styles.infoModalContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {infoProducts?.map((group) => (
+                <View key={group.id} style={styles.infoModalGroup}>
+                  <View style={styles.infoModalHeader}>
+                    <ProductArtwork name={group.name} />
+                    <View style={styles.infoModalTitleCopy}>
+                      <Text style={styles.infoModalTitle}>{group.name}</Text>
+                      <Text style={styles.infoModalDescription}>
+                        {group.description || 'No description available.'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.infoModalSectionLabel}>Sizes and prices</Text>
+                  {group.variants.map((variant) => (
+                    <View key={variant.id} style={styles.infoVariantRow}>
+                      <Text style={styles.infoVariantSize}>{variant.sizeLabel}</Text>
+                      <Text style={styles.infoVariantPrice}>{money(variant.price)}</Text>
+                      <View style={styles.infoVariantStatus}>
+                        <View style={[
+                          styles.availabilityDot,
+                          !variant.isAvailable && styles.availabilityDotOff,
+                        ]} />
+                        <Text style={[
+                          styles.infoVariantAvailability,
+                          !variant.isAvailable && styles.unavailableText,
+                        ]}>
+                          {variant.isAvailable ? 'Available' : 'Unavailable'}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+            <Pressable accessibilityRole="button" onPress={() => setInfoProducts(null)} style={styles.infoModalClose}>
+              <Text style={styles.infoModalCloseText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -628,11 +951,118 @@ const styles = StyleSheet.create({
   backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   backGlyph: { color: colors.navy, fontFamily: font.regular, fontSize: 33, lineHeight: 37, marginTop: -4 },
   headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: 21 },
-  search: {
-    height: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
-    borderRadius: 22, backgroundColor: colors.white,
+  posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.pink },
+  posHeader: { paddingHorizontal: 16, paddingTop: 9, paddingBottom: 7 },
+  posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 16 },
+  posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 2, opacity: 0.9 },
+  flavorSelector: { flexGrow: 0, flexShrink: 0, maxHeight: 87 },
+  flavorSelectorContent: {
+    minWidth: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    paddingHorizontal: 22, paddingTop: 3, paddingBottom: 9,
   },
-  catalogLabel: { color: colors.white, fontFamily: font.semibold, fontSize: 9, marginBottom: 2 },
+  flavorOption: { width: 62, alignItems: 'center' },
+  flavorImageFrame: {
+    width: 54, height: 54, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 27, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.65)',
+    backgroundColor: colors.white, overflow: 'hidden',
+  },
+  flavorImageFrameSelected: { borderWidth: 3, borderColor: colors.white, backgroundColor: colors.navy },
+  flavorImage: { width: 50, height: 50, borderRadius: 25 },
+  flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 4, opacity: 0.85 },
+  flavorLabelSelected: { fontFamily: font.bold, opacity: 1 },
+  selectedProductBar: {
+    minHeight: 48, flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 12, marginBottom: 5, paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 12, backgroundColor: colors.white,
+  },
+  selectedProductCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
+  selectedProductTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
+  selectedProductSubtitle: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, marginTop: 2 },
+  viewMenuButton: { minHeight: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 14, backgroundColor: '#FFF0F4' },
+  viewMenuText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  posProductScroll: { flex: 1, minHeight: 0 },
+  posProductList: { gap: 10, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 11 },
+  sizeGroup: { gap: 7 },
+  sizeGroupHeading: { minHeight: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sizeGroupTitle: { color: colors.white, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.5 },
+  sizeGroupProduct: { flex: 1, color: colors.white, fontFamily: font.medium, fontSize: 7, textAlign: 'right', opacity: 0.9 },
+  sizeOptionRow: { flexDirection: 'row', gap: 7 },
+  sizeOptionCard: {
+    flex: 1, minWidth: 0, minHeight: 75, paddingHorizontal: 7, paddingVertical: 6,
+    borderRadius: 11, backgroundColor: colors.white,
+  },
+  sizeOptionCardUnavailable: { backgroundColor: '#F3F3F5', opacity: 0.72 },
+  sizeOptionHeader: { minHeight: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sizeOptionLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
+  sizeInfoButton: {
+    width: 17, height: 17, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 9, backgroundColor: '#F4F4F7',
+  },
+  sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: 9 },
+  sizeOptionAction: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  sizeOptionPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 12, marginTop: 2 },
+  availabilityLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  availabilityDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#38A169' },
+  availabilityDotOff: { backgroundColor: colors.secondary },
+  availabilityLabel: { color: '#2F8C57', fontFamily: font.medium, fontSize: 6 },
+  unavailableText: { color: colors.secondary },
+  addonSection: { gap: 6, paddingTop: 2 },
+  addonSectionTitle: { color: colors.white, fontFamily: font.bold, fontSize: 10 },
+  addonPills: { gap: 7, paddingRight: 10 },
+  addonPill: {
+    minHeight: 29, justifyContent: 'center', paddingHorizontal: 10,
+    borderRadius: 16, backgroundColor: colors.white,
+  },
+  addonPillSelected: { backgroundColor: colors.navy },
+  addonPillText: { color: colors.text, fontFamily: font.medium, fontSize: 7 },
+  addonPillTextSelected: { color: colors.white, fontFamily: font.semibold },
+  addonUnavailableText: { color: colors.white, fontFamily: font.regular, fontSize: 7, lineHeight: 11, opacity: 0.9 },
+  currentOrderPanel: {
+    flexShrink: 0, maxHeight: '44%', gap: 5, paddingHorizontal: 13, paddingTop: 9, paddingBottom: 10,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18, backgroundColor: colors.white,
+  },
+  currentOrderHeader: { minHeight: 29, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 7 },
+  currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
+  currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: 7 },
+  clearOrderButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 7 },
+  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  clearOrderDisabled: { color: '#B8B8C0' },
+  currentOrderItems: { flexGrow: 0, maxHeight: 120 },
+  currentOrderItemsContent: { gap: 3, paddingVertical: 1 },
+  currentOrderLine: {
+    minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
+  },
+  currentOrderCopy: { flex: 1, minWidth: 0 },
+  currentOrderName: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
+  currentOrderUnit: { color: colors.secondary, fontFamily: font.regular, fontSize: 6, marginTop: 1 },
+  currentOrderLineTotal: { width: 43, color: colors.navy, fontFamily: font.bold, fontSize: 7, textAlign: 'right' },
+  currentOrderQuantity: { height: 23, flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: '#F3F3F6' },
+  currentOrderQuantityButton: { width: 21, height: 23, alignItems: 'center', justifyContent: 'center' },
+  currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
+  currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
+  currentOrderRemove: { width: 22, height: 23, alignItems: 'center', justifyContent: 'center' },
+  currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
+  currentAddonLine: {
+    minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingVertical: 2, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
+  },
+  currentAddonName: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 7 },
+  currentAddonPrice: { width: 43, color: colors.navy, fontFamily: font.semibold, fontSize: 7, textAlign: 'right' },
+  currentOrderEmpty: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center', paddingVertical: 7 },
+  currentOrderTotalRow: {
+    minHeight: 27, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 4,
+  },
+  currentOrderTotalLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 9 },
+  currentOrderTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12 },
+  proceedPaymentButton: {
+    minHeight: 36, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 18, backgroundColor: colors.pink,
+  },
+  proceedPaymentDisabled: { opacity: 0.5 },
+  proceedPaymentText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   feedbackBanner: {
     flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
@@ -656,76 +1086,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18, borderRadius: 12, backgroundColor: colors.pink, marginTop: 8,
   },
   retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  searchGlyph: { color: colors.secondary, fontSize: 23, marginRight: 7 },
-  searchInput: { flex: 1, height: 42, color: colors.text, fontFamily: font.regular, fontSize: 10 },
-  clearSearch: { color: colors.secondary, fontFamily: font.medium, fontSize: 21, paddingHorizontal: 3 },
-  menuPanel: {
-    flex: 1, minHeight: 0, marginHorizontal: 10, marginBottom: 4, overflow: 'hidden',
-    paddingTop: 8, borderTopLeftRadius: 25, borderTopRightRadius: 25,
-    backgroundColor: colors.pink,
-  },
-  categoryScroll: { height: 75, flexGrow: 0, flexShrink: 0 },
-  categoryList: { gap: 14, paddingHorizontal: 13, alignItems: 'center' },
-  categoryButton: { width: 66, alignItems: 'center' },
-  categoryImageWrap: {
-    width: 54, height: 54, overflow: 'hidden', borderRadius: 28,
-    borderWidth: 2, borderColor: colors.white, backgroundColor: colors.white,
-  },
-  categoryImageWrapSelected: { borderWidth: 3, borderColor: colors.navy },
-  categoryImage: { width: '100%', height: '100%' },
-  categoryName: { maxWidth: 66, color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 4 },
-  categoryNameSelected: { fontFamily: font.bold },
-  filterTabs: {
-    flexDirection: 'row', justifyContent: 'center', gap: 8,
-    paddingHorizontal: 13, paddingTop: 1, paddingBottom: 7,
-  },
-  filterTab: {
-    minWidth: 65, minHeight: 29, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 12, borderWidth: 1, borderColor: colors.white, borderRadius: 16,
-  },
-  filterTabSelected: { borderColor: colors.navy, backgroundColor: colors.navy },
-  filterTabText: { color: colors.white, fontFamily: font.medium, fontSize: 8 },
-  filterTabTextSelected: { color: colors.white, fontFamily: font.semibold },
-  productScroll: { flex: 1, minHeight: 0 },
-  productList: { gap: 8, paddingHorizontal: 11, paddingTop: 0, paddingBottom: 8 },
-  productSectionTitle: {
-    color: colors.white, fontFamily: font.semibold, fontSize: 12, marginBottom: 0,
-  },
-  productCard: {
-    minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, paddingVertical: 9,
-    borderWidth: 1.5, borderColor: 'transparent', borderRadius: 14, backgroundColor: colors.white,
-  },
-  productCardSelected: { borderColor: colors.navy, borderWidth: 2 },
-  productCardUnavailable: { opacity: 0.58, borderColor: colors.border },
   pressed: { opacity: 0.8 },
-  productCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  productName: { color: colors.text, fontFamily: font.bold, fontSize: 10 },
-  productType: { color: colors.secondary, fontFamily: font.medium, fontSize: 8, marginTop: 2 },
-  productPieces: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
-  productPriceColumn: { minWidth: 60, alignItems: 'flex-end' },
-  productPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 13 },
-  productAction: { color: colors.pink, fontFamily: font.semibold, fontSize: 8, marginTop: 3 },
-  productActionSelected: { color: colors.navy },
-  unavailableText: { color: colors.secondary },
-  selectedCheck: {
-    position: 'absolute', top: -7, right: -5, width: 20, height: 20,
-    alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.navy,
+  productArtwork: {
+    width: 56, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden', borderRadius: 10, backgroundColor: '#F7F7FA',
   },
-  selectedCheckText: { color: colors.white, fontFamily: font.bold, fontSize: 11 },
-  cartSummaryOuter: { paddingHorizontal: 8, paddingTop: 7, paddingBottom: 8, backgroundColor: colors.white },
-  cartSummaryButton: {
-    minHeight: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
-    paddingVertical: 7, borderRadius: 15, backgroundColor: colors.pink,
-  },
-  cartCount: {
-    width: 32, height: 32, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 16, backgroundColor: colors.white,
-  },
-  cartCountText: { color: colors.pink, fontFamily: font.bold, fontSize: 12 },
-  cartSummaryCopy: { flex: 1, minWidth: 0, marginLeft: 9 },
-  cartSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  cartSummarySubtitle: { color: colors.white, fontFamily: font.regular, fontSize: 7, marginTop: 2 },
-  cartSummaryTotal: { color: colors.white, fontFamily: font.bold, fontSize: 12 },
+  singleProductImage: { width: 50, height: 50 },
+  comboProductImage: { width: 25, height: 46 },
+  infoModalTitleCopy: { flex: 1, minWidth: 0 },
+  infoModalBackdrop: { flex: 1, backgroundColor: 'rgba(16,16,39,0.45)', alignItems: 'center', justifyContent: 'center', padding: 22 },
+  infoModalCard: { width: '100%', maxWidth: 360, maxHeight: '85%', borderRadius: 18, backgroundColor: colors.white, padding: 16 },
+  infoModalScroll: { flexShrink: 1 },
+  infoModalContent: { gap: 14 },
+  infoModalGroup: { gap: 5 },
+  infoModalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  infoModalTitle: { color: colors.text, fontFamily: font.bold, fontSize: 18 },
+  infoModalSectionLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 6 },
+  infoVariantRow: { minHeight: 35, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.border },
+  infoVariantSize: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 8 },
+  infoVariantPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginRight: 9 },
+  infoVariantStatus: { width: 75, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  infoVariantAvailability: { color: '#2F8C57', fontFamily: font.medium, fontSize: 7 },
+  infoModalDescription: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 3 },
+  infoModalClose: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.navy, marginTop: 10 },
+  infoModalCloseText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   progress: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center',
     paddingHorizontal: 30, paddingTop: 8, paddingBottom: 17, backgroundColor: colors.background,

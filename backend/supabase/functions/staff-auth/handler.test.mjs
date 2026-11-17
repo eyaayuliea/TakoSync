@@ -72,6 +72,10 @@ function createFixture({
                 authAdminPayloads.push(args);
                 return { error: null };
               },
+              getUserById: async (id) => ({
+                data: { user: { id, email: 'staff@example.test' } },
+                error: null,
+              }),
               deleteUser: async () => {
                 calls.push({ kind: 'account-auth-admin' });
                 authAdminOperations.push('delete');
@@ -84,7 +88,9 @@ function createFixture({
       }
       return {
         auth: {
-          signInWithPassword: async () => ({
+          signInWithPassword: async (input) => {
+            calls.push({ kind: 'auth-login', email: input.email, password: input.password });
+            return {
             data: {
                 user: { id: authUserId },
               session: {
@@ -96,7 +102,8 @@ function createFixture({
               },
             },
               error: authLoginError,
-          }),
+            };
+          },
         },
       };
     },
@@ -136,8 +143,8 @@ function createFixture({
       }
 
       if (table === 'branches') {
-        branches.push({ id: filters.id ?? 'branch-id', name: 'Cebu Branch', active: true });
-        const row = { id: filters.id ?? 'branch-id', name: 'Cebu Branch' };
+        branches.push({ id: filters.id ?? 'branch-id', name: 'Cebu Branch', city: 'Cebu', code: 'BR-001', active: true });
+        const row = { id: filters.id ?? 'branch-id', name: 'Cebu Branch', city: 'Cebu', code: 'BR-001', active: true };
         return resultShape === 'many'
           ? { data: [row], error: null }
           : { data: filters.id ? row : null, error: null };
@@ -357,6 +364,24 @@ test('Staff login still returns its Auth session', async () => {
 
   assert.equal(result.status, 200);
   assert.equal((await result.json()).session.access_token, 'staff-access-token');
+});
+
+test('Staff login uses the authoritative Auth email for the profile UID', async () => {
+  const fixture = createFixture({
+    staffProfiles: [{ ...staffAccount, email: 'stale-profile@example.test' }],
+  });
+  const result = await fixture.handler(new Request('https://function.test/staff-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'login', username: 'ana_staff', password: 'unchanged-password' }),
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).ok, true);
+  assert.deepEqual(
+    fixture.calls.find((call) => call.kind === 'auth-login'),
+    { kind: 'auth-login', email: 'staff@example.test', password: 'unchanged-password' },
+  );
 });
 
 function ownerLoginRequest(username, password) {
