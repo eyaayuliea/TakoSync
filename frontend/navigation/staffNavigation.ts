@@ -12,6 +12,7 @@ export type StaffRoute =
   | 'inventory'
   | 'stocks'
   | 'stockIn'
+  | 'batterBatch'
   | 'stockOut'
   | 'usagePreview'
   | 'stockOutSuccess'
@@ -22,6 +23,8 @@ export type StaffRoute =
   | 'historyFilters'
   | 'transactionDetails'
   | 'ingredientDetails'
+  | 'unitsPackSizes'
+  | 'expirationInfo'
   | 'inventoryHistory'
   | 'alertDetails'
   | 'dailyInventoryCheck'
@@ -50,6 +53,7 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
   ) return 'more';
   if (
     route === 'stockIn' ||
+    route === 'batterBatch' ||
     route === 'stockOut' ||
     route === 'usagePreview' ||
     route === 'stockOutSuccess' ||
@@ -62,6 +66,8 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
   ) return 'stocks';
   if (
     route === 'ingredientDetails' ||
+    route === 'unitsPackSizes' ||
+    route === 'expirationInfo' ||
     route === 'inventoryHistory' ||
     route === 'inventoryReporting' ||
     route === 'inventoryReport' ||

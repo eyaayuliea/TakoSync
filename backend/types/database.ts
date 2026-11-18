@@ -174,6 +174,7 @@ export type Database = {
         prepared_by: string;
         bottle_count: number;
         bottle_volume_ml: number;
+        preparation_date: string;
         prepared_quantity: number;
         prepared_unit: string;
         estimated_yield_pieces: number;
@@ -423,8 +424,17 @@ export type Database = {
         Returns: Database['public']['Tables']['inventory_count_validations']['Row'];
       };
       prepare_batter_batch: {
-        Args: { p_branch_id: string; p_batch_reference: string; p_prepared_quantity: number };
+        Args: {
+          p_branch_id: string;
+          p_batch_reference: string | null;
+          p_prepared_quantity?: number;
+          p_preparation_date?: string | null;
+        };
         Returns: Database['public']['Tables']['batter_preparation_batches']['Row'];
+      };
+      next_batter_batch_reference: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
       };
       submit_sale: {
         Args: {

@@ -13,6 +13,42 @@ import {
   runInventoryReportLoad,
   STAFF_INVENTORY_CATEGORIES,
 } from './inventoryReports.ts';
+import {
+  getApprovedStaffInventoryItem,
+  STAFF_INVENTORY_CATALOG,
+} from './staffInventoryCatalog.ts';
+
+test('ST-04 inventory catalog preserves the approved names, categories, units, and order', () => {
+  assert.deepEqual(STAFF_INVENTORY_CATALOG.map((item) => item.name), [
+    'Octopus',
+    'Cheese',
+    'Crab stick',
+    'Bacon bits',
+    'Takoyaki batter',
+    'Cabbage (chopped)',
+    'Takoyaki sauce',
+    'Japanese mayonnaise',
+    'Bonito flakes',
+    'Packaging',
+  ]);
+  assert.deepEqual(getApprovedStaffInventoryItem('crab-sticks', 'Crab Sticks', 'Seafood'), {
+    id: 'crab-sticks',
+    name: 'Crab stick',
+    category: 'Seafood',
+    unit: 'pcs',
+  });
+  assert.equal(getApprovedStaffInventoryItem('cheese-cubes', 'Cheese Cubes', 'Dairy & eggs')?.name, 'Cheese');
+  assert.deepEqual(getApprovedStaffInventoryItem('bacon-bits', 'Bacon Bits', 'Dry Goods'), {
+    id: 'bacon-bits',
+    name: 'Bacon bits',
+    category: 'Meat',
+    unit: 'g',
+  });
+  assert.equal(getApprovedStaffInventoryItem('japanese-white-sauce', 'Japanese White Sauce', 'Condiments'), null);
+  assert.equal(getApprovedStaffInventoryItem('eggs', 'Eggs', 'Dairy'), null);
+  assert.equal(getApprovedStaffInventoryItem('flour', 'All-purpose flour', 'Dry Goods'), null);
+  assert.equal(getApprovedStaffInventoryItem('sauces', 'Takoyaki Sauce', 'Condiments')?.name, 'Takoyaki sauce');
+});
 
 const ingredientItems = [
   { id: 'flour', name: 'Flour', category: 'Dry Goods', quantity: 3, unit: 'kg', minimumStock: 5 },
@@ -86,7 +122,7 @@ test('categories sort alphabetically, count ingredients, and total quantities on
 
 test('stock status boundaries match Normal, Low Stock, and Out of Stock rules', () => {
   assert.equal(inventoryStockStatus(5.01, 5), 'Normal');
-  assert.equal(inventoryStockStatus(5, 5), 'Low Stock');
+  assert.equal(inventoryStockStatus(5, 5), 'Normal');
   assert.equal(inventoryStockStatus(1, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(0, 5), 'Out of Stock');
 });

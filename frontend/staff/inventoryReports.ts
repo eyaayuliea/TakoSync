@@ -1,4 +1,5 @@
 import type { InventoryItem } from '../services/takosync';
+import { approvedStaffInventorySort } from './staffInventoryCatalog.ts';
 
 export type InventoryReportItem = Pick<
   InventoryItem,
@@ -140,7 +141,7 @@ function asNumber(value: number | string) {
 
 export function inventoryStockStatus(quantity: number, minimumStock: number): InventoryStockStatus {
   if (quantity <= 0) return 'Out of Stock';
-  if (quantity <= minimumStock) return 'Low Stock';
+  if (quantity < minimumStock) return 'Low Stock';
   return 'Normal';
 }
 
@@ -184,6 +185,11 @@ export function filterStaffInventoryItems<T extends {
     item.hasBranchInventory &&
     (category === 'All' || displayInventoryCategory(item.category) === category) &&
     item.name.toLowerCase().includes(normalizedSearch),
+  ).sort((left, right) =>
+    approvedStaffInventorySort(
+      { id: ('id' in left ? String(left.id) : ''), name: left.name },
+      { id: ('id' in right ? String(right.id) : ''), name: right.name },
+    ),
   );
 }
 
@@ -259,6 +265,7 @@ export function buildInventoryCountReports(input: {
   const counts = input.lines.flatMap((line): InventoryCountRecord[] => {
     const check = checksById.get(line.daily_stock_check_id);
     if (!check) return [];
+    const ingredientName = namesById.get(line.ingredient_id) ?? line.ingredient_id;
     const expectedQuantity = asNumber(line.recorded_quantity);
     const originalActualQuantity = asNumber(line.physical_quantity);
     const movement = adjustmentsByCountLine.get(line.id);
@@ -283,7 +290,7 @@ export function buildInventoryCountReports(input: {
       checkId: check.id,
       reference: check.reference,
       ingredientId: line.ingredient_id,
-      ingredientName: namesById.get(line.ingredient_id) ?? line.ingredient_id,
+      ingredientName,
       expectedQuantity,
       originalActualQuantity,
       actualQuantity: originalActualQuantity,

@@ -24,6 +24,7 @@ import {
   inventoryTransactionLabel,
   type InventoryTransactionLabel,
 } from './transactionLabels';
+import { getApprovedStaffInventoryItem } from '../staff/staffInventoryCatalog.ts';
 import {
   filterStaffSaleHistory,
   filterUnresolvedSales,
@@ -1111,7 +1112,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     batches.set(batch.ingredient_id, [...(batches.get(batch.ingredient_id) ?? []), batch]);
   }
 
-  const items = (ingredientsResult.data ?? []).map((ingredient) => {
+  const items = (ingredientsResult.data ?? []).flatMap((ingredient): InventoryItem[] => {
     const stock = inventory.get(ingredient.id);
     const itemBatches = batches.get(ingredient.id) ?? [];
     const nextBatch = itemBatches.find((batch) => batch.expiration_date && Number(batch.quantity_remaining) > 0) ??
@@ -1126,28 +1127,44 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
     const packageSize = packageSizes.get(ingredient.id);
-    return {
+    const approvedItem = getApprovedStaffInventoryItem(
+      ingredient.id,
+      ingredient.name,
+      categories.get(ingredient.category_id) ?? 'Other',
+    );
+    if (!approvedItem) return [];
+
+    const approvedName = approvedItem.name;
+    const approvedCategory = approvedItem.category;
+    const approvedUnit = approvedItem.unit;
+    const isPreparedBatter = approvedItem.id === 'prepared-batter';
+    const displayQuantity = isPreparedBatter ? quantity * 680 : quantity;
+    const displayMinimumStock = isPreparedBatter ? minimumStock * 680 : minimumStock;
+    const displayQuantityPrecision = isPreparedBatter ? 0 : ingredient.quantity_precision;
+    return [{
       id: ingredient.id,
       hasBranchInventory: stock !== undefined,
-      name: ingredient.name,
-      category: categories.get(ingredient.category_id) ?? 'Other',
-      quantity,
+      name: approvedName,
+      category: approvedCategory,
+      quantity: displayQuantity,
       inventoryRevision: Number(stock?.inventory_revision ?? -1),
-      unit: ingredient.unit,
-      quantityPrecision: ingredient.quantity_precision,
+      unit: approvedUnit,
+      quantityPrecision: displayQuantityPrecision,
       expirationTracking: ingredient.expiration_tracking,
-      threshold: minimumStock,
-      lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
+      threshold: displayMinimumStock,
+      lowStock: displayQuantity <= 0 || (displayMinimumStock > 0 && displayQuantity <= displayMinimumStock),
       expiration: formattedExpiration,
       nearExpiry: expirationStatus === 'Near Expiry',
       expirationStatus,
-      minimumStock,
+      minimumStock: displayMinimumStock,
       type: visual.type,
-      unitName: ingredient.unit === 'kg'
-        ? 'Kilograms (kg)'
-        : ingredient.unit === 'pcs'
+      unitName: approvedUnit === 'g'
+          ? 'Grams (g)'
+        : approvedUnit === 'pcs'
           ? 'Pieces (pcs)'
-          : ingredient.unit === 'L'
+          : approvedUnit === 'ml'
+            ? 'Milliliters (ml)'
+          : approvedUnit === 'L'
             ? 'Liters (L)'
             : `${ingredient.unit} (${ingredient.unit})`,
       receivedBatch: firstBatch
@@ -1162,13 +1179,13 @@ export async function loadInventory(branchId: string, businessDate = new Date())
         receivedDate: formatDate(batch.received_date) ?? '',
         expirationDate: formatDate(batch.expiration_date),
         expirationDateIso: batch.expiration_date,
-        quantityReceived: Number(batch.quantity_received),
-        quantityRemaining: Number(batch.quantity_remaining),
+        quantityReceived: isPreparedBatter ? Number(batch.quantity_received) * 680 : Number(batch.quantity_received),
+        quantityRemaining: isPreparedBatter ? Number(batch.quantity_remaining) * 680 : Number(batch.quantity_remaining),
       })),
       lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
       emoji: visual.emoji,
       tint: visual.tint,
-    };
+    }];
   });
   return {
     items,
@@ -1247,26 +1264,37 @@ export async function loadStaffInventoryReports(
   const quantityPrecisionById = new Map(inventory.items.map((item) => [item.id, item.quantityPrecision]));
   const unavailableIngredientIds = [...new Set(lines
     .map((line) => line.ingredient_id)
-    .filter((id) => !itemNameById.has(id)))];
+    .filter((id) => !itemNameById.has(id) && getApprovedStaffInventoryItem(id, '', '') !== null))];
   for (let offset = 0; offset < unavailableIngredientIds.length; offset += pageSize) {
     const { data, error } = await client.from('ingredients')
       .select('id, name, quantity_precision')
       .in('id', unavailableIngredientIds.slice(offset, offset + pageSize));
     assertNoError(error);
     for (const ingredient of data ?? []) {
-      itemNameById.set(ingredient.id, ingredient.name);
+      const approved = getApprovedStaffInventoryItem(ingredient.id, ingredient.name, '');
+      if (!approved) continue;
+      itemNameById.set(ingredient.id, approved.name);
       quantityPrecisionById.set(ingredient.id, ingredient.quantity_precision);
     }
   }
 
-  const branchInventoryItems = inventory.items.filter((item) => item.hasBranchInventory);
+  const branchInventoryItems = inventory.items
+    .filter((item) => item.hasBranchInventory)
+    .map((item) => item.id === 'prepared-batter' && item.unit === 'ml'
+      ? {
+          ...item,
+          quantity: Number((item.quantity / 680).toFixed(3)),
+          unit: 'bottle',
+          minimumStock: Number((item.minimumStock / 680).toFixed(3)),
+        }
+      : item);
   return buildInventoryReportData({
     branchId,
     branchName,
     generatedAt: new Date().toISOString(),
     ingredients: branchInventoryItems,
     checks,
-    lines,
+    lines: lines.filter((line) => itemNameById.has(line.ingredient_id)),
     itemNames: [...itemNameById.entries()].map(([id, name]) => ({
       id,
       name,
@@ -1762,11 +1790,24 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   };
 }
 
-export async function prepareBatterBatch(branchId: string, batchReference: string, client?: StaffServiceClient) {
-  const { data, error } = await staffServiceClient(client).rpc('prepare_batter_batch', {
+export async function prepareBatterBatch(
+  branchId: string,
+  batchReference?: string,
+  preparationDateOrClient?: Date | StaffServiceClient,
+  client?: StaffServiceClient,
+) {
+  // Keep the original three-argument (branch, reference, client) contract
+  // working for callers while allowing the preparation-date-aware form.
+  const preparationDate = preparationDateOrClient instanceof Date ? preparationDateOrClient : undefined;
+  const resolvedClient = preparationDateOrClient instanceof Date ? client : preparationDateOrClient;
+  const date = preparationDate
+    ? `${preparationDate.getFullYear()}-${String(preparationDate.getMonth() + 1).padStart(2, '0')}-${String(preparationDate.getDate()).padStart(2, '0')}`
+    : null;
+  const { data, error } = await staffServiceClient(resolvedClient).rpc('prepare_batter_batch', {
     p_branch_id: branchId,
-    p_batch_reference: batchReference,
+    p_batch_reference: batchReference?.trim() || null,
     p_prepared_quantity: PREPARED_BATTER_BATCH_BOTTLES,
+    p_preparation_date: date,
   });
   assertNoError(error);
   return validatePreparedBatterBatch(data);
