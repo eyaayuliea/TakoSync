@@ -113,15 +113,16 @@ const productArtwork: Record<string, ImageSourcePropType[]> = {
   'Cheese Takoyaki': [require('../../assets/CHEESE.png')],
   'Crab Takoyaki': [require('../../assets/CRAB.png')],
   'BaconBits Takoyaki': [require('../../assets/BACON.png')],
-  'Octobits / Cheese': [require('../../assets/OCTOBITS.png'), require('../../assets/CHEESE.png')],
-  'Bacon / Cheese': [require('../../assets/BACON.png'), require('../../assets/CHEESE.png')],
-  'Crab / Cheese': [require('../../assets/CRAB.png'), require('../../assets/CHEESE.png')],
+  'Octobits / Cheese': [require('../../assets/CHEESEY.png')],
+  'Bacon / Cheese': [require('../../assets/CHEESEY.png')],
+  'Crab / Cheese': [require('../../assets/CHEESEY.png')],
 };
 
 function ProductArtwork({ name }: { name: string }) {
+  const { isDark } = useTheme();
   const images = productArtwork[name] ?? [];
   return (
-    <View style={styles.productArtwork}>
+    <View style={[styles.productArtwork, isDark && { backgroundColor: colors.navy }]}>
       {images.map((source, index) => (
         <Image
           key={`${name}-${index}`}
@@ -195,7 +196,7 @@ function SizeOptionCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#0F1025' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#101027' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
       <View style={styles.sizeOptionHeader}>
         <Text style={[styles.sizeOptionLabel, isDark && { color: '#FFFFFF' }]}>{variant.sizeLabel}</Text>
         <Pressable
@@ -242,7 +243,7 @@ function CartItemCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.cartItem, isDark && { backgroundColor: '#0F1025' }]}>
+    <View style={[styles.cartItem, isDark && { backgroundColor: '#101027' }]}>
       <View style={styles.cartItemCopy}>
         <Text style={[styles.cartItemName, isDark && { color: '#FFFFFF' }]} numberOfLines={2}>{product.name}</Text>
         <Text style={[styles.cartItemDetail, isDark && { color: '#B2B3C4' }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
@@ -292,6 +293,7 @@ function CurrentOrderLine({
 }) {
   const { isDark } = useTheme();
   const darkText = isDark ? { color: '#FFFFFF' } : undefined;
+  const darkQuantityText = isDark ? { color: '#101027' } : undefined;
   return (
     <View style={styles.currentOrderLine}>
       <View style={styles.currentOrderCopy}>
@@ -308,7 +310,7 @@ function CurrentOrderLine({
         >
           <Text style={styles.currentOrderQuantityText}>−</Text>
         </Pressable>
-        <Text style={[styles.currentOrderQuantityValue, darkText]}>{quantity}</Text>
+        <Text style={[styles.currentOrderQuantityValue, darkQuantityText]}>{quantity}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Increase ${product.name} quantity`}
@@ -356,8 +358,6 @@ export default function MenuWorkspace({
   const darkSecondarySurface = isDark ? { backgroundColor: '#101027' } : undefined;
   const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
   const darkWarningText = isDark ? { color: '#101027' } : undefined;
-  const flavorSurface = { backgroundColor: isDark ? colors.navy : colors.white };
-  const flavorText = { color: isDark ? colors.white : colors.navy };
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -672,59 +672,63 @@ export default function MenuWorkspace({
   }
 
   return (
-    <View style={styles.posScreen}>
-      <View style={styles.posHeader}>
-        <Text style={styles.posHeaderTitle}>POS · {branchName}</Text>
-        <Text style={styles.posHeaderStaff} numberOfLines={1}>{staffName} · {branchCode}</Text>
+    <View style={[styles.posScreen, isDark && { backgroundColor: '#101027' }]}>
+      <View style={[styles.posHeader, { backgroundColor: colors.white }]}>
+        <Text style={[styles.posHeaderTitle, { color: colors.navy }]}>POS · {branchName}</Text>
+        <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{staffName} · {branchCode}</Text>
       </View>
-      <ScrollView
-        horizontal
-        style={[styles.flavorSelector, flavorSurface]}
-        contentContainerStyle={styles.flavorSelectorContent}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-      >
-        {flavorOptions.map((flavor) => {
-          const selected = flavor.id === selectedFlavor.id;
-          return (
-            <Pressable
-              key={flavor.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Select ${flavor.label} flavor`}
-              accessibilityState={{ selected }}
-              onPress={() => setSelectedFlavorId(flavor.id)}
-              style={styles.flavorOption}
-            >
-              <View style={[styles.flavorImageFrame, isDark && { backgroundColor: colors.navy }, selected && styles.flavorImageFrameSelected]}>
-                <Image source={flavor.image} resizeMode="cover" style={styles.flavorImage} />
-              </View>
-              <Text style={[styles.flavorLabel, flavorText, selected && styles.flavorLabelSelected]}>{flavor.label}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-      <View style={[styles.selectedProductBar, darkSecondarySurface]}>
-        <View style={styles.selectedProductCopy}>
-          <Text style={[styles.selectedProductTitle, darkSecondaryText]} numberOfLines={1}>{selectedFlavor.productName}</Text>
-          <Text style={[styles.selectedProductSubtitle, darkSecondaryText]}>Choose a size to add to your order</Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`View menu information for ${selectedFlavor.productName}`}
-          accessibilityState={{ disabled: selectedProductGroups.length === 0 }}
-          disabled={selectedProductGroups.length === 0}
-          onPress={() => setInfoProducts(selectedProductGroups)}
-          style={({ pressed }) => [styles.viewMenuButton, pressed && styles.pressed]}
+      <View style={styles.productSelectionSection}>
+        <ScrollView
+          horizontal
+          style={styles.flavorSelector}
+          contentContainerStyle={styles.flavorSelectorContent}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.viewMenuText}>View Menu</Text>
-        </Pressable>
-      </View>
-      <ScrollView
-        style={styles.posProductScroll}
-        contentContainerStyle={styles.posProductList}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
+          {flavorOptions.map((flavor) => {
+            const selected = flavor.id === selectedFlavor.id;
+            const circleBackground = selected
+              ? (isDark ? colors.white : colors.navy)
+              : (isDark ? colors.navy : colors.white);
+            return (
+              <Pressable
+                key={flavor.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${flavor.label} flavor`}
+                accessibilityState={{ selected }}
+                onPress={() => setSelectedFlavorId(flavor.id)}
+                style={styles.flavorOption}
+              >
+                <View style={[styles.flavorImageFrame, { backgroundColor: circleBackground }, selected && styles.flavorImageFrameSelected]}>
+                  <Image source={flavor.image} resizeMode="cover" style={styles.flavorImage} />
+                </View>
+                <Text style={[styles.flavorLabel, selected && styles.flavorLabelSelected]}>{flavor.label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <View style={styles.selectedProductBar}>
+          <View style={styles.selectedProductCopy}>
+            <Text style={styles.selectedProductTitle} numberOfLines={1}>{selectedFlavor.productName}</Text>
+            <Text style={styles.selectedProductSubtitle}>Choose a size to add to your order</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`View menu information for ${selectedFlavor.productName}`}
+            accessibilityState={{ disabled: selectedProductGroups.length === 0 }}
+            disabled={selectedProductGroups.length === 0}
+            onPress={() => setInfoProducts(selectedProductGroups)}
+            style={({ pressed }) => [styles.viewMenuButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.viewMenuText}>View Menu</Text>
+          </Pressable>
+        </View>
+        <ScrollView
+          style={styles.posProductScroll}
+          contentContainerStyle={styles.posProductList}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
         {feedbackMessage !== '' ? (
               <View style={styles.feedbackBanner} accessibilityRole="alert">
             <Pressable onPress={onDismissFeedback} style={styles.feedbackMessagePressable}>
@@ -826,7 +830,8 @@ export default function MenuWorkspace({
             </View>
           </>
         )}
-      </ScrollView>
+        </ScrollView>
+      </View>
       <View style={[styles.currentOrderPanel, darkSecondarySurface]}>
         <View style={styles.currentOrderHeader}>
           <View style={styles.currentOrderHeadingCopy}>
@@ -907,7 +912,7 @@ export default function MenuWorkspace({
         onRequestClose={() => setInfoProducts(null)}
       >
         <View style={styles.infoModalBackdrop}>
-          <View style={styles.infoModalCard}>
+          <View style={[styles.infoModalCard, isDark && { backgroundColor: colors.navy }]}>
             <ScrollView
               style={styles.infoModalScroll}
               contentContainerStyle={styles.infoModalContent}
@@ -918,17 +923,17 @@ export default function MenuWorkspace({
                   <View style={styles.infoModalHeader}>
                     <ProductArtwork name={group.name} />
                     <View style={styles.infoModalTitleCopy}>
-                      <Text style={styles.infoModalTitle}>{group.name}</Text>
-                      <Text style={styles.infoModalDescription}>
+                      <Text style={[styles.infoModalTitle, isDark && { color: colors.white }]}>{group.name}</Text>
+                      <Text style={[styles.infoModalDescription, isDark && { color: colors.white }]}>
                         {group.description || 'No description available.'}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.infoModalSectionLabel}>Sizes and prices</Text>
+                  <Text style={[styles.infoModalSectionLabel, isDark && { color: colors.white }]}>Sizes and prices</Text>
                   {group.variants.map((variant) => (
                     <View key={variant.id} style={styles.infoVariantRow}>
-                      <Text style={styles.infoVariantSize}>{variant.sizeLabel}</Text>
-                      <Text style={styles.infoVariantPrice}>{money(variant.price)}</Text>
+                      <Text style={[styles.infoVariantSize, isDark && { color: colors.white }]}>{variant.sizeLabel}</Text>
+                      <Text style={[styles.infoVariantPrice, isDark && { color: colors.white }]}>{money(variant.price)}</Text>
                       <View style={styles.infoVariantStatus}>
                         <View style={[
                           styles.availabilityDot,
@@ -946,7 +951,11 @@ export default function MenuWorkspace({
                 </View>
               ))}
             </ScrollView>
-            <Pressable accessibilityRole="button" onPress={() => setInfoProducts(null)} style={styles.infoModalClose}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setInfoProducts(null)}
+              style={[styles.infoModalClose, { backgroundColor: colors.pink }]}
+            >
               <Text style={styles.infoModalCloseText}>Close</Text>
             </Pressable>
           </View>
@@ -964,10 +973,14 @@ const styles = StyleSheet.create({
   backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   backGlyph: { color: colors.navy, fontFamily: font.regular, fontSize: 33, lineHeight: 37, marginTop: -4 },
   headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: 21 },
-  posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.pink },
+  posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.white },
   posHeader: { paddingHorizontal: 16, paddingTop: 9, paddingBottom: 7 },
   posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 16 },
   posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 2, opacity: 0.9 },
+  productSelectionSection: {
+    flex: 1, minHeight: 0, backgroundColor: colors.pink,
+    borderTopLeftRadius: 40, borderTopRightRadius: 40, overflow: 'hidden',
+  },
   flavorSelector: { flexGrow: 0, flexShrink: 0, maxHeight: 87 },
   flavorSelectorContent: {
     minWidth: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
@@ -979,20 +992,19 @@ const styles = StyleSheet.create({
     borderRadius: 27, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.65)',
     backgroundColor: colors.white, overflow: 'hidden',
   },
-  flavorImageFrameSelected: { borderWidth: 3, borderColor: colors.white, backgroundColor: colors.navy },
+  flavorImageFrameSelected: { borderWidth: 3, borderColor: colors.white },
   flavorImage: { width: 50, height: 50, borderRadius: 25 },
   flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 4, opacity: 0.85 },
   flavorLabelSelected: { fontFamily: font.bold, opacity: 1 },
   selectedProductBar: {
     minHeight: 48, flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: 12, marginBottom: 5, paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 12, backgroundColor: colors.white,
+    marginHorizontal: 12, marginBottom: 0, paddingHorizontal: 0, paddingVertical: 7,
   },
   selectedProductCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  selectedProductTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
-  selectedProductSubtitle: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, marginTop: 2 },
-  viewMenuButton: { minHeight: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 14, backgroundColor: '#FFF0F4' },
-  viewMenuText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  selectedProductTitle: { color: colors.white, fontFamily: font.bold, fontSize: 11 },
+  selectedProductSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: 7, marginTop: 2, opacity: 0.9 },
+  viewMenuButton: { minHeight: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  viewMenuText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   posProductScroll: { flex: 1, minHeight: 0 },
   posProductList: { gap: 10, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 11 },
   sizeGroup: { gap: 7 },

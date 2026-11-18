@@ -567,17 +567,19 @@ function StatusBadge({
   label,
   tone,
   alignRight = false,
+  textColor,
 }: {
   label: string;
   tone: 'low' | 'good' | 'warning';
   alignRight?: boolean;
+  textColor?: string;
 }) {
   const styles = useStaffStyles();
   const toneStyle = tone === 'low' ? styles.lowBadge : tone === 'warning' ? styles.warningBadge : styles.goodBadge;
   const textStyle = tone === 'low' ? styles.lowBadgeText : tone === 'warning' ? styles.warningBadgeText : styles.goodBadgeText;
   return (
     <View style={[styles.statusBadge, toneStyle, alignRight && styles.statusBadgeRight]}>
-      <Text style={[styles.statusBadgeText, textStyle]}>{label}</Text>
+      <Text style={[styles.statusBadgeText, textStyle, textColor ? { color: textColor } : undefined]}>{label}</Text>
     </View>
   );
 }
@@ -598,6 +600,7 @@ function InventoryIngredientCard({
   cardWidth?: number;
 }) {
   const styles = useStaffStyles();
+  const { isDark } = useTheme();
   const stockStatus = inventoryStockStatus(item.quantity, item.minimumStock);
   const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
@@ -638,13 +641,18 @@ function InventoryIngredientCard({
         ) : null}
         {showInventoryStatuses ? (
           <View style={styles.inventoryBadgeStack}>
-            <StatusBadge label={stockStatus} tone={stockStatusTone} alignRight />
+            <StatusBadge
+              label={stockStatus}
+              tone={stockStatusTone}
+              alignRight
+              textColor={stockStatus === 'Out of Stock' && isDark ? '#0F1025' : undefined}
+            />
             {item.expirationStatus ? (
               <StatusBadge label={item.expirationStatus} tone={expirationStatusTone} alignRight />
             ) : null}
           </View>
         ) : (
-          <StatusBadge label={statusLabel} tone={statusTone} alignRight />
+          <StatusBadge label={statusLabel} tone={statusTone} alignRight textColor={statusLabel === 'Out of Stock' && isDark ? '#0F1025' : undefined} />
         )}
       </View>
     </Pressable>
@@ -5616,6 +5624,7 @@ export default function StaffWorkspace({
               styles.stockStatusLabel,
               status === 'Normal' ? styles.stockStatusNormal :
                 status === 'Low Stock' ? styles.stockStatusLow : styles.stockStatusOut,
+              status === 'Out of Stock' && theme.isDark && { color: '#0F1025' },
             ]}>{status}</Text>
           </View>
         );
@@ -5692,6 +5701,7 @@ export default function StaffWorkspace({
                     styles.inventoryReportStatus,
                     status === 'Normal' ? styles.inventoryStatusNormal :
                       status === 'Low Stock' ? styles.inventoryStatusLow : styles.inventoryStatusOut,
+                    status === 'Out of Stock' && theme.isDark && { color: '#0F1025' },
                   ]}>{status}</Text>
                 </View>
               ) : null}
