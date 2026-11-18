@@ -1563,8 +1563,8 @@ function useAppStyles() {
   loadingLogo: { alignSelf: 'center', marginTop: '14%' },
   welcomeScreen: { flex: 1, backgroundColor: '#FFFFFF', overflow: 'hidden' },
   welcomeBackgroundImage: { width: '100%', height: '100%' },
-  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '5%', backgroundColor: 'rgba(255,255,255,0.18)' },
-  headerLogo: { marginTop: 0 },
+  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '5%', backgroundColor: 'transparent' },
+  headerLogo: { alignSelf: 'center', marginTop: 0 },
   pinkPanel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: PINK, borderTopLeftRadius: 36, borderTopRightRadius: 36,
@@ -1599,7 +1599,7 @@ function useAppStyles() {
   loginBackground: { flex: 1 },
   loginBackgroundImage: { width: '100%', height: '100%', opacity: 0.38 },
   loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.62)' },
-  loginHeader: { alignItems: 'center', justifyContent: 'center', paddingTop: 12, backgroundColor: '#FFFFFF' },
+  loginHeader: { alignItems: 'center', justifyContent: 'center', paddingTop: 12, backgroundColor: 'transparent' },
   loginScroll: { flex: 1 },
   loginScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 },
   loginCard: {

@@ -356,6 +356,8 @@ export default function MenuWorkspace({
   const darkSecondarySurface = isDark ? { backgroundColor: '#101027' } : undefined;
   const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
   const darkWarningText = isDark ? { color: '#101027' } : undefined;
+  const flavorSurface = { backgroundColor: isDark ? colors.navy : colors.white };
+  const flavorText = { color: isDark ? colors.white : colors.navy };
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -677,7 +679,7 @@ export default function MenuWorkspace({
       </View>
       <ScrollView
         horizontal
-        style={styles.flavorSelector}
+        style={[styles.flavorSelector, flavorSurface]}
         contentContainerStyle={styles.flavorSelectorContent}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
@@ -693,10 +695,10 @@ export default function MenuWorkspace({
               onPress={() => setSelectedFlavorId(flavor.id)}
               style={styles.flavorOption}
             >
-              <View style={[styles.flavorImageFrame, selected && styles.flavorImageFrameSelected]}>
+              <View style={[styles.flavorImageFrame, isDark && { backgroundColor: colors.navy }, selected && styles.flavorImageFrameSelected]}>
                 <Image source={flavor.image} resizeMode="cover" style={styles.flavorImage} />
               </View>
-              <Text style={[styles.flavorLabel, selected && styles.flavorLabelSelected]}>{flavor.label}</Text>
+              <Text style={[styles.flavorLabel, flavorText, selected && styles.flavorLabelSelected]}>{flavor.label}</Text>
             </Pressable>
           );
         })}

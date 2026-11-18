@@ -112,7 +112,7 @@ export default function OwnerLoginScreen({
                 >
                   <Text style={[styles.backText, { color: colors.text }]}>‹ Back</Text>
                 </Pressable>
-                <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64, backgroundColor: isDark ? colors.surface : '#FFFFFF' }]}>
+                <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64 }]}>
                   <Image
                     source={isDark ? require('../../assets/DARK THEME (LOGO).png') : require('../../assets/LIGHT THEME (LOGO).png')}
                     style={styles.logo}
@@ -252,8 +252,8 @@ const styles = StyleSheet.create({
   backButton: { width: 52, paddingVertical: 8, alignItems: 'flex-start' },
   backText: { color: '#101027', fontFamily: FONT.semibold, fontSize: 12 },
   backButtonSpacer: { width: 52 },
-  logoFrame: { backgroundColor: '#FFFFFF', borderRadius: 8, overflow: 'hidden' },
-  logo: { width: '100%', height: '100%' },
+  logoFrame: { alignItems: 'center', justifyContent: 'center' },
+  logo: { width: '100%', height: '100%', alignSelf: 'center' },
   card: {
     width: '100%',
     borderRadius: 28,
