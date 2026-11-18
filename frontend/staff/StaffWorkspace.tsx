@@ -801,6 +801,7 @@ function DatePickerField({
   allowClear = false,
   maxDate,
   useConfirmation = false,
+  confirmLabel = 'Use Date',
 }: {
   label: string;
   value: Date | null;
@@ -809,6 +810,7 @@ function DatePickerField({
   allowClear?: boolean;
   maxDate?: Date;
   useConfirmation?: boolean;
+  confirmLabel?: string;
 }) {
   const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
@@ -953,7 +955,7 @@ function DatePickerField({
                     }}
                     style={[styles.calendarUseButton, !draftValue && styles.buttonDisabled]}
                   >
-                    <Text style={styles.calendarUseText}>Use Date</Text>
+                    <Text style={styles.calendarUseText}>{confirmLabel}</Text>
                   </Pressable>
                 </View>
               </>
@@ -1558,6 +1560,7 @@ export default function StaffWorkspace({
     }
     setDailySalesLoading(true);
     setDailySalesError('');
+    setDailySalesSummary(null);
     getStaffDailySalesLoadResult(() => loadStaffDailySales(branchId, dailySalesDate))
       .then(({ summary, error }) => {
         if (active) {
@@ -6440,35 +6443,29 @@ export default function StaffWorkspace({
     </ScrollView>
   );
 
-  const renderDailySales = () => (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.dailySalesContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.formHeader}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to More"
-          onPress={() => setRoute('more')}
-          style={styles.backButton}
-        >
-          <Text style={styles.backGlyph}>‹</Text>
-        </Pressable>
-        <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>Daily Sales</Text>
-          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+  const renderDailySales = () => {
+    const productQuantity = dailySalesSummary?.products.reduce((total, product) => total + product.quantity, 0) ?? 0;
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.dailySalesContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.formHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => setRoute('more')} style={styles.backButton}>
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Daily Sales</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} · {formatDate(dailySalesDate)}</Text>
+          </View>
         </View>
-      </View>
-      <View style={styles.dailySalesControls}>
-        <View style={styles.dailySalesDateField}>
+        <View style={styles.dailySalesDatePicker}>
           <DatePickerField
             label="Business date"
             value={dailySalesDate}
+            useConfirmation
+            confirmLabel="Apply date"
+            maxDate={today}
             onChange={(date) => {
               if (date) setDailySalesDate(date);
             }}
-            maxDate={today}
           />
         </View>
         <Pressable
@@ -6477,81 +6474,82 @@ export default function StaffWorkspace({
           accessibilityState={{ disabled: dailySalesLoading }}
           disabled={dailySalesLoading}
           onPress={() => setDailySalesRefreshKey((key) => key + 1)}
-          style={[styles.dailySalesRefreshButton, dailySalesLoading && styles.buttonDisabled]}
+          style={[styles.dailySalesRefreshButton, styles.dailySalesFullButton, dailySalesLoading && styles.buttonDisabled]}
         >
           <Text style={styles.dailySalesRefreshText}>Refresh</Text>
         </Pressable>
-      </View>
-      {dailySalesLoading ? (
-        <View style={styles.dailySalesLoading}>
-          <ActivityIndicator color={colors.pink} />
-          <Text style={styles.emptyState}>Generating daily sales…</Text>
-        </View>
-      ) : dailySalesError ? (
-        <View style={styles.dailySalesError}>
-          <Text style={styles.dailySalesErrorText}>{dailySalesError}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setDailySalesRefreshKey((key) => key + 1)}
-            style={styles.dailySalesRetryButton}
-          >
-            <Text style={styles.dailySalesRetryText}>Retry</Text>
-          </Pressable>
-        </View>
-      ) : dailySalesSummary ? (
-        <>
-          <View style={styles.dailySalesTotals}>
-            <View style={styles.dailySalesMetric}>
-              <Text style={styles.dailySalesMetricLabel}>Transactions</Text>
-              <Text style={styles.dailySalesTransactionCount}>{dailySalesSummary.transactionCount}</Text>
-            </View>
-            <View style={styles.dailySalesMetric}>
-              <Text style={styles.dailySalesMetricLabel}>Total sales</Text>
-              <Text style={styles.dailySalesTotal}>{formatSaleMoney(dailySalesSummary.totalSales)}</Text>
-            </View>
+        {dailySalesLoading ? (
+          <View style={styles.dailySalesLoading}>
+            <ActivityIndicator color={colors.pink} />
+            <Text style={styles.dailySalesStateText}>Generating daily sales…</Text>
           </View>
-          {dailySalesSummary.transactionCount === 0 ? (
-            <Text style={styles.dailySalesEmpty}>No sales recorded for this day.</Text>
-          ) : (
-            <>
-              <View style={styles.dailySalesSection}>
-                <Text style={styles.sectionTitle}>Sales per Payment Method</Text>
-                <View style={styles.dailySalesRows}>
-                  {dailySalesSummary.paymentMethods.map((payment) => (
-                    <View key={payment.paymentMethod} style={styles.dailySalesRow}>
-                      <View style={styles.dailySalesRowCopy}>
-                        <Text style={styles.dailySalesRowTitle}>{payment.paymentMethod}</Text>
-                        <Text style={styles.dailySalesRowDetail}>
-                          {payment.transactionCount} {payment.transactionCount === 1 ? 'transaction' : 'transactions'}
-                        </Text>
-                      </View>
-                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(payment.totalSales)}</Text>
-                    </View>
-                  ))}
-                </View>
+        ) : dailySalesError ? (
+          <View style={styles.dailySalesError}>
+            <Text style={styles.dailySalesErrorText}>{dailySalesError}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setDailySalesRefreshKey((key) => key + 1)} style={[styles.dailySalesRetryButton, styles.dailySalesFullButton]}>
+              <Text style={styles.dailySalesRetryText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : dailySalesSummary ? (
+          <>
+            <View style={styles.dailySalesTotals}>
+              <Text style={styles.dailySalesSummaryEyebrow}>Total sales · {formatSaleMoney(dailySalesSummary.totalSales)}</Text>
+              <View style={styles.dailySalesSummaryLine}>
+                <Text style={styles.dailySalesSummaryMeta}>{dailySalesSummary.transactionCount} confirmed {dailySalesSummary.transactionCount === 1 ? 'transaction' : 'transactions'}</Text>
+                <Text style={styles.dailySalesSummaryMeta}>{formatQuantity(productQuantity)} products sold</Text>
               </View>
-              <View style={styles.dailySalesSection}>
-                <Text style={styles.sectionTitle}>Products Sold</Text>
-                <View style={styles.dailySalesRows}>
-                  {dailySalesSummary.products.length ? dailySalesSummary.products.map((product) => (
-                    <View key={product.productId} style={styles.dailySalesRow}>
-                      <View style={styles.dailySalesRowCopy}>
-                        <Text style={styles.dailySalesRowTitle} numberOfLines={2}>{product.productName}</Text>
-                        <Text style={styles.dailySalesRowDetail}>Quantity sold: {formatQuantity(product.quantity)}</Text>
-                      </View>
-                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(product.totalSales)}</Text>
-                    </View>
-                  )) : (
-                    <Text style={styles.dailySalesEmpty}>No product details are available for this day.</Text>
-                  )}
-                </View>
+            </View>
+            {dailySalesSummary.transactionCount === 0 ? (
+              <View style={styles.dailySalesEmptyCard}>
+                <Text style={styles.dailySalesEmptyTotal}>{formatSaleMoney(0)} · 0 transactions</Text>
+                <Text style={styles.dailySalesEmpty}>No sales recorded for this day.</Text>
               </View>
-            </>
-          )}
-        </>
-      ) : null}
-    </ScrollView>
-  );
+            ) : (
+              <>
+                <View style={styles.dailySalesSection}>
+                  <Text style={styles.sectionTitle}>Sales per Payment Method</Text>
+                  <View style={styles.dailySalesRows}>
+                    {dailySalesSummary.paymentMethods.map((payment) => (
+                      <View key={payment.paymentMethod} style={styles.dailySalesRow}>
+                        <View style={styles.dailySalesRowCopy}>
+                          <Text style={styles.dailySalesRowTitle}>{payment.paymentMethod}</Text>
+                          <Text style={styles.dailySalesRowDetail}>{payment.transactionCount} {payment.transactionCount === 1 ? 'transaction' : 'transactions'}</Text>
+                        </View>
+                        <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(payment.totalSales)}</Text>
+                      </View>
+                    ))}
+                    <View style={styles.dailySalesRow}>
+                      <Text style={styles.dailySalesRowTitle}>Total</Text>
+                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(dailySalesSummary.totalSales)}</Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.dailySalesSection}>
+                  <Text style={styles.sectionTitle}>Products Sold</Text>
+                  <View style={styles.dailySalesRows}>
+                    {dailySalesSummary.products.map((product) => (
+                      <View key={product.productId} style={styles.dailySalesRow}>
+                        <View style={styles.dailySalesRowCopy}>
+                          <Text style={styles.dailySalesRowTitle} numberOfLines={2}>{product.productName}</Text>
+                          <Text style={styles.dailySalesRowDetail}>Quantity {formatQuantity(product.quantity)}</Text>
+                        </View>
+                        <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(product.totalSales)}</Text>
+                      </View>
+                    ))}
+                    <View style={styles.dailySalesRow}>
+                      <Text style={styles.dailySalesRowTitle}>Total · Quantity {formatQuantity(productQuantity)}</Text>
+                      <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(dailySalesSummary.totalSales)}</Text>
+                    </View>
+                  </View>
+                </View>
+              </>
+            )}
+            <Text style={styles.dailySalesReadOnly}>Confirmed sales only · Read-only</Text>
+          </>
+        ) : null}
+      </ScrollView>
+    );
+  };
 
   const renderProfileSettings = () => {
     const appAlertsEnabled = alertPreferences.lowStock && alertPreferences.expiration;
@@ -9961,25 +9959,18 @@ function createStaffStyles(theme: AppTheme) {
   inventoryReportRecordLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 7, marginTop: 6 },
   inventoryDiscrepancyRemarks: { marginTop: 5, marginBottom: 8 },
   inventoryDiscrepancySaving: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  dailySalesControls: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 9, paddingHorizontal: 14,
-    paddingTop: 13, paddingBottom: 13,
-  },
-  dailySalesDateField: { flex: 1, minWidth: 0 },
+  dailySalesDatePicker: { marginHorizontal: 14, marginTop: 13 },
   dailySalesRefreshButton: {
     minHeight: 42, minWidth: 72, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 12, borderRadius: 11, backgroundColor: colors.pink,
   },
   dailySalesRefreshText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  dailySalesTotals: {
-    flexDirection: 'row', gap: 9, marginHorizontal: 14, marginBottom: 16,
-    padding: 14, borderRadius: 15, backgroundColor: colors.navy,
-  },
-  dailySalesMetric: { flex: 1, minWidth: 0 },
-  dailySalesMetricLabel: { color: '#D5D5E0', fontFamily: font.medium, fontSize: 8 },
-  dailySalesTransactionCount: { color: colors.white, fontFamily: font.bold, fontSize: 22, marginTop: 4 },
-  dailySalesTotal: { color: colors.orange, fontFamily: font.bold, fontSize: 18, marginTop: 6 },
-  dailySalesSection: { marginHorizontal: 14, marginBottom: 17 },
+  dailySalesFullButton: { alignSelf: 'stretch', marginHorizontal: 14, marginTop: 8 },
+  dailySalesTotals: { marginHorizontal: 14, marginBottom: 14, padding: 14, borderRadius: 16, backgroundColor: colors.pale },
+  dailySalesSummaryEyebrow: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
+  dailySalesSummaryLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 8 },
+  dailySalesSummaryMeta: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
+  dailySalesSection: { marginHorizontal: 14, marginBottom: 14, padding: 14, borderRadius: 16, backgroundColor: colors.pale },
   dailySalesRows: {
     gap: 6, marginTop: 8, padding: 8, borderRadius: 13,
     backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line,
@@ -9993,6 +9984,7 @@ function createStaffStyles(theme: AppTheme) {
   dailySalesRowDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   dailySalesRowAmount: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   dailySalesLoading: { minHeight: 160, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  dailySalesStateText: { color: colors.muted, fontFamily: font.regular, fontSize: 10 },
   dailySalesError: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 35 },
   dailySalesErrorText: { color: colors.red, fontFamily: font.medium, fontSize: 10, lineHeight: 16, textAlign: 'center' },
   dailySalesRetryButton: {
@@ -10000,6 +9992,9 @@ function createStaffStyles(theme: AppTheme) {
     paddingHorizontal: 14, marginTop: 12, borderRadius: 8, backgroundColor: '#EC1358',
   },
   dailySalesRetryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  dailySalesEmptyCard: { marginHorizontal: 14, padding: 16, borderRadius: 16, backgroundColor: colors.pale },
+  dailySalesEmptyTotal: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+  dailySalesReadOnly: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', marginVertical: 8 },
   dailySalesEmpty: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', padding: 15 },
   dailyCheckIntro: { color: colors.navy, fontFamily: font.medium, fontSize: 9, lineHeight: 14, marginBottom: 12 },
   dailyTableHeader: {
