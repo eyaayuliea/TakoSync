@@ -216,7 +216,7 @@ async function invoke(fixture, action, account, authorization) {
 }
 
 for (const action of ['list', 'create', 'update']) {
-  test(`active Owner business session can ${action} Staff accounts`, async () => {
+  test(`active Owner can ${action} Staff accounts without a business-hours gate`, async () => {
     const fixture = createFixture();
     const account = action === 'create'
       ? { username: 'Ana Cruz', branchId: 'branch-id' }
@@ -230,13 +230,7 @@ for (const action of ['list', 'create', 'update']) {
     assert.equal(result.body.ok, true);
     if (action === 'list') assert.equal(result.body.accounts.length, 1);
     else assert.equal(result.body.account.id, action === 'create' ? 'created-staff-id' : 'staff-id');
-    const sessionCall = fixture.calls.findIndex((call) => call.kind === 'session-rpc');
-    const firstAccountCall = fixture.calls.findIndex((call) =>
-      call.kind === 'account-operation' || call.kind === 'account-auth-admin');
-    assert.ok(sessionCall >= 0);
-    assert.ok(firstAccountCall > sessionCall);
-    assert.equal(fixture.calls[sessionCall].name, 'business_session_status');
-    assert.equal(fixture.calls[sessionCall].authorization, 'Bearer valid-token');
+    assert.equal(fixture.calls.some((call) => call.kind === 'session-rpc'), false);
   });
 }
 
@@ -288,23 +282,23 @@ test('Staff cannot administer Owner accounts', async () => {
 });
 
 for (const [description, status] of [
-  ['missing', { active: false }],
-  ['expired', { active: false, expires_at: '2026-01-01T00:00:00Z' }],
-  ['revoked', { active: false }],
+  ['after closing', { active: false }],
+  ['after midnight', { active: false, expires_at: '2026-01-01T00:00:00Z' }],
+  ['during a non-operating period', { active: false }],
 ]) {
-  test(`${description} business session is rejected before privileged account operations`, async () => {
+  test(`Owner Staff-account access remains available ${description}`, async () => {
     const fixture = createFixture({ sessionResult: { data: status, error: null } });
     const result = await invoke(fixture, 'create', {
       username: 'Ana Cruz', branchId: 'branch-id',
     });
 
-    assert.equal(result.status, 403);
-    assert.deepEqual(fixture.accountOperations, []);
-    assert.deepEqual(fixture.authAdminOperations, []);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(fixture.calls.some((call) => call.kind === 'session-rpc'), false);
   });
 }
 
-test('business session RPC errors fail closed without exposing database details', async () => {
+test('business session RPC failures do not block Owner Staff-account access', async () => {
   const fixture = createFixture({
     sessionResult: { data: null, error: { code: 'XX000', message: 'private database detail', status: 500 } },
   });
@@ -312,34 +306,18 @@ test('business session RPC errors fail closed without exposing database details'
     id: 'staff-id', username: 'Ana Cruz', branchId: 'branch-id', active: true,
   });
 
-  assert.equal(result.status, 500);
-  assert.doesNotMatch(JSON.stringify(result.body), /private database detail|XX000/);
-  assert.deepEqual(fixture.accountOperations, []);
-  assert.deepEqual(fixture.authAdminOperations, []);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(fixture.calls.some((call) => call.kind === 'session-rpc'), false);
 });
 
-test('business session is allowed only when RPC explicitly returns active true', async () => {
+test('client-supplied business session status cannot grant authorization', async () => {
   for (const data of [null, {}, { active: 1 }, { active: 'true' }]) {
     const fixture = createFixture({ sessionResult: { data, error: null } });
     const result = await invoke(fixture, 'list');
-    assert.equal(result.status, 403);
-    assert.deepEqual(fixture.accountOperations, []);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
   }
-});
-
-test('client-supplied session status cannot replace the caller-context RPC result', async () => {
-  const fixture = createFixture({ sessionResult: { data: { active: false }, error: null } });
-  const result = await fixture.handler(new Request('https://function.test/staff-auth', {
-    method: 'POST',
-    headers: {
-      Authorization: 'Bearer valid-token',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ action: 'list', businessSession: { active: true } }),
-  }));
-
-  assert.equal(result.status, 403);
-  assert.deepEqual(fixture.accountOperations, []);
 });
 
 test('invalid create input returns 400 without touching account data', async () => {
@@ -407,10 +385,10 @@ test('Owner username login preserves apostrophes and returns the existing Auth s
 
 test('Owner login rejects unknown, inactive, Staff, and mismatched Auth identities', async () => {
   const cases = [
-    { ownerProfile: { id: 'owner-id', username: 'different-owner', email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'owner-id' },
-    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: false }, authUserId: 'owner-id' },
-    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'staff', active: true }, authUserId: 'owner-id' },
-    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'another-id' },
+    { ownerProfile: null, authUserId: 'owner-id', code: 'unknown_username' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: false }, authUserId: 'owner-id', code: 'unauthorized_access' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'staff', active: true }, authUserId: 'owner-id', code: 'unauthorized_access' },
+    { ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'another-id', code: null },
   ];
   for (const options of cases) {
     const fixture = createFixture(options);
@@ -418,7 +396,7 @@ test('Owner login rejects unknown, inactive, Staff, and mismatched Auth identiti
     assert.equal(result.status, options.authUserId === 'another-id' ? 500 : 200);
     const body = await result.json();
     if (options.authUserId === 'another-id') assert.equal(body.ok, false);
-    else assert.equal(body.code, 'invalid_credentials');
+    else assert.equal(body.code, options.code);
   }
 });
 
@@ -430,7 +408,7 @@ test('Owner login maps Supabase invalid credentials to a safe error', async () =
   });
   const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'wrong-password'));
   assert.equal(result.status, 200);
-  assert.deepEqual(await result.json(), { ok: false, code: 'invalid_credentials' });
+  assert.deepEqual(await result.json(), { ok: false, code: 'incorrect_password' });
 });
 
 test('Owner login diagnostic logs expose only safe stage metadata', async () => {
@@ -486,14 +464,17 @@ test('Owner Auth failure diagnostic logs only its code and HTTP status', async (
 });
 
 test('Owner login rejects missing username or password without authenticating', async () => {
-  for (const [username, password] of [['', 'owner-password'], ['ownergelo\'26', '']]) {
+  for (const [username, password, code] of [
+    ['', 'owner-password', 'unknown_username'],
+    ['ownergelo\'26', '', 'incorrect_password'],
+  ]) {
     const fixture = createFixture({
       ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
       authUserId: 'owner-id',
     });
     const result = await fixture.handler(ownerLoginRequest(username, password));
     assert.equal(result.status, 200);
-    assert.deepEqual(await result.json(), { ok: false, code: 'invalid_credentials' });
+    assert.deepEqual(await result.json(), { ok: false, code });
   }
 });
 

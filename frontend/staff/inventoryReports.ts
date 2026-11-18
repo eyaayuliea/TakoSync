@@ -454,6 +454,7 @@ export type InventoryCountHistoryRecord = {
       reason: string;
       validatedBy: string;
       validatedAt: string;
+      validatedByName?: string | null;
     } | null;
   };
 };

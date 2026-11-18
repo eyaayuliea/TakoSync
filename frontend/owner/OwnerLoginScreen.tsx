@@ -28,14 +28,13 @@ const FONT = {
 } as const;
 
 export default function OwnerLoginScreen({
-  onBack,
   onLogin,
 }: {
   onBack: () => void;
   onLogin: (username: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
-  const { isDark, colors } = useTheme();
+  const { isDark } = useTheme();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -45,7 +44,7 @@ export default function OwnerLoginScreen({
   const submissionLock = useRef(false);
   const passwordInput = useRef<TextInput>(null);
   const isShortScreen = height < 700;
-  const logoWidth = Math.min(width * 0.48, 205);
+  const logoWidth = Math.min(width * 0.44, 190);
   const displayedError = loginError || (!isSupabaseConfigured ? supabaseConfigurationError : '');
 
   const clearFeedback = () => {
@@ -62,8 +61,8 @@ export default function OwnerLoginScreen({
 
     const trimmedUsername = username.trim();
     const nextErrors: FieldErrors = {};
-    if (!trimmedUsername) nextErrors.username = 'Username is required.';
-    if (!password) nextErrors.password = 'Password is required.';
+    if (!trimmedUsername) nextErrors.username = 'Please enter your username.';
+    if (!password) nextErrors.password = 'Please enter your password.';
 
     setUsername(trimmedUsername);
     setFieldErrors(nextErrors);
@@ -75,7 +74,11 @@ export default function OwnerLoginScreen({
     try {
       await onLogin(trimmedUsername, password);
     } catch (error) {
-      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
+      setLoginError(message);
+      if (message === 'Incorrect password. Please try again.') {
+        setPassword('');
+      }
     } finally {
       submissionLock.current = false;
       setSubmitting(false);
@@ -84,13 +87,12 @@ export default function OwnerLoginScreen({
 
   return (
     <ImageBackground
-      source={require('../../assets/takoyaki-plate.png')}
+      source={require('../../assets/WELCOME PAGE.jpg')}
       resizeMode="cover"
-      blurRadius={10}
-      style={[styles.background, { backgroundColor: colors.background }]}
+      style={styles.background}
       imageStyle={styles.backgroundImage}
     >
-      <View style={[styles.warmTint, { backgroundColor: isDark ? 'rgba(19,18,26,0.42)' : 'rgba(255,239,218,0.38)' }]}>
+      <View style={styles.backgroundOverlay}>
         <KeyboardAvoidingView
           style={styles.keyboardRoot}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -101,32 +103,18 @@ export default function OwnerLoginScreen({
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.content, { maxWidth: Math.min(width - 40, 380) }]}>
-              <View style={styles.brandRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Back to welcome"
-                  onPress={onBack}
-                  hitSlop={8}
-                  style={styles.backButton}
-                >
-                  <Text style={[styles.backText, { color: colors.text }]}>‹ Back</Text>
-                </Pressable>
-                <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64 }]}>
-                  <Image
-                    source={isDark ? require('../../assets/DARK THEME (LOGO).png') : require('../../assets/LIGHT THEME (LOGO).png')}
-                    style={styles.logo}
-                    resizeMode="contain"
-                    accessibilityLabel="TakoSync logo"
-                  />
-                </View>
-                <View style={styles.backButtonSpacer} />
+            <View style={[styles.content, { maxWidth: Math.min(width - 40, 330) }]}>
+              <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64 }]}>
+                <Image
+                  source={isDark ? require('../../assets/DARK THEME (LOGO).png') : require('../../assets/LIGHT THEME (LOGO).png')}
+                  style={styles.logo}
+                  resizeMode="contain"
+                  accessibilityLabel="Gelo's Takoyaki logo"
+                />
               </View>
 
-              <View style={[styles.card, { backgroundColor: isDark ? colors.surface : '#101027' }, isShortScreen && styles.compactCard]}>
+              <View style={[styles.card, isShortScreen && styles.compactCard]}>
                 <Text style={styles.heading}>Log In</Text>
-                <Text style={styles.subtitle}>Owner access · Gelo’s Takoyaki</Text>
-
                 {displayedError !== '' && (
                   <View style={styles.errorBanner} accessibilityRole="alert">
                     <View style={styles.errorIcon}>
@@ -193,6 +181,7 @@ export default function OwnerLoginScreen({
                     >
                       <View style={styles.eye}>
                         <View style={styles.eyePupil} />
+                        {passwordVisible && <View style={styles.eyeSlash} />}
                       </View>
                     </Pressable>
                   </View>
@@ -211,13 +200,8 @@ export default function OwnerLoginScreen({
                     submitting && styles.loginButtonDisabled,
                   ]}
                 >
-                  <Text style={styles.loginButtonText}>{submitting ? 'Signing in…' : 'Log In'}</Text>
+                  <Text style={styles.loginButtonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
                 </Pressable>
-
-                <Text style={styles.helper}>
-                  Monitor all three branches with your owner account. Keep your credentials private.
-                </Text>
-                <Text style={styles.footer}>Secure access to your inventory</Text>
               </View>
             </View>
           </ScrollView>
@@ -228,55 +212,36 @@ export default function OwnerLoginScreen({
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1, backgroundColor: '#E8B77E' },
-  backgroundImage: { opacity: 0.72 },
-  warmTint: { flex: 1, backgroundColor: 'rgba(255, 239, 218, 0.38)' },
+  background: { flex: 1, backgroundColor: '#FFFFFF' },
+  backgroundImage: { width: '100%', height: '100%', opacity: 0.88 },
+  backgroundOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
   keyboardRoot: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 22,
+    paddingVertical: 18,
   },
   shortScrollContent: { justifyContent: 'flex-start', paddingVertical: 14 },
   content: { width: '100%', alignItems: 'center', alignSelf: 'center' },
-  brandRow: {
-    width: '100%',
-    minHeight: 116,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  backButton: { width: 52, paddingVertical: 8, alignItems: 'flex-start' },
-  backText: { color: '#101027', fontFamily: FONT.semibold, fontSize: 12 },
-  backButtonSpacer: { width: 52 },
-  logoFrame: { alignItems: 'center', justifyContent: 'center' },
+  logoFrame: { alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
   logo: { width: '100%', height: '100%', alignSelf: 'center' },
   card: {
     width: '100%',
-    borderRadius: 28,
-    backgroundColor: '#101027',
-    paddingHorizontal: 26,
-    paddingTop: 25,
-    paddingBottom: 19,
-    shadowColor: '#101027',
+    borderRadius: 24,
+    backgroundColor: '#0F1025',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 20,
+    shadowColor: '#0F1025',
     shadowOpacity: 0.2,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 9 },
     elevation: 10,
   },
-  compactCard: { paddingHorizontal: 22, paddingTop: 21, paddingBottom: 16, borderRadius: 24 },
-  heading: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 27, textAlign: 'center' },
-  subtitle: {
-    color: '#FF9418',
-    fontFamily: FONT.semibold,
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 3,
-    marginBottom: 19,
-  },
+  compactCard: { paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, borderRadius: 24 },
+  heading: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 24, textAlign: 'center', marginBottom: 20 },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -292,41 +257,41 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F20D55',
+    backgroundColor: '#F52F2E',
     marginRight: 9,
   },
   errorIconText: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 14, lineHeight: 18 },
   errorMessage: { flex: 1, color: '#711433', fontFamily: FONT.regular, fontSize: 10, lineHeight: 16 },
   fieldGroup: { marginBottom: 13 },
-  label: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 11, marginBottom: 6 },
+  label: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 12, marginBottom: 7 },
   input: {
     height: 46,
     width: '100%',
     borderWidth: 1,
     borderColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 8,
     paddingHorizontal: 13,
     backgroundColor: '#FFFFFF',
-    color: '#101027',
+    color: '#000000',
     fontFamily: FONT.regular,
     fontSize: 13,
   },
-  inputInvalid: { borderWidth: 1.5, borderColor: '#F20D55' },
-  fieldError: { color: '#FF91AC', fontFamily: FONT.regular, fontSize: 10, marginTop: 4, lineHeight: 15 },
+  inputInvalid: { borderWidth: 1.5, borderColor: '#F52F2E' },
+  fieldError: { color: '#FFFFFF', fontFamily: FONT.regular, fontSize: 11, marginTop: 5, lineHeight: 16 },
   passwordWrap: {
     height: 46,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
   },
   passwordInput: {
     flex: 1,
     height: '100%',
     paddingHorizontal: 13,
-    color: '#101027',
+    color: '#000000',
     fontFamily: FONT.regular,
     fontSize: 13,
   },
@@ -341,11 +306,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   eyePupil: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#858591' },
+  eyeSlash: {
+    position: 'absolute',
+    width: 23,
+    height: 1.5,
+    backgroundColor: '#858591',
+    transform: [{ rotate: '-45deg' }],
+  },
   loginButton: {
     height: 48,
     width: '100%',
     borderRadius: 24,
-    backgroundColor: '#F20D55',
+    backgroundColor: '#EC1358',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
@@ -353,24 +325,4 @@ const styles = StyleSheet.create({
   loginButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   loginButtonDisabled: { opacity: 0.65 },
   loginButtonText: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 13 },
-  previewButton: {
-    minHeight: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 9,
-    borderWidth: 1,
-    borderColor: '#FF9418',
-    borderRadius: 20,
-  },
-  previewButtonText: { color: '#FFB24A', fontFamily: FONT.medium, fontSize: 9 },
-  helper: {
-    color: '#D5D5DF',
-    fontFamily: FONT.regular,
-    fontSize: 10,
-    lineHeight: 15,
-    textAlign: 'center',
-    marginTop: 14,
-  },
-  footer: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 9, textAlign: 'center', marginTop: 14 },
-  previewNote: { color: '#858591', fontFamily: FONT.regular, fontSize: 8, textAlign: 'center', marginTop: 7 },
 });

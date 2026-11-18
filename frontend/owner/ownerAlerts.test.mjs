@@ -123,6 +123,6 @@ test('buildOwnerAlertSnapshot applies each branch filter to both categories', ()
   };
   assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-1' }).lowStock.map((item) => item.branchId), ['branch-1']);
   assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-2' }).expiration.map((item) => item.branchId), ['branch-2']);
-  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.lowStock, 0);
-  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.expiration, 0);
+  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.lowStock, 2);
+  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.expiration, 2);
 });

@@ -176,6 +176,10 @@ export type TransactionHistoryItem = {
   beforeQuantity: number;
   afterQuantity: number;
   batchReference: string | null;
+  expirationDate?: string | null;
+  staffEmployeeId?: string | null;
+  staffEmail?: string | null;
+  staffRole?: string | null;
   physicalCount?: InventoryCountHistoryRecord['physicalCount'];
 };
 
@@ -183,6 +187,8 @@ export type OwnerSale = {
   id: string;
   transaction_reference: string;
   branch_id: string;
+  staff_id?: string;
+  recorded_by_name?: string;
   total_amount: number;
   payment_method: string;
   status: 'pending' | 'completed' | 'cancelled';
@@ -453,23 +459,6 @@ function branchLabel(city: string, code: string): string {
   return `${city ? `${city} · ` : ''}Branch ${number}`;
 }
 
-function readBusinessSessionStatus(value: Json): {
-  active: boolean;
-  millisecondsUntilExpiration: number;
-} {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('The server returned an invalid business-session status.');
-  }
-  if (value.active !== true) {
-    return { active: false, millisecondsUntilExpiration: 0 };
-  }
-  const remaining = value.milliseconds_until_expiration;
-  if (typeof remaining !== 'number' || !Number.isFinite(remaining) || remaining < 0) {
-    throw new Error('The server returned an invalid business-session deadline.');
-  }
-  return { active: true, millisecondsUntilExpiration: remaining };
-}
-
 async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<AppUser | null> {
   const client = staffServiceClient(clientOverride);
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
@@ -481,14 +470,6 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
     const { error } = await client.auth.signOut();
     assertNoError(error);
   };
-
-  const { data: businessSession, error: businessSessionError } = await client.rpc('business_session_status');
-  assertNoError(businessSessionError);
-  const businessSessionStatus = readBusinessSessionStatus(businessSession);
-  if (!businessSessionStatus.active) {
-    await clearRejectedSession();
-    throw new Error('Your business session has expired. Sign in again when the next business date is available.');
-  }
 
   const { data: profile, error } = await client
     .from('profiles')
@@ -533,7 +514,8 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
     email: profile.email || session.user.email || '',
     branchId: profile.branch_id,
     branch,
-    businessSessionMillisecondsRemaining: businessSessionStatus.millisecondsUntilExpiration,
+    // Business hours are configuration/reporting data, never an authentication deadline.
+    businessSessionMillisecondsRemaining: 0,
   };
 }
 
@@ -580,12 +562,6 @@ export async function signIn(
       throw new Error('Confirm this email address before signing in.');
     }
     throw new Error(error.message);
-  }
-  const { error: authorizationError } = await client.rpc('authorize_business_session');
-  if (authorizationError) {
-    const { error: signOutError } = await client.auth.signOut();
-    const detail = signOutError ? ` Also unable to clear the rejected Auth session: ${signOutError.message}` : '';
-    throw new Error(`${authorizationError.message}${detail}`);
   }
   const user = await loadCurrentUser(client);
   if (!user) throw new Error('Supabase did not return an authenticated session.');
@@ -645,11 +621,6 @@ export async function signInStaff(username: string, password: string, clientOver
   }
   const { error: sessionError } = await client.auth.setSession(data.session);
   assertNoError(sessionError);
-  const { error: authorizationError } = await client.rpc('authorize_business_session');
-  if (authorizationError) {
-    await client.auth.signOut();
-    throw new Error(authorizationError.message);
-  }
   const user = await loadCurrentUser(client);
   if (!user || user.role !== 'Staff') {
     await client.auth.signOut();
@@ -664,23 +635,37 @@ export async function signInOwner(username: string, password: string, clientOver
   if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
   let result;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    result = await client.functions.invoke('staff-auth', {
-      body: { action: 'owner-login', username: normalizedUsername, password },
-    });
+    result = await Promise.race([
+      client.functions.invoke('staff-auth', {
+        body: { action: 'owner-login', username: normalizedUsername, password },
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error('Unable to connect. Please check your internet connection and try again.')),
+          10_000,
+        );
+      }),
+    ]);
   } catch {
     throw new Error('Unable to connect. Please check your internet connection and try again.');
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
   if (result.error) {
     throw new Error('Unable to connect. Please check your internet connection and try again.');
   }
   const data = result.data as {
     ok?: boolean;
-    code?: 'invalid_credentials';
+    code?: 'unknown_username' | 'incorrect_password' | 'unauthorized_access' | 'invalid_credentials';
     session?: Parameters<typeof client.auth.setSession>[0];
   } | null;
   if (!data?.ok) {
-    if (data?.code === 'invalid_credentials') throw new Error('Username or password is incorrect.');
+    if (data?.code === 'unknown_username') throw new Error('Invalid username. Please try again.');
+    if (data?.code === 'incorrect_password') throw new Error('Incorrect password. Please try again.');
+    if (data?.code === 'unauthorized_access') throw new Error('Unauthorized access.');
+    if (data?.code === 'invalid_credentials') throw new Error('Invalid username. Please try again.');
     throw new Error('Unable to connect. Please check your internet connection and try again.');
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
@@ -688,15 +673,10 @@ export async function signInOwner(username: string, password: string, clientOver
   }
   const { error: sessionError } = await client.auth.setSession(data.session);
   assertNoError(sessionError);
-  const { error: authorizationError } = await client.rpc('authorize_business_session');
-  if (authorizationError) {
-    await client.auth.signOut();
-    throw new Error(authorizationError.message);
-  }
   const user = await loadCurrentUser(client);
   if (!user || user.role !== 'Owner') {
     await client.auth.signOut();
-    throw new Error('This account does not have Owner access.');
+    throw new Error('Unauthorized access.');
   }
   return user;
 }
@@ -771,12 +751,6 @@ export async function updateOwnerProfile(input: { fullName: string; newPassword?
   }
 }
 
-export async function isBusinessSessionExpired(): Promise<boolean> {
-  const { data, error } = await requireSupabase().rpc('business_session_status');
-  assertNoError(error);
-  return !readBusinessSessionStatus(data).active;
-}
-
 export async function loadCurrentBusinessDaySettings(): Promise<BusinessDaySettings> {
   const { data, error } = await requireSupabase().rpc('business_session_status');
   assertNoError(error);
@@ -833,7 +807,7 @@ export async function loadOwnerSalesData(input: {
     const sales: OwnerSale[] = [];
     for (let offset = 0; ; offset += pageSize) {
       let query = client.from('sales')
-        .select('id, transaction_reference, branch_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at')
+        .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at')
         .eq('status', 'completed')
         .gte('created_at', start.toISOString())
         .lt('created_at', end.toISOString())
@@ -866,6 +840,21 @@ export async function loadOwnerSalesData(input: {
     const createdAt = new Date(sale.created_at).getTime();
     return createdAt >= todayStart.getTime() && createdAt < tomorrowStart.getTime();
   });
+
+  const staffIds = [...new Set(sales.map((sale) => sale.staff_id).filter((id): id is string => Boolean(id)))];
+  const staffNames = new Map<string, string>();
+  for (let offset = 0; offset < staffIds.length; offset += pageSize) {
+    const { data, error } = await client.from('profiles')
+      .select('id, full_name')
+      .in('id', staffIds.slice(offset, offset + pageSize));
+    assertNoError(error);
+    for (const profile of data ?? []) {
+      if (profile.full_name) staffNames.set(profile.id, profile.full_name);
+    }
+  }
+  for (const sale of sales) {
+    sale.recorded_by_name = sale.staff_id ? staffNames.get(sale.staff_id) : undefined;
+  }
 
   const saleItems: OwnerSalesData['items'] = [];
   const productNames = new Map<string, string>();
@@ -1657,17 +1646,15 @@ export async function validateOwnerSubmittedInventoryCount(input: {
 
 export async function loadTransactionHistory(branchId: string): Promise<TransactionHistoryItem[]> {
   const client = requireSupabase();
-  const [ingredientsResult, categoriesResult, batchesResult, profilesResult, branchResult] = await Promise.all([
+  const [ingredientsResult, categoriesResult, batchesResult, branchResult] = await Promise.all([
     client.from('ingredients').select('id, name, category_id'),
     client.from('ingredient_categories').select('id, name'),
-    client.from('ingredient_batches').select('id, batch_reference'),
-    client.from('profiles').select('id, full_name'),
+    client.from('ingredient_batches').select('id, batch_reference, expiration_date'),
     client.from('branches').select('city, code').eq('id', branchId).maybeSingle(),
   ]);
   assertNoError(ingredientsResult.error);
   assertNoError(categoriesResult.error);
   assertNoError(batchesResult.error);
-  assertNoError(profilesResult.error);
   assertNoError(branchResult.error);
   if (!branchResult.data) throw new Error('The assigned branch is unavailable.');
 
@@ -1719,10 +1706,25 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
   assertNoError(correctionsResult.error);
   assertNoError(validationsResult.error);
 
+  const profileIds = [...new Set([
+    ...transactions.map((row) => row.actor_id),
+    ...countCheckRows.map((check) => check.submitted_by),
+    ...(validationsResult.data ?? []).map((validation) => validation.validated_by),
+  ])];
+  const profilesResult = profileIds.length
+    ? await client.from('profiles')
+      .select('id, full_name, employee_id, email, role')
+      .in('id', profileIds)
+    : { data: [], error: null };
+  assertNoError(profilesResult.error);
+
   const ingredients = new Map((ingredientsResult.data ?? []).map((row) => [row.id, row]));
   const categories = new Map((categoriesResult.data ?? []).map((row) => [row.id, row.name]));
-  const profiles = new Map((profilesResult.data ?? []).map((row) => [row.id, row.full_name]));
-  const batches = new Map((batchesResult.data ?? []).map((row) => [row.id, row.batch_reference]));
+  const profiles = new Map((profilesResult.data ?? []).map((row) => [row.id, row]));
+  const batches = new Map((batchesResult.data ?? []).map((row) => [row.id, {
+    reference: row.batch_reference,
+    expirationDate: row.expiration_date,
+  }]));
   const branch = branchLabel(branchResult.data.city, branchResult.data.code);
   const movementHistory = transactions.flatMap((row) => {
     const ingredient = ingredients.get(row.ingredient_id);
@@ -1740,13 +1742,17 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
       branchId: row.branch_id,
       branch,
       staffId: row.actor_id,
-      staff: profiles.get(row.actor_id) ?? 'Unknown user',
+      staff: profiles.get(row.actor_id)?.full_name ?? 'Unknown user',
+      staffEmployeeId: profiles.get(row.actor_id)?.employee_id ?? null,
+      staffEmail: profiles.get(row.actor_id)?.email ?? null,
+      staffRole: profiles.get(row.actor_id)?.role ?? null,
       transactionDate: new Date(row.transaction_date),
       reason: row.reason,
       notes: row.notes,
       beforeQuantity: Number(row.before_quantity),
       afterQuantity: Number(row.after_quantity),
-      batchReference: row.batch_id ? batches.get(row.batch_id) ?? null : null,
+      batchReference: row.batch_id ? batches.get(row.batch_id)?.reference ?? null : null,
+      expirationDate: row.batch_id ? batches.get(row.batch_id)?.expirationDate ?? null : null,
     };
   });
   const checksById = new Map(countCheckRows.map((check) => [check.id, check]));
@@ -1761,7 +1767,7 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
     validation.daily_stock_count_line_id,
     validation,
   ]));
-  const countHistory = buildInventoryCountHistoryRecords(
+  const countHistory: TransactionHistoryItem[] = buildInventoryCountHistoryRecords(
     countLines.flatMap((line) => {
       const check = checksById.get(line.daily_stock_check_id);
       const ingredient = ingredients.get(line.ingredient_id);
@@ -1789,7 +1795,7 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
         },
         branchId,
         branch,
-        staff: profiles.get(check.submitted_by) ?? 'Unknown user',
+        staff: profiles.get(check.submitted_by)?.full_name ?? 'Unknown user',
         corrections: (correctionsByLineId.get(line.id) ?? []).map((correction) => ({
           status: correction.status,
           correctedActualQuantity: correction.corrected_actual_quantity,
@@ -1809,7 +1815,24 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
         })(),
       }];
     }),
-  );
+  ).map((record) => {
+    const employee = profiles.get(record.staffId);
+    const validation = record.physicalCount.validation;
+    const validator = validation ? profiles.get(validation.validatedBy) : null;
+    return {
+      ...record,
+      staffEmployeeId: employee?.employee_id ?? null,
+      staffEmail: employee?.email ?? null,
+      staffRole: employee?.role ?? null,
+      physicalCount: {
+        ...record.physicalCount,
+        validation: validation ? {
+          ...validation,
+          validatedByName: validator?.full_name ?? null,
+        } : null,
+      },
+    };
+  });
   return [...movementHistory, ...countHistory].sort((left, right) =>
     right.transactionDate.getTime() - left.transactionDate.getTime() || left.id.localeCompare(right.id),
   );
@@ -2031,8 +2054,8 @@ export async function processSaleInventory(saleId: string, client?: StaffService
   const { data, error } = await staffServiceClient(client).rpc('process_sale_inventory', { p_sale_id: saleId });
   if (error) {
     const message = error.message.toLowerCase();
-    if (message.includes('business session has expired')) {
-      throw new Error('Your session has expired. Sign in again before retrying inventory processing.');
+    if (message.includes('authentication') || message.includes('session')) {
+      throw new Error('Your authenticated session is no longer valid. Sign in again before retrying inventory processing.');
     }
     throw new Error('Inventory processing could not be completed. The sale is still recorded; retry when ready.');
   }

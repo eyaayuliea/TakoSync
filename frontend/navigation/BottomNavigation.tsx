@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { staffColors } from '../staff/theme/staffTokens';
 import {
   activeStaffTab,
   STAFF_NAVIGATION_TOUCH_TARGET,
@@ -13,21 +15,24 @@ export type { StaffRoute, StaffTab } from './staffNavigation';
 export { activeStaffTab };
 
 const colors = {
-  pink: '#F20D55',
-  staffPink: '#EC1358',
-  navy: '#101027',
-  orange: '#FF9418',
-  white: '#FFFFFF',
+  pink: staffColors.primary,
+  staffPink: staffColors.primary,
+  navy: staffColors.navy,
+  orange: staffColors.action,
+  white: staffColors.white,
 } as const;
 
-type Destination = { route: StaffTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' };
+export type OwnerTab = 'dashboard' | 'sales' | 'inventory' | 'discrepancies' | 'alerts' | 'more';
+export const OWNER_NAVIGATION_HEIGHT = 75;
+
+type Destination = { route: StaffTab | OwnerTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' | 'dashboardGrid' | 'salesChart' | 'sync' };
 
 const staffDestinationList: Destination[] = staffDestinations.map((destination) => ({ ...destination }));
-const ownerDestinations: Destination[] = [
-  { route: 'dashboard', label: 'Dashboard', icon: 'home' },
-  { route: 'menu', label: 'Menu', icon: 'menu' },
+export const ownerDestinations: readonly Destination[] = [
+  { route: 'dashboard', label: 'Dashboard', icon: 'dashboardGrid' },
+  { route: 'sales', label: 'Sales', icon: 'salesChart' },
   { route: 'inventory', label: 'Inventory', icon: 'box' },
-  { route: 'stocks', label: 'Stock movement', icon: 'stock' },
+  { route: 'discrepancies', label: 'Discrepancies', icon: 'sync' },
   { route: 'alerts', label: 'Alerts', icon: 'bell' },
   { route: 'more', label: 'More', icon: 'more' },
 ];
@@ -36,11 +41,58 @@ function NavigationIcon({
   name,
   color,
   outlinedBell,
+  vectorized = false,
 }: {
   name: Destination['icon'];
   color: string;
   outlinedBell: boolean;
+  vectorized?: boolean;
 }) {
+  if (vectorized) {
+    const iconName = {
+      home: 'home-outline',
+      pos: 'cash-register',
+      menu: 'silverware-fork-knife',
+      box: 'package-variant-closed',
+      stock: 'archive-outline',
+      bell: 'bell-outline',
+      more: 'dots-horizontal',
+      dashboardGrid: 'view-dashboard-outline',
+      salesChart: 'chart-bar',
+      sync: 'sync',
+    }[name] as React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+    return <MaterialCommunityIcons name={iconName} color={color} size={22} accessibilityLabel={`${name} icon`} />;
+  }
+  if (name === 'dashboardGrid') {
+    return (
+      <View style={iconStyles.dashboardGrid}>
+        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
+        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
+        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
+        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
+      </View>
+    );
+  }
+
+  if (name === 'salesChart') {
+    return (
+      <View style={iconStyles.salesChart}>
+        <View style={[iconStyles.salesBarSmall, { backgroundColor: color }]} />
+        <View style={[iconStyles.salesBarMedium, { backgroundColor: color }]} />
+        <View style={[iconStyles.salesBarTall, { backgroundColor: color }]} />
+      </View>
+    );
+  }
+
+  if (name === 'sync') {
+    return (
+      <View style={iconStyles.sync}>
+        <View style={[iconStyles.syncArrowTop, { borderColor: color }]} />
+        <View style={[iconStyles.syncArrowBottom, { borderColor: color }]} />
+      </View>
+    );
+  }
+
   if (name === 'home') {
     return <Text style={{ color, fontSize: 20 }}>⌂</Text>;
   }
@@ -142,7 +194,7 @@ export default function BottomNavigation({
               accessibilityRole="button"
               accessibilityLabel={destination.label}
               accessibilityState={{ selected }}
-              onPress={() => onSelect(destination.route)}
+              onPress={() => onSelect(destination.route as StaffTab)}
               style={({ pressed }) => [
                 styles.item,
                 staffOnly && styles.staffItem,
@@ -152,7 +204,7 @@ export default function BottomNavigation({
             >
               <View style={[styles.iconWrap, staffOnly && styles.staffOuterIconWrap]}>
                 <View style={[staffOnly && styles.staffIconWrap, showAlertBadge && styles.staffBadgeAnchor]}>
-                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} />
+                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} vectorized={staffOnly} />
                   {showAlertBadge ? (
                     <View style={[styles.staffAlertBadge, selected && styles.staffAlertBadgeSelected]}>
                       <Text style={[styles.staffAlertBadgeText, selected && styles.staffAlertBadgeTextSelected]}>
@@ -168,6 +220,50 @@ export default function BottomNavigation({
                 staffOnly && !selected && styles.staffInactiveLabel,
                 selected && styles.labelSelected,
               ]}>{destination.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+export function OwnerBottomNav({
+  activeIndex,
+  onSelect,
+}: {
+  activeIndex: number;
+  onSelect: (tab: OwnerTab) => void;
+}) {
+  const styles = useNavigationStyles();
+  return (
+    <View style={styles.outer}>
+      <View style={[styles.bar, styles.staffBar]}>
+        {ownerDestinations.map((destination, index) => {
+          const selected = destination.route !== 'more' ? activeIndex === index : activeIndex === 5;
+          return (
+            <Pressable
+              key={destination.route}
+              accessibilityRole="button"
+              accessibilityLabel={destination.label}
+              accessibilityState={{ selected }}
+              onPress={() => onSelect(destination.route as OwnerTab)}
+              style={({ pressed }) => [
+                styles.item,
+                styles.staffItem,
+                selected && styles.staffItemSelected,
+                selected && styles.ownerSelectedItem,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={[styles.iconWrap, styles.staffOuterIconWrap]}>
+                <NavigationIcon name={destination.icon} color={colors.white} outlinedBell={false} />
+              </View>
+              {selected ? (
+                <Text style={[styles.label, styles.staffLabel, styles.labelSelected]} numberOfLines={1}>
+                  {destination.label}
+                </Text>
+              ) : null}
             </Pressable>
           );
         })}
@@ -229,6 +325,9 @@ function useNavigationStyles() {
     borderRadius: 24,
     backgroundColor: colors.staffPink,
   },
+  ownerSelectedItem: {
+    maxWidth: 112,
+  },
   iconWrap: {
     width: 42,
     height: 42,
@@ -269,15 +368,16 @@ function useNavigationStyles() {
   },
   staffAlertBadgeText: {
     color: colors.white,
-    fontSize: 6,
+    // Decorative count badge; the count is also exposed through the parent label.
+    fontSize: 10,
     lineHeight: 8,
     fontFamily: 'Poppins_700Bold',
   },
   staffAlertBadgeTextSelected: {
     color: colors.staffPink,
   },
-  label: { color: colors.white, fontSize: 9, fontFamily: 'Poppins_500Medium', marginTop: 2 },
-  staffLabel: { fontSize: 8, marginTop: 0 },
+  label: { color: colors.white, fontSize: 12, lineHeight: 16, fontFamily: 'Poppins_500Medium', marginTop: 2 },
+  staffLabel: { fontSize: 12, lineHeight: 16, marginTop: 0 },
   staffInactiveLabel: { display: 'none' },
   labelSelected: { color: colors.white },
   pressed: { opacity: 0.76 },
@@ -285,6 +385,15 @@ function useNavigationStyles() {
 }
 
 const iconStyles = StyleSheet.create({
+  dashboardGrid: { width: 20, height: 20, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', padding: 2 },
+  dashboardDot: { width: 6, height: 6, borderRadius: 1 },
+  salesChart: { width: 20, height: 20, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: 2, paddingBottom: 2 },
+  salesBarSmall: { width: 4, height: 7, borderRadius: 1 },
+  salesBarMedium: { width: 4, height: 11, borderRadius: 1 },
+  salesBarTall: { width: 4, height: 16, borderRadius: 1 },
+  sync: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+  syncArrowTop: { position: 'absolute', top: 2, left: 4, width: 11, height: 6, borderTopWidth: 1.8, borderRightWidth: 1.8, borderTopRightRadius: 5, transform: [{ rotate: '-18deg' }] },
+  syncArrowBottom: { position: 'absolute', bottom: 2, right: 4, width: 11, height: 6, borderBottomWidth: 1.8, borderLeftWidth: 1.8, borderBottomLeftRadius: 5, transform: [{ rotate: '-18deg' }] },
   pos: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   posScreen: {
     width: 13, height: 17, justifyContent: 'center', paddingHorizontal: 2,

@@ -6,7 +6,6 @@ import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import appConfig from '../app.json';
 import {
-  AppState,
   ActivityIndicator,
   Image,
   ImageBackground,
@@ -22,6 +21,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
+import { StaffLoadingOverlay } from './staff/shared/staffComponents';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
@@ -33,7 +33,6 @@ import { StaffLoginError } from './services/staffAuthentication';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
-  isBusinessSessionExpired,
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
@@ -44,8 +43,8 @@ import {
   type OwnerSalesData,
 } from './services/takosync';
 
-const PINK = '#F20D55';
-const NAVY = '#101026';
+const PINK = '#EC1358';
+const NAVY = '#0F1025';
 const DASHBOARD_COLORS = {
   pink: '#EC1358',
   navy: '#0F1025',
@@ -126,7 +125,6 @@ function AppContent() {
   const authOperationLock = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
-  const businessExpiryLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
@@ -546,7 +544,15 @@ function AppContent() {
       if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
         setPassword('');
       }
-      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
+      if (error instanceof StaffLoginError && error.code === 'unknown_username') {
+        setUsernameError(error.message);
+        setLoginError('');
+      } else if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
+        setPasswordError(error.message);
+        setLoginError('');
+      } else {
+        setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
+      }
     } finally {
       authLock.current = false;
       authOperationLock.current = false;
@@ -597,45 +603,6 @@ function AppContent() {
     });
     return () => data.subscription.unsubscribe();
   }, [clearSignedInState]);
-
-  useEffect(() => {
-    if (!authenticatedUser) return;
-    let active = true;
-    const expireBusinessSession = async () => {
-      if (businessExpiryLock.current) return;
-      businessExpiryLock.current = true;
-      try {
-        if (!(await isBusinessSessionExpired())) return;
-        await signOut();
-        if (!active) return;
-        clearSignedInState();
-        setLoginError(authenticatedUser.role === 'Staff'
-          ? 'Your session for the business day has ended. Please log in again.'
-          : 'Your business session has ended. Sign in again for the next business date.');
-        setScreen(authenticatedUser.role === 'Owner' ? 'ownerLogin' : 'login');
-      } catch (error) {
-        if (active) {
-          clearSignedInState();
-          setLoginError(error instanceof Error ? error.message : 'Unable to verify the business session. Sign in again.');
-          setScreen(authenticatedUser.role === 'Owner' ? 'ownerLogin' : 'login');
-        }
-      } finally {
-        businessExpiryLock.current = false;
-      }
-    };
-    const timer = setTimeout(
-      () => void expireBusinessSession(),
-      Math.max(0, authenticatedUser.businessSessionMillisecondsRemaining + 25),
-    );
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void expireBusinessSession();
-    });
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      subscription.remove();
-    };
-  }, [authenticatedUser, clearSignedInState]);
 
   const handleLogout = async () => {
     if (logoutLock.current) return;
@@ -771,7 +738,7 @@ function AppContent() {
             {visibleScreen === 'login' && (
               <View style={styles.loginScreen}>
                 <ImageBackground
-                  source={require('../assets/takoyaki-plate.png')}
+                  source={require('../assets/WELCOME PAGE.jpg')}
                   resizeMode="cover"
                   style={styles.loginBackground}
                   imageStyle={styles.loginBackgroundImage}
@@ -881,6 +848,7 @@ function AppContent() {
                     </ScrollView>
                   </View>
                 </ImageBackground>
+                <StaffLoadingOverlay visible={authenticating} label="Logging in…" />
               </View>
             )}
 
@@ -1597,8 +1565,8 @@ function useAppStyles() {
   buttonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   loginScreen: { flex: 1, backgroundColor: '#FFFFFF' },
   loginBackground: { flex: 1 },
-  loginBackgroundImage: { width: '100%', height: '100%', opacity: 0.38 },
-  loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.62)' },
+  loginBackgroundImage: { width: '100%', height: '100%' },
+  loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
   loginHeader: { alignItems: 'center', justifyContent: 'center', paddingTop: 12, backgroundColor: 'transparent' },
   loginScroll: { flex: 1 },
   loginScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 },

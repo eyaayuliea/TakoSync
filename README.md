@@ -1,5 +1,9 @@
 # TakoSync: A Mobile Inventory Monitoring and Stock Auditing System for Gelo’s Takoyaki
 
+## Staff web preview
+
+Use `npm run web:staff` to launch the Staff target in Expo web mode for development-only visual smoke testing. The command sets `EXPO_PUBLIC_APP_MODE=staff`; production builds must continue to use the native Staff entry point and must not rely on this preview flag for access control.
+
 ## Project overview
 
 TakoSync is a React Native and Expo application for monitoring ingredient inventory and recording stock activity for Gelo’s Takoyaki’s three branches. It addresses the difficulty of keeping branch stock records current, identifying low or expiring items, and documenting differences between recorded and physically counted inventory.
@@ -17,7 +21,7 @@ TakoSync is a React Native and Expo application for monitoring ingredient invent
 
 The Staff interface currently includes:
 - A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
-- Supabase email/password sign-in, persistent session restoration, logout, and server-enforced Staff and Owner mobile business-session expiration. Sessions use the Asia/Manila business date: the default close is 10:00 PM, with an optional 11:00 PM extension that the Owner must enable before 10:00 PM; no extension authorization is permitted after normal closing.
+- Supabase email/password sign-in, persistent session restoration, secure token refresh, logout, and role/branch authorization for Staff and Owner mobile users. Business hours remain configurable reporting data and do not expire authenticated sessions.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
 - Stock-Out and usage entries, including cooking-batch workflows.

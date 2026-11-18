@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import type { StyleSheet } from 'react-native';
+import { ownerColors } from '../owner/shared/ownerTokens';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -18,13 +19,134 @@ export type ThemeColors = {
   error: string;
   information: string;
   border: string;
+  salesRecordNavy: string;
+  salesRecordCrimson: string;
+  salesRecordRed: string;
+  salesRecordGray: string;
+  salesRecordTile: string;
+  salesRecordCategoryTag: string;
+  salesRecordSuccess: string;
+  salesRecordMuted: string;
+  salesRecordLavender: string;
+  salesRecordBorder: string;
+  physicalCountRed: string;
+  physicalCountBerry: string;
+  physicalCountOrange: string;
+  physicalCountYellow: string;
 };
 
 export type AppTheme = {
   mode: ThemeMode;
   isDark: boolean;
   colors: ThemeColors;
+  ownerMenu: OwnerMenuTheme;
   setMode: (mode: ThemeMode) => void;
+};
+
+export type OwnerMenuTheme = {
+  colors: {
+    background: string;
+    text: string;
+    navy: string;
+    crimson: string;
+    flameOrange: string;
+    tile: string;
+    secondaryText: string;
+    chevron: string;
+    white: string;
+    scrim: string;
+  };
+  fonts: {
+    regular: string;
+    bold: string;
+  };
+  typography: {
+    pageTitle: number;
+    tileTitle: number;
+    subtitle: number;
+    chevron: number;
+  };
+  layout: {
+    screenHorizontalPadding: number;
+    screenTopPadding: number;
+    screenBottomPadding: number;
+    titleBottomSpacing: number;
+    tileGap: number;
+    tileMinHeight: number;
+    tileRadius: number;
+    tilePadding: number;
+    iconCircleSize: number;
+    tileIconGap: number;
+    textLineGap: number;
+    scrollBottomPadding: number;
+    navHeight: number;
+    navHorizontalMargin: number;
+    navBottomMargin: number;
+    navIconSize: number;
+    navIconWrapWidth: number;
+    navIconWrapHeight: number;
+    backGestureEdgeWidth: number;
+    backGestureActivationDistance: number;
+    backGestureVerticalTolerance: number;
+    pressedOpacity: number;
+  };
+  icon: {
+    strokeWidth: number;
+    dotSize: number;
+  };
+};
+
+const ownerMenuTheme: OwnerMenuTheme = {
+  colors: {
+    background: ownerColors.white,
+    text: ownerColors.black,
+    navy: ownerColors.navy,
+    crimson: ownerColors.primary,
+    flameOrange: ownerColors.orange,
+    tile: ownerColors.card,
+    secondaryText: ownerColors.secondaryText,
+    chevron: ownerColors.neutral,
+    white: ownerColors.white,
+    scrim: ownerColors.scrim,
+  },
+  fonts: {
+    regular: 'Poppins_400Regular',
+    bold: 'Poppins_700Bold',
+  },
+  typography: {
+    pageTitle: 20,
+    tileTitle: 10,
+    subtitle: 8,
+    chevron: 18,
+  },
+  layout: {
+    screenHorizontalPadding: 20,
+    screenTopPadding: 20,
+    screenBottomPadding: 14,
+    titleBottomSpacing: 16,
+    tileGap: 8,
+    tileMinHeight: 52,
+    tileRadius: 12,
+    tilePadding: 10,
+    iconCircleSize: 32,
+    tileIconGap: 10,
+    textLineGap: 2,
+    scrollBottomPadding: 18,
+    navHeight: 75,
+    navHorizontalMargin: 14,
+    navBottomMargin: 11,
+    navIconSize: 20,
+    navIconWrapWidth: 38,
+    navIconWrapHeight: 32,
+    backGestureEdgeWidth: 24,
+    backGestureActivationDistance: 60,
+    backGestureVerticalTolerance: 32,
+    pressedOpacity: 0.72,
+  },
+  icon: {
+    strokeWidth: 1.8,
+    dotSize: 2.5,
+  },
 };
 
 const STORAGE_KEY = 'takosync.theme-mode';
@@ -42,6 +164,20 @@ const lightColors: ThemeColors = {
   error: '#C92F3C',
   information: '#595EC0',
   border: '#EEEEF1',
+  salesRecordNavy: ownerColors.navy,
+  salesRecordCrimson: ownerColors.primary,
+  salesRecordRed: ownerColors.error,
+  salesRecordGray: ownerColors.neutral,
+  salesRecordTile: ownerColors.card,
+  salesRecordCategoryTag: ownerColors.neutral,
+  salesRecordSuccess: ownerColors.success,
+  salesRecordMuted: ownerColors.secondaryText,
+  salesRecordLavender: ownerColors.lavenderTint,
+  salesRecordBorder: ownerColors.divider,
+  physicalCountRed: ownerColors.error,
+  physicalCountBerry: ownerColors.discrepancy,
+  physicalCountOrange: ownerColors.orange,
+  physicalCountYellow: ownerColors.warning,
 };
 
 const darkColors: ThemeColors = {
@@ -57,6 +193,20 @@ const darkColors: ThemeColors = {
   error: '#F52F2E',
   information: '#595EC0',
   border: '#3A394D',
+  salesRecordNavy: '#F5F4FA',
+  salesRecordCrimson: '#FF0A50',
+  salesRecordRed: '#F52F2E',
+  salesRecordGray: '#29283B',
+  salesRecordTile: '#29283B',
+  salesRecordCategoryTag: '#494957',
+  salesRecordSuccess: '#589144',
+  salesRecordMuted: '#B2B3C4',
+  salesRecordLavender: '#29283B',
+  salesRecordBorder: '#3A394D',
+  physicalCountRed: '#F52F2E',
+  physicalCountBerry: '#FF6C8F',
+  physicalCountOrange: '#FCA639',
+  physicalCountYellow: '#FDE672',
 };
 
 const ThemeContext = createContext<AppTheme | null>(null);
@@ -96,6 +246,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     mode,
     isDark: mode === 'dark',
     colors: mode === 'dark' ? darkColors : lightColors,
+    ownerMenu: ownerMenuTheme,
     setMode,
   }), [mode]);
 
@@ -202,13 +353,19 @@ export function createThemedStyles<T extends StyleSheet.NamedStyles<T>>(
   theme: AppTheme,
 ): T {
   if (!theme.isDark) return definitions;
-  Object.entries(definitions).forEach(([styleName, style]) => {
-    if (typeof style !== 'object' || style === null) return;
-    Object.entries(style).forEach(([property, value]) => {
-      if (typeof value === 'string' && isColorProperty(property)) {
-        Reflect.set(style, property, remapColor(value, property, styleName, theme));
-      }
-    });
-  });
-  return definitions;
+  const themedDefinitions = Object.fromEntries(
+    Object.entries(definitions).map(([styleName, style]) => {
+      if (typeof style !== 'object' || style === null) return [styleName, style];
+      const themedStyle = Object.fromEntries(
+        Object.entries(style).map(([property, value]) => [
+          property,
+          typeof value === 'string' && isColorProperty(property)
+            ? remapColor(value, property, styleName, theme)
+            : value,
+        ]),
+      );
+      return [styleName, themedStyle];
+    }),
+  );
+  return themedDefinitions as T;
 }

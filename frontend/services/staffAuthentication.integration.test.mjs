@@ -97,18 +97,16 @@ test('Staff login forwards the Employee ID password unchanged', async () => {
   });
 });
 
-test('development mode rejects Staff login when the business session is closed', async () => {
+test('Staff login succeeds after business closing time', async () => {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousBypass = process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
   process.env.NODE_ENV = 'development';
   process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = 'true';
   try {
     const client = new AuthFixture({ businessSessionActive: false });
-    await assert.rejects(
-      () => signInStaff('ana_staff', 'EMP-001', client),
-      /Your business session has expired/,
-    );
-    assert.equal(client.signedOut, true);
+    const user = await signInStaff('ana_staff', 'EMP-001', client);
+    assert.equal(user.role, 'Staff');
+    assert.equal(client.signedOut, false);
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
@@ -117,18 +115,16 @@ test('development mode rejects Staff login when the business session is closed',
   }
 });
 
-test('production mode still blocks Staff login when the business session is closed', async () => {
+test('Staff login succeeds after midnight regardless of environment', async () => {
   const previousNodeEnv = process.env.NODE_ENV;
   const previousBypass = process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION;
   process.env.NODE_ENV = 'production';
   process.env.EXPO_PUBLIC_ALLOW_STAFF_LOGIN_WITHOUT_BUSINESS_SESSION = 'true';
   try {
     const client = new AuthFixture({ businessSessionActive: false });
-    await assert.rejects(
-      () => signInStaff('ana_staff', 'EMP-001', client),
-      /Your business session has expired/,
-    );
-    assert.equal(client.signedOut, true);
+    const user = await signInStaff('ana_staff', 'EMP-001', client);
+    assert.equal(user.role, 'Staff');
+    assert.equal(client.signedOut, false);
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
@@ -180,17 +176,18 @@ test('Owner username login rejects a Staff profile after the session is installe
   const client = new AuthFixture({ profile: {
     id: 'user-1', username: 'ana_staff', email: 'staff@example.test', full_name: 'Ana', role: 'staff', branch_id: 'branch-2', active: true,
   }});
-  await assert.rejects(() => signInOwner('ana_staff', 'password', client), { message: 'This account does not have Owner access.' });
+  await assert.rejects(() => signInOwner('ana_staff', 'password', client), { message: 'Unauthorized access.' });
   assert.equal(client.signedOut, true);
 });
 
-test('Owner username login clears the session when business authorization fails', async () => {
+test('Owner username login ignores business-hours status and preserves the session', async () => {
   const client = new AuthFixture({
     profile: {
       id: 'user-1', username: "ownergelo'26", email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
     },
     authorizationError: { message: 'Business session is not active.' },
   });
-  await assert.rejects(() => signInOwner("ownergelo'26", 'owner-password', client), { message: 'Business session is not active.' });
-  assert.equal(client.signedOut, true);
+  const user = await signInOwner("ownergelo'26", 'owner-password', client);
+  assert.equal(user.role, 'Owner');
+  assert.equal(client.signedOut, false);
 });

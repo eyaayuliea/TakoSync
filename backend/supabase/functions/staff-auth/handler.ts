@@ -87,9 +87,6 @@ function getClients(options: HandlerOptions) {
 async function requireOwner(
   request: Request,
   admin: ReturnType<HandlerOptions['createClient']>,
-  url: string,
-  anonKey: string,
-  createClient: HandlerOptions['createClient'],
 ) {
   const authorization = request.headers.get('Authorization') ?? '';
   const token = authorization.match(/^Bearer\s+(\S+)$/i)?.[1];
@@ -123,27 +120,6 @@ async function requireOwner(
   const profile = profileResult.data;
   if (!profile || profile.role !== 'owner' || !profile.active) {
     throw new HttpError(403, 'Only an active Owner may manage Staff accounts.');
-  }
-
-  let sessionResult;
-  try {
-    const caller = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    sessionResult = await caller.rpc('business_session_status');
-  } catch {
-    throw new HttpError(500, 'Unable to verify the business session.');
-  }
-  if (sessionResult.error) {
-    console.error('[staff-auth] business session authorization RPC failed', {
-      code: sessionResult.error.code ?? null,
-      status: sessionResult.error.status ?? null,
-    });
-    throw new HttpError(500, 'Unable to verify the business session.');
-  }
-  if (!sessionResult.data || typeof sessionResult.data !== 'object' || sessionResult.data.active !== true) {
-    throw new HttpError(403, 'An active business session is required.');
   }
 
   return userData.user.id;
@@ -253,15 +229,14 @@ async function loginOwner(
   admin: ReturnType<HandlerOptions['createClient']>,
 ) {
   const username = normalizeOwnerUsername(usernameValue);
-  if (!username || !password) return response({ ok: false, code: 'invalid_credentials' });
+  if (!username) return response({ ok: false, code: 'unknown_username' });
+  if (!password) return response({ ok: false, code: 'incorrect_password' });
 
   let profileResult;
   try {
     profileResult = await admin.from('profiles')
       .select('id, email, role, active')
       .eq('username', username)
-      .eq('role', 'owner')
-      .eq('active', true)
       .maybeSingle();
   } catch (error) {
     console.error('[staff-auth] Owner profile lookup threw', {
@@ -285,8 +260,14 @@ async function loginOwner(
     active: profile?.active ?? null,
     hasEmail: typeof profile?.email === 'string' && Boolean(profile.email.trim()),
   });
-  if (!profile || profile.role !== 'owner' || !profile.active || typeof profile.email !== 'string' || !profile.email.trim()) {
-    return response({ ok: false, code: 'invalid_credentials' });
+  if (!profile) {
+    return response({ ok: false, code: 'unknown_username' });
+  }
+  if (profile.role !== 'owner' || !profile.active) {
+    return response({ ok: false, code: 'unauthorized_access' });
+  }
+  if (typeof profile.email !== 'string' || !profile.email.trim()) {
+    return response({ ok: false, code: 'unauthorized_access' });
   }
 
   let authResult;
@@ -307,7 +288,7 @@ async function loginOwner(
     const isInvalidCredentials =
       authResult.error.code === 'invalid_credentials' ||
       (authResult.error.status === 400 && authResult.error.message === 'Invalid login credentials');
-    if (isInvalidCredentials) return response({ ok: false, code: 'invalid_credentials' });
+    if (isInvalidCredentials) return response({ ok: false, code: 'incorrect_password' });
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
   console.info('[staff-auth] Owner Supabase Auth sign-in succeeded');
@@ -342,7 +323,7 @@ async function provisionExistingStaff(
   anonKey: string,
   createClient: HandlerOptions['createClient'],
 ) {
-  await requireOwner(request, admin, url, anonKey, createClient);
+  await requireOwner(request, admin);
   const { data: profiles, error } = await admin.from('profiles')
     .select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at')
     .eq('role', 'staff')
@@ -377,7 +358,7 @@ async function resetStaffPassword(
   anonKey: string,
   createClient: HandlerOptions['createClient'],
 ) {
-  await requireOwner(request, admin, url, anonKey, createClient);
+  await requireOwner(request, admin);
   const id = inputString(input.id);
   if (!id) throw new HttpError(400, 'A Staff profile ID is required.');
 
@@ -433,7 +414,7 @@ async function saveAccount(
   anonKey: string,
   createClient: HandlerOptions['createClient'],
 ) {
-  await requireOwner(request, admin, url, anonKey, createClient);
+  await requireOwner(request, admin);
   const username = normalizeUsername(inputString(input.username));
   const branchId = inputString(input.branchId);
   if (!username) throw new HttpError(400, 'Employee name / username is required.');
@@ -574,7 +555,7 @@ export function createStaffAuthHandler(options: HandlerOptions) {
         return await changePassword(request, typeof body.newPassword === 'string' ? body.newPassword : '', admin);
       }
       if (body.action === 'list') {
-        await requireOwner(request, admin, url, anonKey, options.createClient);
+        await requireOwner(request, admin);
         return await accountList(admin);
       }
       if (body.action === 'create' || body.action === 'update') {

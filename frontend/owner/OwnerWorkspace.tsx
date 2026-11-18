@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import BottomNavigation, { type StaffTab } from '../navigation/BottomNavigation';
+import { OwnerBottomNav, type OwnerTab, type StaffTab } from '../navigation/BottomNavigation';
 import {
   branchLabel,
   formatOwnerDate,
@@ -540,7 +540,24 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
         </ScrollView>
       )}
 
-      <BottomNavigation active={selectedTab} onSelect={navigateTab} showMenu={false} />
+      <OwnerBottomNav
+        activeIndex={
+          page === 'dashboard' ? 0
+            : page === 'inventory' ? 2
+              : page === 'stocks' ? 2
+                : page === 'alerts' ? 4
+                  : page === 'settings' ? 5
+                    : 0
+        }
+        onSelect={(tab: OwnerTab) => {
+          if (tab === 'dashboard') setPage('dashboard');
+          else if (tab === 'sales') setPage('dashboard');
+          else if (tab === 'inventory') setPage('inventory');
+          else if (tab === 'discrepancies') setPage('inventory');
+          else if (tab === 'alerts') setPage('alerts');
+          else setPage('settings');
+        }}
+      />
     </View>
   );
 }
