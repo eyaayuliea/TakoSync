@@ -28,6 +28,7 @@ export type StaffRoute =
   | 'inventoryHistory'
   | 'alertDetails'
   | 'dailyInventoryCheck'
+  | 'dailyInventoryOverview'
   | 'dailyCheckSuccess'
   | 'profileSettings'
   | 'alerts'
@@ -74,6 +75,7 @@ export function activeStaffTab(route: StaffRoute): StaffTab {
     route === 'inventoryCountDetails' ||
     route === 'inventoryDiscrepancySubmission' ||
     route === 'dailyInventoryCheck' ||
+    route === 'dailyInventoryOverview' ||
     route === 'dailyCheckSuccess'
   ) return 'inventory';
   if (route === 'alerts' || route === 'alertDetails') return 'alerts';

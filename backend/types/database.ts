@@ -111,6 +111,18 @@ export type Database = {
         created_at: string;
         inventory_revision: number | null;
       }>;
+      daily_stock_check_drafts: Table<{
+        id: string;
+        draft_id: string;
+        branch_id: string;
+        staff_id: string;
+        check_date: string;
+        remarks: string;
+        verified: boolean;
+        lines: Json;
+        created_at: string;
+        updated_at: string;
+      }>;
       products: Table<{
         id: string;
         product_name: string;
@@ -397,6 +409,21 @@ export type Database = {
       submit_daily_stock_check: {
         Args: { p_branch_id: string; p_request_id: string; p_check_date: string; p_remarks: string; p_lines: Json };
         Returns: Json;
+      };
+      save_daily_stock_check_draft: {
+        Args: {
+          p_draft_id: string;
+          p_branch_id: string;
+          p_check_date: string;
+          p_remarks: string;
+          p_verified: boolean;
+          p_lines: Json;
+        };
+        Returns: Database['public']['Tables']['daily_stock_check_drafts']['Row'];
+      };
+      delete_daily_stock_check_draft: {
+        Args: { p_draft_id: string; p_branch_id: string };
+        Returns: boolean;
       };
       authorize_inventory_discrepancy_adjustment: {
         Args: { p_count_line_id: string; p_reason: string };

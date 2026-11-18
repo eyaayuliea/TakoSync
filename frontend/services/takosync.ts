@@ -983,13 +983,15 @@ export async function loadStaffDailySales(
     product_id: string;
     quantity: number;
     subtotal: number;
+    product_variant_id: string | null;
+    unit_price: number | null;
   }> = [];
   const saleIds = sales.map((sale) => sale.id);
   for (let saleOffset = 0; saleOffset < saleIds.length; saleOffset += pageSize) {
     const saleIdBatch = saleIds.slice(saleOffset, saleOffset + pageSize);
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await client.from('sale_items')
-        .select('id, sale_id, product_id, quantity, subtotal')
+        .select('id, sale_id, product_id, product_variant_id, quantity, unit_price, subtotal')
         .in('sale_id', saleIdBatch)
         .order('id', { ascending: true })
         .range(offset, offset + pageSize - 1);
@@ -1009,7 +1011,17 @@ export async function loadStaffDailySales(
     productNames.push(...(data ?? []));
   }
 
-  return buildStaffDailySalesSummary({ branchId, sales, saleItems, productNames });
+  const variantIds = [...new Set(saleItems.flatMap((item) => item.product_variant_id ? [item.product_variant_id] : []))];
+  const productVariants: Array<{ id: string; size_label: string }> = [];
+  for (let offset = 0; offset < variantIds.length; offset += pageSize) {
+    const { data, error } = await client.from('product_variants')
+      .select('id, size_label')
+      .in('id', variantIds.slice(offset, offset + pageSize));
+    assertNoError(error);
+    productVariants.push(...(data ?? []));
+  }
+
+  return buildStaffDailySalesSummary({ branchId, sales, saleItems, productNames, productVariants });
 }
 
 export async function loadStaffSaleReceipt(saleId: string, branchId: string): Promise<StaffSaleReceipt> {
@@ -1431,6 +1443,127 @@ export async function submitDailyStockCheck(input: {
     checkDate: typeof receipt.check_date === 'string' ? receipt.check_date : input.checkDate,
     lines,
   };
+}
+
+export type StaffDailyStockCheckDraftLine = {
+  ingredientId: string;
+  recordedQuantity: number;
+  inventoryRevision: number;
+  physicalQuantity: string;
+  unit: string;
+};
+
+export type StaffDailyStockCheckDraft = {
+  draftId: string;
+  branchId: string;
+  checkDate: string;
+  remarks: string;
+  verified: boolean;
+  lines: StaffDailyStockCheckDraftLine[];
+  updatedAt: string;
+};
+
+function parseStaffDailyStockCheckDraft(value: unknown): StaffDailyStockCheckDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The saved daily count draft was invalid.');
+  }
+  const draft = value as {
+    draft_id?: unknown;
+    branch_id?: unknown;
+    check_date?: unknown;
+    remarks?: unknown;
+    verified?: unknown;
+    lines?: unknown;
+    updated_at?: unknown;
+  };
+  if (
+    typeof draft.draft_id !== 'string' ||
+    typeof draft.branch_id !== 'string' ||
+    typeof draft.check_date !== 'string' ||
+    typeof draft.remarks !== 'string' ||
+    typeof draft.verified !== 'boolean' ||
+    !Array.isArray(draft.lines) ||
+    typeof draft.updated_at !== 'string'
+  ) {
+    throw new Error('The saved daily count draft was incomplete.');
+  }
+  const lines = draft.lines.map((line) => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) {
+      throw new Error('The saved daily count draft contains an invalid line.');
+    }
+    const value = line as Record<string, unknown>;
+    if (
+      typeof value.ingredient_id !== 'string' ||
+      typeof value.recorded_quantity !== 'number' ||
+      typeof value.inventory_revision !== 'number' ||
+      (typeof value.physical_quantity !== 'string' && value.physical_quantity !== null) ||
+      typeof value.unit !== 'string'
+    ) {
+      throw new Error('The saved daily count draft contains invalid quantity data.');
+    }
+    return {
+      ingredientId: value.ingredient_id,
+      recordedQuantity: value.recorded_quantity,
+      inventoryRevision: value.inventory_revision,
+      physicalQuantity: value.physical_quantity ?? '',
+      unit: value.unit,
+    };
+  });
+  return {
+    draftId: draft.draft_id,
+    branchId: draft.branch_id,
+    checkDate: draft.check_date,
+    remarks: draft.remarks,
+    verified: draft.verified,
+    lines,
+    updatedAt: draft.updated_at,
+  };
+}
+
+export async function loadStaffDailyStockCheckDraft(branchId: string): Promise<StaffDailyStockCheckDraft | null> {
+  if (!branchId.trim()) throw new Error('An assigned branch is required to load a daily count draft.');
+  const { data, error } = await requireSupabase()
+    .from('daily_stock_check_drafts')
+    .select('draft_id, branch_id, check_date, remarks, verified, lines, updated_at')
+    .eq('branch_id', branchId)
+    .maybeSingle();
+  assertNoError(error);
+  return data ? parseStaffDailyStockCheckDraft(data) : null;
+}
+
+export async function saveStaffDailyStockCheckDraft(input: {
+  draftId: string;
+  branchId: string;
+  checkDate: string;
+  remarks: string;
+  verified: boolean;
+  lines: StaffDailyStockCheckDraftLine[];
+}) {
+  const payload: Json = input.lines.map((line) => ({
+    ingredient_id: line.ingredientId,
+    recorded_quantity: line.recordedQuantity,
+    inventory_revision: line.inventoryRevision,
+    physical_quantity: line.physicalQuantity,
+    unit: line.unit,
+  }));
+  const { data, error } = await requireSupabase().rpc('save_daily_stock_check_draft', {
+    p_draft_id: input.draftId,
+    p_branch_id: input.branchId,
+    p_check_date: input.checkDate,
+    p_remarks: input.remarks,
+    p_verified: input.verified,
+    p_lines: payload,
+  });
+  assertNoError(error);
+  return parseStaffDailyStockCheckDraft(data);
+}
+
+export async function deleteStaffDailyStockCheckDraft(draftId: string, branchId: string): Promise<void> {
+  const { error } = await requireSupabase().rpc('delete_daily_stock_check_draft', {
+    p_draft_id: draftId,
+    p_branch_id: branchId,
+  });
+  assertNoError(error);
 }
 
 export async function requestInventoryCountCorrection(input: {

@@ -57,6 +57,9 @@ import {
   processSaleInventory,
   submitSale,
   submitDailyStockCheck,
+  loadStaffDailyStockCheckDraft,
+  saveStaffDailyStockCheckDraft,
+  deleteStaffDailyStockCheckDraft,
   requestInventoryCountCorrection,
   InventoryCountCorrectionSubmissionError,
   type AppUser,
@@ -68,6 +71,7 @@ import {
   type StaffSaleReceipt,
   type StaffSaleRecord,
   type StaffDailySalesSummary,
+  type StaffDailyStockCheckDraftLine,
   loadStaffDailySales,
   loadStaffInventoryReports,
   recordInventoryTransactionsIdempotently,
@@ -802,6 +806,7 @@ function DatePickerField({
   maxDate,
   useConfirmation = false,
   confirmLabel = 'Use Date',
+  triggerLabel,
 }: {
   label: string;
   value: Date | null;
@@ -811,6 +816,7 @@ function DatePickerField({
   maxDate?: Date;
   useConfirmation?: boolean;
   confirmLabel?: string;
+  triggerLabel?: string;
 }) {
   const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
@@ -836,6 +842,19 @@ function DatePickerField({
 
   return (
     <>
+      {triggerLabel ? (
+        <View style={styles.fieldGroup}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${triggerLabel}, ${value ? formatDate(value) : 'choose date'}`}
+            onPress={openDatePicker}
+            style={styles.dailySalesDateButton}
+          >
+            <Text style={styles.dailySalesDateButtonText}>{triggerLabel}</Text>
+          </Pressable>
+          {error ? <InlineFieldError message={error} /> : null}
+        </View>
+      ) : (
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>{label}</Text>
         <View style={[styles.dateInput, error ? styles.textInputError : undefined]}>
@@ -870,6 +889,7 @@ function DatePickerField({
         </View>
         {error ? <InlineFieldError message={error} /> : null}
       </View>
+      )}
       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.calendarModal}>
@@ -1062,7 +1082,12 @@ export default function StaffWorkspace({
   const [refreshing, setRefreshing] = useState(false);
   const alertRefreshLock = useRef(false);
   const [dailyCheckLines, setDailyCheckLines] = useState<DailyCheckLine[]>([]);
+  const [dailyCheckSearch, setDailyCheckSearch] = useState('');
   const [dailyCheckRemarks, setDailyCheckRemarks] = useState('');
+  const [dailyCheckVerified, setDailyCheckVerified] = useState(false);
+  const [dailyCheckDraftId, setDailyCheckDraftId] = useState<string | null>(null);
+  const [dailyCheckDraftSaving, setDailyCheckDraftSaving] = useState(false);
+  const [dailyCheckDraftMessage, setDailyCheckDraftMessage] = useState('');
   const [dailyCheckStartedAt, setDailyCheckStartedAt] = useState<Date | null>(null);
   const [dailyCheckAttempted, setDailyCheckAttempted] = useState(false);
   const [dailyCheckModal, setDailyCheckModal] = useState<'review' | 'confirm' | null>(null);
@@ -2645,15 +2670,26 @@ export default function StaffWorkspace({
           physicalQuantity: '',
           unit: item.unit,
         }));
-      setDailyCheckLines(lines);
-      setDailyCheckRemarks('');
+      const draft = await loadStaffDailyStockCheckDraft(user.branchId);
+      const draftLines = draft?.lines ?? [];
+      setDailyCheckLines(lines.map((line) => {
+        const savedLine = draftLines.find((entry) => entry.ingredientId === line.ingredientId);
+        return savedLine && savedLine.recordedQuantity === line.recordedQuantity && savedLine.inventoryRevision === line.inventoryRevision
+          ? { ...line, physicalQuantity: savedLine.physicalQuantity }
+          : line;
+      }));
+      setDailyCheckSearch('');
+      setDailyCheckRemarks(draft?.remarks ?? '');
+      setDailyCheckVerified(draft?.verified ?? false);
+      setDailyCheckDraftId(draft?.draftId ?? null);
+      setDailyCheckDraftMessage(draft ? 'Draft loaded. Continue editing until submitted.' : '');
       setDailyCheckStartedAt(new Date());
       setDailyCheckAttempted(false);
       setDailyCheckModal(null);
       setCurrentDailyCheck(null);
       setDailyCheckSubmissionRequest(null);
       dailyCheckSubmissionLock.current = false;
-      setRoute('dailyInventoryCheck');
+      setRoute('dailyInventoryOverview');
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'Unable to refresh stock before the count begins.');
     } finally {
@@ -2663,16 +2699,49 @@ export default function StaffWorkspace({
 
   const validateDailyInventoryCheck = () => {
     setDailyCheckAttempted(true);
-    return dailyCheckValid;
+    if (!dailyCheckValid) {
+      setFormError('Correct the highlighted quantities before continuing.');
+      return false;
+    }
+    if (!dailyCheckVerified) {
+      setFormError('Verify the physical count before continuing.');
+      return false;
+    }
+    return true;
+  };
+
+  const saveDailyInventoryDraft = async () => {
+    if (dailyCheckDraftSaving || !user.branchId || dailyCheckLines.length === 0) return;
+    setDailyCheckDraftSaving(true);
+    setFormError('');
+    try {
+      const draftId = dailyCheckDraftId ?? crypto.randomUUID();
+      const lines: StaffDailyStockCheckDraftLine[] = dailyCheckLines.map((line) => ({
+        ingredientId: line.ingredientId,
+        recordedQuantity: line.recordedQuantity,
+        inventoryRevision: line.inventoryRevision,
+        physicalQuantity: line.physicalQuantity,
+        unit: line.unit,
+      }));
+      const saved = await saveStaffDailyStockCheckDraft({
+        draftId,
+        branchId: user.branchId,
+        checkDate: formatLocalIsoDate(manilaBusinessDate()),
+        remarks: dailyCheckRemarks.trim(),
+        verified: dailyCheckVerified,
+        lines,
+      });
+      setDailyCheckDraftId(saved.draftId);
+      setDailyCheckDraftMessage('Matches expected · Draft can be edited until submitted.');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to save the count draft.');
+    } finally {
+      setDailyCheckDraftSaving(false);
+    }
   };
 
   const openDailyCheckReview = () => {
     if (!validateDailyInventoryCheck()) return;
-    if (dailyDiscrepancies.length > 0) {
-      setDailyCheckModal(null);
-      setRoute('inventoryDiscrepancySubmission');
-      return;
-    }
     setDailyCheckModal('review');
   };
 
@@ -2720,6 +2789,14 @@ export default function StaffWorkspace({
       try {
         setPendingDailyStockChecks(await pendingDailyStockCheckStore.save(request));
         await retryDailyStockCheck(request);
+        if (dailyCheckDraftId && user.branchId) {
+          try {
+            await deleteStaffDailyStockCheckDraft(dailyCheckDraftId, user.branchId);
+            setDailyCheckDraftId(null);
+          } catch {
+            setDailyCheckDraftMessage('Count submitted. The saved draft will be replaced the next time a draft is saved.');
+          }
+        }
       } catch (error) {
         setDailyCheckModal(null);
         setFormError(error instanceof Error
@@ -4775,6 +4852,60 @@ export default function StaffWorkspace({
     );
   };
 
+  const renderDailyInventoryOverview = () => {
+    const term = dailyCheckSearch.trim().toLowerCase();
+    const visibleLines = dailyCheckLines.filter((line) => line.name.toLowerCase().includes(term));
+    return (
+      <>
+        <View style={styles.formHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => navigate('more')} style={styles.backButton}>
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <View style={styles.formHeaderCopy}>
+            <Text style={styles.formTitle}>Daily Inventory Check</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+          </View>
+        </View>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.dailyCheckContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <TextInput
+            accessibilityLabel="Search inventory ingredients"
+            value={dailyCheckSearch}
+            onChangeText={setDailyCheckSearch}
+            placeholder="Searching for something?"
+            placeholderTextColor={colors.muted}
+            style={styles.dailyCheckSearch}
+          />
+          {visibleLines.length === 0 ? (
+            <Text style={styles.dailyFormError}>No assigned ingredients match that search.</Text>
+          ) : visibleLines.map((line) => (
+            <Pressable
+              key={line.ingredientId}
+              accessibilityRole="button"
+              onPress={() => setRoute('dailyInventoryCheck')}
+              style={({ pressed }) => [styles.dailyIngredientOverviewCard, pressed && styles.pressed]}
+            >
+              <View style={styles.dailyIngredientOverviewCopy}>
+                <Text style={styles.dailyIngredientOverviewName}>{line.name}</Text>
+                <Text style={styles.dailyIngredientOverviewRecorded}>
+                  Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)}
+                </Text>
+              </View>
+              <Text style={styles.dailyIngredientOverviewEdit}>Edit ›</Text>
+            </Pressable>
+          ))}
+          {dailyCheckDraftMessage ? <Text style={styles.dailyDraftMessage}>{dailyCheckDraftMessage}</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRoute('dailyInventoryCheck')}
+            style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.dailyPrimaryButtonText}>Continue count</Text>
+          </Pressable>
+        </ScrollView>
+      </>
+    );
+  };
+
   const renderDailyInventoryCheck = () => {
     const unresolvedDailyChecks = pendingDailyStockChecks.filter(
       (request) => request.actorId === user.id && request.branchId === user.branchId,
@@ -4810,7 +4941,15 @@ export default function StaffWorkspace({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.dailyCheckIntro}>{formatDate(today)} · Enter today's physical quantities.</Text>
+          <Text style={styles.dailyCheckIntro}>Enter the actual count. Difference = Actual − Recorded.</Text>
+          <TextInput
+            accessibilityLabel="Search inventory ingredients"
+            value={dailyCheckSearch}
+            onChangeText={setDailyCheckSearch}
+            placeholder="Searching for something?"
+            placeholderTextColor={colors.muted}
+            style={styles.dailyCheckSearch}
+          />
           {dailyCheckStorageError ? (
             <Text style={styles.dailyFormError} accessibilityRole="alert">{dailyCheckStorageError}</Text>
           ) : null}
@@ -4843,7 +4982,7 @@ export default function StaffWorkspace({
             <Text style={[styles.dailyColumnTitle, styles.dailyDifferenceColumn]}>Diff.</Text>
           </View>
           <View style={styles.dailyRows}>
-            {dailyCheckResults.map((line) => {
+            {dailyCheckResults.filter((line) => line.name.toLowerCase().includes(dailyCheckSearch.trim().toLowerCase())).map((line) => {
               const discrepant = line.valid && line.difference !== 0;
               const showError = !line.valid && (dailyCheckAttempted || line.physicalQuantity.trim() !== '');
               const errorText = line.physicalQuantity.trim() === ''
@@ -4935,6 +5074,18 @@ export default function StaffWorkspace({
           {formError !== '' ? (
             <Text style={styles.dailyFormError} accessibilityRole="alert">{formError}</Text>
           ) : null}
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: dailyCheckVerified }}
+            onPress={() => setDailyCheckVerified((checked) => !checked)}
+            style={styles.dailyVerificationRow}
+          >
+            <View style={[styles.dailyVerificationBox, dailyCheckVerified && styles.dailyVerificationBoxChecked]}>
+              {dailyCheckVerified ? <Text style={styles.dailyVerificationMark}>✓</Text> : null}
+            </View>
+            <Text style={styles.dailyVerificationText}>I verified the physical count.</Text>
+          </Pressable>
+          {dailyCheckDraftMessage ? <Text style={styles.dailyDraftMessage}>{dailyCheckDraftMessage}</Text> : null}
           {dailyCheckSaveFailed ? (
             <Pressable
               accessibilityRole="button"
@@ -4960,7 +5111,7 @@ export default function StaffWorkspace({
               onPress={openDailyCheckReview}
               style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailyPrimaryButtonText}>Review differences</Text>
+              <Text style={styles.dailyPrimaryButtonText}>{dailyDiscrepancies.length > 0 ? 'Save' : 'Review differences'}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -4968,6 +5119,14 @@ export default function StaffWorkspace({
               style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
             >
               <Text style={styles.dailySecondaryButtonText}>Back to More</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={dailyCheckDraftSaving}
+              onPress={() => void saveDailyInventoryDraft()}
+              style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.dailySecondaryButtonText}>{dailyCheckDraftSaving ? 'Saving…' : 'Save as Draft'}</Text>
             </Pressable>
           </View>
           <Text style={styles.dailyDemoNote}>
@@ -5242,8 +5401,8 @@ export default function StaffWorkspace({
         <View style={styles.staffIdentityBody} />
       </View>
       <View style={styles.staffIdentityCopy}>
-        <Text style={styles.staffIdentityName}>{staffName}</Text>
-        <Text style={styles.staffIdentitySubtitle}>{staffRole} · {assignedBranch}</Text>
+        <Text style={styles.staffIdentityName}>{user.employeeId ?? 'Employee ID unavailable'}</Text>
+        <Text style={styles.staffIdentitySubtitle}>{staffName} · {assignedBranch}</Text>
       </View>
     </View>
   );
@@ -6380,26 +6539,20 @@ export default function StaffWorkspace({
 
   const renderMore = () => (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.morePageContent} showsVerticalScrollIndicator={false}>
-      {renderTopHeader('More', `${assignedBranch} / Staff`)}
+      {renderTopHeader('More')}
       {renderStaffIdentityCard()}
       <View style={styles.moreNavigationList}>
         {([
           {
-            icon: '▤',
-            title: 'Inventory Reporting',
-            description: 'Read-only branch inventory and count reports',
-            onPress: () => openInventoryReporting('more'),
-          },
-          {
             icon: '₱',
             title: 'Daily Sales',
-            description: 'Confirmed sales for a selected business day',
+            description: 'Count, compare and submit for review',
             onPress: openDailySales,
           },
           {
             icon: '☷',
-            title: 'Daily inventory check',
-            description: dailyCheckStarting ? 'Refreshing current branch stock…' : 'Count, compare and submit for review',
+            title: 'Physical Inventory Check',
+            description: 'Count, compare and submit for review',
             onPress: startDailyInventoryCheck,
           },
           {
@@ -6418,7 +6571,7 @@ export default function StaffWorkspace({
           <Pressable
             key={option.title}
             accessibilityRole="button"
-            disabled={option.title === 'Daily inventory check' && dailyCheckStarting}
+            disabled={option.title === 'Physical Inventory Check' && dailyCheckStarting}
             onPress={option.onPress}
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
@@ -6456,28 +6609,6 @@ export default function StaffWorkspace({
             <Text style={styles.formSubtitle}>{assignedBranch} · {formatDate(dailySalesDate)}</Text>
           </View>
         </View>
-        <View style={styles.dailySalesDatePicker}>
-          <DatePickerField
-            label="Business date"
-            value={dailySalesDate}
-            useConfirmation
-            confirmLabel="Apply date"
-            maxDate={today}
-            onChange={(date) => {
-              if (date) setDailySalesDate(date);
-            }}
-          />
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Refresh daily sales"
-          accessibilityState={{ disabled: dailySalesLoading }}
-          disabled={dailySalesLoading}
-          onPress={() => setDailySalesRefreshKey((key) => key + 1)}
-          style={[styles.dailySalesRefreshButton, styles.dailySalesFullButton, dailySalesLoading && styles.buttonDisabled]}
-        >
-          <Text style={styles.dailySalesRefreshText}>Refresh</Text>
-        </Pressable>
         {dailySalesLoading ? (
           <View style={styles.dailySalesLoading}>
             <ActivityIndicator color={colors.pink} />
@@ -6528,10 +6659,14 @@ export default function StaffWorkspace({
                   <Text style={styles.sectionTitle}>Products Sold</Text>
                   <View style={styles.dailySalesRows}>
                     {dailySalesSummary.products.map((product) => (
-                      <View key={product.productId} style={styles.dailySalesRow}>
+                      <View key={`${product.productId}-${product.variationName ?? 'base'}`} style={styles.dailySalesRow}>
                         <View style={styles.dailySalesRowCopy}>
-                          <Text style={styles.dailySalesRowTitle} numberOfLines={2}>{product.productName}</Text>
-                          <Text style={styles.dailySalesRowDetail}>Quantity {formatQuantity(product.quantity)}</Text>
+                          <Text style={styles.dailySalesRowTitle} numberOfLines={2}>
+                            {product.productName}{product.variationName ? ` · ${product.variationName}` : ''}
+                          </Text>
+                          <Text style={styles.dailySalesRowDetail}>
+                            {product.variationName ?? 'Item'} · Quantity {formatQuantity(product.quantity)} · {formatSaleMoney(product.unitPrice ?? (product.quantity ? product.totalSales / product.quantity : product.totalSales))}
+                          </Text>
                         </View>
                         <Text style={styles.dailySalesRowAmount}>{formatSaleMoney(product.totalSales)}</Text>
                       </View>
@@ -6547,6 +6682,31 @@ export default function StaffWorkspace({
             <Text style={styles.dailySalesReadOnly}>Confirmed sales only · Read-only</Text>
           </>
         ) : null}
+        <View style={styles.dailySalesBottomActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh daily sales"
+            accessibilityState={{ disabled: dailySalesLoading }}
+            disabled={dailySalesLoading}
+            onPress={() => setDailySalesRefreshKey((key) => key + 1)}
+            style={[styles.dailySalesRefreshButton, styles.dailySalesFullButton, dailySalesLoading && styles.buttonDisabled]}
+          >
+            <Text style={styles.dailySalesRefreshText}>Refresh</Text>
+          </Pressable>
+          <View style={styles.dailySalesDatePicker}>
+            <DatePickerField
+              label="Business date"
+              triggerLabel="Select business date"
+              value={dailySalesDate}
+              useConfirmation
+              confirmLabel="Apply date"
+              maxDate={today}
+              onChange={(date) => {
+                if (date) setDailySalesDate(date);
+              }}
+            />
+          </View>
+        </View>
       </ScrollView>
     );
   };
@@ -7722,17 +7882,34 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Transaction history</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+            <Text style={styles.formTitle}>Transaction History</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} Â· View only</Text>
           </View>
         </View>
         <View style={styles.historySearchWrap}>
           <SearchBar
             value={historySearch}
             onChangeText={setHistorySearch}
-            placeholder="Search item or transaction reference"
+            placeholder="Searching for something?"
           />
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Select transaction date range"
+          onPress={beginHistoryFilters}
+          style={({ pressed }) => [styles.historyDateSelector, pressed && styles.pressed]}
+        >
+          <Text style={styles.historyDateSelectorText}>
+            {historyFromDate && historyToDate
+              ? `${formatDate(historyFromDate)} – ${formatDate(historyToDate)}`
+              : historyFromDate
+                ? `From ${formatDate(historyFromDate)}`
+                : historyToDate
+                  ? `Until ${formatDate(historyToDate)}`
+                  : 'All business dates'}
+          </Text>
+          <Text style={styles.historyDateSelectorIcon}>□</Text>
+        </Pressable>
         <View style={styles.historyMetadataRow}>
           <View style={styles.historyMetadataCopy}>
             <Text style={styles.historyMetadataTitle}>{assignedBranch} · {formatDate(today)}</Text>
@@ -7750,15 +7927,33 @@ export default function StaffWorkspace({
           </Pressable>
         </View>
 
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyTypeTabs}>
+          {historyTypeFilters.map((filter) => {
+            const selected = historyTypeFilter === filter;
+            const label = filter === 'All types' ? 'All' : filter === 'Sales Consumption' ? 'Sales' : filter;
+            return (
+              <Pressable
+                key={filter}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setHistoryTypeFilter(filter)}
+                style={[styles.historyTypeTab, selected && styles.historyTypeTabSelected]}
+              >
+                <Text style={[styles.historyTypeTabText, selected && styles.historyTypeTabTextSelected]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
         <View style={styles.sectionHeadingRow}>
-          <Text style={styles.sectionTitle}>Recorded sales</Text>
-          <Text style={styles.sectionHint}>Tap a receipt to reopen</Text>
+          <Text style={styles.sectionTitle}>Inventory transactions</Text>
+          <Text style={styles.sectionHint}>Newest first</Text>
         </View>
-        {saleHistoryError ? (
+        {false ? (
           <Pressable accessibilityRole="button" onPress={() => void refreshBackendData()} style={styles.recoveryError}>
             <Text style={styles.recoveryErrorText}>{saleHistoryError} · Tap to retry</Text>
           </Pressable>
-        ) : recentSales.length ? (
+        ) : false && recentSales.length ? (
           <View style={styles.unresolvedSalesList}>
             {recentSales.map((sale) => (
               <Pressable
@@ -7781,7 +7976,19 @@ export default function StaffWorkspace({
           </View>
         ) : null}
 
-        {filteredHistoryTransactions.length > 0 ? (
+        {backendLoading ? (
+          <View style={styles.historyStateCard}>
+            <ActivityIndicator color={colors.pink} />
+            <Text style={styles.historyStateText}>Loading transactionsâ€¦</Text>
+          </View>
+        ) : backendError && historyTransactions.length === 0 ? (
+          <View style={styles.historyStateCard}>
+            <Text style={styles.historyStateText}>Unable to load data. Please check your internet connection and try again.</Text>
+            <Pressable accessibilityRole="button" onPress={() => void refreshBackendData()} style={styles.historyEmptyButton}>
+              <Text style={styles.historyEmptyButtonText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : filteredHistoryTransactions.length > 0 ? (
           <>
             <View style={styles.historyTransactionList}>
               {filteredHistoryTransactions.map((transaction) => (
@@ -7801,6 +8008,9 @@ export default function StaffWorkspace({
                         {transaction.type} · {transaction.ingredientName}
                       </Text>
                       <Text style={styles.historyTransactionReference}>{transaction.reference}</Text>
+                      <View style={[styles.historyTypeBadge, transaction.type === 'Stock-In' ? styles.historyTypeBadgePositive : transaction.type === 'Waste' || transaction.type === 'Spoilage' ? styles.historyTypeBadgeNegative : styles.historyTypeBadgeNeutral]}>
+                        <Text style={styles.historyTypeBadgeText}>{transaction.type}</Text>
+                      </View>
                     </View>
                     <Text style={[
                       styles.historyTransactionQuantity,
@@ -8217,6 +8427,9 @@ export default function StaffWorkspace({
     case 'dailyInventoryCheck':
       screenContent = renderDailyInventoryCheck();
       break;
+    case 'dailyInventoryOverview':
+      screenContent = renderDailyInventoryOverview();
+      break;
     case 'dailyCheckSuccess':
       screenContent = renderDailyCheckSuccess();
       break;
@@ -8442,16 +8655,10 @@ export default function StaffWorkspace({
             <View style={styles.logoutModalIcon}>
               <Text style={styles.logoutModalIconText}>↪</Text>
             </View>
-            <Text style={styles.logoutModalTitle}>Are you sure you want to log out?</Text>
+            <Text style={styles.logoutModalTitle}>Do you want to Log out?</Text>
             <Text style={styles.logoutModalDescription}>
-              End your secure session on this device? You will need your email and password to sign in again.
+              End the daily session? Any unconfirmed order will be discarded.
             </Text>
-            <View style={styles.logoutSessionPanel}>
-              <Text style={styles.logoutSessionText}>{staffName} · {staffRole}</Text>
-              <Text style={styles.logoutSessionText}>{assignedBranch}</Text>
-              <Text style={styles.logoutSessionNote}>Saved inventory records stay safe.</Text>
-              <Text style={styles.logoutSessionNote}>No unsaved changes on this screen.</Text>
-            </View>
             {logoutError !== '' ? (
               <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text>
             ) : null}
@@ -8474,7 +8681,7 @@ export default function StaffWorkspace({
                   logoutPending && styles.confirmButtonDisabled,
                 ]}
               >
-                <Text style={styles.logoutConfirmText}>{logoutPending ? 'Logging out…' : 'Log out'}</Text>
+                <Text style={styles.logoutConfirmText}>{logoutPending ? 'Logging out…' : 'Log Out'}</Text>
               </Pressable>
             </View>
           </View>
@@ -8498,11 +8705,11 @@ export default function StaffWorkspace({
               <>
                 <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
                 <Text style={styles.dailyModalTitle}>
-                  {dailyDiscrepancies.length > 0 ? 'Review discrepancy' : 'No discrepancies found'}
+                  {dailyDiscrepancies.length > 0 ? 'Inventory Discrepancy' : 'Daily Inventory Check'}
                 </Text>
                 <Text style={styles.dailyModalSubtitle}>
                   {dailyDiscrepancies.length > 0
-                    ? 'Review the physical count. Recorded balances will not be overwritten.'
+                    ? 'Review the difference before saving.'
                     : 'All physical counts match their recorded balances. No stock will be changed.'}
                 </Text>
                 <View style={styles.dailyModalSummary}>
@@ -8518,11 +8725,11 @@ export default function StaffWorkspace({
                             {line.name} · {assignedBranch}
                           </Text>
                           <Text style={styles.dailyModalSummaryText}>
-                            Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Physical{' '}
+                            {line.name} · Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Actual{' '}
                             {formatDailyUnitQuantity(line.parsedQuantity, line.unit)}
                           </Text>
                           <Text style={styles.dailyModalSummaryEmphasis}>
-                            Computed difference {formatDailyDifference(line.difference ?? 0, line.unit)}
+                            Difference {formatDailyDifference(line.difference ?? 0, line.unit)} · {dailyCheckRemarks.trim() || 'No remarks'}
                           </Text>
                         </React.Fragment>
                       ))}
@@ -8554,7 +8761,7 @@ export default function StaffWorkspace({
                     }}
                     style={({ pressed }) => [styles.dailyModalPrimaryButton, pressed && styles.pressed]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>Continue</Text>
+                    <Text style={styles.dailyModalPrimaryText}>{dailyDiscrepancies.length > 0 ? 'Save Check' : 'Continue'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -8563,15 +8770,9 @@ export default function StaffWorkspace({
                 <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
                   <Text style={styles.dailyModalIconText}>✓</Text>
                 </View>
-                <Text style={styles.dailyModalTitle}>
-                  {route === 'inventoryDiscrepancySubmission'
-                    ? 'Submit the discrepancy now?'
-                    : 'Submit daily check?'}
-                </Text>
+                <Text style={styles.dailyModalTitle}>Daily Inventory Check</Text>
                 <Text style={styles.dailyModalSubtitle}>
-                  {route === 'inventoryDiscrepancySubmission'
-                    ? 'This discrepancy has not been submitted. Stay to review it or submit it to the owner.'
-                    : 'Send this physical count for owner review. Recorded balances will not change.'}
+                  Submit the physical count for this branch?
                 </Text>
                 <View style={styles.dailyModalSummary}>
                   <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(today)}</Text>
@@ -8622,13 +8823,7 @@ export default function StaffWorkspace({
                       dailyCheckSubmitting && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>
-                      {dailyCheckSubmitting
-                        ? 'Saving…'
-                        : dailyDiscrepancies.length > 0
-                          ? 'Submit for Owner Review'
-                          : 'Submit count'}
-                    </Text>
+                    <Text style={styles.dailyModalPrimaryText}>{dailyCheckSubmitting ? 'Saving…' : 'Submit Count'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -9140,6 +9335,20 @@ function createStaffStyles(theme: AppTheme) {
   historyMetadataCopy: { flex: 1, minWidth: 0 },
   historyMetadataTitle: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   historyMetadataSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  historyDateSelector: {
+    minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 11, marginBottom: 9, borderRadius: 11, backgroundColor: colors.pale,
+    borderWidth: 1, borderColor: colors.line,
+  },
+  historyDateSelectorText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+  historyDateSelectorIcon: { color: colors.muted, fontFamily: font.semibold, fontSize: 13 },
+  historyTypeTabs: { gap: 7, paddingBottom: 12 },
+  historyTypeTab: { minHeight: 30, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#EEEEEF' },
+  historyTypeTabSelected: { backgroundColor: colors.navy },
+  historyTypeTabText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  historyTypeTabTextSelected: { color: colors.white },
+  historyStateCard: { minHeight: 160, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 18, borderRadius: 14, backgroundColor: colors.pale },
+  historyStateText: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, textAlign: 'center' },
   historyFilterAction: { paddingHorizontal: 5, paddingVertical: 6 },
   historyFilterActionText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
   historyTransactionList: { gap: 8 },
@@ -9151,6 +9360,11 @@ function createStaffStyles(theme: AppTheme) {
   historyTransactionTitleWrap: { flex: 1, minWidth: 0 },
   historyTransactionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   historyTransactionReference: { color: colors.muted, fontFamily: font.regular, fontSize: 7, marginTop: 2 },
+  historyTypeBadge: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 3, marginTop: 5, borderRadius: 8 },
+  historyTypeBadgePositive: { backgroundColor: '#E8F6EC' },
+  historyTypeBadgeNegative: { backgroundColor: '#FCE9EB' },
+  historyTypeBadgeNeutral: { backgroundColor: '#E6E6F6' },
+  historyTypeBadgeText: { color: colors.navy, fontFamily: font.medium, fontSize: 6 },
   historyTransactionQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, textAlign: 'right' },
   historyTransactionPositive: { color: colors.green },
   historyTransactionNegative: { color: colors.navy },
@@ -9470,23 +9684,23 @@ function createStaffStyles(theme: AppTheme) {
   },
   staffIdentityCopy: { flex: 1, minWidth: 0 },
   staffIdentityName: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
-  staffIdentitySubtitle: { color: '#FFA126', fontFamily: font.medium, fontSize: 8, marginTop: 3 },
+  staffIdentitySubtitle: { color: colors.orange, fontFamily: font.medium, fontSize: 8, marginTop: 3 },
   moreNavigationList: { gap: 8 },
   moreNavigationCard: {
     minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
-    paddingVertical: 9, borderRadius: 13, backgroundColor: '#EEEEEF',
-    borderWidth: 1, borderColor: '#E8E8EB',
+    paddingVertical: 9, borderRadius: 13, backgroundColor: colors.pale,
+    borderWidth: 1, borderColor: colors.line,
   },
   moreNavigationIcon: {
     width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 11, backgroundColor: '#FFF8EA', borderWidth: 1, borderColor: '#F6D6A4',
+    borderRadius: 11, backgroundColor: colors.yellow, borderWidth: 1, borderColor: colors.orange,
     marginRight: 10,
   },
-  moreNavigationIconText: { color: '#E59420', fontFamily: font.medium, fontSize: 18, lineHeight: 22 },
+  moreNavigationIconText: { color: colors.orange, fontFamily: font.medium, fontSize: 18, lineHeight: 22 },
   moreNavigationCopy: { flex: 1, minWidth: 0 },
   moreNavigationTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   moreNavigationDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 2 },
-  moreNavigationChevron: { color: '#A8A8B1', fontFamily: font.regular, fontSize: 22, marginLeft: 5 },
+  moreNavigationChevron: { color: colors.muted, fontFamily: font.regular, fontSize: 22, marginLeft: 5 },
   moreLogoutButton: { marginTop: 12, marginBottom: 3 },
   profileSettingsContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 18 },
   profileInformationCard: {
@@ -9570,14 +9784,14 @@ function createStaffStyles(theme: AppTheme) {
   logoutSessionText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
   logoutSessionNote: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
   logoutError: { color: colors.red, fontFamily: font.medium, fontSize: 8, lineHeight: 12, marginTop: 8 },
-  logoutModalActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 9, marginTop: 14 },
+  logoutModalActions: { alignItems: 'stretch', gap: 9, marginTop: 14 },
   logoutCancelAction: {
-    minWidth: 82, minHeight: 39, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 10, backgroundColor: '#EEEEF0',
+    minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 10, backgroundColor: colors.pale,
   },
   logoutCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
   logoutConfirmAction: {
-    minWidth: 95, minHeight: 39, alignItems: 'center', justifyContent: 'center',
+    minHeight: 39, alignItems: 'center', justifyContent: 'center',
     borderRadius: 10, backgroundColor: colors.pink,
   },
   logoutConfirmText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
@@ -9960,6 +10174,13 @@ function createStaffStyles(theme: AppTheme) {
   inventoryDiscrepancyRemarks: { marginTop: 5, marginBottom: 8 },
   inventoryDiscrepancySaving: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   dailySalesDatePicker: { marginHorizontal: 14, marginTop: 13 },
+  dailySalesBottomActions: { marginTop: 8, paddingBottom: 8 },
+  dailySalesDateButton: {
+    minHeight: 42, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 14, borderRadius: 11, backgroundColor: colors.pale,
+    borderWidth: 1, borderColor: colors.line,
+  },
+  dailySalesDateButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   dailySalesRefreshButton: {
     minHeight: 42, minWidth: 72, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 12, borderRadius: 11, backgroundColor: colors.pink,
@@ -9997,6 +10218,21 @@ function createStaffStyles(theme: AppTheme) {
   dailySalesReadOnly: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', marginVertical: 8 },
   dailySalesEmpty: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', padding: 15 },
   dailyCheckIntro: { color: colors.navy, fontFamily: font.medium, fontSize: 9, lineHeight: 14, marginBottom: 12 },
+  dailyCheckSearch: {
+    minHeight: 42, paddingHorizontal: 11, marginBottom: 10, borderRadius: 11,
+    borderWidth: 1, borderColor: colors.line, backgroundColor: colors.pale,
+    color: colors.ink, fontFamily: font.regular, fontSize: 9,
+  },
+  dailyIngredientOverviewCard: {
+    minHeight: 62, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 9, marginBottom: 8, borderRadius: 13,
+    backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.line,
+  },
+  dailyIngredientOverviewCopy: { flex: 1, minWidth: 0 },
+  dailyIngredientOverviewName: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  dailyIngredientOverviewRecorded: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  dailyIngredientOverviewEdit: { color: colors.orange, fontFamily: font.semibold, fontSize: 8 },
+  dailyDraftMessage: { color: colors.green, fontFamily: font.medium, fontSize: 8, lineHeight: 12, marginVertical: 7 },
   dailyTableHeader: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingBottom: 6,
   },
@@ -10059,6 +10295,11 @@ function createStaffStyles(theme: AppTheme) {
     backgroundColor: '#EEEEF0',
   },
   dailySecondaryButtonText: { color: '#555560', fontFamily: font.semibold, fontSize: 10 },
+  dailyVerificationRow: { flexDirection: 'row', alignItems: 'center', minHeight: 42, marginBottom: 8 },
+  dailyVerificationBox: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center', marginRight: 8, borderRadius: 5, borderWidth: 1.5, borderColor: colors.muted, backgroundColor: colors.white },
+  dailyVerificationBoxChecked: { borderColor: colors.pink, backgroundColor: colors.pink },
+  dailyVerificationMark: { color: colors.white, fontFamily: font.bold, fontSize: 14, lineHeight: 16 },
+  dailyVerificationText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   dailyDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, textAlign: 'center', marginTop: 9 },
   dailySuccessFallback: { flex: 1, justifyContent: 'center', padding: 18 },
   dailySuccessBanner: {

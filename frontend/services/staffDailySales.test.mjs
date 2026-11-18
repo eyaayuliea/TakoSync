@@ -66,6 +66,23 @@ test('products aggregate quantities and sales amounts and sort by highest quanti
   ]);
 });
 
+test('products preserve variant labels and persisted unit prices when available', () => {
+  const summary = summarize({
+    saleItems: [
+      { id: 'variant-line', sale_id: 'sale-1', product_id: 'product-a', product_variant_id: 'variant-combo', quantity: 1, unit_price: 59, subtotal: 59 },
+    ],
+    productVariants: [{ id: 'variant-combo', size_label: '4 pcs' }],
+  });
+  assert.deepEqual(summary.products, [{
+    productId: 'product-a',
+    productName: 'Octobits Cheese',
+    quantity: 1,
+    totalSales: 59,
+    variationName: '4 pcs',
+    unitPrice: 59,
+  }]);
+});
+
 test('branch filtering and duplicate sale/item records cannot inflate the summary', () => {
   const summary = summarize({
     sales: [...sales, sales[0]],

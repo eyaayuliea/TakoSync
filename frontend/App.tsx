@@ -107,6 +107,9 @@ export default function App() {
 
 function AppContent() {
   const { colors, isDark, setMode } = useTheme();
+  const themedLogo = isDark
+    ? require('../assets/DARK THEME (LOGO).png')
+    : require('../assets/LIGHT THEME (LOGO).png');
   const styles = useAppStyles();
   const [screen, setScreen] = useState<Screen>('loading');
   const [sessionInitialized, setSessionInitialized] = useState(!isSupabaseConfigured);
@@ -695,7 +698,7 @@ function AppContent() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
         barStyle={screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={screen === 'ownerLogin' ? '#E8B77E' : colors.background}
+        backgroundColor={colors.background}
       />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
@@ -703,7 +706,7 @@ function AppContent() {
             {visibleScreen === 'loading' && (!fontsLoaded || !sessionInitialized) && (
               <View style={styles.loadingScreen}>
                 <Image
-                  source={require('../assets/takosync-logo.png')}
+                  source={themedLogo}
                   style={[styles.loadingLogo, { width: Math.min(frameWidth * 0.68, 280), height: Math.min(frameWidth * 0.48, 190) }]}
                   resizeMode="contain"
                   accessibilityLabel="TakoSync logo"
@@ -712,10 +715,15 @@ function AppContent() {
             )}
 
             {visibleScreen === 'welcome' && (
-              <View style={styles.welcomeScreen}>
+              <ImageBackground
+                source={require('../assets/WELCOME PAGE.jpg')}
+                resizeMode="cover"
+                style={styles.welcomeScreen}
+                imageStyle={styles.welcomeBackgroundImage}
+              >
                 <View style={styles.whiteHeader}>
                   <Image
-                    source={require('../assets/takosync-logo.png')}
+                    source={themedLogo}
                     style={[styles.headerLogo, { width: logoWidth, height: logoWidth * 0.64 }]}
                     resizeMode="contain"
                     accessibilityLabel="TakoSync logo"
@@ -723,7 +731,7 @@ function AppContent() {
                 </View>
 
                 <View style={[styles.pinkPanel, { height: frameHeight * (frameHeight < 700 ? 0.65 : 0.53) }]}>
-                  <View style={[styles.panelContent, { paddingTop: foodSize * 0.37 }]}>
+                  <View style={[styles.panelContent, { paddingTop: frameHeight < 700 ? 22 : 34 }]}>
                     <Text style={styles.heading}>Welcome!</Text>
                     <Text style={styles.description}>
                       Keep your ingredients in sync and your takoyaki shop ready for every rush.
@@ -750,13 +758,7 @@ function AppContent() {
                   </View>
                 </View>
 
-                <Image
-                  source={require('../assets/takoyaki-plate.png')}
-                  style={[styles.foodImage, { width: foodSize, height: foodSize, top: frameHeight * 0.255 }]}
-                  resizeMode="contain"
-                  accessibilityLabel="A plate of takoyaki"
-                />
-              </View>
+              </ImageBackground>
             )}
 
             {visibleScreen === 'ownerLogin' && (
@@ -777,7 +779,7 @@ function AppContent() {
                   <View style={styles.loginOverlay}>
                     <View style={[styles.loginHeader, { height: Math.max(frameHeight * 0.22, 125) }]}>
                       <Image
-                        source={require('../assets/takosync-logo.png')}
+                        source={themedLogo}
                         style={[styles.headerLogo, { width: logoWidth, height: logoWidth * 0.64 }]}
                         resizeMode="contain"
                         accessibilityLabel="TakoSync logo"
@@ -1560,14 +1562,14 @@ function useAppStyles() {
   loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   loadingLogo: { alignSelf: 'center', marginTop: '14%' },
   welcomeScreen: { flex: 1, backgroundColor: '#FFFFFF', overflow: 'hidden' },
-  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '5%', backgroundColor: '#FFFFFF' },
+  welcomeBackgroundImage: { width: '100%', height: '100%' },
+  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '5%', backgroundColor: 'rgba(255,255,255,0.18)' },
   headerLogo: { marginTop: 0 },
   pinkPanel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: PINK, borderTopLeftRadius: 36, borderTopRightRadius: 36,
     paddingHorizontal: 25,
   },
-  foodImage: { position: 'absolute', alignSelf: 'center', zIndex: 2 },
   panelContent: { alignItems: 'center', width: '100%' },
   heading: { color: '#FFFFFF', fontSize: 25, fontWeight: '800', textAlign: 'center', marginBottom: 15 },
   description: { color: '#FFFFFF', fontSize: 13, lineHeight: 19, textAlign: 'center', maxWidth: 340 },

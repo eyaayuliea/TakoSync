@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
+import { useTheme } from '../theme/ThemeProvider';
 import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
 import {
   calculateSelectedAddonTotal,
@@ -192,10 +193,11 @@ function SizeOptionCard({
   onAdd: () => void;
   onViewInfo: () => void;
 }) {
+  const { isDark } = useTheme();
   return (
-    <View style={[styles.sizeOptionCard, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#0F1025' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
       <View style={styles.sizeOptionHeader}>
-        <Text style={styles.sizeOptionLabel}>{variant.sizeLabel}</Text>
+        <Text style={[styles.sizeOptionLabel, isDark && { color: '#FFFFFF' }]}>{variant.sizeLabel}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`View information for ${productName}`}
@@ -213,7 +215,7 @@ function SizeOptionCard({
         onPress={onAdd}
         style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
       >
-        <Text style={styles.sizeOptionPrice}>{money(variant.price)}</Text>
+        <Text style={[styles.sizeOptionPrice, isDark && { color: '#FFFFFF' }]}>{money(variant.price)}</Text>
         <View style={styles.availabilityLine}>
           <View style={[styles.availabilityDot, !variant.isAvailable && styles.availabilityDotOff]} />
           <Text style={[styles.availabilityLabel, !variant.isAvailable && styles.unavailableText]}>
@@ -238,12 +240,13 @@ function CartItemCard({
   onDecrease: () => void;
   onRemove: () => void;
 }) {
+  const { isDark } = useTheme();
   return (
-    <View style={styles.cartItem}>
+    <View style={[styles.cartItem, isDark && { backgroundColor: '#0F1025' }]}>
       <View style={styles.cartItemCopy}>
-        <Text style={styles.cartItemName} numberOfLines={2}>{product.name}</Text>
-        <Text style={styles.cartItemDetail} numberOfLines={2}>{product.description || 'No description available'}</Text>
-        <Text style={styles.cartItemPrice}>{money(product.price)} each</Text>
+        <Text style={[styles.cartItemName, isDark && { color: '#FFFFFF' }]} numberOfLines={2}>{product.name}</Text>
+        <Text style={[styles.cartItemDetail, isDark && { color: '#B2B3C4' }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
+        <Text style={[styles.cartItemPrice, isDark && { color: '#FFFFFF' }]}>{money(product.price)} each</Text>
       </View>
       <View style={styles.cartItemActions}>
         <Text style={styles.cartLineTotal}>{money(product.price * quantity)}</Text>
@@ -287,13 +290,15 @@ function CurrentOrderLine({
   onDecrease: () => void;
   onRemove: () => void;
 }) {
+  const { isDark } = useTheme();
+  const darkText = isDark ? { color: '#FFFFFF' } : undefined;
   return (
     <View style={styles.currentOrderLine}>
       <View style={styles.currentOrderCopy}>
-        <Text style={styles.currentOrderName} numberOfLines={1}>{product.name}</Text>
-        <Text style={styles.currentOrderUnit}>{money(product.price)} each</Text>
+        <Text style={[styles.currentOrderName, darkText]} numberOfLines={1}>{product.name}</Text>
+        <Text style={[styles.currentOrderUnit, darkText]}>{money(product.price)} each</Text>
       </View>
-      <Text style={styles.currentOrderLineTotal}>{money(product.price * quantity)}</Text>
+      <Text style={[styles.currentOrderLineTotal, darkText]}>{money(product.price * quantity)}</Text>
       <View style={styles.currentOrderQuantity}>
         <Pressable
           accessibilityRole="button"
@@ -303,7 +308,7 @@ function CurrentOrderLine({
         >
           <Text style={styles.currentOrderQuantityText}>−</Text>
         </Pressable>
-        <Text style={styles.currentOrderQuantityValue}>{quantity}</Text>
+        <Text style={[styles.currentOrderQuantityValue, darkText]}>{quantity}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Increase ${product.name} quantity`}
@@ -347,6 +352,10 @@ export default function MenuWorkspace({
   onDismissFeedback,
   onRetryInventory,
 }: MenuWorkspaceProps) {
+  const { isDark, colors: themeColors } = useTheme();
+  const darkSecondarySurface = isDark ? { backgroundColor: '#101027' } : undefined;
+  const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
+  const darkWarningText = isDark ? { color: '#101027' } : undefined;
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -463,7 +472,7 @@ export default function MenuWorkspace({
 
   if (page === 'cart') {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
         <ScreenHeader title="Cart" onBack={() => onSetPage('menu')} />
         <ProgressSteps active={2} />
         <ScrollView
@@ -483,7 +492,7 @@ export default function MenuWorkspace({
             />
           ))}
           {cartProducts.length === 0 ? (
-            <View style={styles.emptyCard}>
+            <View style={[styles.emptyCard, darkSecondarySurface]}>
               <Text style={styles.emptyTitle}>Your cart is empty</Text>
               <Text style={styles.emptyCopy}>Add menu items to review a preview total.</Text>
             </View>
@@ -528,16 +537,16 @@ export default function MenuWorkspace({
 
   if (page === 'checkout') {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
         <ScreenHeader title="Order" onBack={() => onSetPage('cart')} />
         <ProgressSteps active={3} />
-        <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled">
+          <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Text style={styles.checkoutTitle}>Review transaction</Text>
           {cartProducts.map(({ product, quantity }) => (
-            <View key={product.id} style={styles.checkoutLine}>
+            <View key={product.id} style={[styles.checkoutLine, darkSecondarySurface]}>
               <View style={styles.checkoutLineCopy}>
-                <Text style={styles.checkoutLineName}>{product.name}</Text>
-                <Text style={styles.checkoutLineMeta}>{quantity} × {money(product.price)}</Text>
+              <Text style={[styles.checkoutLineName, darkSecondaryText]}>{product.name}</Text>
+              <Text style={[styles.checkoutLineMeta, darkSecondaryText]}>{quantity} × {money(product.price)}</Text>
               </View>
               <Text style={styles.checkoutLineTotal}>{money(product.price * quantity)}</Text>
             </View>
@@ -559,10 +568,10 @@ export default function MenuWorkspace({
                 onPress={() => setSelectedAddonIds((current) => selected
                   ? current.filter((id) => id !== addon.id)
                   : [...current, addon.id])}
-                style={styles.addonOption}
+                style={[styles.addonOption, darkSecondarySurface]}
               >
-                <Text style={styles.addonOptionText}>{selected ? '✓ ' : ''}{addon.name}</Text>
-                <Text style={styles.addonOptionPrice}>{money(addon.price)}</Text>
+                <Text style={[styles.addonOptionText, darkSecondaryText]}>{selected ? '✓ ' : ''}{addon.name}</Text>
+                <Text style={[styles.addonOptionPrice, darkSecondaryText]}>{money(addon.price)}</Text>
               </Pressable>
             );
           })}
@@ -671,6 +680,7 @@ export default function MenuWorkspace({
         style={styles.flavorSelector}
         contentContainerStyle={styles.flavorSelectorContent}
         showsHorizontalScrollIndicator={false}
+        showsVerticalScrollIndicator={false}
       >
         {flavorOptions.map((flavor) => {
           const selected = flavor.id === selectedFlavor.id;
@@ -691,10 +701,10 @@ export default function MenuWorkspace({
           );
         })}
       </ScrollView>
-      <View style={styles.selectedProductBar}>
+      <View style={[styles.selectedProductBar, darkSecondarySurface]}>
         <View style={styles.selectedProductCopy}>
-          <Text style={styles.selectedProductTitle} numberOfLines={1}>{selectedFlavor.productName}</Text>
-          <Text style={styles.selectedProductSubtitle}>Choose a size to add to your order</Text>
+          <Text style={[styles.selectedProductTitle, darkSecondaryText]} numberOfLines={1}>{selectedFlavor.productName}</Text>
+          <Text style={[styles.selectedProductSubtitle, darkSecondaryText]}>Choose a size to add to your order</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -714,10 +724,10 @@ export default function MenuWorkspace({
         showsVerticalScrollIndicator={false}
       >
         {feedbackMessage !== '' ? (
-          <View style={styles.feedbackBanner} accessibilityRole="alert">
+              <View style={styles.feedbackBanner} accessibilityRole="alert">
             <Pressable onPress={onDismissFeedback} style={styles.feedbackMessagePressable}>
-              <Text style={styles.feedbackText}>{feedbackMessage}</Text>
-              <Text style={styles.feedbackDismiss}>×</Text>
+                <Text style={[styles.feedbackText, darkWarningText]}>{feedbackMessage}</Text>
+              <Text style={[styles.feedbackDismiss, darkWarningText]}>×</Text>
             </Pressable>
             {onRetryInventory ? (
               <Pressable onPress={onRetryInventory} style={styles.retryInventoryButton} accessibilityRole="button">
@@ -727,12 +737,12 @@ export default function MenuWorkspace({
           </View>
         ) : null}
         {catalogLoading ? (
-          <View style={styles.stateCard}>
+          <View style={[styles.stateCard, darkSecondarySurface]}>
             <ActivityIndicator color={colors.pink} />
             <Text style={styles.emptyCopy}>Loading menu…</Text>
           </View>
         ) : catalogError ? (
-          <View style={styles.stateCard}>
+          <View style={[styles.stateCard, darkSecondarySurface]}>
             <Text style={styles.emptyTitle}>Unable to load menu</Text>
             <Text style={styles.emptyCopy}>{catalogError}</Text>
             <Pressable onPress={onRetryCatalog} style={styles.retryButton}>
@@ -740,7 +750,7 @@ export default function MenuWorkspace({
             </Pressable>
           </View>
         ) : selectedProductGroups.length === 0 ? (
-          <View style={styles.stateCard}>
+          <View style={[styles.stateCard, darkSecondarySurface]}>
             <Text style={styles.emptyTitle}>
               {products.length === 0 ? 'No products available' : 'No menu for this flavor'}
             </Text>
@@ -777,6 +787,7 @@ export default function MenuWorkspace({
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
+                  showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.addonPills}
                 >
                   {displayAddons.map((addon) => {
@@ -789,9 +800,9 @@ export default function MenuWorkspace({
                         onPress={() => setSelectedAddonIds((current) => selected
                           ? current.filter((id) => id !== addon.id)
                           : [...current, addon.id])}
-                        style={[styles.addonPill, selected && styles.addonPillSelected]}
+                        style={[styles.addonPill, isDark && darkSecondarySurface, selected && styles.addonPillSelected]}
                       >
-                        <Text style={[styles.addonPillText, selected && styles.addonPillTextSelected]}>
+                        <Text style={[styles.addonPillText, isDark && darkSecondaryText, selected && styles.addonPillTextSelected]}>
                           {addon.name} · +{money(addon.price)}
                         </Text>
                       </Pressable>
@@ -814,11 +825,11 @@ export default function MenuWorkspace({
           </>
         )}
       </ScrollView>
-      <View style={styles.currentOrderPanel}>
+      <View style={[styles.currentOrderPanel, darkSecondarySurface]}>
         <View style={styles.currentOrderHeader}>
           <View style={styles.currentOrderHeadingCopy}>
-            <Text style={styles.currentOrderTitle}>Current Order</Text>
-            <Text style={styles.currentOrderCount}>{totals.count} {totals.count === 1 ? 'item' : 'items'}</Text>
+            <Text style={[styles.currentOrderTitle, darkSecondaryText]}>Current Order</Text>
+            <Text style={[styles.currentOrderCount, darkSecondaryText]}>{totals.count} {totals.count === 1 ? 'item' : 'items'}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
@@ -851,8 +862,8 @@ export default function MenuWorkspace({
             ))}
             {selectedAddons.map((addon) => (
               <View key={addon.id} style={styles.currentAddonLine}>
-                <Text style={styles.currentAddonName} numberOfLines={1}>{addon.name}</Text>
-                <Text style={styles.currentAddonPrice}>{money(addon.price)}</Text>
+              <Text style={[styles.currentAddonName, darkSecondaryText]} numberOfLines={1}>{addon.name}</Text>
+              <Text style={[styles.currentAddonPrice, darkSecondaryText]}>{money(addon.price)}</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${addon.name}`}
@@ -865,11 +876,11 @@ export default function MenuWorkspace({
             ))}
           </ScrollView>
         ) : (
-          <Text style={styles.currentOrderEmpty}>Your order is empty. Select a size to begin.</Text>
+          <Text style={[styles.currentOrderEmpty, darkSecondaryText]}>Your order is empty. Select a size to begin.</Text>
         )}
         <View style={styles.currentOrderTotalRow}>
-          <Text style={styles.currentOrderTotalLabel}>Total</Text>
-          <Text style={styles.currentOrderTotalValue}>{money(checkoutTotal)}</Text>
+          <Text style={[styles.currentOrderTotalLabel, darkSecondaryText]}>Total</Text>
+          <Text style={[styles.currentOrderTotalValue, darkSecondaryText]}>{money(checkoutTotal)}</Text>
         </View>
         <Pressable
           accessibilityRole="button"

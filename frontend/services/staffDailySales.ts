@@ -13,6 +13,8 @@ export type StaffDailySaleItem = {
   product_id: string;
   quantity: number | string;
   subtotal: number | string;
+  product_variant_id?: string | null;
+  unit_price?: number | string | null;
 };
 
 export type StaffDailySalesSummary = {
@@ -28,6 +30,8 @@ export type StaffDailySalesSummary = {
     productName: string;
     quantity: number;
     totalSales: number;
+    variationName?: string;
+    unitPrice?: number;
   }>;
 };
 
@@ -80,6 +84,7 @@ export function buildStaffDailySalesSummary(input: {
   sales: StaffDailySale[];
   saleItems: StaffDailySaleItem[];
   productNames: Array<{ id: string; product_name: string }>;
+  productVariants?: Array<{ id: string; size_label: string }>;
 }): StaffDailySalesSummary {
   const recordedSales = new Map<string, StaffDailySale>();
   for (const sale of input.sales) {
@@ -102,20 +107,26 @@ export function buildStaffDailySalesSummary(input: {
   }
 
   const namesById = new Map(input.productNames.map((product) => [product.id, product.product_name]));
-  const productsById = new Map<string, { productId: string; productName: string; quantity: number; totalSales: number }>();
+  const variantsById = new Map((input.productVariants ?? []).map((variant) => [variant.id, variant.size_label]));
+  const productsById = new Map<string, { productId: string; productName: string; quantity: number; totalSales: number; variationName?: string; unitPrice?: number }>();
   const seenItems = new Set<string>();
   for (const item of input.saleItems) {
     if (!recordedSales.has(item.sale_id) || seenItems.has(item.id)) continue;
     seenItems.add(item.id);
-    const product = productsById.get(item.product_id) ?? {
+    const productKey = `${item.product_id}:${item.product_variant_id ?? 'base'}`;
+    const product = productsById.get(productKey) ?? {
       productId: item.product_id,
       productName: namesById.get(item.product_id) ?? 'Product unavailable',
       quantity: 0,
       totalSales: 0,
     };
+    const variationName = item.product_variant_id ? variantsById.get(item.product_variant_id) : undefined;
+    if (variationName) product.variationName = variationName;
+    const unitPrice = item.unit_price === null || item.unit_price === undefined ? undefined : finiteNumber(item.unit_price);
+    if (unitPrice !== undefined) product.unitPrice = unitPrice;
     product.quantity += finiteNumber(item.quantity);
     product.totalSales += finiteNumber(item.subtotal);
-    productsById.set(item.product_id, product);
+    productsById.set(productKey, product);
   }
 
   return {

@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { isSupabaseConfigured, supabaseConfigurationError } from '../services/supabase';
+import { useTheme } from '../theme/ThemeProvider';
 
 type FieldErrors = {
   username?: string;
@@ -34,6 +35,7 @@ export default function OwnerLoginScreen({
   onLogin: (username: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
+  const { isDark, colors } = useTheme();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -85,10 +87,10 @@ export default function OwnerLoginScreen({
       source={require('../../assets/takoyaki-plate.png')}
       resizeMode="cover"
       blurRadius={10}
-      style={styles.background}
+      style={[styles.background, { backgroundColor: colors.background }]}
       imageStyle={styles.backgroundImage}
     >
-      <View style={styles.warmTint}>
+      <View style={[styles.warmTint, { backgroundColor: isDark ? 'rgba(19,18,26,0.42)' : 'rgba(255,239,218,0.38)' }]}>
         <KeyboardAvoidingView
           style={styles.keyboardRoot}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -108,11 +110,11 @@ export default function OwnerLoginScreen({
                   hitSlop={8}
                   style={styles.backButton}
                 >
-                  <Text style={styles.backText}>‹ Back</Text>
+                  <Text style={[styles.backText, { color: colors.text }]}>‹ Back</Text>
                 </Pressable>
-                <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64 }]}>
+                <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64, backgroundColor: isDark ? colors.surface : '#FFFFFF' }]}>
                   <Image
-                    source={require('../../assets/takosync-logo.png')}
+                    source={isDark ? require('../../assets/DARK THEME (LOGO).png') : require('../../assets/LIGHT THEME (LOGO).png')}
                     style={styles.logo}
                     resizeMode="contain"
                     accessibilityLabel="TakoSync logo"
@@ -121,7 +123,7 @@ export default function OwnerLoginScreen({
                 <View style={styles.backButtonSpacer} />
               </View>
 
-              <View style={[styles.card, isShortScreen && styles.compactCard]}>
+              <View style={[styles.card, { backgroundColor: isDark ? colors.surface : '#101027' }, isShortScreen && styles.compactCard]}>
                 <Text style={styles.heading}>Log In</Text>
                 <Text style={styles.subtitle}>Owner access · Gelo’s Takoyaki</Text>
 
