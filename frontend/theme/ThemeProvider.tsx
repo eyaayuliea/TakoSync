@@ -353,19 +353,13 @@ export function createThemedStyles<T extends StyleSheet.NamedStyles<T>>(
   theme: AppTheme,
 ): T {
   if (!theme.isDark) return definitions;
-  const themedDefinitions = Object.fromEntries(
-    Object.entries(definitions).map(([styleName, style]) => {
-      if (typeof style !== 'object' || style === null) return [styleName, style];
-      const themedStyle = Object.fromEntries(
-        Object.entries(style).map(([property, value]) => [
-          property,
-          typeof value === 'string' && isColorProperty(property)
-            ? remapColor(value, property, styleName, theme)
-            : value,
-        ]),
-      );
-      return [styleName, themedStyle];
-    }),
-  );
-  return themedDefinitions as T;
+  Object.entries(definitions).forEach(([styleName, style]) => {
+    if (typeof style !== 'object' || style === null) return;
+    Object.entries(style).forEach(([property, value]) => {
+      if (typeof value === 'string' && isColorProperty(property)) {
+        Reflect.set(style, property, remapColor(value, property, styleName, theme));
+      }
+    });
+  });
+  return definitions;
 }

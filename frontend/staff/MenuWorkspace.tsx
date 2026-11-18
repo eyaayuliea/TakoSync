@@ -14,8 +14,6 @@ import {
 import type { ImageSourcePropType } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
 import { useTheme } from '../theme/ThemeProvider';
-import { staffColors, staffFonts, staffTypography } from './theme/staffTokens';
-import { StaffPageHeader } from './components/staffComponents';
 import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
 import {
   calculateSelectedAddonTotal,
@@ -52,18 +50,23 @@ type MenuWorkspaceProps = {
 };
 
 const colors = {
-  pink: staffColors.primary,
-  navy: staffColors.navy,
-  background: staffColors.background,
-  white: staffColors.white,
-  text: staffColors.text,
-  secondary: staffColors.secondaryText,
-  border: staffColors.divider,
-  warning: staffColors.warning,
-  error: staffColors.error,
+  pink: '#F20D52',
+  navy: '#111027',
+  background: '#F5F5F5',
+  white: '#FFFFFF',
+  text: '#171717',
+  secondary: '#8D8D98',
+  border: '#E8E8ED',
+  warning: '#FFF2C4',
+  error: '#F52F2E',
 } as const;
 
-const font = staffFonts;
+const font = {
+  regular: 'Poppins_400Regular',
+  medium: 'Poppins_500Medium',
+  semibold: 'Poppins_600SemiBold',
+  bold: 'Poppins_700Bold',
+} as const;
 
 const money = (value: number) => `₱${value.toLocaleString('en-PH')}`;
 
@@ -163,7 +166,21 @@ function ScreenHeader({ title, onBack }: {
   title: string;
   onBack: () => void;
 }) {
-  return <StaffPageHeader title={title} onBack={onBack} />;
+  return (
+    <View style={styles.header}>
+      <View style={styles.headerTitleRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          onPress={onBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <Text style={styles.backGlyph}>‹</Text>
+        </Pressable>
+        <Text style={styles.headerTitle}>{title}</Text>
+      </View>
+    </View>
+  );
 }
 
 function SizeOptionCard({
@@ -179,9 +196,9 @@ function SizeOptionCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: colors.navy }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#101027' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
       <View style={styles.sizeOptionHeader}>
-        <Text style={[styles.sizeOptionLabel, isDark && { color: colors.white }]}>{variant.sizeLabel}</Text>
+        <Text style={[styles.sizeOptionLabel, isDark && { color: '#FFFFFF' }]}>{variant.sizeLabel}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`View information for ${productName}`}
@@ -199,7 +216,7 @@ function SizeOptionCard({
         onPress={onAdd}
         style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
       >
-        <Text style={[styles.sizeOptionPrice, isDark && { color: colors.white }]}>{money(variant.price)}</Text>
+        <Text style={[styles.sizeOptionPrice, isDark && { color: '#FFFFFF' }]}>{money(variant.price)}</Text>
         <View style={styles.availabilityLine}>
           <View style={[styles.availabilityDot, !variant.isAvailable && styles.availabilityDotOff]} />
           <Text style={[styles.availabilityLabel, !variant.isAvailable && styles.unavailableText]}>
@@ -226,11 +243,11 @@ function CartItemCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.cartItem, isDark && { backgroundColor: colors.navy }]}>
+    <View style={[styles.cartItem, isDark && { backgroundColor: '#101027' }]}>
       <View style={styles.cartItemCopy}>
-        <Text style={[styles.cartItemName, isDark && { color: colors.white }]} numberOfLines={2}>{product.name}</Text>
-        <Text style={[styles.cartItemDetail, isDark && { color: staffColors.darkSecondaryText }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
-        <Text style={[styles.cartItemPrice, isDark && { color: colors.white }]}>{money(product.price)} each</Text>
+        <Text style={[styles.cartItemName, isDark && { color: '#FFFFFF' }]} numberOfLines={2}>{product.name}</Text>
+        <Text style={[styles.cartItemDetail, isDark && { color: '#B2B3C4' }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
+        <Text style={[styles.cartItemPrice, isDark && { color: '#FFFFFF' }]}>{money(product.price)} each</Text>
       </View>
       <View style={styles.cartItemActions}>
         <Text style={styles.cartLineTotal}>{money(product.price * quantity)}</Text>
@@ -275,8 +292,8 @@ function CurrentOrderLine({
   onRemove: () => void;
 }) {
   const { isDark } = useTheme();
-  const darkText = isDark ? { color: colors.white } : undefined;
-  const darkQuantityText = isDark ? { color: colors.navy } : undefined;
+  const darkText = isDark ? { color: '#FFFFFF' } : undefined;
+  const darkQuantityText = isDark ? { color: '#101027' } : undefined;
   return (
     <View style={styles.currentOrderLine}>
       <View style={styles.currentOrderCopy}>
@@ -338,9 +355,9 @@ export default function MenuWorkspace({
   onRetryInventory,
 }: MenuWorkspaceProps) {
   const { isDark, colors: themeColors } = useTheme();
-  const darkSecondarySurface = isDark ? { backgroundColor: colors.navy } : undefined;
-  const darkSecondaryText = isDark ? { color: colors.white } : undefined;
-  const darkWarningText = isDark ? { color: colors.navy } : undefined;
+  const darkSecondarySurface = isDark ? { backgroundColor: '#101027' } : undefined;
+  const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
+  const darkWarningText = isDark ? { color: '#101027' } : undefined;
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -655,7 +672,7 @@ export default function MenuWorkspace({
   }
 
   return (
-    <View style={[styles.posScreen, isDark && { backgroundColor: colors.navy }]}>
+    <View style={[styles.posScreen, isDark && { backgroundColor: '#101027' }]}>
       <View style={[styles.posHeader, { backgroundColor: colors.white }]}>
         <Text style={[styles.posHeaderTitle, { color: colors.navy }]}>POS · {branchName}</Text>
         <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{staffName} · {branchCode}</Text>
@@ -959,7 +976,7 @@ const styles = StyleSheet.create({
   posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.white },
   posHeader: { paddingHorizontal: 16, paddingTop: 9, paddingBottom: 7 },
   posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 16 },
-  posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, marginTop: 2, opacity: 0.9 },
+  posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 2, opacity: 0.9 },
   productSelectionSection: {
     flex: 1, minHeight: 0, backgroundColor: colors.pink,
     borderTopLeftRadius: 40, borderTopRightRadius: 40, overflow: 'hidden',
@@ -977,108 +994,108 @@ const styles = StyleSheet.create({
   },
   flavorImageFrameSelected: { borderWidth: 3, borderColor: colors.white },
   flavorImage: { width: 50, height: 50, borderRadius: 25 },
-  flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, marginTop: 4, opacity: 0.85 },
+  flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 4, opacity: 0.85 },
   flavorLabelSelected: { fontFamily: font.bold, opacity: 1 },
   selectedProductBar: {
     minHeight: 48, flexDirection: 'row', alignItems: 'center',
     marginHorizontal: 12, marginBottom: 0, paddingHorizontal: 0, paddingVertical: 7,
   },
   selectedProductCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  selectedProductTitle: { color: colors.white, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize },
-  selectedProductSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, marginTop: 2, opacity: 0.9 },
+  selectedProductTitle: { color: colors.white, fontFamily: font.bold, fontSize: 11 },
+  selectedProductSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: 7, marginTop: 2, opacity: 0.9 },
   viewMenuButton: { minHeight: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
-  viewMenuText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  viewMenuText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   posProductScroll: { flex: 1, minHeight: 0 },
   posProductList: { gap: 10, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 11 },
   sizeGroup: { gap: 7 },
   sizeGroupHeading: { minHeight: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  sizeGroupTitle: { color: colors.white, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize, letterSpacing: 0.5 },
-  sizeGroupProduct: { flex: 1, color: colors.white, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, textAlign: 'right', opacity: 0.9 },
+  sizeGroupTitle: { color: colors.white, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.5 },
+  sizeGroupProduct: { flex: 1, color: colors.white, fontFamily: font.medium, fontSize: 7, textAlign: 'right', opacity: 0.9 },
   sizeOptionRow: { flexDirection: 'row', gap: 7 },
   sizeOptionCard: {
     flex: 1, minWidth: 0, minHeight: 75, paddingHorizontal: 7, paddingVertical: 6,
     borderRadius: 11, backgroundColor: colors.white,
   },
-  sizeOptionCardUnavailable: { backgroundColor: staffColors.background, opacity: 0.72 },
+  sizeOptionCardUnavailable: { backgroundColor: '#F3F3F5', opacity: 0.72 },
   sizeOptionHeader: { minHeight: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sizeOptionLabel: { color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  sizeOptionLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
   sizeInfoButton: {
     width: 17, height: 17, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 9, backgroundColor: staffColors.background,
+    borderRadius: 9, backgroundColor: '#F4F4F7',
   },
-  sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize },
+  sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: 9 },
   sizeOptionAction: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   sizeOptionPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 12, marginTop: 2 },
   availabilityLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  availabilityDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: staffColors.success },
+  availabilityDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#38A169' },
   availabilityDotOff: { backgroundColor: colors.secondary },
-  availabilityLabel: { color: staffColors.success, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  availabilityLabel: { color: '#2F8C57', fontFamily: font.medium, fontSize: 6 },
   unavailableText: { color: colors.secondary },
   addonSection: { gap: 6, paddingTop: 2 },
-  addonSectionTitle: { color: colors.white, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize },
+  addonSectionTitle: { color: colors.white, fontFamily: font.bold, fontSize: 10 },
   addonPills: { gap: 7, paddingRight: 10 },
   addonPill: {
     minHeight: 29, justifyContent: 'center', paddingHorizontal: 10,
     borderRadius: 16, backgroundColor: colors.white,
   },
   addonPillSelected: { backgroundColor: colors.navy },
-  addonPillText: { color: colors.text, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  addonPillText: { color: colors.text, fontFamily: font.medium, fontSize: 7 },
   addonPillTextSelected: { color: colors.white, fontFamily: font.semibold },
-  addonUnavailableText: { color: colors.white, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, lineHeight: 11, opacity: 0.9 },
+  addonUnavailableText: { color: colors.white, fontFamily: font.regular, fontSize: 7, lineHeight: 11, opacity: 0.9 },
   currentOrderPanel: {
     flexShrink: 0, maxHeight: '44%', gap: 5, paddingHorizontal: 13, paddingTop: 9, paddingBottom: 10,
     borderTopLeftRadius: 18, borderTopRightRadius: 18, backgroundColor: colors.white,
   },
   currentOrderHeader: { minHeight: 29, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 7 },
-  currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize },
-  currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
+  currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: 7 },
   clearOrderButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 7 },
-  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  clearOrderDisabled: { color: staffColors.neutral },
+  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  clearOrderDisabled: { color: '#B8B8C0' },
   currentOrderItems: { flexGrow: 0, maxHeight: 120 },
   currentOrderItemsContent: { gap: 3, paddingVertical: 1 },
   currentOrderLine: {
     minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: staffColors.divider,
+    paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
   },
   currentOrderCopy: { flex: 1, minWidth: 0 },
-  currentOrderName: { color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  currentOrderUnit: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, marginTop: 1 },
-  currentOrderLineTotal: { width: 43, color: colors.navy, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize, textAlign: 'right' },
-  currentOrderQuantity: { height: 23, flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: staffColors.background },
+  currentOrderName: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
+  currentOrderUnit: { color: colors.secondary, fontFamily: font.regular, fontSize: 6, marginTop: 1 },
+  currentOrderLineTotal: { width: 43, color: colors.navy, fontFamily: font.bold, fontSize: 7, textAlign: 'right' },
+  currentOrderQuantity: { height: 23, flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: '#F3F3F6' },
   currentOrderQuantityButton: { width: 21, height: 23, alignItems: 'center', justifyContent: 'center' },
   currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
-  currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, textAlign: 'center' },
+  currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
   currentOrderRemove: { width: 22, height: 23, alignItems: 'center', justifyContent: 'center' },
   currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
   currentAddonLine: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingVertical: 2, borderBottomWidth: 1, borderBottomColor: staffColors.divider,
+    paddingVertical: 2, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
   },
-  currentAddonName: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
-  currentAddonPrice: { width: 43, color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, textAlign: 'right' },
-  currentOrderEmpty: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, textAlign: 'center', paddingVertical: 7 },
+  currentAddonName: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 7 },
+  currentAddonPrice: { width: 43, color: colors.navy, fontFamily: font.semibold, fontSize: 7, textAlign: 'right' },
+  currentOrderEmpty: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center', paddingVertical: 7 },
   currentOrderTotalRow: {
     minHeight: 27, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 4,
   },
-  currentOrderTotalLabel: { color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  currentOrderTotalLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 9 },
   currentOrderTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12 },
   proceedPaymentButton: {
     minHeight: 36, alignItems: 'center', justifyContent: 'center',
     borderRadius: 18, backgroundColor: colors.pink,
   },
   proceedPaymentDisabled: { opacity: 0.5 },
-  proceedPaymentText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  proceedPaymentText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   feedbackBanner: {
     flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
   },
   feedbackMessagePressable: { flexDirection: 'row', alignItems: 'flex-start', flex: 1, gap: 8 },
   retryInventoryButton: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.pink },
-  retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+  feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8 },
   feedbackDismiss: { color: colors.navy, fontFamily: font.bold, fontSize: 16, paddingLeft: 8 },
   stateCard: {
     alignItems: 'center', gap: 7, paddingHorizontal: 16, paddingVertical: 22,
@@ -1088,16 +1105,16 @@ const styles = StyleSheet.create({
     minHeight: 34, justifyContent: 'center', paddingHorizontal: 18,
     borderRadius: 12, backgroundColor: colors.pink, marginTop: 7,
   },
-  retryText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  retryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
   retryCheckoutButton: {
     minHeight: 38, justifyContent: 'center', alignItems: 'center',
     paddingHorizontal: 18, borderRadius: 12, backgroundColor: colors.pink, marginTop: 8,
   },
-  retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   pressed: { opacity: 0.8 },
   productArtwork: {
     width: 56, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    overflow: 'hidden', borderRadius: 10, backgroundColor: staffColors.surface,
+    overflow: 'hidden', borderRadius: 10, backgroundColor: '#F7F7FA',
   },
   singleProductImage: { width: 50, height: 50 },
   comboProductImage: { width: 25, height: 46 },
@@ -1109,15 +1126,15 @@ const styles = StyleSheet.create({
   infoModalGroup: { gap: 5 },
   infoModalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   infoModalTitle: { color: colors.text, fontFamily: font.bold, fontSize: 18 },
-  infoModalSectionLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, marginTop: 6 },
+  infoModalSectionLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 6 },
   infoVariantRow: { minHeight: 35, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.border },
-  infoVariantSize: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
-  infoVariantPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, marginRight: 9 },
+  infoVariantSize: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 8 },
+  infoVariantPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginRight: 9 },
   infoVariantStatus: { width: 75, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  infoVariantAvailability: { color: staffColors.success, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
-  infoModalDescription: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, lineHeight: 12, marginTop: 3 },
+  infoVariantAvailability: { color: '#2F8C57', fontFamily: font.medium, fontSize: 7 },
+  infoModalDescription: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 3 },
   infoModalClose: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.navy, marginTop: 10 },
-  infoModalCloseText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  infoModalCloseText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   progress: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center',
     paddingHorizontal: 30, paddingTop: 8, paddingBottom: 17, backgroundColor: colors.background,
@@ -1125,66 +1142,66 @@ const styles = StyleSheet.create({
   progressStep: { alignItems: 'center', minWidth: 38 },
   progressCircle: {
     width: 27, height: 27, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: staffColors.neutral, borderRadius: 14, backgroundColor: colors.white,
+    borderWidth: 1.5, borderColor: '#C9C9D0', borderRadius: 14, backgroundColor: colors.white,
   },
   progressCircleActive: { borderColor: colors.navy, backgroundColor: colors.navy },
-  progressNumber: { color: colors.secondary, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  progressNumber: { color: colors.secondary, fontFamily: font.semibold, fontSize: 9 },
   progressNumberActive: { color: colors.white },
-  progressLabel: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, marginTop: 4 },
+  progressLabel: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, marginTop: 4 },
   progressLabelActive: { color: colors.navy, fontFamily: font.semibold },
-  progressLine: { flex: 1, height: 2, backgroundColor: staffColors.neutral, marginTop: 13 },
+  progressLine: { flex: 1, height: 2, backgroundColor: '#D8D8DE', marginTop: 13 },
   progressLineActive: { backgroundColor: colors.navy },
   cartScroll: { flex: 1, minHeight: 0 },
   cartList: { gap: 9, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 18 },
   sectionHeading: { color: colors.navy, fontFamily: font.semibold, fontSize: 14, marginBottom: 1 },
-  itemCount: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize },
+  itemCount: { color: colors.secondary, fontFamily: font.regular, fontSize: 10 },
   cartItem: {
     minHeight: 104, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     paddingVertical: 11, borderRadius: 15, backgroundColor: colors.white,
     borderWidth: 1, borderColor: colors.border,
   },
   cartItemCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  cartItemName: { color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  cartItemDetail: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, marginTop: 4 },
-  cartItemPrice: { color: colors.navy, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, marginTop: 5 },
+  cartItemName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
+  cartItemDetail: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
+  cartItemPrice: { color: colors.navy, fontFamily: font.medium, fontSize: 8, marginTop: 5 },
   cartItemActions: { minWidth: 91, alignItems: 'flex-end' },
-  cartLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize, marginBottom: 5 },
+  cartLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 11, marginBottom: 5 },
   quantityControl: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center',
     borderRadius: 14, backgroundColor: colors.background,
   },
   quantityButton: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   quantityButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 16 },
-  quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, textAlign: 'center' },
-  removeItem: { color: colors.error, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, marginTop: 4 },
+  quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: 9, textAlign: 'center' },
+  removeItem: { color: colors.error, fontFamily: font.medium, fontSize: 7, marginTop: 4 },
   emptyCard: {
     alignItems: 'center', paddingHorizontal: 16, paddingVertical: 22,
     borderRadius: 15, backgroundColor: colors.white,
   },
-  emptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  emptyCopy: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, textAlign: 'center', marginTop: 4 },
+  emptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+  emptyCopy: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, textAlign: 'center', marginTop: 4 },
   addMoreButton: {
     minHeight: 42, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.pink, borderRadius: 13, backgroundColor: colors.white,
   },
-  addMoreText: { color: colors.pink, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  previewNotice: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, textAlign: 'center' },
+  addMoreText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  previewNotice: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center' },
   totalFooter: {
     paddingHorizontal: 16, paddingTop: 11, paddingBottom: 13,
     borderTopLeftRadius: 21, borderTopRightRadius: 21, backgroundColor: colors.pink,
   },
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 },
-  totalLabel: { color: colors.white, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  totalLabel: { color: colors.white, fontFamily: font.medium, fontSize: 10 },
   totalValue: { color: colors.white, fontFamily: font.bold, fontSize: 17 },
   footerActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   footerSecondary: { paddingVertical: 8, paddingHorizontal: 3 },
-  footerSecondaryText: { color: colors.white, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  footerSecondaryText: { color: colors.white, fontFamily: font.medium, fontSize: 8 },
   placeOrderButton: {
     minWidth: 132, minHeight: 40, alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 16, borderRadius: 13, backgroundColor: colors.white,
   },
   disabledButton: { opacity: 0.65 },
-  placeOrderText: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  placeOrderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutContent: {
     paddingHorizontal: 16, paddingBottom: 20,
   },
@@ -1195,21 +1212,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, marginBottom: 7,
   },
   checkoutLineCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  checkoutLineName: { color: colors.text, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
-  checkoutLineMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, marginTop: 3 },
-  checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: staffTypography.detail.fontSize },
+  checkoutLineName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
+  checkoutLineMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
+  checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 10 },
   addonOption: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 12, paddingVertical: 9, borderRadius: 12,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white, marginBottom: 6,
   },
-  addonOptionText: { color: colors.text, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
-  addonOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  addonOptionText: { color: colors.text, fontFamily: font.medium, fontSize: 9 },
+  addonOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutTotalRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: 12,
   },
-  paymentLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, marginTop: 8, marginBottom: 7 },
+  paymentLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 8, marginBottom: 7 },
   paymentOptions: { flexDirection: 'row', gap: 8 },
   paymentOption: {
     minWidth: 84, minHeight: 36, alignItems: 'center', justifyContent: 'center',
@@ -1217,21 +1234,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   paymentOptionSelected: { borderColor: colors.navy, backgroundColor: colors.navy },
-  paymentOptionText: { color: colors.secondary, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize },
+  paymentOptionText: { color: colors.secondary, fontFamily: font.medium, fontSize: 9 },
   paymentOptionTextSelected: { color: colors.white, fontFamily: font.semibold },
   paymentInput: {
     height: 42, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1,
     borderColor: colors.border, backgroundColor: colors.white, color: colors.text,
-    fontFamily: font.regular, fontSize: staffTypography.detail.fontSize,
+    fontFamily: font.regular, fontSize: 10,
   },
   paymentInputError: { borderColor: colors.error },
-  paymentError: { color: colors.error, fontFamily: font.medium, fontSize: staffTypography.detail.fontSize, marginTop: 5 },
-  changeText: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, marginTop: 7 },
-  paymentMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: staffTypography.detail.fontSize, lineHeight: 13 },
+  paymentError: { color: colors.error, fontFamily: font.medium, fontSize: 8, marginTop: 5 },
+  changeText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 7 },
+  paymentMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   checkoutUnavailableBox: {
     padding: 12, borderRadius: 13, backgroundColor: colors.warning, marginTop: 16,
   },
-  checkoutUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  checkoutUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutIcon: {
     width: 53, height: 53, alignItems: 'center', justifyContent: 'center',
     borderRadius: 27, backgroundColor: colors.warning, marginBottom: 14,
@@ -1240,12 +1257,12 @@ const styles = StyleSheet.create({
   checkoutTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 15, textAlign: 'center' },
   checkoutMessage: {
     maxWidth: 330, color: colors.secondary, fontFamily: font.regular,
-    fontSize: staffTypography.detail.fontSize, lineHeight: 15, textAlign: 'center', marginTop: 8,
+    fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 8,
   },
-  checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize, marginTop: 15 },
+  checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 15 },
   checkoutBackButton: {
     minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 13,
     backgroundColor: colors.pink, marginTop: 17,
   },
-  checkoutBackText: { color: colors.white, fontFamily: font.semibold, fontSize: staffTypography.detail.fontSize },
+  checkoutBackText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
 });

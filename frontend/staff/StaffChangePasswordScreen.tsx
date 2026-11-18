@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { changeStaffPassword } from '../services/takosync';
-import { staffColors, staffRadius, staffSpacing, staffTypography } from './theme/staffTokens';
 
 type Props = {
   employeeId: string | null;
@@ -59,7 +58,6 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onLog
           autoCorrect={false}
           editable={!saving}
           style={styles.input}
-          accessibilityLabel="New password"
           placeholder="At least 8 characters"
         />
         <Text style={styles.label}>Confirm new password</Text>
@@ -71,14 +69,13 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onLog
           autoCorrect={false}
           editable={!saving}
           style={styles.input}
-          accessibilityLabel="Confirm new password"
           placeholder="Re-enter your new password"
         />
         {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
-        <Pressable accessibilityRole="button" accessibilityLabel="Save new password" accessibilityState={{ disabled: saving, busy: saving }} onPress={() => void submit()} disabled={saving} style={[styles.primary, saving && styles.disabled]}>
+        <Pressable onPress={() => void submit()} disabled={saving} style={[styles.primary, saving && styles.disabled]}>
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Save new password</Text>}
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Log out" accessibilityState={{ disabled: saving }} onPress={() => void onLogout()} disabled={saving} style={styles.logout}>
+        <Pressable onPress={() => void onLogout()} disabled={saving} style={styles.logout}>
           <Text style={styles.logoutText}>Log out</Text>
         </Pressable>
       </View>
@@ -87,17 +84,17 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onLog
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: staffSpacing.xxl, backgroundColor: staffColors.background },
-  card: { width: '100%', maxWidth: 430, padding: staffSpacing.xxl, borderRadius: staffRadius.dialog, backgroundColor: staffColors.surface, borderWidth: 1, borderColor: staffColors.divider },
-  eyebrow: { color: staffColors.primary, ...staffTypography.label, letterSpacing: 1.2 },
-  title: { color: staffColors.navy, ...staffTypography.h2, marginTop: 10 },
-  copy: { color: staffColors.secondaryText, ...staffTypography.detail, marginTop: 10 },
-  label: { color: staffColors.navy, ...staffTypography.label, marginTop: 18, marginBottom: 6 },
-  input: { minHeight: 48, paddingHorizontal: 13, borderRadius: staffRadius.control, borderWidth: 1, borderColor: staffColors.divider, color: staffColors.text, ...staffTypography.detail },
-  error: { color: staffColors.discrepancy, ...staffTypography.detail, marginTop: 12 },
-  primary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 20, borderRadius: staffRadius.control, backgroundColor: staffColors.primary },
+  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#F6F6F8' },
+  card: { width: '100%', maxWidth: 430, padding: 24, borderRadius: 20, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E7E7EC' },
+  eyebrow: { color: '#F20D55', fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
+  title: { color: '#101026', fontSize: 25, fontWeight: '800', marginTop: 10 },
+  copy: { color: '#777783', fontSize: 12, lineHeight: 19, marginTop: 10 },
+  label: { color: '#303044', fontSize: 11, fontWeight: '700', marginTop: 18, marginBottom: 6 },
+  input: { minHeight: 48, paddingHorizontal: 13, borderRadius: 10, borderWidth: 1, borderColor: '#DCDCE3', color: '#171724', fontSize: 13 },
+  error: { color: '#B9244C', fontSize: 11, lineHeight: 16, marginTop: 12 },
+  primary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 20, borderRadius: 10, backgroundColor: '#F20D55' },
   disabled: { opacity: 0.6 },
-  primaryText: { color: staffColors.white, ...staffTypography.label },
+  primaryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   logout: { alignItems: 'center', paddingVertical: 14 },
-  logoutText: { color: staffColors.secondaryText, ...staffTypography.label },
+  logoutText: { color: '#777783', fontSize: 11, fontWeight: '700' },
 });

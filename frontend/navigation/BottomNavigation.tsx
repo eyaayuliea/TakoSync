@@ -1,8 +1,6 @@
 import React, { useMemo } from 'react';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
-import { staffColors } from '../staff/theme/staffTokens';
 import {
   activeStaffTab,
   STAFF_NAVIGATION_TOUCH_TARGET,
@@ -15,11 +13,11 @@ export type { StaffRoute, StaffTab } from './staffNavigation';
 export { activeStaffTab };
 
 const colors = {
-  pink: staffColors.primary,
-  staffPink: staffColors.primary,
-  navy: staffColors.navy,
-  orange: staffColors.action,
-  white: staffColors.white,
+  pink: '#F20D55',
+  staffPink: '#EC1358',
+  navy: '#101027',
+  orange: '#FF9418',
+  white: '#FFFFFF',
 } as const;
 
 export type OwnerTab = 'dashboard' | 'sales' | 'inventory' | 'discrepancies' | 'alerts' | 'more';
@@ -41,28 +39,11 @@ function NavigationIcon({
   name,
   color,
   outlinedBell,
-  vectorized = false,
 }: {
   name: Destination['icon'];
   color: string;
   outlinedBell: boolean;
-  vectorized?: boolean;
 }) {
-  if (vectorized) {
-    const iconName = {
-      home: 'home-outline',
-      pos: 'cash-register',
-      menu: 'silverware-fork-knife',
-      box: 'package-variant-closed',
-      stock: 'archive-outline',
-      bell: 'bell-outline',
-      more: 'dots-horizontal',
-      dashboardGrid: 'view-dashboard-outline',
-      salesChart: 'chart-bar',
-      sync: 'sync',
-    }[name] as React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-    return <MaterialCommunityIcons name={iconName} color={color} size={22} accessibilityLabel={`${name} icon`} />;
-  }
   if (name === 'dashboardGrid') {
     return (
       <View style={iconStyles.dashboardGrid}>
@@ -204,7 +185,7 @@ export default function BottomNavigation({
             >
               <View style={[styles.iconWrap, staffOnly && styles.staffOuterIconWrap]}>
                 <View style={[staffOnly && styles.staffIconWrap, showAlertBadge && styles.staffBadgeAnchor]}>
-                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} vectorized={staffOnly} />
+                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} />
                   {showAlertBadge ? (
                     <View style={[styles.staffAlertBadge, selected && styles.staffAlertBadgeSelected]}>
                       <Text style={[styles.staffAlertBadgeText, selected && styles.staffAlertBadgeTextSelected]}>
@@ -238,7 +219,7 @@ export function OwnerBottomNav({
   const styles = useNavigationStyles();
   return (
     <View style={styles.outer}>
-      <View style={[styles.bar, styles.staffBar]}>
+      <View style={[styles.bar, styles.ownerBar]}>
         {ownerDestinations.map((destination, index) => {
           const selected = destination.route !== 'more' ? activeIndex === index : activeIndex === 5;
           return (
@@ -250,17 +231,17 @@ export function OwnerBottomNav({
               onPress={() => onSelect(destination.route as OwnerTab)}
               style={({ pressed }) => [
                 styles.item,
-                styles.staffItem,
-                selected && styles.staffItemSelected,
+                styles.ownerItem,
+                selected && styles.ownerItemSelected,
                 selected && styles.ownerSelectedItem,
                 pressed && styles.pressed,
               ]}
             >
-              <View style={[styles.iconWrap, styles.staffOuterIconWrap]}>
+              <View style={[styles.iconWrap, styles.ownerOuterIconWrap]}>
                 <NavigationIcon name={destination.icon} color={colors.white} outlinedBell={false} />
               </View>
               {selected ? (
-                <Text style={[styles.label, styles.staffLabel, styles.labelSelected]} numberOfLines={1}>
+                <Text style={[styles.ownerLabel, styles.labelSelected]} numberOfLines={1}>
                   {destination.label}
                 </Text>
               ) : null}
@@ -306,6 +287,16 @@ function useNavigationStyles() {
     shadowRadius: 0,
     shadowOffset: { width: 0, height: 0 },
   },
+  ownerBar: {
+    minHeight: 56,
+    justifyContent: 'space-between',
+    gap: 3,
+    backgroundColor: '#0F1025',
+    elevation: 0,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+  },
   item: {
     flex: 1,
     minWidth: 0,
@@ -317,7 +308,19 @@ function useNavigationStyles() {
     height: STAFF_NAVIGATION_TOUCH_TARGET,
     flexDirection: 'column',
   },
+  ownerItem: {
+    height: STAFF_NAVIGATION_TOUCH_TARGET,
+    flexDirection: 'column',
+  },
   staffItemSelected: {
+    flex: 1.65,
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 24,
+    backgroundColor: colors.staffPink,
+  },
+  ownerItemSelected: {
     flex: 1.65,
     flexDirection: 'row',
     gap: 5,
@@ -339,6 +342,7 @@ function useNavigationStyles() {
     backgroundColor: colors.pink,
   },
   staffOuterIconWrap: { width: 20, height: 20 },
+  ownerOuterIconWrap: { width: 20, height: 20 },
   staffIconWrap: {
     width: 20,
     height: 20,
@@ -368,16 +372,16 @@ function useNavigationStyles() {
   },
   staffAlertBadgeText: {
     color: colors.white,
-    // Decorative count badge; the count is also exposed through the parent label.
-    fontSize: 10,
+    fontSize: 6,
     lineHeight: 8,
     fontFamily: 'Poppins_700Bold',
   },
   staffAlertBadgeTextSelected: {
     color: colors.staffPink,
   },
-  label: { color: colors.white, fontSize: 12, lineHeight: 16, fontFamily: 'Poppins_500Medium', marginTop: 2 },
-  staffLabel: { fontSize: 12, lineHeight: 16, marginTop: 0 },
+  label: { color: colors.white, fontSize: 9, fontFamily: 'Poppins_500Medium', marginTop: 2 },
+  staffLabel: { fontSize: 8, marginTop: 0 },
+  ownerLabel: { color: colors.white, fontSize: 12, lineHeight: 16, fontFamily: 'Poppins_500Medium', marginTop: 0 },
   staffInactiveLabel: { display: 'none' },
   labelSelected: { color: colors.white },
   pressed: { opacity: 0.76 },

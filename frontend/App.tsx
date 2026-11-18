@@ -21,7 +21,6 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import StaffWorkspace from './staff/StaffWorkspace';
-import { StaffLoadingOverlay } from './staff/shared/staffComponents';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
@@ -43,8 +42,8 @@ import {
   type OwnerSalesData,
 } from './services/takosync';
 
-const PINK = '#EC1358';
-const NAVY = '#0F1025';
+const PINK = '#F20D55';
+const NAVY = '#101026';
 const DASHBOARD_COLORS = {
   pink: '#EC1358',
   navy: '#0F1025',
@@ -544,15 +543,7 @@ function AppContent() {
       if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
         setPassword('');
       }
-      if (error instanceof StaffLoginError && error.code === 'unknown_username') {
-        setUsernameError(error.message);
-        setLoginError('');
-      } else if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
-        setPasswordError(error.message);
-        setLoginError('');
-      } else {
-        setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
-      }
+      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
       authLock.current = false;
       authOperationLock.current = false;
@@ -738,7 +729,7 @@ function AppContent() {
             {visibleScreen === 'login' && (
               <View style={styles.loginScreen}>
                 <ImageBackground
-                  source={require('../assets/WELCOME PAGE.jpg')}
+                  source={require('../assets/takoyaki-plate.png')}
                   resizeMode="cover"
                   style={styles.loginBackground}
                   imageStyle={styles.loginBackgroundImage}
@@ -848,7 +839,6 @@ function AppContent() {
                     </ScrollView>
                   </View>
                 </ImageBackground>
-                <StaffLoadingOverlay visible={authenticating} label="Logging in…" />
               </View>
             )}
 
@@ -1565,8 +1555,8 @@ function useAppStyles() {
   buttonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   loginScreen: { flex: 1, backgroundColor: '#FFFFFF' },
   loginBackground: { flex: 1 },
-  loginBackgroundImage: { width: '100%', height: '100%' },
-  loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
+  loginBackgroundImage: { width: '100%', height: '100%', opacity: 0.38 },
+  loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.62)' },
   loginHeader: { alignItems: 'center', justifyContent: 'center', paddingTop: 12, backgroundColor: 'transparent' },
   loginScroll: { flex: 1 },
   loginScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 },
