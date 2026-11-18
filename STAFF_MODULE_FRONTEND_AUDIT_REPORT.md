@@ -128,12 +128,12 @@ Status for the current remediation pass (2026-11-18):
 - UI-003 — Fixed. Shared primitives are in [frontend/staff/components/](./frontend/staff/components/), with the former duplicate module removed.
 - UI-004 — Not fixed. Legacy movement screens still contain inline field layouts; migrating them fully requires moving their existing handlers and state without changing validation or recovery behavior.
 - UI-005 — Fixed. Token-backed cards, fields, badges, dialogs, and success states are available in [frontend/staff/components/](./frontend/staff/components/).
-- UI-006 — Partially fixed. Staff bottom navigation uses outlined Material Community Icons in [frontend/navigation/BottomNavigation.tsx](../frontend/navigation/BottomNavigation.tsx); legacy dashboard and empty-state marks remain.
+- UI-006 — Partially fixed. Staff bottom navigation uses outlined Material Community Icons in [frontend/navigation/BottomNavigation.tsx](./frontend/navigation/BottomNavigation.tsx); legacy dashboard and empty-state marks remain.
 - UI-007 — Not fixed. Feature boundaries were scaffolded in [frontend/staff/screens/](./frontend/staff/screens/), but the render closures and their local styles have not yet been fully moved out of [frontend/staff/StaffWorkspace.tsx](./frontend/staff/StaffWorkspace.tsx).
 - UI-008 — Fixed. The Staff profile copy identifies “In-app alerts” and retains the push-delivery limitation in [frontend/staff/StaffWorkspace.tsx](./frontend/staff/StaffWorkspace.tsx).
 - UI-009 — Partially fixed. Existing keyboard-persist behavior and responsive flex constraints remain, but a device-level keyboard/safe-area audit is still required.
 - UI-010 — Not fixed. No render-level console-error mounting test was added because the repository’s frontend runner is Node-only and cannot mount React Native JSX without a configured renderer.
-- UI-011 — Fixed. [createThemedStyles](../frontend/theme/ThemeProvider.tsx) returns a new themed map for dark mode without mutating definitions; the invariant is checked by [frontend/theme/ThemeProvider.test.mjs](../frontend/theme/ThemeProvider.test.mjs).
+- UI-011 — Fixed. [createThemedStyles](./frontend/theme/ThemeProvider.tsx) returns a new themed map for dark mode without mutating definitions; the invariant is checked by [frontend/theme/ThemeProvider.test.mjs](./frontend/theme/ThemeProvider.test.mjs).
 - UI-012 — Partially fixed. Token, navigation, and service-level Staff tests pass; primitive rendering, per-mode movement-form rendering, and real-device accessibility coverage remain outstanding.
 
 The current frontend verification run is 193 passing tests across 38 files; `npm run typecheck` also passes. No service-layer, branch-scoping, recovery, validation, role-separation, or Owner behavior changes were made in this remediation pass.
