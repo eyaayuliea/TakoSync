@@ -44,7 +44,11 @@ import {
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
 import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
-import { validateWasteForm as validateWasteFields } from './wasteValidation';
+import {
+  validateStockInForm,
+  validateStockOutForm,
+  validateWasteForm as validateWasteFields,
+} from './inventoryFormValidation';
 import {
   dailyQuantityErrorText,
   getDailyCountBasis,
@@ -1945,7 +1949,7 @@ export default function StaffWorkspace({
   }, [route]);
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
-  const validateStockInValues = ({
+  const getStockInValidation = ({
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
     transactionDateValue = transactionDate,
@@ -1955,109 +1959,43 @@ export default function StaffWorkspace({
     quantityValue?: string;
     transactionDateValue?: Date | null;
     expirationDateValue?: Date | null;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = ingredients.find((item) => item.id === ingredientId);
-    if (!ingredient) {
-      errors.ingredient = 'Ingredient is required.';
-    }
-
-    if (!quantityValue.trim()) {
-      errors.quantity = 'Quantity is required.';
-    } else {
-      const parsedQuantity = Number(quantityValue);
-      if (Number.isFinite(parsedQuantity) && parsedQuantity <= 0) {
-        errors.quantity = 'Quantity must be greater than zero.';
-      } else {
-        const precision = ingredient?.quantityPrecision ?? 2;
-        const validFormat = precision === 0
-          ? /^\d+$/.test(quantityValue.trim())
-          : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`).test(quantityValue.trim());
-        if (!Number.isFinite(parsedQuantity) || !validFormat) {
-          errors.quantity = 'Enter a valid number greater than zero.';
-        }
-      }
-    }
-
-    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {
-      errors.transactionDate = 'Transaction date is required.';
-    }
-    if (
-      expirationDateValue &&
-      !Number.isFinite(expirationDateValue.getTime())
-    ) {
-      errors.expirationDate = 'Enter a valid expiration date.';
-    } else if (ingredient?.expirationTracking && !expirationDateValue) {
-      errors.expirationDate = 'Expiration date is required for this ingredient.';
-    } else if (
-      transactionDateValue &&
-      expirationDateValue &&
-      new Date(
-        expirationDateValue.getFullYear(),
-        expirationDateValue.getMonth(),
-        expirationDateValue.getDate(),
-      ).getTime() < new Date(
-        transactionDateValue.getFullYear(),
-        transactionDateValue.getMonth(),
-        transactionDateValue.getDate(),
-      ).getTime()
-    ) {
-      errors.expirationDate = 'Expiration date cannot be earlier than Date.';
-    }
-    return errors;
+  } = {}) => validateStockInForm({
+    ingredient: ingredients.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    transactionDate: transactionDateValue,
+    expirationDate: expirationDateValue,
+  });
+  const updateStockInValidation = (values: Parameters<typeof getStockInValidation>[0]) => {
+    const { errors, summary } = getStockInValidation(values);
+    setStockInFieldErrors(errors as Record<string, string>);
+    setFormError(summary);
   };
-  const updateStockInValidation = (values: Parameters<typeof validateStockInValues>[0]) => {
-    const errors = validateStockInValues(values);
-    setStockInFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
-  };
-  const validateStockOutValues = ({
+  const getStockOutValidation = ({
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
     transactionDateValue = transactionDate,
     reasonValue = reason,
+    validateIngredientAndQuantity = true,
   }: {
     ingredientId?: string;
     quantityValue?: string;
     transactionDateValue?: Date | null;
     reasonValue?: string;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = ingredients.find((item) => item.id === ingredientId);
-    if (!ingredient) {
-      errors.ingredient = 'Ingredient is required.';
-    }
-
-    if (!quantityValue.trim()) {
-      errors.quantity = 'Quantity used is required.';
-    } else {
-      const parsedQuantity = Number(quantityValue);
-      const precision = ingredient?.quantityPrecision ?? 2;
-      const validFormat = precision === 0
-        ? /^\d+$/.test(quantityValue.trim())
-        : new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`).test(quantityValue.trim());
-      if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0 || !validFormat) {
-        errors.quantity = precision === 0
-          ? `Enter a whole number of ${ingredient?.unit ?? 'units'} greater than zero.`
-          : `Enter a valid quantity with up to ${precision} decimal places greater than zero.`;
-      } else if (ingredient && parsedQuantity > ingredient.quantity) {
-        errors.quantity = 'Quantity used exceeds the available stock.';
-      }
-    }
-
-    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {
-      errors.transactionDate = 'Transaction date is required.';
-    }
-    if (!reasonValue.trim()) {
-      errors.reason = 'Reason is required.';
-    }
-    return errors;
-  };
+    validateIngredientAndQuantity?: boolean;
+  } = {}) => validateStockOutForm({
+    ingredient: ingredients.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    transactionDate: transactionDateValue,
+    reason: reasonValue,
+    validateIngredientAndQuantity,
+  });
+  const validateStockOutValues = (values: Parameters<typeof getStockOutValidation>[0] = {}) =>
+    getStockOutValidation(values).errors as Record<string, string>;
   const updateStockOutValidation = (values: Parameters<typeof validateStockOutValues>[0]) => {
-    const errors = validateStockOutValues(values);
-    setStockOutFieldErrors(errors);
+    const { errors, summary } = getStockOutValidation(values);
+    setStockOutFieldErrors(errors as Record<string, string>);
     setQuantityError(errors.quantity ?? '');
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
   };
   const staffName = user.displayName;
   const staffRole = user.role;
@@ -3056,11 +2994,11 @@ export default function StaffWorkspace({
     setSuccessMessage('');
     setFormError('');
     if (route === 'stockIn') {
-      const errors = validateStockInValues();
+      const { errors, summary } = getStockInValidation();
       setStockInValidationAttempted(true);
-      setStockInFieldErrors(errors);
+      setStockInFieldErrors(errors as Record<string, string>);
       if (Object.keys(errors).length > 0) {
-        setFormError('Check the required fields to continue.');
+        setFormError(summary);
         return false;
       }
       return true;
@@ -3068,22 +3006,20 @@ export default function StaffWorkspace({
     if (route === 'stockOut') {
       setStockOutValidationAttempted(true);
       if (usageMode === 'manual') {
-        const errors = validateStockOutValues();
-        setStockOutFieldErrors(errors);
+        const { errors, summary } = getStockOutValidation();
+        setStockOutFieldErrors(errors as Record<string, string>);
         setQuantityError(errors.quantity ?? '');
         if (Object.keys(errors).length > 0) {
-          setFormError('Check the required fields to continue.');
+          setFormError(summary);
           return false;
         }
         return true;
       }
 
-      const errors: Record<string, string> = {};
-      if (!transactionDate) errors.transactionDate = 'Transaction date is required.';
-      if (!reason.trim()) errors.reason = 'Reason is required.';
-      setStockOutFieldErrors(errors);
-      if (Object.keys(errors).length > 0) {
-        setFormError('Check the required fields to continue.');
+      const batchValidation = getStockOutValidation({ validateIngredientAndQuantity: false });
+      setStockOutFieldErrors(batchValidation.errors as Record<string, string>);
+      if (Object.keys(batchValidation.errors).length > 0) {
+        setFormError(batchValidation.summary);
         return false;
       }
       if (!Number.isFinite(parsedBatchCount) || parsedBatchCount <= 0) {
