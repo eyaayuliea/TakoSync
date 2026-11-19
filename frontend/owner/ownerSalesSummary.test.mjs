@@ -37,7 +37,7 @@ test('products sold excludes zero and invalid quantities', () => {
   assert.deepEqual(summary, []);
 });
 
-test('products sold excludes completed sales whose inventory processing is unresolved or failed', () => {
+test('products sold counts every recorded sale, including ones whose inventory update is pending or failed', () => {
   const summary = summarizeOwnerProducts([
     item({ product_id: 'confirmed', product_name: 'Confirmed', quantity: 4, inventory_processing_status: 'completed' }),
     item({ id: 'pending-line', product_id: 'pending', product_name: 'Pending', quantity: 20, inventory_processing_status: 'pending' }),
@@ -45,7 +45,8 @@ test('products sold excludes completed sales whose inventory processing is unres
     item({ id: 'legacy-line', product_id: 'legacy', product_name: 'Legacy', quantity: 2 }),
   ]);
 
-  assert.deepEqual(summary.map((product) => product.id), ['confirmed', 'legacy']);
+  assert.deepEqual(summary.map((product) => product.id), ['pending', 'failed', 'confirmed', 'legacy']);
+  assert.equal(summary.reduce((sum, product) => sum + product.quantity, 0), 36);
 });
 
 test('empty products sold state uses the exact required message', () => {
