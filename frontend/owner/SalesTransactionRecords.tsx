@@ -203,8 +203,8 @@ export default function SalesTransactionRecords({
               <View style={styles.summaryTop}>
                 <Text style={styles.transactionId}>{selected.transactionReference}</Text>
                 <View style={styles.recordedBadge}>
-                  <Text style={styles.recordedCheck}>✓</Text>
-                  <Text style={styles.recordedText}>Recorded</Text>
+                  {selected.status === 'Recorded' ? <Text style={styles.recordedCheck}>✓</Text> : null}
+                  <Text style={styles.recordedText}>{selected.status}</Text>
                 </View>
               </View>
               {[

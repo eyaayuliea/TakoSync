@@ -89,3 +89,10 @@ test('design-preview states can force loading, empty and error but never inject 
     else process.env.EXPO_PUBLIC_FORCE_SALES_TRANSACTION_STATE = original;
   }
 });
+
+test('a sale opened by id keeps its real status instead of always saying Recorded', () => {
+  const [pending] = buildSalesTransactions({ ...bundle, sales: [{ ...bundle.sales[0], status: 'pending' }] });
+  const [cancelled] = buildSalesTransactions({ ...bundle, sales: [{ ...bundle.sales[0], status: 'cancelled' }] });
+  assert.equal(pending.status, 'Pending');
+  assert.equal(cancelled.status, 'Cancelled');
+});

@@ -16,7 +16,7 @@ export type SalesTransaction = {
   /** The database does not store cash tendered or change, so these are always null. */
   amountTendered: number | null;
   createdAt: string;
-  status: 'Recorded';
+  status: 'Recorded' | 'Pending' | 'Cancelled';
   items: Array<{
     name: string;
     quantity: number;
@@ -90,7 +90,7 @@ export function buildSalesTransactions(bundle: OwnerSalesTransactionBundle): Sal
       paymentMethod: sale.payment_method,
       amountTendered: null,
       createdAt: sale.created_at,
-      status: 'Recorded' as const,
+      status: sale.status === 'cancelled' ? 'Cancelled' as const : sale.status === 'pending' ? 'Pending' as const : 'Recorded' as const,
       items: [...productLines, ...addonLines],
       // The saved sale total is authoritative; it already includes add-ons.
       total: money(sale.total_amount),

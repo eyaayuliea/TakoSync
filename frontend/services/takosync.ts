@@ -1011,10 +1011,11 @@ export async function loadOwnerSalesTransactionBundle(input: {
 
   let query = client.from('sales')
     .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at')
-    .eq('status', 'completed')
     .order('created_at', { ascending: false })
     .order('id', { ascending: false });
-  if (input.saleId) query = query.eq('id', input.saleId);
+  // The list shows completed sales only. Opening one sale by id (for example from a Sales
+  // Consumption record) must resolve whatever its status is.
+  query = input.saleId ? query.eq('id', input.saleId) : query.eq('status', 'completed');
   const { data: saleRows, error: salesError } = await query.range(offset, offset + limit);
   assertNoError(salesError);
   const fetched = saleRows ?? [];
@@ -1073,6 +1074,90 @@ export async function loadOwnerSalesTransactionBundle(input: {
     variants: variantResult.data ?? [],
     addons,
     addonNames: addonNameResult.data ?? [],
+    hasMore,
+  };
+}
+
+export type OwnerSalesConsumptionBundle = {
+  movements: Array<{
+    id: string;
+    reference: string;
+    branch_id: string;
+    ingredient_id: string;
+    actor_id: string;
+    quantity: number | string;
+    unit: string;
+    transaction_date: string;
+    created_at: string;
+    sale_id: string | null;
+  }>;
+  ingredients: Array<{ id: string; name: string }>;
+  branches: Array<{ id: string; city: string; code: string }>;
+  profiles: Array<{ id: string; full_name: string | null }>;
+  sales: Array<{
+    id: string;
+    transaction_reference: string;
+    status: string;
+    inventory_processing_status: string;
+  }>;
+  /** True when more records exist after this page. */
+  hasMore: boolean;
+};
+
+/**
+ * Reads sales-consumption inventory movements (`inventory_movements.type = 'sales_consumption'`,
+ * which always carry the `sale_id` that consumed the stock) with the ingredient, branch, actor
+ * and linked sale. RLS (`transactions_read_branch` -> can_access_branch) lets an active Owner
+ * read every active branch. Errors are thrown, never turned into an empty list.
+ */
+export async function loadOwnerSalesConsumptionBundle(input: {
+  offset?: number;
+  limit?: number;
+  recordId?: string;
+}): Promise<OwnerSalesConsumptionBundle> {
+  const client = requireSupabase();
+  const limit = Math.max(1, Math.min(100, input.limit ?? 20));
+  const offset = Math.max(0, input.offset ?? 0);
+
+  let query = client.from('inventory_movements')
+    .select('id, reference, branch_id, ingredient_id, actor_id, quantity, unit, transaction_date, created_at, sale_id')
+    .eq('type', 'sales_consumption')
+    .not('sale_id', 'is', null)
+    .order('transaction_date', { ascending: false })
+    .order('id', { ascending: false });
+  if (input.recordId) query = query.eq('id', input.recordId);
+  const { data: rows, error } = await query.range(offset, offset + limit);
+  assertNoError(error);
+  const fetched = rows ?? [];
+  const hasMore = fetched.length > limit;
+  const movements = fetched.slice(0, limit);
+  if (movements.length === 0) {
+    return { movements, ingredients: [], branches: [], profiles: [], sales: [], hasMore: false };
+  }
+
+  const ingredientIds = [...new Set(movements.map((movement) => movement.ingredient_id))];
+  const branchIds = [...new Set(movements.map((movement) => movement.branch_id))];
+  const actorIds = [...new Set(movements.map((movement) => movement.actor_id))];
+  const saleIds = [...new Set(movements.flatMap((movement) => movement.sale_id ? [movement.sale_id] : []))];
+  const [ingredientResult, branchResult, profileResult, saleResult] = await Promise.all([
+    client.from('ingredients').select('id, name').in('id', ingredientIds),
+    client.from('branches').select('id, city, code').in('id', branchIds),
+    client.from('profiles').select('id, full_name').in('id', actorIds),
+    saleIds.length
+      ? client.from('sales').select('id, transaction_reference, status, inventory_processing_status').in('id', saleIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  assertNoError(ingredientResult.error);
+  assertNoError(branchResult.error);
+  assertNoError(profileResult.error);
+  assertNoError(saleResult.error);
+
+  return {
+    movements,
+    ingredients: ingredientResult.data ?? [],
+    branches: branchResult.data ?? [],
+    profiles: profileResult.data ?? [],
+    sales: saleResult.data ?? [],
     hasMore,
   };
 }
