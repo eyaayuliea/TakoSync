@@ -13,7 +13,6 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -38,7 +37,6 @@ import {
   getInventoryAlertScreenStatus,
   inventoryAlertEmptyCopy,
   inventoryAlertLabel,
-  isStockAlert,
   runInventoryAlertsRefreshOnce,
   sortInventoryAlerts,
   type InventoryAlertKind,
@@ -142,14 +140,6 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
-import {
-  DEFAULT_STAFF_ALERT_PREFERENCES,
-  getActiveStaffAlertPreferences,
-  loadStaffAlertPreferences,
-  saveStaffAlertPreferences,
-  type StaffAlertPreferenceKey,
-  type StaffAlertPreferences,
-} from './alertPreferences';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -1207,10 +1197,6 @@ export default function StaffWorkspace({
   const [logoutError, setLogoutError] = useState('');
   const [logoutPending, setLogoutPending] = useState(false);
   const logoutSubmissionLock = useRef(false);
-  const [alertPreferences, setAlertPreferences] = useState<StaffAlertPreferences>(DEFAULT_STAFF_ALERT_PREFERENCES);
-  const [alertPreferencesHydrated, setAlertPreferencesHydrated] = useState(false);
-  const [alertPreferencesSaving, setAlertPreferencesSaving] = useState(false);
-  const [alertPreferencesError, setAlertPreferencesError] = useState('');
 
   const applyInventorySnapshot = (
     inventory: Awaited<ReturnType<typeof loadInventory>>,
@@ -1221,48 +1207,6 @@ export default function StaffWorkspace({
     setAlertSnapshotBranchId(branchId);
     setAlertDataError('');
     setAlertErrorBranchId(null);
-  };
-
-  useEffect(() => {
-    let active = true;
-    setAlertPreferencesHydrated(false);
-    setAlertPreferencesError('');
-    loadStaffAlertPreferences(AsyncStorage, user.id)
-      .then((preferences) => {
-        if (active) setAlertPreferences(preferences);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setAlertPreferencesError(error instanceof Error
-            ? error.message
-            : 'Unable to load alert preferences. Default alerts remain enabled.');
-        }
-      })
-      .finally(() => {
-        if (active) setAlertPreferencesHydrated(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [user.id]);
-
-  const updateAlertPreference = async (key: StaffAlertPreferenceKey, value: boolean) => {
-    if (!alertPreferencesHydrated || alertPreferencesSaving) return;
-    const previous = alertPreferences;
-    const next = { ...previous, [key]: value };
-    setAlertPreferences(next);
-    setAlertPreferencesSaving(true);
-    setAlertPreferencesError('');
-    try {
-      await saveStaffAlertPreferences(AsyncStorage, user.id, next);
-    } catch (error: unknown) {
-      setAlertPreferences(previous);
-      setAlertPreferencesError(error instanceof Error
-        ? error.message
-        : 'Unable to save alert preferences. Your previous settings were restored.');
-    } finally {
-      setAlertPreferencesSaving(false);
-    }
   };
 
   const retryCountCorrectionRequest = async (request: PendingInventoryCountCorrection) => {
@@ -2301,13 +2245,8 @@ export default function StaffWorkspace({
       detail: `Batch ${batch.reference} · ${formatUnitQuantity(batch.quantityRemaining, item.unit)}\nExpired ${batch.expirationDate ?? 'Not recorded'}\n${Math.abs(daysRemaining)} ${Math.abs(daysRemaining) === 1 ? 'day' : 'days'} past expiration`,
     })),
   ]));
-  const enabledAlerts = inventoryAlerts.filter((item) => {
-    const activeAlertPreferences = getActiveStaffAlertPreferences(alertPreferences, alertPreferencesHydrated);
-    const preference = isStockAlert(item.kind) ? activeAlertPreferences.lowStock : activeAlertPreferences.expiration;
-    return preference;
-  });
-  const enabledAlertCounts = countInventoryAlertsWhenReady(enabledAlerts, backendLoading, backendError);
-  const enabledAlertCount = Object.values(enabledAlertCounts).reduce((total, count) => total + count, 0);
+  const alertBadgeCounts = countInventoryAlertsWhenReady(inventoryAlerts, backendLoading, backendError);
+  const alertBadgeCount = Object.values(alertBadgeCounts).reduce((total, count) => total + count, 0);
   const hasCurrentAlertSnapshot = Boolean(user.branchId) && alertSnapshotBranchId === user.branchId;
   const alertRefreshError = user.branchId
     ? alertErrorBranchId === user.branchId ? alertDataError : ''
@@ -2317,7 +2256,7 @@ export default function StaffWorkspace({
     backendLoading || alertRefreshing,
     alertRefreshError,
   );
-  const alertCounts = countInventoryAlertsForSnapshot(enabledAlerts, hasCurrentAlertSnapshot);
+  const alertCounts = countInventoryAlertsForSnapshot(inventoryAlerts, hasCurrentAlertSnapshot);
   const activeAlertCount = alertCounts
     ? Object.values(alertCounts).reduce((total, count) => total + count, 0)
     : null;
@@ -3621,9 +3560,9 @@ export default function StaffWorkspace({
             <View style={styles.bellBase} />
             <View style={styles.bellClapper} />
           </View>
-          {enabledAlertCount > 0 ? (
+          {alertBadgeCount > 0 ? (
             <View style={styles.alertCountBadge}>
-              <Text style={styles.alertCountText}>{enabledAlertCount > 99 ? '99+' : enabledAlertCount}</Text>
+              <Text style={styles.alertCountText}>{alertBadgeCount > 99 ? '99+' : alertBadgeCount}</Text>
             </View>
           ) : null}
         </Pressable>
@@ -3766,7 +3705,7 @@ export default function StaffWorkspace({
               ? 'Loading stock alerts…'
               : backendError !== '' && ingredients.length === 0
                 ? 'Stock data unavailable'
-                : `${enabledAlertCount} stock alerts need attention`}
+                : `${alertBadgeCount} stock alerts need attention`}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -4599,7 +4538,7 @@ export default function StaffWorkspace({
     }
 
     const alertDate = manilaBusinessDate();
-    const relatedAlerts = enabledAlerts.filter((alert) => alert.ingredientId === item.id);
+    const relatedAlerts = inventoryAlerts.filter((alert) => alert.ingredientId === item.id);
     const detailKinds = [...new Set([selectedAlertKind, ...relatedAlerts.map((alert) => alert.kind)])];
     const batches = [...item.batches].sort((left, right) => {
       const leftDate = parseInventoryDate(left.expirationDateIso ?? left.expirationDate);
@@ -4735,7 +4674,7 @@ export default function StaffWorkspace({
   };
 
   const renderAlerts = () => {
-    const selectedAlerts = enabledAlerts.filter((alert) => alert.kind === selectedAlertTab);
+    const selectedAlerts = inventoryAlerts.filter((alert) => alert.kind === selectedAlertTab);
     const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
       { kind: 'lowStock', label: 'Low Stock' },
       { kind: 'outOfStock', label: 'Out of Stock' },
@@ -6757,7 +6696,6 @@ export default function StaffWorkspace({
   };
 
   const renderProfileSettings = () => {
-    const appAlertsEnabled = alertPreferences.lowStock && alertPreferences.expiration;
     return (
       <>
         <View style={styles.formHeader}>
@@ -6825,47 +6763,6 @@ export default function StaffWorkspace({
             >
               <Text style={styles.profilePasswordButtonText}>Change password</Text>
             </Pressable>
-          </View>
-
-          <View style={styles.profileSettingsCard}>
-            <View style={styles.profileSettingsHeading}>
-              <Text style={styles.profileSectionTitle}>Alert visibility</Text>
-              <Text style={styles.profileSettingsValue}>
-                {!alertPreferencesHydrated
-                  ? 'Loading alert preferences…'
-                  : alertPreferencesSaving
-                    ? 'Saving alert preferences…'
-                    : appAlertsEnabled
-                      ? 'Enabled for stock and expiry'
-                      : 'Some in-app alerts are off'}
-              </Text>
-            </View>
-            <View style={styles.profilePreferenceRow}>
-              <Text style={styles.profilePreferenceLabel}>Low-stock alerts</Text>
-              <Switch
-                accessibilityLabel="Low-stock alerts"
-                value={alertPreferences.lowStock}
-                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
-                onValueChange={(value) => { void updateAlertPreference('lowStock', value); }}
-                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
-                thumbColor={alertPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
-              />
-            </View>
-            <View style={styles.profilePreferenceRow}>
-              <Text style={styles.profilePreferenceLabel}>Expiry alerts</Text>
-              <Switch
-                accessibilityLabel="Expiry alerts"
-                value={alertPreferences.expiration}
-                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
-                onValueChange={(value) => { void updateAlertPreference('expiration', value); }}
-                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
-                thumbColor={alertPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
-              />
-            </View>
-            {alertPreferencesError ? (
-              <Text style={styles.profileAlertNote}>Alert preferences could not be saved or loaded: {alertPreferencesError}</Text>
-            ) : null}
-            <Text style={styles.profileAlertNote}>These preferences control in-app alert visibility only; push delivery is not configured.</Text>
           </View>
 
           <View style={styles.profileVersionRow}>
@@ -9802,17 +9699,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   profilePasswordButtonPressed: { opacity: 0.82 },
   profilePasswordButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
-  profileSettingsHeading: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-    minHeight: 30,
-  },
   profileSettingsValue: { color: colors.muted, fontFamily: font.regular, fontSize: 7, textAlign: 'right' },
-  profilePreferenceRow: {
-    minHeight: 35, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderTopWidth: 1, borderTopColor: '#DDDDDF',
-  },
-  profilePreferenceLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
-  profileAlertNote: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 2 },
   profileVersionRow: {
     minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 1, marginBottom: 7,

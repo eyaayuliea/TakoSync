@@ -1,6 +1,6 @@
 # TakoSync Complete Mobile Application Audit Report
 
-> **Current evidence-based story status: see sections 75 and 76 (2026-11-20).** Earlier sections are historical records and keep the status they had when written.
+> **Current evidence-based story status: see sections 75, 76 and 77 (2026-11-20).** Earlier sections are historical records and keep the status they had when written.
 
 Audit date: 2026-11-13  
 Scope: Staff mobile module, Owner mobile module, shared Supabase backend/database paths, and end-to-end integration. The separate Owner Web Portal is excluded from completion scoring, per the supplied brief.
@@ -2743,7 +2743,7 @@ Legend — **Source**: implemented in code and reviewed. **Local**: unit/integra
 | ST-02 | Complete (criteria 1–10 mapped; ambiguous-failure retry reuses the reference) | Yes (checkout recovery, offline message, quantity rule) | Not verified | Not verified |
 | ST-03–ST-09, ST-11–ST-19 | Complete | Yes (existing suites) | Not verified | Not verified |
 | ST-10 | Complete (in-app only) | Yes | Not verified | Not verified |
-| ST-20 | Complete for approved scope (alert toggles are an unapproved extra) | No component tests | Not verified | Not verified |
+| ST-20 | Complete for approved scope (alert toggles removed in section 77) | No component tests | Not verified | Not verified |
 | OM-01 | Complete for approved scope; distinct email/password messages depend on the deployed Edge action | Yes | Not verified | Not verified |
 | OM-02 | Complete | Partly (summary helpers) | Not verified | Not verified |
 | OM-03–OM-07, OM-09, OM-11–OM-19 | Complete | Yes (existing suites) | Not verified | Not verified |
@@ -2817,3 +2817,17 @@ Priority change: an item with 0 available is Out of Stock even if an old batch d
 - SQL/pgTAP/shell tests — **not run** (no approved Development database; none against Production). New migrations `202611200003` and `202611200004` are unapplied and untested against a database.
 - Android device / emulator — **not done at Michael's request**. Every story remains Dev-DB and Device "Not verified".
 - Admin actions: approve a Development target; review/apply `202611200003` and `202611200004` there first; decide D1–D5.
+
+## 77. Owner decisions t32 and their implementation (2026-11-20)
+
+Michael decided D1 to D5 from section 76.4. No Production access, no device/emulator, no push, no migration change.
+
+| Decision | Outcome |
+|---|---|
+| D1 near-expiry window | Keep configurable, default 3 days. No change (section 76.2). |
+| D2 Profile alert toggles | **Removed.** The "Alert visibility" card (low-stock and expiry switches), its state, AsyncStorage load/save, and `staff/alertPreferences.ts` plus its test are deleted. ST-10 alerts, tab counts and the badge now always show for the assigned branch. ST-20 profile is read-only information plus Change password and Log Out. Any old `takosync.staff-alert-preferences.v1:*` key left on a device is no longer read (harmless orphan). |
+| D3 inactivity lock | **Left off** pending a timeout value (ST-01 criterion 17: "enabled once the group finalizes the timeout setting"). Not implemented. |
+| D4 dead mock files | **Deleted** `frontend/owner/OwnerWorkspace.tsx`, `frontend/owner/mockData.ts`, `frontend/owner/mockData.test.mjs`. No other file imported them (typecheck clean). `dailySalesRepository.ts` does not depend on `mockData`, so its env-gated sample path (`EXPO_PUBLIC_FORCE_DAILY_SALES_STATE`, unset everywhere) was left unchanged. `ownerDiscrepancyMock` in `ownerDiscrepancies.ts` was also left. |
+| D5 extras in Owner recipes | **Octobits and Prepared Takoyaki Batter stay active now.** Octobits is to be hidden later, after the Owner removes it from its recipe, by re-running the guarded deactivation in `202611200003` (no migration change now). Prepared batter remains a protected system item. |
+
+Validation (box): `npm run typecheck` passed; `npm run test:frontend` **306/306** (six tests went with the deleted modules); `npm run test:edge` **32/32**. SQL/RLS and Android not run; all stories remain Dev-DB and Device "Not verified".
