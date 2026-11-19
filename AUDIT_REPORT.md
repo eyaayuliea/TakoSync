@@ -1,6 +1,6 @@
 # TakoSync Complete Mobile Application Audit Report
 
-> **Current evidence-based story status: see section 75 (2026-11-20).** Earlier sections are historical records and keep the status they had when written.
+> **Current evidence-based story status: see sections 75 and 76 (2026-11-20).** Earlier sections are historical records and keep the status they had when written.
 
 Audit date: 2026-11-13  
 Scope: Staff mobile module, Owner mobile module, shared Supabase backend/database paths, and end-to-end integration. The separate Owner Web Portal is excluded from completion scoring, per the supplied brief.
@@ -2689,7 +2689,7 @@ No isolated Development Supabase project exists. Everything below needs a Supaba
 2. **GitHub configuration** consumed by `.github/workflows/supabase-migrations.yml` (manual `workflow_dispatch`, protected environment `supabase-development`):
    - repository/environment variables: `SUPABASE_DEVELOPMENT_PROJECT_REF`, `SUPABASE_PRODUCTION_PROJECT_REF` (= `lofltjhvivcjuyezxaif`, used only as a "must differ" guard), `TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED=true`, `TAKOSYNC_MIGRATIONS_RECONCILED=true` (the local duplicate-version condition is now cleared);
    - environment secret `SUPABASE_DB_URL` — the Development pooler URI whose user is exactly `postgres.<development ref>` (the workflow refuses any other user).
-3. **Apply and test in Development only:** run the workflow (dry-run, then apply) so Development receives all 43 migrations; then run the pgTAP/shell suites in `backend/supabase/tests` against Development. Known stale SQL suite: `202611180001_persistent_business_sessions.test.sql` asserts business-day session expiry that migration `202611180000` removed — it must be rewritten or retired by decision before it is run; several other suites still insert `business_day_sessions` rows (harmless but dated).
+3. **Apply and test in Development only:** run the workflow (dry-run, then apply) so Development receives all 43 migrations; then run the pgTAP/shell suites in `backend/supabase/tests` against Development. (Correction, section 76: `202611180001_persistent_business_sessions.test.sql` already asserts the approved no-expiry behavior and is not stale.) Several other suites still insert `business_day_sessions` rows (harmless but dated).
 4. **Deploy `staff-auth` to Development** (`verify_jwt = false` per `config.toml`; it reads the hosted `SUPABASE_URL`, anon key, and service-role key from the Edge runtime — no secrets are added to the app): `supabase functions deploy staff-auth --project-ref <development ref>`. The workflow does **not** deploy Edge Functions.
 5. **Test data in Development:** one active Owner (email + password), at least one active Staff account per branch (username = employee name, initial password = Employee ID), the three branches, the approved ingredient catalog (the seed now matches migration `202611200002`), product variants/prices/branch visibility/recipes, and a few stock-in batches with expiration dates. Point a *separate* `.env` (not committed) for the Expo app at the Development URL/anon key.
 6. **Android verification** (see below) then runs against that Development project.
@@ -2761,3 +2761,59 @@ Previously published counts (31 complete / 8 partial, 89.7%) were source estimat
 - SQL/pgTAP/shell tests — **not run** (no approved Development database); the two updated suites (`202611130001_inventory_transaction_idempotency.test.sql`, `202611130002_staff_prepared_batter_five_bottle_batches.test.sql`) now use `throws_matching` on the new "Insufficient stock for X: required R unit, available A unit, shortage S unit" and "Cannot record this batter batch. …" messages, with the plan counts unchanged. The sale-processing suites (`*_sale_inventory_retry.sh`, `*_prepared_batter_integration.sh`) still expect the generic stored error from the unchanged sale-path function and were left as is.
 - Files changed: `frontend/App.tsx`, `frontend/owner/OwnerLoginScreen.tsx`, `frontend/owner/OwnerMobileWorkspace.tsx`, `frontend/services/ownerAuthentication.ts`, `frontend/services/staffAuthentication.ts`, `frontend/services/takosync.ts`, `frontend/staff/MenuWorkspace.tsx`, `frontend/staff/StaffWorkspace.tsx`, `frontend/staff/menuPreviewData.ts`, tests (`staffAuthentication*.test.mjs`, `takosync.staff.integration.test.mjs`, `menuPreviewData.test.mjs`), `backend/supabase/seed.sql`, two pgTAP suites, `.github/workflows/supabase-migrations.yml` (error-message text only), and this report. No migration was created or applied.
 
+## 76. Final completion pass t29u — catalog, status rules, open decisions (2026-11-20)
+
+Scope: Staff Mobile and Owner Mobile only. Nothing was written to, tested against, seeded, or migrated in Production; Production was queried read-only. No push, no merge. The Android device task was **not done at Michael's request** (an emulator was started briefly before that instruction and exited when the command was interrupted; no app or Expo Go was installed, no data was entered, no device evidence exists).
+
+### 76.1 Required ingredient catalog
+
+Read-only Production comparison (`--read-only`, project lofltjhvivcjuyezxaif) against the approved 15-item list:
+
+| Check | Result |
+|---|---|
+| Missing from Production | None (all 15 exist, in the right categories) |
+| Casing differs from the approved names | All-Purpose Flour, Baking Powder, Bonito Flakes, Crab Stick, Dashi Stock, Soy Sauce, Takoyaki Sauce, Japanese Mayonnaise, Chopped Cabbage |
+| Active but not on the list, no recipe use | Cooking Oil (7 L, 3 movements), Other Toppings (0), Seaweed (30 g, 1 movement), Spring Onions (20 g, 1 movement) |
+| Active, not on the list, used by Owner recipes | **Octobits** (1 product-recipe line, 30 pcs) and **Prepared Takoyaki Batter** (`prepared-batter`, category Prepared Inventory, 3 product-recipe lines, 1 shared-recipe line, 18 movements) |
+| Already inactive | Japanese White Sauce (0 movements) |
+
+New migration `202611200003_required_ingredient_catalog.sql` (**not applied**): fixes categories, creates any missing approved row, enforces the exact names/categories/active state, ensures each active branch has a stock row per approved ingredient, and deactivates every other active ingredient that no recipe, shared recipe, or recipe version references (`prepared-batter` is explicitly protected). It never deletes rows and never touches recipe quantities, movements, batches, or stock. `seed.sql` now seeds exactly the 15 approved ingredients (Spring Onions and Cooking Oil removed). `requiredIngredientCatalog.test.mjs` checks seed and migration against the list.
+
+Effect when applied: Cooking Oil, Other Toppings, Seaweed, and Spring Onions become inactive, which hides their remaining stock (7 L, 30 g, 20 g) from the apps; the rows remain in the database.
+
+### 76.2 Inventory status rules (one shared helper)
+
+New `frontend/services/inventoryStatusRules.ts` is the single implementation: Out of Stock = 0; Low Stock = >0 and ≤ owner minimum; Near Expiration = today through 3 days ahead; Expired = at least 1 day past; Manila calendar-day arithmetic. SQL has no status computation (searched migrations/functions), so no SQL view/function needed changes.
+
+Now using it: Staff alerts (`inventoryAlerts.ts`), Staff inventory/report statuses (`inventoryReports.ts`, including the ST-15 report), Owner alerts (`ownerAlerts.ts`), Owner inventory rows/dashboard counts (`ownerInventoryStatus.ts`, `ownerDashboardSummary.ts`), Owner stock/expiration settings screen, Owner/Staff Mobile fallbacks, and the legacy `App.tsx` lists.
+
+Bugs fixed on the way: the ST-15 report used "< minimum" (an item exactly at its minimum read Normal while ST-10 showed it as Low Stock); `Staff` used a 0-day window when the setting had not loaded; the Owner screens used a device-local timezone or a fixed 7-day window; the legacy list included expired items as "7 days".
+
+**Expiry window reading.** ST-10 criterion 4 and OM-10 criterion 5 define Near Expiration as the *owner's expiration alert period*; Michael's rule says 3 days. Both hold if 3 days is the default of the owner-configurable period, so the helper takes the configured period and defaults to 3, and migration `202611200004_near_expiration_default_3_days.sql` (**not applied**) changes the column default from 7 to 3 and moves a stored value of exactly 7 to 3 (Production currently holds the untouched default 7). If Michael wants a hard fixed 3 days with no setting, see decision D1.
+
+Priority change: an item with 0 available is Out of Stock even if an old batch date has passed (previously Expired won). Tests: `inventoryStatusRules.test.mjs` covers 0, minimum, minimum+1, expiry in 3 days, 4 days, today, yesterday, month/year ends, Manila rollover, and checks Staff/Owner helpers agree.
+
+### 76.3 Open decisions from the previous report
+
+| Item | Outcome |
+|---|---|
+| Business-session SQL test | **Settled / no change.** The current `202611180001_persistent_business_sessions.test.sql` already asserts no expiry and persistent sessions (23 assertions match plan(23)); the earlier "stale" note was wrong. It is unrun (no Development database). |
+| OM-08 vs OM-03..07 | **Settled by text, implemented.** All of them count "confirmed and recorded sales"; OM-03..07 totals use `status = completed`, and OM-14 criterion 5 treats a sale with a failed inventory update as a recorded sale with a flag. Products Sold no longer skips pending/failed-inventory sales, so quantities reconcile with the totals. Test updated. |
+| Local alert toggles | **Not settled — left unchanged. Decision D2.** |
+| ST-01 inactivity lock | **Not settled — not implemented. Decision D3** (criterion 17 says "enabled once the group finalizes the timeout setting"; no timeout exists). |
+| Dead `OwnerWorkspace.tsx` / `mockData.ts` | **Not settled — left. Decision D4.** Also noted: `dailySalesRepository.ts` sample data is reachable only if `EXPO_PUBLIC_FORCE_DAILY_SALES_STATE` is set; it is set nowhere in the repo or the app `.env`. |
+
+### 76.4 Decisions for the owner
+
+- **D1 — Near-expiration window.** (a) Keep the configurable period with default 3 (done, recommended); (b) fixed 3 days and remove the setting; (c) keep default 7. 
+- **D2 — Alert toggles.** The Profile alert switches hide ST-10 alerts and badge counts on that device only. ST-20 says the profile is read-only information. (a) Remove them so alerts always show (recommended); (b) keep as a device-local display preference; (c) keep but never hide the badge.
+- **D3 — Inactivity lock.** (a) Leave disabled until a timeout is given (current, recommended); (b) implement with a timeout Michael chooses (e.g. 5/10/15 minutes), password unlock, session unaffected; (c) drop criterion 17.
+- **D4 — Dead mock files.** (a) Delete `OwnerWorkspace.tsx`, `mockData.ts`, and its test (recommended); (b) keep; (c) keep `ownerDiscrepancyMock` and the sample generators only for tests.
+- **D5 — Extras used by Owner recipes.** `Octobits` (1 recipe line) and `Prepared Takoyaki Batter` stay active. Batter is the two-stage batter system item (batch prep creates it, sales consume it), so deactivating it would break ST-07/ST-02. (a) Keep both active (recommended: batter is system-owned, Octobits stays until Owner edits the recipe); (b) have the Owner remove Octobits from its recipe, then re-run the migration to deactivate it; (c) deactivate both (breaks batter workflow — not recommended).
+
+### 76.5 Validation (box)
+
+- `npm run typecheck` — passed. `npm run test:frontend` — **312/312**. `npm run test:edge` — **32/32**.
+- SQL/pgTAP/shell tests — **not run** (no approved Development database; none against Production). New migrations `202611200003` and `202611200004` are unapplied and untested against a database.
+- Android device / emulator — **not done at Michael's request**. Every story remains Dev-DB and Device "Not verified".
+- Admin actions: approve a Development target; review/apply `202611200003` and `202611200004` there first; decide D1–D5.
