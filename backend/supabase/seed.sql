@@ -1,14 +1,16 @@
 insert into public.ingredient_categories (id, name) values
   ('seafood', 'Seafood'),
   ('dry-goods', 'Dry Goods'),
-  ('dairy-eggs', 'Dairy & eggs'),
+  ('dairy-eggs', 'Dairy'),
   ('condiments', 'Condiments'),
-  ('produce', 'Produce')
-on conflict (id) do nothing;
+  ('produce', 'Vegetables'),
+  ('meat', 'Meat'),
+  ('supplies', 'Supplies')
+on conflict (id) do update set name = excluded.name;
 
 insert into public.ingredients (id, category_id, name, unit, quantity_precision) values
   ('octopus', 'seafood', 'Octopus', 'kg', 2),
-  ('flour', 'dry-goods', 'Flour', 'kg', 2),
+  ('flour', 'dry-goods', 'All-Purpose Flour', 'kg', 2),
   ('eggs', 'dairy-eggs', 'Eggs', 'pcs', 0),
   ('sauces', 'condiments', 'Takoyaki Sauce', 'L', 2),
   ('japanese-mayonnaise', 'condiments', 'Japanese Mayonnaise', 'L', 2),

@@ -496,15 +496,14 @@ select throws_ok(
   'Branch access denied',
   'staff cannot prepare batter for another branch'
 );
-select throws_ok(
+select throws_matching(
   format(
     'select * from public.prepare_batter_batch(%L::uuid, %L, 5)',
     (select branch_b_id from st07_fixture),
     'ST07-INSUFFICIENT-STOCK'
   ),
-  'P0001',
-  'Transaction exceeds available stock',
-  'insufficient raw ingredient stock rejects the preparation'
+  '^Cannot record this batter batch\. Insufficient stock for .+: required [0-9.]+ .+, available [0-9.]+ .+, shortage [0-9.]+ .+',
+  'insufficient raw ingredient stock rejects the preparation and lists each shortage'
 );
 select is(
   (
