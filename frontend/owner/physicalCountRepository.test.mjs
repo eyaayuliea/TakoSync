@@ -154,3 +154,24 @@ test('result and quantity formatters use signed differences and Manila timestamp
   assert.equal(formatPhysicalCountDateTime('2026-11-12T02:30:00Z'), '12 Nov 2026 · 10:30 AM');
   assert.equal(formatPhysicalCountDate('2026-11-12T16:00:00Z'), '13 Nov 2026');
 });
+
+test('Owner physical-count records keep prepared batter in stored bottles, never millilitres', () => {
+  const record = countHistoryRecord({
+    ingredientId: 'prepared-batter',
+    ingredientName: 'Takoyaki batter',
+    unit: 'bottle',
+    physicalCount: {
+      ...countHistoryRecord().physicalCount,
+      expectedQuantity: 3,
+      originalActualQuantity: 2,
+      difference: -1,
+    },
+  });
+  const [mapped] = buildPhysicalCountRecords([record], []);
+  assert.equal(mapped.unit, 'bottle');
+  assert.equal(mapped.expectedQuantity, 3);
+  assert.equal(mapped.actualQuantity, 2);
+  assert.equal(mapped.difference, -1);
+  assert.equal(formatPhysicalCountDifference(mapped.difference, mapped.unit), '−1 bottle');
+  assert.equal(formatPhysicalCountQuantity(mapped.expectedQuantity, mapped.unit), '3 bottle');
+});
