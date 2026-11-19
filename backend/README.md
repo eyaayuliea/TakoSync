@@ -5,7 +5,7 @@ The backend is Supabase PostgreSQL and Auth; there is no separate application se
 
 ## Database safety and setup
 
-The linked project is confirmed to be **Production**. Do not link the CLI to it for migration work, inspect it remotely, run SQL, push/repair migrations, reset it, or use it for tests. The migration history is unresolved and the local source has two different migrations with version `202611180001`.
+The linked project is confirmed to be **Production**. Do not link the CLI to it for migration work, inspect it remotely, run SQL, push/repair migrations, reset it, or use it for tests. The migration history is unresolved. The local source used to contain two different migrations with version `202611180001`; one has since been renumbered to `202611180000` (see [Migration renumbering](#migration-renumbering-202611180001--202611180000)).
 
 Database testing and migration application are blocked until an administrator identifies and approves a separate Development project and reconciles the migration provenance without changing Production. No remote command or SQL is part of the current validation. The repository workflow has been changed to manual, Development-only operation; it requires explicit project approval, distinct Development and Production refs, reconciliation approval, a unique local migration sequence, and a protected Development environment before it can connect or apply.
 
@@ -29,9 +29,25 @@ The persistent-session database regression test is `supabase/tests/202611180001_
 
 The additive migration `202611190001_enforce_authenticated_branch_access.sql` updates Owner and Staff branch helpers to require a valid Auth session, an active profile, and an active branch; Staff remain restricted to their assigned branch. It also wraps the existing sale-inventory processor with session and sale-branch checks and revokes direct client execution of internal helpers. The wrapper prefers the existing integrity-aware helper and does not add a second inventory deduction.
 
-The migration and its pgTAP regression coverage are source changes only. They have not been applied or executed against any database. Do not deploy them until an administrator resolves the duplicate `202611180001` migration version and approves an isolated Development environment. The migration runner intentionally fails closed while local versions are duplicated.
+The migration and its pgTAP regression coverage are source changes only. They have not been applied or executed against any database. Do not deploy them until an administrator reconciles the migration history (see [Migration renumbering](#migration-renumbering-202611180001--202611180000)) and approves an isolated Development environment. The migration runner intentionally fails closed while local versions are duplicated.
 
 Owner Mobile tries the `owner-email-login` Edge Function action and falls back to Supabase Auth email/password sign-in if that action is unavailable. In either path, the client loads the authenticated profile, rejects inactive or non-Owner profiles, and signs the account out on role mismatch. The existing `owner-login` username action is retained for the separate Web Portal. Local Edge/service tests cover both paths; no hosted Edge Function was deployed or tested.
+
+### Migration renumbering (`202611180001` -> `202611180000`)
+
+Two files used the version `202611180001`:
+
+- `202611180001_batter_preparation_date.sql` (unchanged), and
+- `202611180001_remove_business_day_session_expiration.sql`, now **`202611180000_remove_business_day_session_expiration.sql`** (`git mv`, contents unchanged).
+
+Why `202611180000`: the session-removal migration redefines `is_business_session_active`, `authorize_business_session`, `business_session_status`, `is_active_owner`, `can_access_branch(uuid)`, `authorize_inventory_discrepancy_adjustment` and `process_sale_inventory`. Two later migrations redefine some of those functions, so it must run before them: `202611180004_allow_staff_initial_password_access.sql` replaces `can_access_branch` (the removal migration's version still blocks Staff with `must_change_password`, so running it after `...0004` would undo that fix), and `202611190001_enforce_authenticated_branch_access.sql` replaces `is_active_owner`, `can_access_branch` and `process_sale_inventory`. It depends only on migrations up to `202611050009`/`202611130003`. It has no dependency on the batter preparation-date migration (and vice versa), and `202611180002` needs only the batter one. Version `202611180000` sorts after `202611170001` and before `202611180001`, so the order is: `...170001`, `...180000` (session removal), `...180001` (batter date), `...180002`, `...180003`, `...180004`, `...190001`. Applying the full chain in this order on an empty local database (PGlite with stubbed Supabase Auth) succeeded with no errors; the test was local only and no remote database was touched.
+
+**Production implication - do not push or repair without an administrator.** Production's ledger has no row for `202611180001`, but the session-removal effects are already present there (no `business_session_required` policies, no closing-time check), apparently applied by hand; the batter preparation-date column and RPC are not. After the rename, `supabase db push` against Production would try to apply `202611180000` (idempotent `create or replace`/`drop ... if exists`, but it would also redefine `can_access_branch` and re-grant functions) and `202611180001` for the first time. Before any push an administrator must decide, from the actual production schema and deployment logs, whether to:
+
+1. mark `202611180000` as applied with `supabase migration repair --status applied 202611180000` (only if its SQL has truly taken full effect, including the `auth.sessions` check in `is_business_session_active`), or let it run; and
+2. let `202611180001` and the later migrations run normally.
+
+Neither command has been run. Validate the whole sequence in an approved Development project first.
 
 ### Production migration-history blocker
 
@@ -68,6 +84,6 @@ Investigate any active account not on the approved roster and correct it through
 
 All collaborators should use GitHub accounts with least-privilege access. Keep local client configuration out of Git. Schema changes must be reviewed as forward-only migrations; never rewrite a migration already applied to a database.
 
-The repository migration workflow is manual and Development-only; there is no push-to-main deployment. It remains blocked unless an administrator configures `SUPABASE_DEVELOPMENT_PROJECT_REF`, `SUPABASE_PRODUCTION_PROJECT_REF`, `TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED=true`, and `TAKOSYNC_MIGRATIONS_RECONCILED=true`, plus a protected `supabase-development` environment with a reviewer and the `SUPABASE_DB_URL` secret. The secret must be the Development project's Session Pooler URL (port `5432`, database `postgres`, `sslmode=require`). The workflow requires a manual confirmation, rejects identical project references, validates unique local migration versions before remote access, previews the SQL, and applies only to the Development URL. The current duplicate `202611180001` files cause the local guard to stop before any remote connection.
+The repository migration workflow is manual and Development-only; there is no push-to-main deployment. It remains blocked unless an administrator configures `SUPABASE_DEVELOPMENT_PROJECT_REF`, `SUPABASE_PRODUCTION_PROJECT_REF`, `TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED=true`, and `TAKOSYNC_MIGRATIONS_RECONCILED=true`, plus a protected `supabase-development` environment with a reviewer and the `SUPABASE_DB_URL` secret. The secret must be the Development project's Session Pooler URL (port `5432`, database `postgres`, `sslmode=require`). The workflow requires a manual confirmation, rejects identical project references, validates unique local migration versions before remote access, previews the SQL, and applies only to the Development URL. The duplicate `202611180001` version was renumbered locally, so the uniqueness check now passes; every other administrative gate above still applies.
 
 Never configure Production credentials in the Development environment. The database URL is privileged and must remain in the protected GitHub environment secret. Production release is a separate administrator-approved operation after migration history has been reconciled and Development tests have passed; this repository workflow does not deploy to Production.
