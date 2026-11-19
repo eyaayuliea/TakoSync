@@ -1,3 +1,5 @@
+import { classifyExpirationLevel, classifyStockLevel } from '../services/inventoryStatusRules.ts';
+
 export type InventoryAlertKind = 'lowStock' | 'outOfStock' | 'nearExpiration' | 'expired';
 
 export type InventoryAlertScreenStatus =
@@ -132,16 +134,18 @@ export function countInventoryAlertsWhenReady<T extends { kind: InventoryAlertKi
 }
 
 export function classifyStockAlert(quantity: number, minimumStock: number): InventoryAlertKind | null {
-  if (quantity <= 0) return 'outOfStock';
-  return minimumStock > 0 && quantity <= minimumStock ? 'lowStock' : null;
+  const level = classifyStockLevel(quantity, minimumStock);
+  if (level === 'Out of Stock') return 'outOfStock';
+  return level === 'Low Stock' ? 'lowStock' : null;
 }
 
 export function classifyExpirationAlert(
   daysRemaining: number,
   nearExpirationDays: number,
 ): InventoryAlertKind | null {
-  if (daysRemaining < 0) return 'expired';
-  return daysRemaining <= nearExpirationDays ? 'nearExpiration' : null;
+  const level = classifyExpirationLevel(daysRemaining, nearExpirationDays);
+  if (level === 'Expired') return 'expired';
+  return level === 'Near Expiration' ? 'nearExpiration' : null;
 }
 
 export function isStockAlert(kind: InventoryAlertKind): boolean {

@@ -4,6 +4,13 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
+import {
+  calendarDaysUntil,
+  classifyExpirationLevel,
+  classifyStockLevel,
+  manilaCalendarDate,
+  resolveNearExpirationDays,
+} from './services/inventoryStatusRules.ts';
 import appConfig from '../app.json';
 import {
   ActivityIndicator,
@@ -330,7 +337,7 @@ function AppContent() {
       quantity: `${quantity} ${ingredient.unit}`,
       unit: ingredient.unit,
       minimumStock,
-      lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
+      lowStock: classifyStockLevel(quantity, minimumStock) !== 'In Stock',
       branch: branchNames.get(record.branch_id) ?? 'Branch',
     }];
   });
@@ -345,9 +352,8 @@ function AppContent() {
     const ingredient = ownerIngredients.get(batch.ingredient_id);
     const branch = branchNames.get(batch.branch_id);
     if (!ingredient?.expiration_tracking || !branch || (branchFilter && branchFilter !== batch.branch_id)) return [];
-    const expiration = new Date(`${batch.expiration_date}T00:00:00`);
-    const daysRemaining = Math.ceil((expiration.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
-    return daysRemaining <= 7
+    const daysRemaining = calendarDaysUntil(batch.expiration_date, manilaCalendarDate(now));
+    return classifyExpirationLevel(daysRemaining, resolveNearExpirationDays(ownerData?.nearExpirationDays)) !== null
       ? [{
           id: batch.id,
           name: ingredient.name,

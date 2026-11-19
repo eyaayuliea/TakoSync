@@ -1,8 +1,13 @@
 import { manilaDateKey } from '../services/businessDaySettings.ts';
+import {
+  NEAR_EXPIRATION_DEFAULT_DAYS,
+  calendarDaysUntil,
+  classifyInventoryStatus,
+} from '../services/inventoryStatusRules.ts';
 
 export type InventoryStockStatus = 'Low Stock' | 'Normal' | 'Out of Stock' | 'Near Expiration' | 'Expired' | 'Not tracked';
 
-export const DEFAULT_NEAR_EXPIRY_DAYS = 7;
+export const DEFAULT_NEAR_EXPIRY_DAYS = NEAR_EXPIRATION_DEFAULT_DAYS;
 
 export type OwnerInventoryComparisonRow = {
   branchId: string;
@@ -66,14 +71,7 @@ export function buildOwnerInventoryComparisonRows(input: {
 }
 
 export function daysUntilManilaExpiration(expirationDate: string, now = new Date()): number {
-  const expirationKey = expirationDate.slice(0, 10);
-  const todayKey = manilaDateKey(now);
-  const expiration = Date.parse(`${expirationKey}T00:00:00.000Z`);
-  const today = Date.parse(`${todayKey}T00:00:00.000Z`);
-  if (!Number.isFinite(expiration) || !Number.isFinite(today)) {
-    throw new RangeError('Expiration dates must use a valid YYYY-MM-DD date.');
-  }
-  return Math.ceil((expiration - today) / 86_400_000);
+  return calendarDaysUntil(expirationDate, manilaDateKey(now));
 }
 
 export function getInventoryStockStatus(
@@ -84,15 +82,13 @@ export function getInventoryStockStatus(
   nearExpiryDays = DEFAULT_NEAR_EXPIRY_DAYS,
 ): InventoryStockStatus {
   if (quantity === null) return 'Not tracked';
-
-  const daysUntilExpiration = expirationDate
-    ? daysUntilManilaExpiration(expirationDate, new Date(`${referenceDate}T00:00:00+08:00`))
-    : null;
-  if (daysUntilExpiration !== null && daysUntilExpiration < 0) return 'Expired';
-  if (quantity === 0) return 'Out of Stock';
-  if (daysUntilExpiration !== null && daysUntilExpiration <= nearExpiryDays) return 'Near Expiration';
-  if (minimumStock > 0 && quantity <= minimumStock) return 'Low Stock';
-  return 'Normal';
+  return classifyInventoryStatus({
+    quantity,
+    minimumStock,
+    expirationDate,
+    today: referenceDate,
+    nearExpirationDays: nearExpiryDays,
+  });
 }
 
 export function formatInventoryQuantity(quantity: number | null): string {

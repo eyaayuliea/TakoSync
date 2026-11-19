@@ -8,15 +8,23 @@ insert into public.ingredient_categories (id, name) values
   ('supplies', 'Supplies')
 on conflict (id) do update set name = excluded.name;
 
+-- Approved ingredient catalog (exact names and categories; no extra ingredients).
 insert into public.ingredients (id, category_id, name, unit, quantity_precision) values
+  ('flour', 'dry-goods', 'All-purpose flour', 'kg', 2),
+  ('salt', 'dry-goods', 'Salt', 'tsp', 2),
+  ('baking-powder', 'dry-goods', 'Baking powder', 'tsp', 2),
+  ('bonito-flakes', 'dry-goods', 'Bonito flakes', 'g', 0),
   ('octopus', 'seafood', 'Octopus', 'kg', 2),
-  ('flour', 'dry-goods', 'All-Purpose Flour', 'kg', 2),
+  ('crab-sticks', 'seafood', 'Crab stick', 'pcs', 0),
   ('eggs', 'dairy-eggs', 'Eggs', 'pcs', 0),
-  ('sauces', 'condiments', 'Takoyaki Sauce', 'L', 2),
-  ('japanese-mayonnaise', 'condiments', 'Japanese Mayonnaise', 'L', 2),
-  ('bonito-flakes', 'dry-goods', 'Bonito Flakes', 'g', 0),
-  ('spring-onions', 'produce', 'Spring Onions', 'g', 0),
-  ('cooking-oil', 'condiments', 'Cooking Oil', 'L', 2)
+  ('cheese-cubes', 'dairy-eggs', 'Cheese', 'pcs', 0),
+  ('dashi', 'condiments', 'Dashi stock', 'L', 2),
+  ('soy-sauce', 'condiments', 'Soy sauce', 'tbsp', 2),
+  ('sauces', 'condiments', 'Takoyaki sauce', 'L', 2),
+  ('japanese-mayonnaise', 'condiments', 'Japanese mayonnaise', 'L', 2),
+  ('bacon-bits', 'meat', 'Bacon', 'g', 0),
+  ('cabbage', 'produce', 'Chopped cabbage', 'g', 0),
+  ('packaging', 'supplies', 'Packaging', 'pack', 0)
 on conflict (id) do update
 set category_id = excluded.category_id,
     name = excluded.name,
@@ -55,8 +63,9 @@ cross join public.ingredients as ingredient
 where branch.active
   and ingredient.active
   and ingredient.id in (
-    'octopus', 'flour', 'eggs', 'sauces', 'japanese-mayonnaise',
-    'bonito-flakes', 'spring-onions', 'cooking-oil'
+    'flour', 'salt', 'baking-powder', 'bonito-flakes', 'octopus', 'crab-sticks',
+    'eggs', 'cheese-cubes', 'dashi', 'soy-sauce', 'sauces', 'japanese-mayonnaise',
+    'bacon-bits', 'cabbage', 'packaging'
   )
 on conflict (branch_id, ingredient_id) do nothing;
 

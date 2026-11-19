@@ -1,3 +1,4 @@
+import { classifyStockLevel } from '../services/inventoryStatusRules.ts';
 export type DashboardSale = {
   branch_id: string;
   total_amount: number | string;
@@ -25,8 +26,9 @@ export function summarizeOwnerInventoryStatus(records: DashboardInventoryRecord[
     const quantity = Number(record.quantity);
     const minimumStock = Number(record.minimum_stock);
     if (!Number.isFinite(quantity) || !Number.isFinite(minimumStock)) return summary;
-    if (quantity <= 0) summary.outOfStock += 1;
-    else if (minimumStock > 0 && quantity <= minimumStock) summary.lowStock += 1;
+    const level = classifyStockLevel(quantity, minimumStock);
+    if (level === 'Out of Stock') summary.outOfStock += 1;
+    else if (level === 'Low Stock') summary.lowStock += 1;
     else summary.normal += 1;
     return summary;
   }, { normal: 0, lowStock: 0, outOfStock: 0 });

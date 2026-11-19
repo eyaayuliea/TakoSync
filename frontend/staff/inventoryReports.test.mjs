@@ -108,9 +108,9 @@ test('categories sort alphabetically, count ingredients, and total quantities on
   ]);
 });
 
-test('stock status boundaries match Normal, Low Stock, and Out of Stock rules', () => {
+test('stock status boundaries match Normal, Low Stock (> 0 and <= minimum), and Out of Stock (0) rules', () => {
   assert.equal(inventoryStockStatus(5.01, 5), 'Normal');
-  assert.equal(inventoryStockStatus(5, 5), 'Normal');
+  assert.equal(inventoryStockStatus(5, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(1, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(0, 5), 'Out of Stock');
 });

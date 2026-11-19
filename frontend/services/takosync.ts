@@ -1,4 +1,5 @@
 import { requireSupabase } from './supabase';
+import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../../backend/types/database';
 import { filterBranchVisibleMenuVariants } from './menuCatalog';
@@ -2725,7 +2726,7 @@ export async function loadOwnerInventory() {
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     batches,
-    nearExpirationDays: settingsResult.data?.near_expiration_days ?? 7,
+    nearExpirationDays: settingsResult.data?.near_expiration_days ?? NEAR_EXPIRATION_DEFAULT_DAYS,
   };
 }
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { classifyStockLevel, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator,
@@ -2232,7 +2233,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'nearExpiration'
+      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'nearExpiration'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -2243,7 +2244,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'expired'
+      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'expired'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -3317,8 +3318,7 @@ export default function StaffWorkspace({
         const alertDeduction = deductions.find((deduction) => {
           const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
           return ingredient !== undefined && (
-            deduction.newQuantity <= 0 ||
-            (ingredient.minimumStock > 0 && deduction.newQuantity < ingredient.minimumStock)
+            classifyStockLevel(deduction.newQuantity, ingredient.minimumStock) !== 'In Stock'
           );
         });
         const alertIngredient = alertDeduction
@@ -4132,10 +4132,10 @@ export default function StaffWorkspace({
                   <StatusBadge
                     label={inventoryExpirationStatus(
                       batch.expirationDateIso,
-                      nearExpirationDays ?? 3,
+                      resolveNearExpirationDays(nearExpirationDays),
                       manilaBusinessDate(),
                     ) ?? 'Normal'}
-                    tone={inventoryExpirationStatus(batch.expirationDateIso, nearExpirationDays ?? 3, manilaBusinessDate()) === 'Expired'
+                    tone={inventoryExpirationStatus(batch.expirationDateIso, resolveNearExpirationDays(nearExpirationDays), manilaBusinessDate()) === 'Expired'
                       ? 'low'
                       : 'warning'}
                   />
@@ -4271,7 +4271,7 @@ export default function StaffWorkspace({
             const expirationDate = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
             const daysRemaining = expirationDate ? daysBetweenDates(manilaBusinessDate(), expirationDate) : null;
             const alert = selectedIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
-              ? classifyExpirationAlert(daysRemaining, nearExpirationDays)
+              ? classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays))
               : null;
             const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
             return (
@@ -4752,7 +4752,7 @@ export default function StaffWorkspace({
       : selectedAlertTab === 'outOfStock'
         ? 'Expected quantity is zero'
         : selectedAlertTab === 'nearExpiration'
-          ? `Owner setting: expiration within the next ${nearExpirationDays ?? 0} days`
+          ? `Owner setting: expiration within the next ${resolveNearExpirationDays(nearExpirationDays)} days`
           : `Recorded expiration date is before ${formatDate(alertDate)}`;
     const activeAlertsCopy = activeAlertCount === null
       ? '— active alerts'
@@ -9007,7 +9007,7 @@ export default function StaffWorkspace({
                 <Text style={styles.confirmSummaryText}>{staffName}</Text>
                 {usageDeductions.some((deduction) => {
                   const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
-                  return item && deduction.newQuantity < item.minimumStock;
+                  return item && classifyStockLevel(deduction.newQuantity, item.minimumStock) === 'Low Stock';
                 }) ? (
                   <Text style={styles.confirmSummaryText}>
                     This will remain below the {formatQuantity(
