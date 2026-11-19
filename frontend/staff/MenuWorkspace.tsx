@@ -13,7 +13,9 @@ import {
 } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
+import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
+import { ownerColors } from '../owner/shared/ownerTokens';
 import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
 import {
   calculateSelectedAddonTotal,
@@ -50,8 +52,8 @@ type MenuWorkspaceProps = {
 };
 
 const colors = {
-  pink: '#F20D52',
-  navy: '#111027',
+  pink: ownerColors.primary,
+  navy: ownerColors.navy,
   background: '#F5F5F5',
   white: '#FFFFFF',
   text: '#171717',
@@ -196,7 +198,7 @@ function SizeOptionCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#101027' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#0F1025' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
       <View style={styles.sizeOptionHeader}>
         <Text style={[styles.sizeOptionLabel, isDark && { color: '#FFFFFF' }]}>{variant.sizeLabel}</Text>
         <Pressable
@@ -243,7 +245,7 @@ function CartItemCard({
 }) {
   const { isDark } = useTheme();
   return (
-    <View style={[styles.cartItem, isDark && { backgroundColor: '#101027' }]}>
+    <View style={[styles.cartItem, isDark && { backgroundColor: '#0F1025' }]}>
       <View style={styles.cartItemCopy}>
         <Text style={[styles.cartItemName, isDark && { color: '#FFFFFF' }]} numberOfLines={2}>{product.name}</Text>
         <Text style={[styles.cartItemDetail, isDark && { color: '#B2B3C4' }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
@@ -293,7 +295,7 @@ function CurrentOrderLine({
 }) {
   const { isDark } = useTheme();
   const darkText = isDark ? { color: '#FFFFFF' } : undefined;
-  const darkQuantityText = isDark ? { color: '#101027' } : undefined;
+  const darkQuantityText = isDark ? { color: '#0F1025' } : undefined;
   return (
     <View style={styles.currentOrderLine}>
       <View style={styles.currentOrderCopy}>
@@ -355,9 +357,9 @@ export default function MenuWorkspace({
   onRetryInventory,
 }: MenuWorkspaceProps) {
   const { isDark, colors: themeColors } = useTheme();
-  const darkSecondarySurface = isDark ? { backgroundColor: '#101027' } : undefined;
+  const darkSecondarySurface = isDark ? { backgroundColor: '#0F1025' } : undefined;
   const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
-  const darkWarningText = isDark ? { color: '#101027' } : undefined;
+  const darkWarningText = isDark ? { color: '#0F1025' } : undefined;
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -407,7 +409,7 @@ export default function MenuWorkspace({
   const hasJapaneseWhiteSauce = activeAddons.some((addon) =>
     addon.name.trim().toLowerCase() === 'japanese white sauce');
   const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
-  const checkoutTotal = totals.total + addonsTotal;
+  const checkoutTotal = Math.round((totals.total + addonsTotal) * 100) / 100;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
     const product = products.find((item) => item.id === line.productId);
     return product ? [{ product, quantity: line.quantity }] : [];
@@ -464,7 +466,7 @@ export default function MenuWorkspace({
       setSelectedAddonIds([]);
     } catch (error) {
       setSaleError(error instanceof Error ? error.message : 'The sale could not be recorded. Your cart was preserved.');
-      setSaleRetryAvailable(true);
+      setSaleRetryAvailable(isRetryableSaleSubmissionError(error));
     } finally {
       setSaleSubmitting(false);
     }
@@ -672,7 +674,7 @@ export default function MenuWorkspace({
   }
 
   return (
-    <View style={[styles.posScreen, isDark && { backgroundColor: '#101027' }]}>
+    <View style={[styles.posScreen, isDark && { backgroundColor: '#0F1025' }]}>
       <View style={[styles.posHeader, { backgroundColor: colors.white }]}>
         <Text style={[styles.posHeaderTitle, { color: colors.navy }]}>POS · {branchName}</Text>
         <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{staffName} · {branchCode}</Text>

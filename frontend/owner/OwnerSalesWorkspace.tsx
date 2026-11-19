@@ -37,6 +37,7 @@ import { refreshOwnerMonitoring } from './ownerSalesRefresh';
 import { resolveOwnerSalesSelection } from './ownerSalesSelection';
 import { isSupabaseConfigured } from '../services/supabase';
 import { DAILY_SALES_THEME } from './dailySalesTheme';
+import { ownerColors } from './shared/ownerTokens';
 import {
   DAILY_SALES_SAMPLE_DATE,
   WEEKLY_SALES_LABEL,
@@ -1608,7 +1609,7 @@ export default function OwnerSalesWorkspace({
 
       {loading && !data ? (
         <View style={styles.loadingCard}>
-          <ActivityIndicator size="small" color="#F20D55" />
+          <ActivityIndicator size="small" color={ownerColors.primary} />
           <Text style={styles.bodyText}>{mode === 'reports' ? 'Generating report…' : 'Loading recorded sales…'}</Text>
         </View>
       ) : !data ? (
@@ -1619,7 +1620,7 @@ export default function OwnerSalesWorkspace({
           </View>
         ) : error === '' ? (
           <View style={styles.emptyCard}>
-            <ActivityIndicator size="small" color="#F20D55" />
+            <ActivityIndicator size="small" color={ownerColors.primary} />
             <Text style={styles.bodyText}>Loading recorded sales…</Text>
           </View>
         ) : null
@@ -2052,7 +2053,7 @@ function useStyles() {
     omErrorCenter: { minHeight: 300, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     omWifiOffIcon: { color: '#EC1358', fontFamily: 'Poppins_700Bold', fontSize: 32, lineHeight: 36, marginBottom: 10 },
     omErrorText: { maxWidth: 220, color: '#343440', fontFamily: 'Poppins_400Regular', fontSize: 11, lineHeight: 16, textAlign: 'center' },
-    omRetryButton: { minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: '#EC1358', backgroundColor: '#FFFFFF' },
+    omRetryButton: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12, borderRadius: 8, borderWidth: 1, borderColor: '#EC1358', backgroundColor: '#FFFFFF' },
     omRetryIcon: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 11, marginRight: 6 },
     omRetryText: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
     omTransactionsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
@@ -2162,30 +2163,30 @@ function useStyles() {
     pageHeadingCopy: { flex: 1, paddingRight: 10 },
     subtitle: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 10, lineHeight: 15, marginTop: 2 },
     headingActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-    refreshButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FCE3EB' },
-    refreshText: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 22, lineHeight: 25 },
+    refreshButton: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FCE3EB' },
+    refreshText: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 22, lineHeight: 25 },
     filterCard: { padding: 14, marginBottom: 14, borderRadius: 16, borderWidth: 1, borderColor: '#EEEEF1', backgroundColor: '#FFFFFF' },
     filterLabel: { color: '#555563', fontFamily: 'Poppins_600SemiBold', fontSize: 10, marginBottom: 7 },
     chipRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-    chip: { minHeight: 31, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 16, backgroundColor: '#F5F5F7', borderWidth: 1, borderColor: '#EEEEF1' },
+    chip: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 8, backgroundColor: '#F5F5F7', borderWidth: 1, borderColor: '#EEEEF1' },
     chipSelected: { backgroundColor: '#FCE3EB', borderColor: '#F4B6C8' },
     chipText: { color: '#626270', fontFamily: 'Poppins_500Medium', fontSize: 9 },
-    chipTextSelected: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold' },
+    chipTextSelected: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold' },
     dateRow: { flexDirection: 'column', gap: 10, marginTop: 13 },
     dateRowWide: { flexDirection: 'row' },
     dateField: { flex: 1 },
-    input: { minHeight: 40, paddingHorizontal: 11, borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF', color: '#171724', fontFamily: 'Poppins_400Regular', fontSize: 10 },
+    input: { minHeight: 40, paddingHorizontal: 11, borderRadius: 8, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF', color: '#171724', fontFamily: 'Poppins_400Regular', fontSize: 10 },
     branchLabel: { marginTop: 13 },
     rangeHint: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 10 },
-    primaryButton: { minHeight: 42, borderRadius: 22, backgroundColor: '#F20D55', alignItems: 'center', justifyContent: 'center', marginTop: 13, paddingHorizontal: 18 },
+    primaryButton: { minHeight: 48, borderRadius: 8, backgroundColor: ownerColors.primary, alignItems: 'center', justifyContent: 'center', marginTop: 13, paddingHorizontal: 18 },
     primaryButtonText: { color: '#FFFFFF', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
-    secondaryButton: { minHeight: 35, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 18, borderWidth: 1, borderColor: '#F20D55', backgroundColor: '#FFFFFF' },
-    secondaryButtonText: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    secondaryButton: { minHeight: 40, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 8, borderWidth: 1, borderColor: ownerColors.primary, backgroundColor: '#FFFFFF' },
+    secondaryButtonText: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     pressed: { opacity: 0.76 },
     disabled: { opacity: 0.5 },
     errorBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: 12, marginBottom: 13, borderRadius: 12, backgroundColor: '#FCE9EB' },
     errorText: { flex: 1, color: '#C92F3C', fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 14 },
-    retryText: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    retryText: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     reconciliationBanner: { padding: 12, marginBottom: 13, borderRadius: 12, borderWidth: 1, borderColor: '#F8D28A', backgroundColor: '#FFF8E7' },
     reconciliationTitle: { color: '#8A5A00', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
     reconciliationText: { color: '#8A5A00', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 13, marginTop: 4 },
@@ -2195,42 +2196,42 @@ function useStyles() {
     emptyCard: { minHeight: 105, justifyContent: 'center', padding: 17, borderRadius: 16, borderWidth: 1, borderColor: '#EEEEF1', backgroundColor: '#FFFFFF' },
     bodyText: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 9, lineHeight: 15, marginTop: 8 },
     bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 12 },
-    heroCard: { minHeight: 132, justifyContent: 'center', padding: 18, borderRadius: 18, backgroundColor: '#101027' },
-    heroEyebrow: { color: '#FF9418', fontFamily: 'Poppins_600SemiBold', fontSize: 8, letterSpacing: 0.5 },
+    heroCard: { minHeight: 132, justifyContent: 'center', padding: 18, borderRadius: 18, backgroundColor: ownerColors.navy },
+    heroEyebrow: { color: ownerColors.orange, fontFamily: 'Poppins_600SemiBold', fontSize: 8, letterSpacing: 0.5 },
     heroValue: { color: '#FFFFFF', fontFamily: 'Poppins_700Bold', fontSize: 30, lineHeight: 39, marginTop: 5 },
     heroDetail: { color: '#D5D5DF', fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 4 },
     metricCard: { minHeight: 94, justifyContent: 'center', padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#EEEEF1', backgroundColor: '#FFFFFF' },
     transactionMetric: { borderColor: '#F4B6C8', backgroundColor: '#FFF5F8' },
     metricLabel: { color: '#777783', fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 13 },
-    metricValue: { color: '#101027', fontFamily: 'Poppins_700Bold', fontSize: 19, lineHeight: 25, marginTop: 3 },
-    metricValueSmall: { color: '#101027', fontFamily: 'Poppins_600SemiBold', fontSize: 12, lineHeight: 18, marginTop: 5 },
+    metricValue: { color: ownerColors.navy, fontFamily: 'Poppins_700Bold', fontSize: 19, lineHeight: 25, marginTop: 3 },
+    metricValueSmall: { color: ownerColors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 12, lineHeight: 18, marginTop: 5 },
     metricHint: { color: '#9797A2', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 12, marginTop: 3 },
     panel: { padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#EEEEF1', backgroundColor: '#FFFFFF', marginBottom: 12 },
     panelHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 },
-    panelTitle: { color: '#101027', fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
+    panelTitle: { color: ownerColors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
     panelCaption: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 13, marginTop: 2 },
-    selectedTrend: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9, marginTop: 9 },
+    selectedTrend: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9, marginTop: 9 },
     chart: { height: 174, flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingTop: 12, paddingHorizontal: 2, marginTop: 8 },
     chartColumn: { width: 44, height: 158, alignItems: 'center', justifyContent: 'flex-end' },
     chartAmount: { width: 54, height: 14, textAlign: 'center', color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 6 },
     chartTrack: { width: 22, height: 108, justifyContent: 'flex-end', overflow: 'hidden', borderRadius: 7, backgroundColor: '#F5F5F7', marginTop: 4 },
-    chartBar: { width: '100%', minHeight: 0, borderTopLeftRadius: 7, borderTopRightRadius: 7, backgroundColor: '#F20D55' },
-    chartBarSelected: { backgroundColor: '#FF9418' },
+    chartBar: { width: '100%', minHeight: 0, borderTopLeftRadius: 7, borderTopRightRadius: 7, backgroundColor: ownerColors.primary },
+    chartBarSelected: { backgroundColor: ownerColors.orange },
     chartLabel: { color: '#777783', fontFamily: 'Poppins_400Regular', fontSize: 7, marginTop: 5 },
     branchRow: { marginTop: 14 },
     branchRowHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
     branchName: { flex: 1, color: '#343440', fontFamily: 'Poppins_500Medium', fontSize: 9 },
-    branchTotal: { color: '#101027', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    branchTotal: { color: ownerColors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     progressTrack: { height: 6, overflow: 'hidden', borderRadius: 4, backgroundColor: '#F0F0F3', marginTop: 6 },
-    progressBar: { height: '100%', borderRadius: 4, backgroundColor: '#FF9418' },
-    productBar: { backgroundColor: '#F20D55' },
+    progressBar: { height: '100%', borderRadius: 4, backgroundColor: ownerColors.orange },
+    productBar: { backgroundColor: ownerColors.primary },
     paymentBar: { backgroundColor: '#595EC0' },
     productRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 12 },
-    rank: { width: 22, color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    rank: { width: 22, color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     productCopy: { flex: 1 },
     productName: { flex: 1, color: '#343440', fontFamily: 'Poppins_500Medium', fontSize: 9 },
     productSales: { color: '#777783', fontFamily: 'Poppins_500Medium', fontSize: 8 },
-    linkText: { color: '#F20D55', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    linkText: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     paymentRow: { marginTop: 13 },
     tableHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
     tableTitleGroup: { flex: 1 },
@@ -2254,8 +2255,8 @@ function useStyles() {
     mobileTransactionList: { gap: 8, marginTop: 11 },
     mobileTransaction: { padding: 12, borderWidth: 1, borderColor: '#EEEEF1', borderRadius: 13, backgroundColor: '#FFFFFF' },
     transactionTopLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
-    transactionReference: { flex: 1, color: '#101027', fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
-    transactionTotal: { color: '#101027', fontFamily: 'Poppins_700Bold', fontSize: 10 },
+    transactionReference: { flex: 1, color: ownerColors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    transactionTotal: { color: ownerColors.navy, fontFamily: 'Poppins_700Bold', fontSize: 10 },
     transactionMeta: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 8, lineHeight: 13, marginTop: 4 },
     transactionProducts: { color: '#343440', fontFamily: 'Poppins_500Medium', fontSize: 8, lineHeight: 13, marginTop: 7 },
     transactionBottomLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 7, marginTop: 3 },

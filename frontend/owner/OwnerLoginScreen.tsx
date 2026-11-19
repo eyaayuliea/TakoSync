@@ -1,8 +1,10 @@
 import React, { useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   ImageBackground,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,9 +16,10 @@ import {
 } from 'react-native';
 import { isSupabaseConfigured, supabaseConfigurationError } from '../services/supabase';
 import { useTheme } from '../theme/ThemeProvider';
+import { OwnerLoginError } from '../services/ownerAuthentication';
 
 type FieldErrors = {
-  username?: string;
+  email?: string;
   password?: string;
 };
 
@@ -28,14 +31,15 @@ const FONT = {
 } as const;
 
 export default function OwnerLoginScreen({
+  onBack,
   onLogin,
 }: {
   onBack: () => void;
-  onLogin: (username: string, password: string) => Promise<void>;
+  onLogin: (email: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
   const { isDark } = useTheme();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [loginError, setLoginError] = useState('');
@@ -59,12 +63,12 @@ export default function OwnerLoginScreen({
       return;
     }
 
-    const trimmedUsername = username.trim();
+    const trimmedEmail = email.trim();
     const nextErrors: FieldErrors = {};
-    if (!trimmedUsername) nextErrors.username = 'Please enter your username.';
+    if (!trimmedEmail) nextErrors.email = 'Please enter your email.';
     if (!password) nextErrors.password = 'Please enter your password.';
 
-    setUsername(trimmedUsername);
+    setEmail(trimmedEmail);
     setFieldErrors(nextErrors);
     setLoginError('');
     if (Object.keys(nextErrors).length > 0) return;
@@ -72,12 +76,15 @@ export default function OwnerLoginScreen({
     submissionLock.current = true;
     setSubmitting(true);
     try {
-      await onLogin(trimmedUsername, password);
+      await onLogin(trimmedEmail, password);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
-      setLoginError(message);
-      if (message === 'Incorrect password. Please try again.') {
+      if (error instanceof OwnerLoginError && error.code === 'email_not_found') {
+        setFieldErrors({ email: error.message });
+      } else if (error instanceof OwnerLoginError && error.code === 'incorrect_password') {
         setPassword('');
+        setFieldErrors({ password: error.message });
+      } else {
+        setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
       }
     } finally {
       submissionLock.current = false;
@@ -125,26 +132,27 @@ export default function OwnerLoginScreen({
                 )}
 
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Username *</Text>
+                  <Text style={styles.label}>Email *</Text>
                   <TextInput
-                    value={username}
+                    value={email}
                     onChangeText={(value) => {
-                      setUsername(value);
+                      setEmail(value);
                       clearFeedback();
                     }}
-                    style={[styles.input, fieldErrors.username && styles.inputInvalid]}
-                    placeholder="Enter your username"
+                    style={[styles.input, fieldErrors.email && styles.inputInvalid]}
+                    placeholder="Enter your email"
                     placeholderTextColor="#858591"
                     autoCapitalize="none"
                     autoCorrect={false}
-                    autoComplete="username"
-                    textContentType="username"
-                    accessibilityLabel="Username, required"
+                    autoComplete="email"
+                    textContentType="emailAddress"
+                    keyboardType="email-address"
+                    accessibilityLabel="Email, required"
                     editable={!submitting}
                     returnKeyType="next"
                     onSubmitEditing={() => passwordInput.current?.focus()}
                   />
-                  {fieldErrors.username && <Text style={styles.fieldError}>{fieldErrors.username}</Text>}
+                  {fieldErrors.email && <Text style={styles.fieldError}>{fieldErrors.email}</Text>}
                 </View>
 
                 <View style={styles.fieldGroup}>
@@ -202,11 +210,35 @@ export default function OwnerLoginScreen({
                 >
                   <Text style={styles.loginButtonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
                 </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to welcome screen"
+                  onPress={onBack}
+                  style={({ pressed }) => [
+                    styles.backButton,
+                    pressed && styles.backButtonPressed,
+                  ]}
+                >
+                  <Text style={styles.backButtonText}>Back</Text>
+                </Pressable>
               </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
+      <Modal
+        visible={submitting}
+        transparent
+        animationType="fade"
+        onRequestClose={() => undefined}
+      >
+        <View style={styles.loadingBackdrop} accessibilityRole="alert">
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#EC1358" />
+            <Text style={styles.loadingText}>Logging in…</Text>
+          </View>
+        </View>
+      </Modal>
     </ImageBackground>
   );
 }
@@ -234,11 +266,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 24,
     paddingBottom: 20,
-    shadowColor: '#0F1025',
-    shadowOpacity: 0.2,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 9 },
-    elevation: 10,
   },
   compactCard: { paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, borderRadius: 24 },
   heading: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 24, textAlign: 'center', marginBottom: 20 },
@@ -265,7 +292,7 @@ const styles = StyleSheet.create({
   fieldGroup: { marginBottom: 13 },
   label: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 12, marginBottom: 7 },
   input: {
-    height: 46,
+    height: 48,
     width: '100%',
     borderWidth: 1,
     borderColor: '#FFFFFF',
@@ -279,7 +306,7 @@ const styles = StyleSheet.create({
   inputInvalid: { borderWidth: 1.5, borderColor: '#F52F2E' },
   fieldError: { color: '#FFFFFF', fontFamily: FONT.regular, fontSize: 11, marginTop: 5, lineHeight: 16 },
   passwordWrap: {
-    height: 46,
+    height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
@@ -316,7 +343,7 @@ const styles = StyleSheet.create({
   loginButton: {
     height: 48,
     width: '100%',
-    borderRadius: 24,
+    borderRadius: 8,
     backgroundColor: '#EC1358',
     alignItems: 'center',
     justifyContent: 'center',
@@ -325,4 +352,34 @@ const styles = StyleSheet.create({
   loginButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   loginButtonDisabled: { opacity: 0.65 },
   loginButtonText: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 13 },
+  backButton: {
+    minHeight: 48,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    borderRadius: 8,
+  },
+  backButtonPressed: { opacity: 0.82 },
+  backButtonText: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 14 },
+  loadingBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(15, 16, 37, 0.62)',
+  },
+  loadingCard: {
+    minWidth: 190,
+    minHeight: 128,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    borderRadius: 16,
+    backgroundColor: '#FDFDFC',
+    padding: 20,
+  },
+  loadingText: { color: '#0F1025', fontFamily: FONT.semibold, fontSize: 14 },
 });

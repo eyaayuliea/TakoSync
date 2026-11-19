@@ -13,6 +13,9 @@ import {
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
   shouldIncludeOwnerSaleInSummary,
+  SalePayloadValidationError,
+  SaleSubmissionRejectedError,
+  isRetryableSaleSubmissionError,
   validateSaleSubmission,
 } from './ownerSalesStatus.ts';
 
@@ -36,7 +39,29 @@ test('sale validation rejects malformed checkout payloads before persistence', (
   assert.throws(() => validateSaleSubmission({ ...valid, paymentMethod: 'Cheque' }), /Select Cash or QR/);
   assert.throws(() => validateSaleSubmission({ ...valid, totalAmount: 0 }), /greater than zero/);
   assert.throws(() => validateSaleSubmission({ ...valid, items: [] }), /at least one item/);
-  assert.throws(() => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 0, unitPrice: 10 }] }), /quantity greater than zero/);
+  assert.throws(() => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 0, unitPrice: 10 }] }), /positive whole-number quantity/);
+  assert.throws(
+    () => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 1.5, unitPrice: 10 }] }),
+    SalePayloadValidationError,
+  );
+  assert.throws(
+    () => validateSaleSubmission({ ...valid, items: [{ variantId: 'variant-a', quantity: 1, unitPrice: 10 }, { variantId: 'variant-a', quantity: 1, unitPrice: 10 }] }),
+    /variant may only appear once/,
+  );
+  assert.throws(
+    () => validateSaleSubmission({ ...valid, addons: [{ addonId: 'addon-a', unitPrice: 1 }, { addonId: 'addon-a', unitPrice: 1 }] }),
+    /add-on may only appear once/,
+  );
+  assert.throws(
+    () => validateSaleSubmission({ ...valid, addons: [{ addonId: 'addon-a', quantity: 0.5, unitPrice: 1 }] }),
+    /positive whole-number quantity/,
+  );
+});
+
+test('checkout retry classification separates definitive failures from uncertain outcomes', () => {
+  assert.equal(isRetryableSaleSubmissionError(new Error('request timeout')), true);
+  assert.equal(isRetryableSaleSubmissionError(new SalePayloadValidationError('invalid cart')), false);
+  assert.equal(isRetryableSaleSubmissionError(new SaleSubmissionRejectedError('insufficient stock')), false);
 });
 
 test('sale retry payload normalization is order-independent but price-sensitive', () => {

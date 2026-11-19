@@ -158,6 +158,9 @@ function createFixture({
       if (filters.username === "ownergelo'26") {
         return { data: ownerProfile?.username === "ownergelo'26" ? ownerProfile : null, error: null };
       }
+      if (filters.email === 'owner@example.test') {
+        return { data: ownerProfile?.email?.toLocaleLowerCase() === 'owner@example.test' ? ownerProfile : null, error: null };
+      }
       if (filters.id === 'staff-id' && filters.role === undefined) {
         return { data: staffProfiles.find((profile) => profile.id === 'staff-id') ?? null, error: null };
       }
@@ -370,6 +373,14 @@ function ownerLoginRequest(username, password) {
   });
 }
 
+function ownerEmailLoginRequest(email, password) {
+  return new Request('https://function.test/staff-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'owner-email-login', email, password }),
+  });
+}
+
 test('Owner username login preserves apostrophes and returns the existing Auth session', async () => {
   const fixture = createFixture({
     ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
@@ -381,6 +392,38 @@ test('Owner username login preserves apostrophes and returns the existing Auth s
   const body = await result.json();
   assert.equal(body.ok, true);
   assert.equal(body.session.access_token, 'staff-access-token');
+});
+
+test('Owner email login normalizes email and returns only the authenticated Owner session', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'owner', active: true },
+    authUserId: 'owner-id',
+  });
+  const result = await fixture.handler(ownerEmailLoginRequest(' OWNER@EXAMPLE.TEST ', 'owner-password'));
+
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.session.access_token, 'staff-access-token');
+  assert.deepEqual(
+    fixture.calls.find((call) => call.kind === 'auth-login'),
+    { kind: 'auth-login', email: 'owner@example.test', password: 'owner-password' },
+  );
+});
+
+test('Owner email login distinguishes unknown email, invalid password, and unauthorized accounts', async () => {
+  const cases = [
+    { ownerProfile: null, authUserId: 'owner-id', code: 'email_not_found' },
+    { ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'owner', active: true }, authUserId: 'owner-id', authLoginError: { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' }, code: 'incorrect_password' },
+    { ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'staff', active: true }, authUserId: 'owner-id', code: 'unauthorized_access' },
+    { ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'owner', active: false }, authUserId: 'owner-id', code: 'unauthorized_access' },
+  ];
+  for (const options of cases) {
+    const fixture = createFixture(options);
+    const result = await fixture.handler(ownerEmailLoginRequest('owner@example.test', 'owner-password'));
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).code, options.code);
+  }
 });
 
 test('Owner login rejects unknown, inactive, Staff, and mismatched Auth identities', async () => {
@@ -531,6 +574,38 @@ test('first-login password change uses Admin Auth and clears the profile flag', 
   assert.equal(fixture.authAdminPayloads[0][0], 'staff-id');
   assert.deepEqual(fixture.authAdminPayloads[0][1], { password: 'new-secure-password' });
   assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), true);
+});
+
+test('active Staff may change a password when no first-login change is pending', async () => {
+  const fixture = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
+  });
+  const result = await invoke(fixture, 'change-password', { newPassword: 'another-secure-password' }, 'Bearer staff-token');
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.deepEqual(fixture.authAdminPayloads[0][1], { password: 'another-secure-password' });
+  assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), true);
+});
+
+test('inactive Staff cannot change a password', async () => {
+  const fixture = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', active: false, must_change_password: false }],
+  });
+  const result = await invoke(fixture, 'change-password', { newPassword: 'another-secure-password' }, 'Bearer staff-token');
+
+  assert.equal(result.status, 403);
+  assert.deepEqual(fixture.authAdminOperations, []);
+});
+
+test('Owner cannot use the Staff password-change action', async () => {
+  const fixture = createFixture({ callerUserId: 'owner-id' });
+  const result = await invoke(fixture, 'change-password', { newPassword: 'another-secure-password' }, 'Bearer valid-token');
+
+  assert.equal(result.status, 403);
+  assert.deepEqual(fixture.authAdminOperations, []);
 });
 
 test('Owner bootstrap explicitly clears Employee ID and first-login state', () => {

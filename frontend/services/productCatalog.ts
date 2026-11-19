@@ -56,6 +56,18 @@ function assertValidPrice(price: number) {
   }
 }
 
+export function parseCatalogPrice(value: unknown, label: string): number {
+  const price = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(price) || price < 0) {
+    throw new Error(`${label} has an invalid price.`);
+  }
+  return price;
+}
+
 async function restoreVariantPrices(
   client: ProductCatalogClient,
   productId: string,
@@ -231,7 +243,7 @@ export function buildStaffMenuProducts(
       description: product.description,
       category: product.category ?? 'Menu',
       sizeLabel: variant.size_label,
-      price: Number(variant.price),
+      price: parseCatalogPrice(variant.price, `Menu variant ${variant.id}`),
       pieceCount: Number(variant.piece_count),
       isAvailable: product.is_available && variant.is_available,
     }];

@@ -24,10 +24,12 @@ import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
+import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
+import { ownerColors } from './owner/shared/ownerTokens';
 import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
-import { shouldClearMobileSession } from './services/authSessionEvents';
+import { getAuthenticatedMobileDestination, shouldClearMobileSession } from './services/authSessionEvents';
 import { StaffLoginError } from './services/staffAuthentication';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
@@ -35,15 +37,15 @@ import {
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
-  signInOwner,
+  signInOwnerWithEmail,
   signInStaff,
   signOut,
   type AppUser,
   type OwnerSalesData,
 } from './services/takosync';
 
-const PINK = '#F20D55';
-const NAVY = '#101026';
+const PINK = ownerColors.primary;
+const NAVY = ownerColors.navy;
 const DASHBOARD_COLORS = {
   pink: '#EC1358',
   navy: '#0F1025',
@@ -71,7 +73,7 @@ type PreviewInventoryItem = {
   lowStock: boolean;
   branch?: string;
 };
-type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace';
+type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace' | 'staffChangePassword';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
 type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
@@ -124,6 +126,7 @@ function AppContent() {
   const authOperationLock = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
+  const ownerRefreshLock = useRef(false);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('Dashboard');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [dashboardMessage, setDashboardMessage] = useState('');
@@ -163,7 +166,7 @@ function AppContent() {
     ? Math.min(height, frameWidth * 2)
     : height;
   const visibleScreen =
-    (screen === 'dashboard' || screen === 'staffWorkspace') && authenticatedUser === null
+    (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'staffChangePassword') && authenticatedUser === null
       ? 'login'
       : screen;
 
@@ -182,7 +185,7 @@ function AppContent() {
           return;
         }
         setAuthenticatedUser(user);
-         setScreen(user.role === 'Staff' ? 'staffWorkspace' : 'dashboard');
+        setScreen(getAuthenticatedMobileDestination(user.role));
       })
       .catch((error: unknown) => {
         if (active) {
@@ -537,7 +540,7 @@ function AppContent() {
       setAuthenticatedUser(user);
       setLoginSuccess(true);
       await new Promise((resolve) => setTimeout(resolve, 600));
-      setScreen('staffWorkspace');
+      setScreen(getAuthenticatedMobileDestination(user.role));
     } catch (error) {
       setLoginSuccess(false);
       if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
@@ -551,10 +554,10 @@ function AppContent() {
     }
   };
 
-  const handleOwnerLogin = async (username: string, ownerPassword: string) => {
+  const handleOwnerLogin = async (email: string, ownerPassword: string) => {
     authOperationLock.current = true;
     try {
-      const user = await signInOwner(username, ownerPassword);
+      const user = await signInOwnerWithEmail(email, ownerPassword);
       setAuthenticatedUser(user);
       setScreen('dashboard');
     } finally {
@@ -615,7 +618,8 @@ function AppContent() {
   };
 
   const refreshOwnerDashboard = async () => {
-    if (ownerLoading || salesLoading || activityLoading) return;
+    if (ownerRefreshLock.current || ownerLoading || salesLoading || activityLoading) return;
+    ownerRefreshLock.current = true;
     setOwnerLoading(true);
     setSalesLoading(true);
     setActivityLoading(true);
@@ -623,33 +627,44 @@ function AppContent() {
     setOwnerLoadError('');
     setSalesLoadError('');
     setActivityLoadError('');
-    const salesRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
-    const activityRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
-    const [inventoryResult, salesResult, activityResult] = await Promise.allSettled([
-      loadOwnerInventory(),
-      salesRange
-        ? loadOwnerSalesData({ ...salesRange, branchId: branchFilter, includePrevious: true })
-        : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
-      activityRange
-        ? loadOwnerActivityData({ ...activityRange, branchId: branchFilter })
-        : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
-    ]);
-    if (inventoryResult.status === 'fulfilled') setOwnerData(inventoryResult.value);
-    else setOwnerLoadError(inventoryResult.reason instanceof Error ? inventoryResult.reason.message : 'Unable to refresh inventory data.');
-    if (salesResult.status === 'fulfilled') setOwnerSalesData(salesResult.value);
-    else setSalesLoadError(salesResult.reason instanceof Error ? salesResult.reason.message : 'Unable to refresh sales data.');
-    if (activityResult.status === 'fulfilled') setOwnerActivityData(activityResult.value);
-    else setActivityLoadError(activityResult.reason instanceof Error ? activityResult.reason.message : 'Unable to refresh business activity.');
-    setOwnerLoading(false);
-    setSalesLoading(false);
-    setActivityLoading(false);
+    try {
+      const salesRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+      const activityRange = getManilaReportingRange(reportingPeriod, new Date(), requestedCustomStart, requestedCustomEnd);
+      const [inventoryResult, salesResult, activityResult] = await Promise.allSettled([
+        loadOwnerInventory(),
+        salesRange
+          ? loadOwnerSalesData({ ...salesRange, branchId: branchFilter, includePrevious: true })
+          : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
+        activityRange
+          ? loadOwnerActivityData({ ...activityRange, branchId: branchFilter })
+          : Promise.reject(new Error('Enter valid start and end dates in YYYY-MM-DD format; the end date must not be before the start date.')),
+      ]);
+      if (inventoryResult.status === 'fulfilled') setOwnerData(inventoryResult.value);
+      else setOwnerLoadError(inventoryResult.reason instanceof Error ? inventoryResult.reason.message : 'Unable to refresh inventory data.');
+      if (salesResult.status === 'fulfilled') setOwnerSalesData(salesResult.value);
+      else setSalesLoadError(salesResult.reason instanceof Error ? salesResult.reason.message : 'Unable to refresh sales data.');
+      if (activityResult.status === 'fulfilled') setOwnerActivityData(activityResult.value);
+      else setActivityLoadError(activityResult.reason instanceof Error ? activityResult.reason.message : 'Unable to refresh business activity.');
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'Unable to refresh Owner data.';
+      setOwnerLoadError(message);
+      setSalesLoadError(message);
+      setActivityLoadError(message);
+    } finally {
+      ownerRefreshLock.current = false;
+      setOwnerLoading(false);
+      setSalesLoading(false);
+      setActivityLoading(false);
+    }
   };
 
-  const handleStaffLogout = async () => {
-    await signOut();
-    clearSignedInState();
-    setLoginError('');
-    setScreen('welcome');
+  const handleStaffPasswordChanged = async () => {
+    const user = await getCurrentUser();
+    if (!user || user.role !== 'Staff' || user.mustChangePassword) {
+      throw new Error('The password change could not be verified. Please retry or log out.');
+    }
+    setAuthenticatedUser(user);
+    setScreen(getAuthenticatedMobileDestination(user.role));
   };
 
   return (
@@ -723,6 +738,15 @@ function AppContent() {
               <OwnerLoginScreen
                 onBack={() => setScreen('welcome')}
                 onLogin={handleOwnerLogin}
+              />
+            )}
+
+            {visibleScreen === 'staffChangePassword' && authenticatedUser?.role === 'Staff' && (
+              <StaffChangePasswordScreen
+                employeeId={authenticatedUser.employeeId}
+                onChanged={handleStaffPasswordChanged}
+                onCancel={() => setScreen('staffWorkspace')}
+                onLogout={handleLogout}
               />
             )}
 
@@ -1489,7 +1513,8 @@ function AppContent() {
             )}
             {visibleScreen === 'staffWorkspace' && authenticatedUser?.role === 'Staff' && (
               <StaffWorkspace
-                onLogout={handleStaffLogout}
+                onLogout={handleLogout}
+                onChangePassword={() => setScreen('staffChangePassword')}
                 user={authenticatedUser}
                 appVersion={appConfig.expo.version}
               />

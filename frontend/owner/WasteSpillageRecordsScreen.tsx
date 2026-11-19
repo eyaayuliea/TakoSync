@@ -25,9 +25,7 @@ import { pageSize } from './salesConsumptionRepository';
 import {
   formatWasteSpillageDateTime,
   formatWasteSpillageQuantity,
-  getForcedWasteSpillageState,
-  getWasteSpillageById,
-  getWasteSpillageMockList,
+  loadWasteSpillageRecords,
   WASTE_SPILLAGE_CATEGORY_LABELS,
   type WasteSpillageRecord,
 } from './wasteSpillageRepository';
@@ -38,7 +36,19 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
-export default function WasteSpillageRecordsScreen({ onBack }: { onBack: () => void }) {
+export default function WasteSpillageRecordsScreen({
+  onBack,
+  branches,
+  inventoryLoading,
+  inventoryError,
+  onRefresh,
+}: {
+  onBack: () => void;
+  branches: { id: string; name: string }[];
+  inventoryLoading: boolean;
+  inventoryError: string;
+  onRefresh: () => void;
+}) {
   const { colors: themeColors } = useTheme();
   const styles = useStyles();
   const listRef = useRef<ScrollView>(null);
@@ -48,73 +58,77 @@ export default function WasteSpillageRecordsScreen({ onBack }: { onBack: () => v
   const [items, setItems] = useState<WasteSpillageRecord[]>([]);
   const [loadedPages, setLoadedPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
   const [selected, setSelected] = useState<WasteSpillageRecord | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const loadingMoreRef = useRef(false);
+  const requestId = useRef(0);
 
   const loadFirst = () => {
+    const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
     setItems([]);
     setLoadedPages(1);
     setLoadingMore(false);
-    setLoadMoreError(false);
     loadingMoreRef.current = false;
-    const forced = getForcedWasteSpillageState();
-    setTimeout(() => {
-      if (forced === 'error') {
-        setError(true);
-      } else if (forced === 'loading') {
-        return;
-      } else {
-        setItems(forced === 'empty' ? [] : getWasteSpillageMockList().slice(0, pageSize));
-        if (forced === 'load_more') setLoadingMore(true);
-      }
+    if (inventoryLoading) return;
+    if (inventoryError) {
+      setError(true);
       setLoading(false);
-    }, 450);
+      return;
+    }
+    if (branches.length === 0) {
+      setError(true);
+      setLoading(false);
+      onRefresh();
+      return;
+    }
+    void loadWasteSpillageRecords(branches).then((loadedRecords) => {
+      if (currentRequestId !== requestId.current) return;
+      setItems(loadedRecords);
+      setLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== requestId.current) return;
+      console.error('Unable to load Waste and Spillage records.', loadError);
+      setError(true);
+      setLoading(false);
+    });
   };
 
-  useEffect(loadFirst, []);
+  useEffect(() => {
+    loadFirst();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [branches, inventoryError, inventoryLoading]);
 
   const openDetails = (id: string) => {
     setSelectedId(id);
     setView('details');
     setDetailLoading(true);
     setDetailError(false);
-    setSelected(null);
-    setTimeout(() => {
-      const record = getWasteSpillageById(id);
-      if (record) setSelected(record);
-      else setDetailError(true);
-      setDetailLoading(false);
-    }, 250);
+    const record = items.find((item) => item.id === id) ?? null;
+    setSelected(record);
+    setDetailError(!record);
+    setDetailLoading(false);
   };
 
   const loadMore = () => {
     if (loadingMoreRef.current || items.length === 0) return;
-    const records = getWasteSpillageMockList();
-    const forced = getForcedWasteSpillageState();
-    if (forced !== 'load_more' && loadedPages * pageSize >= records.length) return;
+    if (loadedPages * pageSize >= items.length) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    setLoadMoreError(false);
-    setTimeout(() => {
-      if (forced === 'error') {
-        setLoadMoreError(true);
-        setLoadingMore(false);
-        loadingMoreRef.current = false;
-      } else if (forced !== 'load_more') {
-        setItems(records.slice(0, (loadedPages + 1) * pageSize));
-        setLoadedPages((value) => value + 1);
-        setLoadingMore(false);
-        loadingMoreRef.current = false;
-      }
-    }, 500);
+    setLoadedPages((value) => Math.min(value + 1, Math.ceil(items.length / pageSize)));
+    requestAnimationFrame(() => {
+      setLoadingMore(false);
+      loadingMoreRef.current = false;
+    });
   };
+
+  const visibleItems = items.slice(0, loadedPages * pageSize);
 
   const back = () => {
     if (view === 'details') {
@@ -171,7 +185,7 @@ export default function WasteSpillageRecordsScreen({ onBack }: { onBack: () => v
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={loadFirst} />
+        <OwnerRecordErrorState onRetry={inventoryError || branches.length === 0 ? onRefresh : loadFirst} />
       ) : items.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (
@@ -188,7 +202,7 @@ export default function WasteSpillageRecordsScreen({ onBack }: { onBack: () => v
           }}
           scrollEventThrottle={16}
         >
-          {items.map((record) => (
+          {visibleItems.map((record) => (
             <Pressable
               key={record.id}
               accessibilityRole="button"
@@ -211,7 +225,7 @@ export default function WasteSpillageRecordsScreen({ onBack }: { onBack: () => v
           ))}
           <OwnerRecordPaginationFooter
             loadingMore={loadingMore}
-            loadMoreError={loadMoreError}
+            loadMoreError={false}
             onRetry={loadMore}
           />
         </ScrollView>

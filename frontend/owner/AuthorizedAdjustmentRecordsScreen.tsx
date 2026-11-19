@@ -3,8 +3,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { OwnerMenuIcon } from './OwnerMenuScreens';
-import { OwnerRecordDetailRow, OwnerRecordEmptyState, OwnerRecordErrorState, OwnerRecordHeader, OwnerRecordLoadingState, OwnerRecordReadOnlyPill } from './WasteSpillageRecordsScreen';
-import { formatAuthorizedAdjustmentDateTime, formatAuthorizedAdjustmentQuantity, getAuthorizedAdjustmentMockRecords, getForcedAuthorizedAdjustmentState, loadAuthorizedAdjustmentRecords, type AuthorizedAdjustmentRecord } from './authorizedAdjustmentRepository';
+import { OwnerRecordDetailRow, OwnerRecordEmptyState, OwnerRecordErrorState, OwnerRecordHeader, OwnerRecordLoadingState, OwnerRecordReadOnlyPill } from './shared/ownerComponents';
+import { formatAuthorizedAdjustmentDateTime, formatAuthorizedAdjustmentQuantity, loadAuthorizedAdjustmentRecords, type AuthorizedAdjustmentRecord } from './authorizedAdjustmentRepository';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
@@ -12,12 +12,23 @@ export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: 
   const styles = useStyles(); const { colors } = useTheme(); const listRef = useRef<ScrollView>(null);
   const [view, setView] = useState<'list' | 'details'>('list'); const [loading, setLoading] = useState(true); const [error, setError] = useState(false);
   const [records, setRecords] = useState<AuthorizedAdjustmentRecord[]>([]); const [selected, setSelected] = useState<AuthorizedAdjustmentRecord | null>(null); const [scrollOffset, setScrollOffset] = useState(0);
-  const loadRecords = () => { setLoading(true); setError(false); setRecords([]); const forced = getForcedAuthorizedAdjustmentState(); setTimeout(() => {
-    if (forced === 'error') { setError(true); setLoading(false); return; } if (forced === 'loading') return; if (forced === 'empty') { setLoading(false); return; }
-    const request = forced === 'success' ? Promise.resolve(getAuthorizedAdjustmentMockRecords()) : loadAuthorizedAdjustmentRecords();
-    void request.then((loaded) => { setRecords(loaded); setLoading(false); }).catch((reason: unknown) => { console.error('Unable to load Authorized Adjustment records.', reason); setError(true); setLoading(false); });
-  }, 450); };
-  useEffect(loadRecords, []);
+  const requestId = useRef(0);
+  const loadRecords = () => {
+    const currentRequestId = ++requestId.current;
+    setLoading(true); setError(false); setRecords([]);
+    void loadAuthorizedAdjustmentRecords().then((loaded) => {
+      if (currentRequestId !== requestId.current) return;
+      setRecords(loaded); setLoading(false);
+    }).catch((reason: unknown) => {
+      if (currentRequestId !== requestId.current) return;
+      console.error('Unable to load Authorized Adjustment records.', reason);
+      setError(true); setLoading(false);
+    });
+  };
+  useEffect(() => {
+    loadRecords();
+    return () => { requestId.current += 1; };
+  }, []);
   const back = () => { if (view === 'details') { setView('list'); setSelected(null); requestAnimationFrame(() => listRef.current?.scrollTo({ y: scrollOffset, animated: false })); } else onBack(); };
   return <View style={styles.screen}>
     <OwnerRecordHeader title={view === 'details' ? 'Adjustment Details' : 'Authorized Adjustment Records'} onBack={back} />

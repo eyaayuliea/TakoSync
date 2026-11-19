@@ -6,6 +6,7 @@ import {
   buildStaffMenuProducts,
   createOwnerProduct,
   updateOwnerProduct,
+  parseCatalogPrice,
   type OwnerProductInput,
   type ProductVariantPrice,
   type ProductVariantPriceInput,
@@ -36,11 +37,13 @@ import {
   shouldIncludeOwnerSaleInSummary,
   filterOwnerSalesByInventoryState,
   validateSaleSubmission,
+  SaleSubmissionRejectedError,
   type UnresolvedSale,
   type StaffSaleRecord,
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
+import { OwnerLoginError } from './ownerAuthentication';
 import {
   buildInventoryReportData,
   buildInventoryCountHistoryRecords,
@@ -485,6 +488,10 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
     await clearRejectedSession();
     throw new Error('This account is inactive. Ask the owner to reactivate it.');
   }
+  if (profile.role !== 'owner' && profile.role !== 'staff') {
+    await clearRejectedSession();
+    throw new Error('This account has an unsupported role. Ask the owner to review its access.');
+  }
   if (profile.role === 'staff' && !profile.branch_id) {
     await clearRejectedSession();
     throw new Error('This staff account has no assigned branch. Ask the owner to assign one.');
@@ -519,8 +526,8 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
   };
 }
 
-export function getCurrentUser(): Promise<AppUser | null> {
-  return loadCurrentUser();
+export function getCurrentUser(clientOverride?: StaffServiceClient): Promise<AppUser | null> {
+  return loadCurrentUser(clientOverride);
 }
 
 export async function signIn(
@@ -677,6 +684,56 @@ export async function signInOwner(username: string, password: string, clientOver
   if (!user || user.role !== 'Owner') {
     await client.auth.signOut();
     throw new Error('Unauthorized access.');
+  }
+  return user;
+}
+
+export async function signInOwnerWithEmail(email: string, password: string, clientOverride?: StaffServiceClient): Promise<AppUser> {
+  const normalizedEmail = email.normalize('NFKC').trim().toLocaleLowerCase();
+  if (!normalizedEmail) throw new Error('Please enter your email.');
+  if (!password) throw new Error('Please enter your password.');
+  const client = staffServiceClient(clientOverride);
+  let result;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    result = await Promise.race([
+      client.functions.invoke('staff-auth', {
+        body: { action: 'owner-email-login', email: normalizedEmail, password },
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new OwnerLoginError('connection_failure')),
+          10_000,
+        );
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof OwnerLoginError) throw error;
+    throw new OwnerLoginError('connection_failure');
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+  if (result.error) throw new OwnerLoginError('connection_failure');
+  const data = result.data as {
+    ok?: boolean;
+    code?: 'email_not_found' | 'incorrect_password' | 'unauthorized_access';
+    session?: Parameters<typeof client.auth.setSession>[0];
+  } | null;
+  if (!data?.ok) {
+    if (data?.code === 'email_not_found') throw new OwnerLoginError('email_not_found');
+    if (data?.code === 'incorrect_password') throw new OwnerLoginError('incorrect_password');
+    if (data?.code === 'unauthorized_access') throw new OwnerLoginError('unauthorized_access');
+    throw new OwnerLoginError('connection_failure');
+  }
+  if (!data.session?.access_token || !data.session.refresh_token) {
+    throw new OwnerLoginError('connection_failure');
+  }
+  const { error: sessionError } = await client.auth.setSession(data.session);
+  assertNoError(sessionError);
+  const user = await loadCurrentUser(client);
+  if (!user || user.role !== 'Owner') {
+    await client.auth.signOut();
+    throw new OwnerLoginError('unauthorized_access');
   }
   return user;
 }
@@ -1940,7 +1997,7 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
     addons: (addonsResult.data ?? []).map((addon) => ({
       id: addon.id,
       name: addon.addon_name,
-      price: Number(addon.price),
+      price: parseCatalogPrice(addon.price, `Add-on ${addon.addon_name}`),
       isAvailable: addon.active,
     })),
   };
@@ -1991,16 +2048,16 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
   if (error) {
     const message = error.message.toLowerCase();
     if (message.includes('different sale payload')) {
-      throw new Error('This transaction reference was already used with a different checkout payload.');
+      throw new SaleSubmissionRejectedError('This transaction reference was already used with a different checkout payload.');
     }
     if (message.includes('belongs to another branch')) {
-      throw new Error('This transaction reference belongs to a different branch.');
+      throw new SaleSubmissionRejectedError('This transaction reference belongs to a different branch.');
     }
     if (message.includes('exceeds available stock')) {
-      throw new Error('Insufficient inventory to complete this sale.');
+      throw new SaleSubmissionRejectedError('Insufficient inventory to complete this sale.');
     }
     if (message.includes('unavailable for this branch')) {
-      throw new Error('One of the selected products is no longer available.');
+      throw new SaleSubmissionRejectedError('One of the selected products is no longer available.');
     }
     throw new Error('Checkout status could not be confirmed. Your cart is preserved; retry the same checkout to safely confirm its status.');
   }
@@ -2396,8 +2453,7 @@ export async function loadOwnerInventory() {
     client.from('ingredient_batches')
       .select('id, branch_id, ingredient_id, batch_reference, expiration_date, quantity_remaining')
       .gt('quantity_remaining', 0)
-      .not('expiration_date', 'is', null)
-      .order('expiration_date')
+      .order('expiration_date', { ascending: true, nullsFirst: false })
       .order('id', { ascending: false })
       .range(0, pageSize - 1),
     client.from('owner_inventory_settings')
@@ -2410,15 +2466,13 @@ export async function loadOwnerInventory() {
   assertNoError(categoriesResult.error);
   assertNoError(batchesResult.error);
   assertNoError(settingsResult.error);
-  if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
 
   const batches = [...(batchesResult.data ?? [])];
   for (let offset = pageSize; (batchesResult.data?.length ?? 0) === pageSize; offset += pageSize) {
     const { data, error } = await client.from('ingredient_batches')
       .select('id, branch_id, ingredient_id, batch_reference, expiration_date, quantity_remaining')
       .gt('quantity_remaining', 0)
-      .not('expiration_date', 'is', null)
-      .order('expiration_date')
+      .order('expiration_date', { ascending: true, nullsFirst: false })
       .order('id', { ascending: false })
       .range(offset, offset + pageSize - 1);
     assertNoError(error);
@@ -2432,7 +2486,7 @@ export async function loadOwnerInventory() {
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     batches,
-    nearExpirationDays: settingsResult.data.near_expiration_days,
+    nearExpirationDays: settingsResult.data?.near_expiration_days ?? 7,
   };
 }
 
@@ -2596,7 +2650,7 @@ export async function loadOwnerActivityData(input: {
   const pageSize = 500;
   const transactionQuery = (offset: number) => {
     let query = client.from('inventory_transactions')
-      .select('id, reference, branch_id, ingredient_id, type, quantity, unit, transaction_date')
+      .select('id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit, movement, before_quantity, after_quantity, reason, notes, batch_id, transaction_date')
       .gte('transaction_date', input.start.toISOString())
       .lt('transaction_date', input.end.toISOString())
       .order('transaction_date', { ascending: false })
@@ -2609,9 +2663,16 @@ export async function loadOwnerActivityData(input: {
     reference: string;
     branch_id: string;
     ingredient_id: string;
+    actor_id: string | null;
     type: Database['public']['Enums']['inventory_transaction_type'];
     quantity: number;
     unit: string;
+    movement: number;
+    before_quantity: number;
+    after_quantity: number;
+    reason: string;
+    notes: string;
+    batch_id: string | null;
     transaction_date: string;
   }[] = [];
   for (let offset = 0; ; offset += pageSize) {
@@ -2644,10 +2705,11 @@ export async function loadOwnerActivityData(input: {
     status: string;
     remarks: string;
     created_at: string;
+    submitted_by: string | null;
   };
   const loadCheckPage = async (offset: number, pendingOnly: boolean) => {
     let query = client.from('daily_stock_checks')
-      .select('id, reference, branch_id, check_date, status, remarks, created_at')
+      .select('id, reference, branch_id, submitted_by, check_date, status, remarks, created_at')
       .order('created_at', { ascending: false })
       .order('id', { ascending: false });
     if (pendingOnly) query = query.eq('status', 'pending_owner_review');
@@ -2680,22 +2742,56 @@ export async function loadOwnerActivityData(input: {
   const checksById = new Map([...recentChecks, ...pendingChecks].map((check) => [check.id, check]));
   const dailyChecks = [...checksById.values()];
   const countLines: {
+    id: string;
     daily_stock_check_id: string;
     ingredient_id: string;
     recorded_quantity: number;
     physical_quantity: number;
     difference: number;
     unit: string;
+    inventory_revision: number | null;
   }[] = [];
   for (let index = 0; index < dailyChecks.length; index += 10) {
     const { data, error } = await client.from('daily_stock_count_lines')
-      .select('daily_stock_check_id, ingredient_id, recorded_quantity, physical_quantity, difference, unit')
+      .select('id, daily_stock_check_id, ingredient_id, recorded_quantity, physical_quantity, difference, unit, inventory_revision')
       .in('daily_stock_check_id', dailyChecks.slice(index, index + 10).map((check) => check.id));
     assertNoError(error);
     countLines.push(...(data ?? []));
   }
 
-  return { transactions, dailyChecks, countLines, auditLogs };
+  const profileIds = [...new Set([
+    ...transactions.flatMap((transaction) => transaction.actor_id ? [transaction.actor_id] : []),
+    ...dailyChecks.flatMap((check) => check.submitted_by ? [check.submitted_by] : []),
+    ...auditLogs.flatMap((log) => log.user_id ? [log.user_id] : []),
+  ])];
+  const profileNames = new Map<string, string>();
+  for (let index = 0; index < profileIds.length; index += pageSize) {
+    const { data, error } = await client.from('profiles')
+      .select('id, full_name')
+      .in('id', profileIds.slice(index, index + pageSize));
+    assertNoError(error);
+    for (const profile of data ?? []) profileNames.set(profile.id, profile.full_name);
+  }
+
+  return {
+    transactions: transactions.map((transaction) => ({
+      ...transaction,
+      actor_name: transaction.actor_id
+        ? profileNames.get(transaction.actor_id) ?? 'Employee unavailable'
+        : 'Employee unavailable',
+    })),
+    dailyChecks: dailyChecks.map((check) => ({
+      ...check,
+      submitted_by_name: check.submitted_by
+        ? profileNames.get(check.submitted_by) ?? 'Employee unavailable'
+        : 'Employee unavailable',
+    })),
+    countLines,
+    auditLogs: auditLogs.map((log) => ({
+      ...log,
+      actor_name: log.user_id ? profileNames.get(log.user_id) ?? 'User unavailable' : 'User unavailable',
+    })),
+  };
 }
 
 export async function loadOwnerDiscrepancyReviews(branchId: string | null) {

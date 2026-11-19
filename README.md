@@ -2,13 +2,13 @@
 
 ## Staff web preview
 
-Use `npm run web:staff` to launch the Staff target in Expo web mode for development-only visual smoke testing. The command sets `EXPO_PUBLIC_APP_MODE=staff`; production builds must continue to use the native Staff entry point and must not rely on this preview flag for access control.
+For a development-only Staff web preview, set `EXPO_PUBLIC_APP_MODE=staff` before running `npm run web`. Production builds must continue to use the native Staff entry point and must not rely on this preview flag for access control.
 
 ## Project overview
 
 TakoSync is a React Native and Expo application for monitoring ingredient inventory and recording stock activity for Gelo’s Takoyaki’s three branches. It addresses the difficulty of keeping branch stock records current, identifying low or expiring items, and documenting differences between recorded and physically counted inventory.
 
-> **Project source:** A standalone Project Charter file was not present in the repository during this review. This README reflects the supplied project brief, the existing backend documentation, and the behavior implemented in the code and migrations.
+> **Project source:** The Project Charter, mobile user stories, summary, and sticker sheet are maintained under `docs/`. This README summarizes the project objectives and the implementation state; refer to those documents and [AUDIT_REPORT.md](AUDIT_REPORT.md) for acceptance criteria and verification status.
 
 ## Objectives
 
@@ -20,8 +20,8 @@ TakoSync is a React Native and Expo application for monitoring ingredient invent
 ## Modules and features
 
 The Staff interface currently includes:
-- A database trigger creates new profiles as inactive, unassigned Staff. Set up the initial Owner and activate/assign Staff through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
-- Supabase email/password sign-in, persistent session restoration, secure token refresh, logout, and role/branch authorization for Staff and Owner mobile users. Business hours remain configurable reporting data and do not expire authenticated sessions.
+- Local migrations create inactive Staff profiles; the latest local bootstrap migration assigns Branch 1 as the initial branch. The Owner Web Portal includes Staff account management. Production provisioning behavior is unverified because its migration history is unresolved.
+- The client implements Supabase email/password sign-in, session restoration, token refresh, logout, and role/branch routing. Production session persistence, explicit revocation, and RLS behavior remain unverified against the linked database; business hours are intended to remain reporting data rather than an expiration deadline.
 - A dashboard and ingredient inventory with search, category filters, and ingredient details.
 - Stock-In receipts with batch and expiry information.
 - Stock-Out and usage entries, including cooking-batch workflows.
@@ -43,9 +43,9 @@ Owner Products & Menu supports creating and editing menu products through the ex
 
 Stock & Expiration Settings lets Owners search and filter branch inventory, edit each ingredient's branch-specific minimum stock, enable or disable ingredient expiration tracking, and add or edit dates on existing active stock-in batches. The persisted owner-wide alert window controls nearing-expiration status; expired batches are identified separately. Batch quantities and stock levels are not changed by these settings, and expiration alerts are dashboard indicators only—notification delivery is not implemented. Apply the `202610310001_stock_expiration_settings.sql` migration before using this screen. Expiration dates can only be attached to existing stock-in batches; creating stock or standalone batch records is intentionally not supported here.
 
-Owner and Staff sign in with their registered Supabase Auth email and password. The app loads each user's active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the live cross-branch monitoring dashboard. There is no demo login or authentication bypass.
+Owner Mobile signs in with the authorized Owner email and password through the dedicated `owner-email-login` action in the `staff-auth` Edge Function. The existing Owner username action remains available to the separate Web Portal. Staff use the configured username/password flow. The client loads the active `profiles` record before routing: Staff go to the assigned-branch workspace, and Owners go to the cross-branch monitoring dashboard. There is no demo login or authentication bypass. Hosted Auth, Edge Function, session revocation, and RLS behavior remain unverified.
 
-The same Expo application can target the web using `npm run web`; this is not a separate web management product. A future Owner web portal must use the same backend-enforced Asia/Manila business-session policy, including the before-10:00 PM extension deadline. No separate Owner web portal is currently implemented. Owner account/branch assignment is not managed in the mobile app. The Owner discrepancy screen provides reasoned adjustment authorization; apply and verify the corresponding database migration before enabling it against a hosted project.
+On web, the Expo app opens the Owner Web Management Portal by default; setting `EXPO_PUBLIC_APP_MODE=staff` selects the Staff web preview for development-only visual testing. The portal includes Owner authentication, a branch/period-filtered dashboard, sales reports, six separately filtered inventory reports, audit/activity history, Staff account management, product and ingredient/category configuration, prepared-batter recipe settings, stock/expiration settings, and discrepancy review. These screens use the existing Supabase service contracts; hosted data, authorization, and RLS behavior remain unverified. No browser acceptance test was run for the latest reporting/settings changes. The latest checked-in migration removes business-hour session expiration, but the linked production migration history is incomplete and ambiguous; do not assume that behavior is deployed. Owner account and branch assignments are managed through the Owner Staff Accounts feature.
 
 ## Architecture
 
@@ -150,81 +150,50 @@ Expo embeds variables prefixed with `EXPO_PUBLIC_` in the client bundle. Only a 
 
 Without both variables, the app intentionally disables sign-in and reports that Supabase is not configured.
 
-## Database setup
+## Database setup and safety
 
-1. Use the existing shared Supabase project and install the [Supabase CLI](https://supabase.com/docs/guides/cli).
-2. Before changing the remote database, inspect its migration history and preview pending SQL:
+The linked Supabase project is confirmed to be **Production**. Do not link the CLI to it for migration work, run remote SQL, push/repair migrations, reset it, or use it for tests. The production ledger and schema are not reconciled, and the local migration set contains two different files with version `202611180001`.
 
-   ```sh
-   supabase login
-   supabase --workdir backend link --project-ref YOUR_PROJECT_REF
-  supabase --workdir backend migration list --remote
-  supabase --workdir backend db push --remote --include-all --dry-run
-   ```
+Before any database testing or migration application, the administrator must identify and approve a separate `TakoSync-Development` Supabase project, reconcile migration provenance without changing Production, and confirm the corrected migration sequence. The repository workflow is manual, Development-only, and fails closed unless the project refs and approvals are configured and all local migration versions are unique. See [backend/README.md](backend/README.md) and [AUDIT_REPORT.md](AUDIT_REPORT.md).
 
-  If the existing database was created manually or does not have matching migration history, stop before `db push`. Have the database owner compare the live schema with the checked-in migrations and reconcile migration history deliberately; never mark a migration applied just to silence a mismatch.
-3. Only after reviewing the dry run, apply pending migrations:
+For source-only app work, copy `.env.example` to `.env`, set only the client-safe Supabase URL and publishable/anon key for an explicitly approved environment, then restart Expo. Never put service-role keys or database passwords in frontend configuration or Git. `enable_signup = false` in `backend/supabase/config.toml` applies only to a local Supabase stack; hosted sign-up settings require administrator verification.
 
-  ```sh
-  supabase --workdir backend db push --remote --include-all
-  ```
+The migrations seed three initial branch records, the inventory and audit tables, branch-level RLS policies, and RPC functions for inventory transactions, daily checks, batter preparation, and atomic sale submission. A read-only aggregate on 2026-11-19 confirmed three total and active branches; the schema does not enforce an exactly-three-branches invariant against privileged database changes. The catalog migration also seeds starter variant prices and a shared-batter recipe; product-specific recipe rows are not enabled for automatic consumption by default. These values have not been confirmed against the approved business catalog and recipes. The base stock tables are `branch_inventory` and `inventory_movements`; security-invoker views named `inventory` and `inventory_transactions` preserve the existing app query contract. Sale table writes remain unavailable to clients; checkout uses the trusted `submit_sale` RPC. Completed sales cannot currently be cancelled or reversed through an inventory-restoring workflow.
 
-4. Configure Supabase Auth email settings and create Auth users through the dashboard or another trusted administrative process. `enable_signup = false` in `backend/supabase/config.toml` applies to a local Supabase stack; disable public sign-ups separately in the hosted project's dashboard.
-5. Copy `.env.example` to `.env`, set the shared project URL and public publishable/anon key, then restart Expo. Each collaborator keeps their own ignored local `.env` file.
+The read-only production catalog audit on 2026-11-19 found 34 public tables with RLS enabled, 52 policies, and two security-invoker compatibility views. Production still lacks the current batter-preparation, retry-safe inventory, and inventory-count correction RPC/schema contracts used by the app; the duplicate `202611180001` migration version and unrecorded schema effects remain unresolved. The user has confirmed that the linked project is Production, so it must not be used for tests. Provision or identify a separate approved Development project before database testing. Do not push or repair production migration history. See [AUDIT_REPORT.md](./AUDIT_REPORT.md) for the verified state and the administrator/Development reconciliation steps.
 
-The migrations create three fixed branch records, the inventory and audit tables, branch-level RLS policies, and RPC functions for inventory transactions, daily checks, batter preparation, and atomic sale submission. The base stock tables are `branch_inventory` and `inventory_movements`; security-invoker views named `inventory` and `inventory_transactions` preserve the existing app query contract. Sale table writes remain unavailable to clients; checkout uses the trusted `submit_sale` RPC. No real product prices or recipe quantities are seeded, and completed sales cannot currently be cancelled or reversed through an inventory-restoring workflow.
+In the latest local migration sequence, Auth bootstrap creates inactive Staff profiles and assigns the initial Branch 1 ID; earlier migrations created unassigned inactive profiles. Production's effective behavior is unknown until migration provenance is reconciled. The Owner Web Portal contains Staff account management, but first-Owner provisioning and hosted account behavior require a trusted administrator and must be verified against the approved Development project before any production operation. Never accept role or branch assignments from user-editable Auth metadata.
 
-New Auth users receive a Staff profile assigned to Branch 1. To designate the first Owner, create the Auth user, then promote the matching profile in the Supabase SQL editor:
-
-```sql
-update public.profiles
-set role = 'owner', branch_id = null, full_name = 'Owner name'
-where email = 'owner@example.com';
-```
-
-Assign Staff only to a fixed branch through a trusted administrative process. For example, Branch 2's ID is `00000000-0000-4000-8000-000000000002`:
-
-```sql
-update public.profiles
-set branch_id = '00000000-0000-4000-8000-000000000002'
-where email = 'staff@example.com' and role = 'staff';
-```
-
-Never accept role or branch assignments from user-editable Auth metadata.
-
-`backend/supabase/seed.sql` is **optional sample data**, not real opening stock. It includes sample balances for four ingredients at Branch 1, zero balances for those ingredients at Branches 2 and 3, and example batches/expiry dates. Review it before use. For a remote project, run the reviewed SQL manually in the Supabase SQL editor only if you want those fixtures. Local Supabase resets use the configured seed file; `supabase --workdir backend db reset` resets the local database and should not be used against a production database.
+`backend/supabase/seed.sql` is **optional sample data**, not real opening stock. It includes sample balances for four ingredients at Branch 1, zero balances for those ingredients at Branches 2 and 3, and example batches/expiry dates. Review it before use and restrict it to a disposable local stack or an explicitly approved, isolated Development project. Never execute it against Production. A local `supabase --workdir backend db reset` is destructive to that local database and must not be used against a remote database.
 
 ## Authentication, branch access, and security
 
-- Staff and Owners authenticate with their actual registered Supabase Auth email and password. The client checks that the linked profile is active and that Staff have an active branch assignment before entering the workspace. A Staff login is rejected on the Owner path and vice versa.
-- A database trigger creates new profiles as Staff assigned to Branch 1. Set up the initial Owner and change Staff assignments through a trusted administrative process; no Owner UI for managing accounts/assignments is currently implemented.
-- RLS scopes Staff inventory and activity reads to their active assigned branch. An active Owner can read across active branches. The database contains exactly three initially provisioned branch records.
+- Owner Mobile authenticates by registered email/password; Staff use the approved employee-name/Employee-ID credential flow. The mobile Owner action is separate from the Owner Web Portal's existing username action. The client verifies the linked profile role, and database branch access requires an active Auth session, an active profile, and the Staff member's assigned branch. A Staff login is rejected on the Owner path and vice versa.
+- The latest local bootstrap migration creates inactive Staff profiles with the Branch 1 assignment. The Owner Web Portal includes Staff account management; production behavior remains unverified until its migration history is reconciled.
+- RLS scopes Staff inventory and activity reads to their active assigned branch. An active Owner can read across active branches. The additive `202611190001_enforce_authenticated_branch_access.sql` source candidate requires a valid Auth session at the branch and sale-processing helpers; it is unexecuted and does not establish hosted behavior. A read-only aggregate on 2026-11-19 confirmed three total and active branches; no database invariant enforces exactly three records.
 - Direct client inventory writes are not granted. The `record_inventory_transactions` database function validates access and stock, updates inventory and batches, and records the ledger entry atomically. `submit_daily_stock_check` records physical counts and discrepancies without changing inventory.
 - Never trust user-editable Auth metadata for roles or branch assignment. Never ship service-role credentials in the client.
 
 ## Shared collaborator workflow
 
-- Invite all three developers to the same GitHub repository and Supabase project using their own accounts. Grant only the Supabase project access each developer needs.
-- Each developer uses the same Supabase project URL and public client key in their own root `.env`; `.env` is ignored and must never be committed.
-- Create schema changes only as new, uniquely named SQL files in `backend/supabase/migrations/`. Do not edit migrations already applied to the shared project.
-- Review migration changes through a GitHub pull request. Merging a migration to `main` triggers `.github/workflows/supabase-migrations.yml`; configure the GitHub `supabase-production` environment with required reviewers before adding its secrets.
-- Add `SUPABASE_DB_URL` as an environment secret for `supabase-production`, using the Supabase
-  **Connect** dialog's session pooler URL. It must use the regional
-  `<region>.pooler.supabase.com` host, port `5432`, username `postgres.<project-ref>`, database
-  `postgres`, and `sslmode=require`. This avoids the direct database host's IPv6 connectivity issue on
-  GitHub-hosted runners. The database URL is only used by GitHub Actions and must never be printed or
-  committed.
-- Collaborators must pull merged code locally. Applying database migrations updates the shared database, not each developer's local source files.
+- The migration workflow no longer runs on pushes to `main` and never targets Production. Do not enable Development migration runs until the administrator has approved a separate project, reconciled the duplicate version and migration provenance, and confirmed the sequence.
+- To enable the protected Development-only workflow later, configure repository variables `SUPABASE_DEVELOPMENT_PROJECT_REF`, `SUPABASE_PRODUCTION_PROJECT_REF`, `TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED=true`, and `TAKOSYNC_MIGRATIONS_RECONCILED=true`. Create a protected GitHub environment named `supabase-development` with a required reviewer and the environment secret `SUPABASE_DB_URL` (the Development project's session pooler, port 5432, database `postgres`, `sslmode=require`; URL username must match the Development project ref).
+- The workflow requires a manual confirmation, rejects identical Development and Production refs, validates migration version uniqueness before connecting, previews pending SQL, and only then applies to the Development URL. It cannot run successfully with the current duplicate migration version.
+- Keep database credentials out of source control and frontend configuration. Collaborators use only client-safe keys for explicitly approved environments and pull merged source code as usual.
 
 ## Checks and troubleshooting
 
-Run the available TypeScript check:
+Run the TypeScript check and automated test suites:
 
 ```sh
 npm run typecheck
+npm run test:frontend
+npm run test:edge
+npm test
+npx expo export --platform android
 ```
 
-There is currently no configured test or lint script in `package.json`. To troubleshoot:
+`npm test` runs the typecheck, frontend tests, and Edge Function tests. The Android export validates the JavaScript bundle but does not produce or install a native APK. No lint script is currently defined in `package.json`. On Windows PowerShell, invoke npm and npx as `npm.cmd` and `npx.cmd`. To troubleshoot:
 
 - **Sign-in disabled:** set both environment variables and restart Expo.
 - **Auth/profile error:** verify that the Auth user exists, has a database profile, and is active. Check the trusted account provisioning and assigned branch.
@@ -236,7 +205,7 @@ There is currently no configured test or lint script in `package.json`. To troub
 
 | Capability | Status |
 |---|---|
-| Staff authentication, session restoration, and logout | Implemented against Supabase Auth; requires project configuration and provisioned accounts |
+| Staff authentication, session restoration, and logout | Implemented in client source; hosted session/revocation behavior requires verification |
 | Staff inventory, search, categories, ingredient details, and history | Implemented against Supabase |
 | Stock-In, Stock-Out/usage, waste/spoilage | Implemented through the database transaction function |
 | Low-stock and expiry alerts | Uses the persisted Owner-configured window; Staff alert categories distinguish low stock, out of stock, near expiration, and expired; no push alert delivery |
@@ -244,14 +213,14 @@ There is currently no configured test or lint script in `package.json`. To troub
 | Staff Menu / cart | Loads the branch-visible menu from Supabase; checkout uses the atomic sale operation |
 | Staff checkout / sales submission | Connected to the atomic `submit_sale` RPC; requires configured branch-visible menu items, prices, and recipes |
 | Branch-to-branch stock transfers | Not implemented; the current frontend contract and transaction service do not support atomic transfers between branches |
-| Owner Login screen | Supabase Auth email/password with active Owner profile check |
+| Owner Mobile Login screen | Supabase Auth email/password through `owner-email-login`, with active Owner profile check; hosted behavior requires verification |
 | Owner inventory, activity, and alert monitoring | Read-only dashboard using shared Supabase data for accessible branches |
 | Owner Products & Menu | Create and edit products using the existing Supabase table |
 | Owner ingredients, categories, and product recipes | CRUD through existing Supabase tables; configuration does not deduct inventory |
 | Recipe-driven consumption after completed sales | Implemented through the trusted atomic sale workflow for configured automatic-consumption recipes |
-| Owner account and branch assignments | Not implemented in the app |
-| Owner review/approval of physical checks | Pending checks are displayed; approval/rejection workflow is not implemented |
-| Separate Owner web application | Not present; the Expo app has a web target |
+| Owner account and branch assignments | Staff account management is implemented in the Owner mobile and web interfaces; hosted behavior requires verification |
+| Owner review/approval of physical checks | Implemented through discrepancy review, reasoned decisions, validation, and audited adjustments; hosted behavior requires verification |
+| Owner Web Management Portal | Default Expo web route with dashboard, sales/inventory reporting, configuration, audit history, and discrepancy review; hosted behavior and browser acceptance require verification |
 | Live backend integration | Requires a configured Supabase project; live Auth, RLS, and database behavior cannot be verified from this repository alone |
 
 The sample ingredient fixtures and opening quantities are demonstration data and must be replaced with verified business data before operational use. Alert preferences are not persisted or connected to a push service.
@@ -260,7 +229,7 @@ Before operational POS use, configure and verify the live branch-visible catalog
 
 ## Project scope
 
-TakoSync is scoped to staff inventory operations and Owner monitoring/configuration for Gelo’s Takoyaki’s three branches. The current repository does not implement a separate custom backend, a separate web administration product, or Owner account/branch assignment and daily-check review workflows. No additional account types are part of the current database role model.
+TakoSync is scoped to staff inventory operations and Owner monitoring/configuration for Gelo’s Takoyaki’s three branches. The Owner Web Management Portal is the default Expo web route and shares the existing Supabase service/backend contracts; there is no separate custom backend. Owner account/branch assignment and daily-check review workflows are implemented in the Owner interfaces but require hosted verification. No additional account types are part of the current database role model.
 
 ## Project team
 

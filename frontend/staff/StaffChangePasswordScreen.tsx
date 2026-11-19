@@ -1,20 +1,41 @@
-import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { changeStaffPassword } from '../services/takosync';
+import { ownerColors, ownerRadii, ownerSpacing } from '../owner/shared/ownerTokens';
+
+const font = {
+  regular: 'Poppins_400Regular',
+  semibold: 'Poppins_600SemiBold',
+  bold: 'Poppins_700Bold',
+} as const;
 
 type Props = {
   employeeId: string | null;
   onChanged: () => void | Promise<void>;
+  onCancel: () => void;
   onLogout: () => void | Promise<void>;
 };
 
-export default function StaffChangePasswordScreen({ employeeId, onChanged, onLogout }: Props) {
+export default function StaffChangePasswordScreen({ employeeId, onChanged, onCancel, onLogout }: Props) {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const confirmationInput = useRef<TextInput>(null);
 
   const submit = async () => {
+    if (saving || loggingOut) return;
     if (password.length < 8) {
       setError('New password must be at least 8 characters.');
       return;
@@ -41,60 +62,191 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onLog
     }
   };
 
+  const logout = async () => {
+    if (saving || loggingOut) return;
+    setLoggingOut(true);
+    setError('');
+    try {
+      await onLogout();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'Unable to log out. Please try again.');
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
   return (
     <View style={styles.screen}>
-      <View style={styles.card}>
-        <Text style={styles.eyebrow}>SECURITY REQUIRED</Text>
-        <Text style={styles.title}>Change your password</Text>
-        <Text style={styles.copy}>
-          Your Employee ID was used only as your initial password. Set a new password before using POS, inventory, or other Staff tools.
-        </Text>
-        <Text style={styles.label}>New password</Text>
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!saving}
-          style={styles.input}
-          placeholder="At least 8 characters"
-        />
-        <Text style={styles.label}>Confirm new password</Text>
-        <TextInput
-          value={confirmation}
-          onChangeText={setConfirmation}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!saving}
-          style={styles.input}
-          placeholder="Re-enter your new password"
-        />
-        {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
-        <Pressable onPress={() => void submit()} disabled={saving} style={[styles.primary, saving && styles.disabled]}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Save new password</Text>}
-        </Pressable>
-        <Pressable onPress={() => void onLogout()} disabled={saving} style={styles.logout}>
-          <Text style={styles.logoutText}>Log out</Text>
-        </Pressable>
-      </View>
+      <KeyboardAvoidingView
+        style={styles.keyboardRoot}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <View style={styles.card}>
+            <Text style={styles.eyebrow}>ACCOUNT SECURITY</Text>
+            <Text style={styles.title}>Change your password</Text>
+            <Text style={styles.copy}>
+              Your Employee ID is your initial password. You can set a different password at any time.
+            </Text>
+            <Text style={styles.label}>New password</Text>
+            <TextInput
+              value={password}
+              onChangeText={(value) => {
+                setPassword(value);
+                setError('');
+              }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
+              accessibilityLabel="New password, required"
+              editable={!saving && !loggingOut}
+              returnKeyType="next"
+              onSubmitEditing={() => confirmationInput.current?.focus()}
+              style={styles.input}
+              placeholder="At least 8 characters"
+              placeholderTextColor={ownerColors.secondaryText}
+            />
+            <Text style={styles.label}>Confirm new password</Text>
+            <TextInput
+              ref={confirmationInput}
+              value={confirmation}
+              onChangeText={(value) => {
+                setConfirmation(value);
+                setError('');
+              }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
+              accessibilityLabel="Confirm new password, required"
+              editable={!saving && !loggingOut}
+              returnKeyType="done"
+              onSubmitEditing={() => void submit()}
+              style={styles.input}
+              placeholder="Re-enter your new password"
+              placeholderTextColor={ownerColors.secondaryText}
+            />
+            {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save new password"
+              accessibilityState={{ disabled: saving || loggingOut, busy: saving }}
+              onPress={() => void submit()}
+              disabled={saving || loggingOut}
+              style={({ pressed }) => [
+                styles.primary,
+                pressed && !saving && !loggingOut && styles.pressed,
+                (saving || loggingOut) && styles.disabled,
+              ]}
+            >
+              {saving
+                ? <ActivityIndicator color={ownerColors.white} />
+                : <Text style={styles.primaryText}>Save new password</Text>}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Return to Staff workspace"
+              accessibilityState={{ disabled: saving || loggingOut }}
+              onPress={onCancel}
+              disabled={saving || loggingOut}
+              style={({ pressed }) => [
+                styles.secondary,
+                pressed && !saving && !loggingOut && styles.pressed,
+                (saving || loggingOut) && styles.disabled,
+              ]}
+            >
+              <Text style={styles.logoutText}>Return to Staff workspace</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Log out"
+              accessibilityState={{ disabled: saving || loggingOut, busy: loggingOut }}
+              onPress={() => void logout()}
+              disabled={saving || loggingOut}
+              style={({ pressed }) => [
+                styles.logout,
+                pressed && !saving && !loggingOut && styles.pressed,
+                (saving || loggingOut) && styles.disabled,
+              ]}
+            >
+              <Text style={styles.logoutText}>{loggingOut ? 'Logging out…' : 'Log out'}</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#F6F6F8' },
-  card: { width: '100%', maxWidth: 430, padding: 24, borderRadius: 20, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E7E7EC' },
-  eyebrow: { color: '#F20D55', fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
-  title: { color: '#101026', fontSize: 25, fontWeight: '800', marginTop: 10 },
-  copy: { color: '#777783', fontSize: 12, lineHeight: 19, marginTop: 10 },
-  label: { color: '#303044', fontSize: 11, fontWeight: '700', marginTop: 18, marginBottom: 6 },
-  input: { minHeight: 48, paddingHorizontal: 13, borderRadius: 10, borderWidth: 1, borderColor: '#DCDCE3', color: '#171724', fontSize: 13 },
-  error: { color: '#B9244C', fontSize: 11, lineHeight: 16, marginTop: 12 },
-  primary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 20, borderRadius: 10, backgroundColor: '#F20D55' },
+  screen: { flex: 1, backgroundColor: ownerColors.canvas },
+  keyboardRoot: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: ownerSpacing.page,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 430,
+    padding: 20,
+    borderRadius: ownerRadii.card,
+    backgroundColor: ownerColors.card,
+    borderWidth: 1,
+    borderColor: ownerColors.divider,
+  },
+  eyebrow: { color: ownerColors.primary, fontFamily: font.bold, fontSize: 11, letterSpacing: 1.2 },
+  title: { color: ownerColors.navy, fontFamily: font.bold, fontSize: 24, marginTop: 10 },
+  copy: { color: ownerColors.secondaryText, fontFamily: font.regular, fontSize: 13, lineHeight: 20, marginTop: 10 },
+  label: { color: ownerColors.black, fontFamily: font.semibold, fontSize: 12, marginTop: 18, marginBottom: 6 },
+  input: {
+    minHeight: ownerSpacing.control,
+    paddingHorizontal: 13,
+    borderRadius: ownerRadii.control,
+    borderWidth: 1,
+    borderColor: ownerColors.divider,
+    backgroundColor: ownerColors.white,
+    color: ownerColors.black,
+    fontFamily: font.regular,
+    fontSize: 14,
+  },
+  error: { color: ownerColors.discrepancy, fontFamily: font.regular, fontSize: 12, lineHeight: 18, marginTop: 12 },
+  primary: {
+    minHeight: ownerSpacing.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    borderRadius: ownerRadii.control,
+    backgroundColor: ownerColors.primary,
+  },
   disabled: { opacity: 0.6 },
-  primaryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  logout: { alignItems: 'center', paddingVertical: 14 },
-  logoutText: { color: '#777783', fontSize: 11, fontWeight: '700' },
+  pressed: { opacity: 0.82 },
+  primaryText: { color: ownerColors.white, fontFamily: font.semibold, fontSize: 14 },
+  secondary: {
+    minHeight: ownerSpacing.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: ownerColors.divider,
+    borderRadius: ownerRadii.control,
+  },
+  logout: {
+    minHeight: ownerSpacing.control,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: ownerColors.divider,
+    borderRadius: ownerRadii.control,
+  },
+  logoutText: { color: ownerColors.navy, fontFamily: font.semibold, fontSize: 14 },
 });

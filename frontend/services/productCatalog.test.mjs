@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildStaffMenuProducts,
   createOwnerProduct,
+  parseCatalogPrice,
   standardProductVariants,
   updateOwnerProduct,
 } from './productCatalog.ts';
@@ -230,6 +231,19 @@ test('unavailable, inactive, or branch-hidden menu variants cannot enter the Sta
     ['v1', false],
     ['v3', false],
   ]);
+});
+
+test('Staff catalog rejects invalid prices instead of silently turning them into zero', () => {
+  const products = [{ id: 'p1', product_name: 'Product', description: '', is_available: true }];
+  const variant = { id: 'v1', product_id: 'p1', size_label: '4 PCS', piece_count: 4, active: true, is_available: true };
+
+  assert.throws(
+    () => buildStaffMenuProducts(products, [{ ...variant, price: null }], new Set(['v1'])),
+    /invalid price/,
+  );
+  assert.throws(() => parseCatalogPrice('', 'Add-on sauce'), /invalid price/);
+  assert.throws(() => parseCatalogPrice(Number.NaN, 'Add-on sauce'), /invalid price/);
+  assert.equal(parseCatalogPrice('12.50', 'Add-on sauce'), 12.5);
 });
 
 test('failed variant creation removes the incomplete product and reports the failure', async () => {

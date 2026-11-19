@@ -28,6 +28,8 @@ export type MenuCartLine = {
 
 export const EMPTY_MENU_ORDER_MESSAGE = 'Please add at least one item to the order.';
 
+const toCents = (amount: number) => Math.round(amount * 100);
+
 export function filterMenuProducts(
   products: MenuProduct[],
   filter: MenuFilter,
@@ -100,19 +102,21 @@ export function calculateSelectedAddonTotal(
   selectedAddonIds: string[],
 ): number {
   const selectedIds = new Set(selectedAddonIds);
-  return addons.reduce((total, addon) =>
-    addon.isAvailable && selectedIds.has(addon.id) ? total + addon.price : total, 0);
+  const totalCents = addons.reduce((total, addon) =>
+    addon.isAvailable && selectedIds.has(addon.id) ? total + toCents(addon.price) : total, 0);
+  return totalCents / 100;
 }
 
 export function calculateMenuCart(cart: MenuCartLine[], products: MenuProduct[]) {
-  return cart.reduce((totals, line) => {
+  const totals = cart.reduce((current, line) => {
     const product = products.find((item) => item.id === line.productId);
-    if (!product) return totals;
+    if (!product) return current;
     return {
-      count: totals.count + line.quantity,
-      total: totals.total + product.price * line.quantity,
+      count: current.count + line.quantity,
+      totalCents: current.totalCents + toCents(product.price) * line.quantity,
     };
-  }, { count: 0, total: 0 });
+  }, { count: 0, totalCents: 0 });
+  return { count: totals.count, total: totals.totalCents / 100 };
 }
 
 export function menuOrderValidationMessage(cartProductCount: number): string {

@@ -1,18 +1,8 @@
-import { manilaDateKey } from '../services/businessDaySettings.ts';
+import { daysUntilManilaExpiration } from './ownerInventoryStatus.ts';
 
 export const OWNER_ALERT_EMPTY_MESSAGE = 'No alerts at the moment.';
 export const OWNER_ALERT_LOAD_ERROR = 'Unable to load data. Please check your internet connection and try again.';
 export const OWNER_ALERT_TOAST_DURATION_MS = 3500;
-
-export type OwnerAlertsForcedState = 'success' | 'empty' | 'loading' | 'error' | null;
-
-export function getForcedOwnerAlertsState(): OwnerAlertsForcedState {
-  const value = typeof process !== 'undefined'
-    ? process.env.EXPO_PUBLIC_FORCE_OWNER_ALERTS_STATE
-    : undefined;
-  if (value === 'success' || value === 'empty' || value === 'loading' || value === 'error') return value;
-  return null;
-}
 
 export type OwnerStockAlertKind = 'Low Stock' | 'Out of Stock';
 export type OwnerExpirationAlertKind = 'Near Expiration' | 'Expired';
@@ -20,7 +10,7 @@ export type OwnerExpirationAlertKind = 'Near Expiration' | 'Expired';
 export type OwnerAlertInventoryRecord = {
   branch_id: string;
   ingredient_id: string;
-  quantity: number;
+  quantity: number | null;
   minimum_stock: number;
 };
 
@@ -68,7 +58,8 @@ export type OwnerExpirationAlert = {
   status: OwnerExpirationAlertKind;
 };
 
-export function classifyOwnerStockAlert(quantity: number, minimumStock: number): OwnerStockAlertKind | null {
+export function classifyOwnerStockAlert(quantity: number | null, minimumStock: number): OwnerStockAlertKind | null {
+  if (quantity === null) return null;
   if (quantity <= 0) return 'Out of Stock';
   return minimumStock > 0 && quantity <= minimumStock ? 'Low Stock' : null;
 }
@@ -79,19 +70,14 @@ export function classifyOwnerExpirationAlert(daysUntilExpiration: number, alertW
 }
 
 export function daysUntilOwnerExpiration(expirationDate: string, now = new Date()): number {
-  const expirationKey = expirationDate.slice(0, 10);
-  const todayKey = manilaDateKey(now);
-  const expiration = Date.parse(`${expirationKey}T00:00:00.000Z`);
-  const today = Date.parse(`${todayKey}T00:00:00.000Z`);
-  return Math.ceil((expiration - today) / 86_400_000);
+  return daysUntilManilaExpiration(expirationDate, now);
 }
 
 export function sortOwnerExpirationAlerts<T extends { expirationDate: string; status?: OwnerExpirationAlertKind }>(alerts: T[]): T[] {
   return [...alerts].sort((left, right) => {
     if (left.status === 'Expired' && right.status !== 'Expired') return -1;
     if (right.status === 'Expired' && left.status !== 'Expired') return 1;
-    return new Date(`${left.expirationDate.slice(0, 10)}T00:00:00`).getTime()
-      - new Date(`${right.expirationDate.slice(0, 10)}T00:00:00`).getTime();
+    return left.expirationDate.slice(0, 10).localeCompare(right.expirationDate.slice(0, 10));
   });
 }
 
@@ -135,15 +121,16 @@ export function buildOwnerAlertSnapshot(input: {
 
   const allLowStock = [...inventoryByKey.values()].flatMap((record) => {
     const ingredient = ingredients.get(record.ingredient_id);
-    const status = classifyOwnerStockAlert(Number(record.quantity), Number(record.minimum_stock));
-    if (!ingredient || !status) return [];
+    const quantity = record.quantity === null ? null : Number(record.quantity);
+    const status = classifyOwnerStockAlert(quantity, Number(record.minimum_stock));
+    if (!ingredient || !status || quantity === null) return [];
     return [{
       id: `${record.branch_id}:${record.ingredient_id}`,
       ingredientId: record.ingredient_id,
       name: ingredient.name,
       branchId: record.branch_id,
       branch: branchNames.get(record.branch_id) ?? 'Branch unavailable',
-      quantity: Number(record.quantity),
+      quantity,
       minimumStock: Number(record.minimum_stock),
       unit: ingredient.unit,
       status,
@@ -186,26 +173,6 @@ export function buildOwnerAlertSnapshot(input: {
   return {
     lowStock,
     expiration: visibleExpiration,
-    counts: countOwnerAlertCategories(allLowStock.length, allExpiration.length),
-  };
-}
-
-export function buildOwnerAlertsMockSnapshot(branchId: string | null) {
-  const lowStock: OwnerLowStockAlert[] = [
-    { id: 'branch-1:octopus', ingredientId: 'octopus', name: 'Octopus', branchId: 'branch-1', branch: 'Branch 1', quantity: 3, minimumStock: 5, unit: 'kg', status: 'Low Stock' },
-    { id: 'branch-1:eggs', ingredientId: 'eggs', name: 'Eggs', branchId: 'branch-1', branch: 'Branch 1', quantity: 0, minimumStock: 24, unit: 'pcs', status: 'Out of Stock' },
-    { id: 'branch-2:flour', ingredientId: 'flour', name: 'All-Purpose Flour', branchId: 'branch-2', branch: 'Branch 2', quantity: 3, minimumStock: 5, unit: 'kg', status: 'Low Stock' },
-    { id: 'branch-3:octopus', ingredientId: 'octopus', name: 'Octopus', branchId: 'branch-3', branch: 'Branch 3', quantity: 0, minimumStock: 5, unit: 'kg', status: 'Out of Stock' },
-  ];
-  const expiration: OwnerExpirationAlert[] = [
-    { id: 'mayonnaise-batch', ingredientId: 'mayonnaise', name: 'Mayonnaise', branchId: 'branch-2', branch: 'Branch 2', quantity: 4, unit: 'bottles', expirationDate: '2026-11-10', reference: 'MY-1020', days: -2, status: 'Expired' },
-    { id: 'prepared-batter-batch', ingredientId: 'prepared-batter', name: 'Prepared Batter', branchId: 'branch-3', branch: 'Branch 3', quantity: 5, unit: 'bottles', expirationDate: '2026-11-13', reference: 'BB-1111-01', days: 1, status: 'Near Expiration' },
-    { id: 'takoyaki-sauce-batch', ingredientId: 'takoyaki-sauce', name: 'Takoyaki Sauce', branchId: 'branch-1', branch: 'Branch 1', quantity: 2, unit: 'bottles', expirationDate: '2026-11-14', reference: 'SB-1105', days: 2, status: 'Near Expiration' },
-  ];
-
-  return {
-    lowStock: branchId ? lowStock.filter((alert) => alert.branchId === branchId) : lowStock,
-    expiration: branchId ? expiration.filter((alert) => alert.branchId === branchId) : expiration,
-    counts: countOwnerAlertCategories(lowStock.length, expiration.length),
+    counts: countOwnerAlertCategories(lowStock.length, visibleExpiration.length),
   };
 }

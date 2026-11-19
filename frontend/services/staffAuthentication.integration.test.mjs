@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 
 register('./testTsLoader.mjs', import.meta.url);
-const { signIn, signInOwner, signInStaff } = await import('./takosync.ts');
+const { getCurrentUser, signIn, signInOwner, signInOwnerWithEmail, signInStaff } = await import('./takosync.ts');
 
 const session = {
   access_token: 'access-token',
@@ -133,7 +133,7 @@ test('Staff login succeeds after midnight regardless of environment', async () =
   }
 });
 
-test('Staff with a pending-password flag still proceeds directly to the Staff workspace path', async () => {
+test('Staff login preserves the first-login password-change flag', async () => {
   const client = new AuthFixture();
   client.loginResult = { ok: true, session, mustChangePassword: true };
   const user = await signInStaff('ana_staff', 'initial-password', client);
@@ -188,6 +188,77 @@ test('Owner username login ignores business-hours status and preserves the sessi
     authorizationError: { message: 'Business session is not active.' },
   });
   const user = await signInOwner("ownergelo'26", 'owner-password', client);
+  assert.equal(user.role, 'Owner');
+  assert.equal(client.signedOut, false);
+});
+
+test('Owner Mobile email login normalizes the email and installs the authenticated session', async () => {
+  const client = new AuthFixture({ profile: {
+    id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
+  }});
+  const user = await signInOwnerWithEmail('  OWNER@EXAMPLE.TEST  ', 'owner-password', client);
+  assert.equal(user.role, 'Owner');
+  assert.deepEqual(client.functionBody, {
+    action: 'owner-email-login',
+    email: 'owner@example.test',
+    password: 'owner-password',
+  });
+  assert.equal(client.currentSession.access_token, 'access-token');
+});
+
+test('Owner Mobile email login maps unknown email and incorrect password to distinct errors', async () => {
+  for (const [code, message] of [
+    ['email_not_found', 'Email not found. Please check your email.'],
+    ['incorrect_password', 'Incorrect password. Please try again.'],
+  ]) {
+    const client = new AuthFixture();
+    client.loginResult = { ok: false, code };
+    await assert.rejects(() => signInOwnerWithEmail('owner@example.test', 'wrong-password', client), { message });
+  }
+});
+
+test('Owner Mobile email login rejects a Staff profile after installing the session', async () => {
+  const client = new AuthFixture({ profile: {
+    id: 'user-1', email: 'staff@example.test', full_name: 'Ana', role: 'staff', branch_id: 'branch-2', active: true,
+  }});
+  await assert.rejects(
+    () => signInOwnerWithEmail('staff@example.test', 'password', client),
+    { message: 'This account does not have Owner access.' },
+  );
+  assert.equal(client.signedOut, true);
+});
+
+test('session restoration rejects an unsupported profile role and clears the session', async () => {
+  const client = new AuthFixture({ profile: {
+    id: 'user-1', email: 'unknown@example.test', full_name: 'Unknown', role: 'manager', branch_id: null, active: true,
+  }});
+
+  await assert.rejects(
+    () => getCurrentUser(client),
+    { message: 'This account has an unsupported role. Ask the owner to review its access.' },
+  );
+  assert.equal(client.signedOut, true);
+});
+
+test('session restoration preserves a valid Staff session after business closing time', async () => {
+  const client = new AuthFixture({ businessSessionActive: false });
+
+  const user = await getCurrentUser(client);
+
+  assert.equal(user.role, 'Staff');
+  assert.equal(client.signedOut, false);
+});
+
+test('session restoration preserves an Owner session after business closing time', async () => {
+  const client = new AuthFixture({
+    profile: {
+      id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
+    },
+    businessSessionActive: false,
+  });
+
+  const user = await getCurrentUser(client);
+
   assert.equal(user.role, 'Owner');
   assert.equal(client.signedOut, false);
 });

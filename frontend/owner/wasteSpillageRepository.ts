@@ -1,6 +1,4 @@
-import { getDailySalesSampleData } from './dailySalesRepository.ts';
-import { OWNER_INVENTORY_INGREDIENTS, OWNER_INVENTORY_RECORDS } from './ownerInventoryMock.ts';
-import type { InventoryIngredient } from './ownerInventoryMock.ts';
+import type { TransactionHistoryItem } from '../services/takosync.ts';
 
 export const WasteSpillageCategory = {
   Spoilage: 'spoilage',
@@ -24,7 +22,7 @@ export type WasteSpillageRecord = {
   ingredientId: string;
   ingredientName: string;
   quantity: number;
-  unit: InventoryIngredient['unit'];
+  unit: string;
   category: WasteSpillageCategory;
   branchId: string;
   branchName: string;
@@ -33,89 +31,48 @@ export type WasteSpillageRecord = {
   recordedBy: string;
 };
 
-export type WasteSpillageForcedState = 'success' | 'empty' | 'loading' | 'error' | 'load_more' | null;
+type WasteSpillageHistoryItem = TransactionHistoryItem & {
+  type: 'Waste' | 'Spoilage';
+};
 
-const recordSpecs = [
-  {
-    id: 'WS-1112-0008',
-    ingredientId: 'eggs',
-    quantity: 6,
-    category: WasteSpillageCategory.Spoilage,
-    branchId: 'branch-3',
-    createdAt: '2026-11-12T10:15:00+08:00',
-    remarks: 'Spoiled; stored too long.',
-  },
-  {
-    id: 'WS-1112-0007',
-    ingredientId: 'sauce',
-    quantity: 0.5,
-    category: WasteSpillageCategory.Spillage,
-    branchId: 'branch-1',
-    createdAt: '2026-11-12T09:05:00+08:00',
-    remarks: '',
-  },
-  {
-    id: 'WS-1111-0006',
-    ingredientId: 'mayonnaise',
-    quantity: 0.4,
-    category: WasteSpillageCategory.Waste,
-    branchId: 'branch-2',
-    createdAt: '2026-11-11T20:20:00+08:00',
-    remarks: '',
-  },
-  {
-    id: 'WS-1111-0005',
-    ingredientId: 'bonito',
-    quantity: 0.2,
-    category: WasteSpillageCategory.Other,
-    branchId: 'branch-1',
-    createdAt: '2026-11-11T18:00:00+08:00',
-    remarks: '',
-  },
-] as const;
-
-export function getForcedWasteSpillageState(): WasteSpillageForcedState {
-  const value = typeof process !== 'undefined'
-    ? process.env.EXPO_PUBLIC_FORCE_WASTE_SPILLAGE_STATE
-    : undefined;
-  if (value === 'success' || value === 'empty' || value === 'loading' || value === 'error' || value === 'load_more') {
-    return value;
-  }
-  return null;
+function categoryFromHistory(record: WasteSpillageHistoryItem): WasteSpillageCategory {
+  const reason = record.reason.trim().toLowerCase();
+  if (reason === WasteSpillageCategory.Spoilage) return WasteSpillageCategory.Spoilage;
+  if (reason === WasteSpillageCategory.Spillage) return WasteSpillageCategory.Spillage;
+  if (reason === WasteSpillageCategory.Waste) return WasteSpillageCategory.Waste;
+  if (reason === WasteSpillageCategory.Other) return WasteSpillageCategory.Other;
+  return record.type === 'Spoilage' ? WasteSpillageCategory.Spoilage : WasteSpillageCategory.Waste;
 }
 
-function getRecordedBy() {
-  const employee = getDailySalesSampleData().sales.find((sale) => sale.staff_id === 'staff-ana');
-  if (!employee?.recorded_by_name) {
-    throw new Error('The shared mock employee account for waste records is unavailable.');
-  }
-  return employee.recorded_by_name;
+export function buildWasteSpillageRecords(history: TransactionHistoryItem[]): WasteSpillageRecord[] {
+  return history
+    .filter((record): record is WasteSpillageHistoryItem => record.type === 'Waste' || record.type === 'Spoilage')
+    .map((record) => ({
+      id: record.id,
+      recordReference: record.reference,
+      ingredientId: record.ingredientId,
+      ingredientName: record.ingredientName,
+      quantity: Math.abs(record.quantity),
+      unit: record.unit,
+      category: categoryFromHistory(record),
+      branchId: record.branchId,
+      branchName: record.branch,
+      createdAt: record.transactionDate.toISOString(),
+      remarks: record.notes,
+      recordedBy: record.staff,
+    }))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-export function getWasteSpillageMockList(): WasteSpillageRecord[] {
-  const recordedBy = getRecordedBy();
-  return recordSpecs.map((spec) => {
-    const ingredient = OWNER_INVENTORY_INGREDIENTS.find((item) => item.id === spec.ingredientId);
-    const inventoryRecord = OWNER_INVENTORY_RECORDS.find(
-      (item) => item.ingredientId === spec.ingredientId && item.branchId === spec.branchId,
-    );
-    if (!ingredient || !inventoryRecord) {
-      throw new Error(`Shared inventory data is incomplete for waste record ${spec.id}.`);
-    }
-
-    return {
-      ...spec,
-      recordReference: spec.id,
-      ingredientName: ingredient.displayName,
-      unit: ingredient.unit,
-      branchName: `Branch ${spec.branchId.slice('branch-'.length)}`,
-      recordedBy,
-    };
-  }).sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-}
-
-export function getWasteSpillageById(id: string): WasteSpillageRecord | null {
-  return getWasteSpillageMockList().find((record) => record.id === id) ?? null;
+export async function loadWasteSpillageRecords(
+  branches: { id: string; name: string }[],
+): Promise<WasteSpillageRecord[]> {
+  if (branches.length === 0) throw new Error('Owner branches are unavailable for Waste and Spillage records.');
+  const { loadTransactionHistory } = await import('../services/takosync.ts');
+  const historyByBranch = await Promise.all(
+    branches.map((branch) => loadTransactionHistory(branch.id)),
+  );
+  return buildWasteSpillageRecords(historyByBranch.flat());
 }
 
 export function formatWasteSpillageDateTime(value: string): string {
@@ -134,5 +91,6 @@ export function formatWasteSpillageDateTime(value: string): string {
 }
 
 export function formatWasteSpillageQuantity(record: Pick<WasteSpillageRecord, 'quantity' | 'unit'>): string {
-  return `${record.quantity} ${record.unit}`;
+  const quantity = new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(record.quantity);
+  return `${quantity} ${record.unit}`;
 }

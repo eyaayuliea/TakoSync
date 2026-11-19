@@ -6,8 +6,6 @@ import {
   formatPhysicalCountDateTime,
   formatPhysicalCountDifference,
   formatPhysicalCountQuantity,
-  getForcedPhysicalCountState,
-  getPhysicalCountMockRecords,
   getPhysicalCountResult,
 } from './physicalCountRepository.ts';
 
@@ -84,27 +82,6 @@ function review(overrides = {}) {
   };
 }
 
-test('Physical Count seed data matches the five ordered Figma list cards', () => {
-  const records = getPhysicalCountMockRecords();
-  assert.deepEqual(records.map((record) => [
-    record.ingredientName,
-    formatPhysicalCountDifference(record.difference, record.unit),
-    record.result,
-    record.countStatus,
-  ]), [
-    ['All-Purpose Flour', '−2 kg', 'Lower than Expected', 'Submitted'],
-    ['Eggs', '0 pcs', 'Matches', 'Validated'],
-    ['Octopus', '−1 kg', 'Lower than Expected', 'Submitted'],
-    ['Bonito Flakes', '+0.3 kg', 'Higher than Expected', 'Validated'],
-    ['Takoyaki Sauce', '0 L', 'Matches', 'Validated'],
-  ]);
-  assert.equal(records[0].reference, 'PC-1112-0012');
-  assert.equal(records[1].revision?.originalValue, 48);
-  assert.equal(records[1].revision?.revisedValue, 50);
-  assert.equal(records[0].discrepancyReference, 'DISC-1112-0007');
-  assert.equal(records[3].discrepancyReference, 'DISC-1111-0004');
-});
-
 test('live history maps revised values, employee metadata, review status, and public references', () => {
   const record = countHistoryRecord({
     reference: 'PC-1112-0011',
@@ -176,17 +153,4 @@ test('result and quantity formatters use signed differences and Manila timestamp
   assert.equal(formatPhysicalCountDifference(0, 'L'), '0 L');
   assert.equal(formatPhysicalCountDateTime('2026-11-12T02:30:00Z'), '12 Nov 2026 · 10:30 AM');
   assert.equal(formatPhysicalCountDate('2026-11-12T16:00:00Z'), '13 Nov 2026');
-});
-
-test('Physical Count forced-state values are validated', () => {
-  const previous = process.env.EXPO_PUBLIC_FORCE_PHYSICAL_COUNT_STATE;
-  try {
-    process.env.EXPO_PUBLIC_FORCE_PHYSICAL_COUNT_STATE = 'empty';
-    assert.equal(getForcedPhysicalCountState(), 'empty');
-    process.env.EXPO_PUBLIC_FORCE_PHYSICAL_COUNT_STATE = 'invalid';
-    assert.equal(getForcedPhysicalCountState(), null);
-  } finally {
-    if (previous === undefined) delete process.env.EXPO_PUBLIC_FORCE_PHYSICAL_COUNT_STATE;
-    else process.env.EXPO_PUBLIC_FORCE_PHYSICAL_COUNT_STATE = previous;
-  }
 });

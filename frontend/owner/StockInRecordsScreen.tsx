@@ -9,13 +9,11 @@ import {
   OwnerRecordHeader,
   OwnerRecordLoadingState,
   OwnerRecordReadOnlyPill,
-} from './WasteSpillageRecordsScreen';
+} from './shared/ownerComponents';
 import {
   formatStockInDateTime,
   formatStockInExpirationDate,
   formatStockInQuantity,
-  getForcedStockInState,
-  getStockInMockRecords,
   loadStockInRecords,
   type StockInBatch,
   type StockInBranch,
@@ -57,56 +55,59 @@ export default function StockInRecordsScreen({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const requestId = useRef(0);
 
   const loadFirst = () => {
+    const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
     setRecords([]);
     if (inventoryLoading) return;
+    if (inventoryError) {
+      setError(true);
+      setLoading(false);
+      return;
+    }
     if (!inventoryData) {
+      setError(true);
+      setLoading(false);
       onRefresh();
       return;
     }
+    if (inventoryData.branches.length === 0) {
+      setError(true);
+      setLoading(false);
+      return;
+    }
 
-    const forced = getForcedStockInState();
-    setTimeout(() => {
-      if (forced === 'error') {
-        setError(true);
-        setLoading(false);
-      } else if (forced === 'loading') {
-        return;
-      } else if (forced === 'empty') {
-        setRecords([]);
-        setLoading(false);
-      } else {
-        const request = forced === 'success'
-          ? Promise.resolve(getStockInMockRecords())
-          : loadStockInRecords(inventoryData.branches, inventoryData.batches);
-        void request.then((loadedRecords) => {
-          setRecords(loadedRecords);
-          setLoading(false);
-        }).catch((loadError: unknown) => {
-          console.error('Unable to load Stock-In records.', loadError);
-          setError(true);
-          setLoading(false);
-        });
-      }
-    }, 450);
+    void loadStockInRecords(inventoryData.branches, inventoryData.batches).then((loadedRecords) => {
+      if (currentRequestId !== requestId.current) return;
+      setRecords(loadedRecords);
+      setLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== requestId.current) return;
+      console.error('Unable to load Stock-In records.', loadError);
+      setError(true);
+      setLoading(false);
+    });
   };
 
-  useEffect(loadFirst, [inventoryData, inventoryError, inventoryLoading]);
+  useEffect(() => {
+    loadFirst();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [inventoryData, inventoryError, inventoryLoading]);
 
   const openDetails = (record: StockInRecord) => {
     setSelected(record);
     setView('details');
     setDetailLoading(true);
     setDetailError(false);
-    setTimeout(() => {
-      const current = records.find((item) => item.id === record.id) ?? null;
-      if (!current) setDetailError(true);
-      else setSelected(current);
-      setDetailLoading(false);
-    }, 250);
+    const current = records.find((item) => item.id === record.id) ?? null;
+    setSelected(current);
+    setDetailError(!current);
+    setDetailLoading(false);
   };
 
   const back = () => {
@@ -165,7 +166,7 @@ export default function StockInRecordsScreen({
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={loadFirst} />
+        <OwnerRecordErrorState onRetry={inventoryError || !inventoryData ? onRefresh : loadFirst} />
       ) : records.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (

@@ -15,12 +15,13 @@ export type DashboardBranchMetric = DashboardBranch & {
 };
 
 export type DashboardInventoryRecord = {
-  quantity: number | string;
+  quantity: number | string | null;
   minimum_stock: number | string;
 };
 
 export function summarizeOwnerInventoryStatus(records: DashboardInventoryRecord[]) {
   return records.reduce((summary, record) => {
+    if (record.quantity === null) return summary;
     const quantity = Number(record.quantity);
     const minimumStock = Number(record.minimum_stock);
     if (!Number.isFinite(quantity) || !Number.isFinite(minimumStock)) return summary;

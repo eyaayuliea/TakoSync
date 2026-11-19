@@ -69,7 +69,7 @@ Status meanings follow the supplied brief. “Complete” means the important co
 
 | ID | Feature | Frontend | Backend / database | Integration status | Classification | Evidence / remaining work |
 |---|---|---|---|---|---|---|
-| ST-01 | Login and branch account access | Staff login, validation, show/hide password, loading/error, logout, session restore | Edge Function username login, profile/branch checks, RLS, business-session gate | Local service tests pass; live Auth/Edge Function not verified | PARTIALLY COMPLETE | [frontend/App.tsx](frontend/App.tsx), [staff-auth](backend/supabase/functions/staff-auth/index.ts), [staff auth tests](frontend/services/staffAuthentication.integration.test.mjs). Verify hosted deployment and account roster. |
+| ST-01 | Login and branch account access | Staff login, validation, show/hide password, loading/error, logout, session restore | Edge Function username login; local candidate adds active Auth-session and assigned-branch checks | Local service tests pass; candidate SQL unexecuted; live Auth/Edge Function not verified | PARTIALLY COMPLETE | [frontend/App.tsx](frontend/App.tsx), [branch/session migration](backend/supabase/migrations/202611190001_enforce_authenticated_branch_access.sql), [staff auth tests](frontend/services/staffAuthentication.integration.test.mjs). Verify approved Development RLS and hosted deployment. |
 | ST-02 | POS and sales recording | Menu, cart, quantities, payment, confirmation, retry-preserved cart | Atomic `submit_sale`, price/branch validation, idempotent reference, inventory status | Local service tests pass; catalog/recipes must exist remotely | PARTIALLY COMPLETE | [MenuWorkspace.tsx](frontend/staff/MenuWorkspace.tsx), [takosync.ts](frontend/services/takosync.ts), [sale migrations](backend/supabase/migrations/202611020001_menu_catalog_foundation.sql). Seed/configure real catalog before operational use. |
 | ST-03 | Menu/product information | Branch-visible menu, availability and search filters | `products`, `product_variants`, branch visibility, Owner CRUD | Connected | COMPLETE | [productCatalog.ts](frontend/services/productCatalog.ts), [menuCatalog.ts](frontend/services/menuCatalog.ts). |
 | ST-04 | Branch inventory | Search, categories, details, quantities, batches, status | Branch-scoped inventory views/RLS | Connected and tested | COMPLETE | [StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [inventory policies](backend/supabase/migrations/202610280001_initial_schema.sql). |
@@ -98,7 +98,7 @@ The Staff module is the strongest part of the repository. Its core inventory and
 
 | ID | Feature | Frontend | Backend / database | Integration status | Classification | Evidence / remaining work |
 |---|---|---|---|---|---|---|
-| OM-01 | Owner login and account access | Email/password login, validation, role-specific route, logout | Profile role/active checks and business-session authorization | Local auth tests pass; live Auth not verified | PARTIALLY COMPLETE | [OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx), [takosync.ts](frontend/services/takosync.ts). |
+| OM-01 | Owner login and account access | Owner Mobile Email/password login, inline credential feedback, loading state, role-specific route, logout | Dedicated `owner-email-login` Edge action verifies active Owner profile and Auth identity; existing Web Portal username action is preserved | Local service/Edge tests pass; deployed function and live Auth not verified | PARTIALLY COMPLETE | [OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx), [ownerAuthentication.ts](frontend/services/ownerAuthentication.ts), [takosync.ts](frontend/services/takosync.ts), and [staff-auth tests](backend/supabase/functions/staff-auth/handler.test.mjs). |
 | OM-02 | Owner dashboard | Combined dashboard, branch filter, inventory, alerts, activities, period selection | Cross-branch Owner reads with RLS | Connected in source; live data unavailable | PARTIALLY COMPLETE | [OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [loadOwnerInventory](frontend/services/takosync.ts). |
 | OM-03 | Sales summaries | Sales monitoring and report navigation | Sales/sale-items/products reads | Connected | COMPLETE | [OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [loadOwnerSalesData](frontend/services/takosync.ts). |
 | OM-04 | Daily sales summary | Today filter, totals and breakdowns | Saved sales query | Connected | COMPLETE | [OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx). |
@@ -160,7 +160,7 @@ The Owner mobile module is broadly implemented and is materially ahead of the st
 - No atomic branch-transfer contract exists. `transfer_in`/`transfer_out` labels appear in projections, but the current Staff transaction service does not implement a two-branch transfer operation.
 - Alert delivery and persistent alert-preference storage are absent.
 - Production migration state, RLS behavior, Edge Function deployment, Auth settings, and actual data cannot be verified locally.
-- No real product prices or recipe quantities are seeded. POS can be technically connected while remaining operationally unusable until the Owner configures valid catalog, visibility, prices, and recipes.
+- Migrations seed starter variant prices and an active shared-batter recipe with raw-ingredient quantities; product-specific recipe rows are not automatically consumed by default. These source values are not verified against the approved live business catalog/recipes and require Owner confirmation before operational sign-off.
 - [README.md](README.md) and [backend/README.md](backend/README.md) contain status statements that are now stale for discrepancy review and Staff account management. Update documentation after the audit.
 - The `.env.example` filename is appropriate for a public client config, but its values should be checked against the rule that no service-role key or database password may enter the client bundle.
 
@@ -182,7 +182,7 @@ The Owner mobile module is broadly implemented and is materially ahead of the st
 ### CRITICAL
 
 - **Production authorization is unverified.** The source contains strong RLS and RPC protections, but no live project audit was possible. Before operational use, verify all migrations, restrictive session policies, Edge Function deployment, and cross-branch denial tests against the hosted project.
-- **Operational POS can be incomplete without visible failure at configuration level.** No real menu prices or recipe quantities are seeded. Provision and verify the catalog before treating ST-02/ST-07 as operationally complete.
+- **Operational POS configuration is unverified.** Migrations seed starter variant prices and shared-batter recipe quantities, but the approved live prices, active recipe configuration, branch visibility, and hosted data have not been verified. Confirm them before treating ST-02/ST-07 as operationally complete.
 
 ### HIGH
 
@@ -1945,3 +1945,728 @@ OM-08 remains **PARTIALLY COMPLETE** until the dedicated Development Supabase pr
 - Full frontend and Edge Function regression results are recorded after the final run below.
 - Database/RLS verification: **not performed**. No hosted project, migration, seed, reset, or remote SQL was used.
 - Android-device verification: **not performed**.
+
+## 60. Current project audit and session-policy verification — 2026-11-19
+
+### Architecture and local verification
+
+- The project is an Expo/React Native client backed by Supabase Auth, PostgreSQL, RLS, RPCs, and a Staff-auth Edge Function; there is no separate application server.
+- Staff mobile, Owner mobile, and an Owner Web Management Portal are present in source. The root web route opens the Owner Portal; Staff web mode is a development preview.
+- `npm test` passed: TypeScript check, all 36 frontend test files, and all 27 Staff-auth Edge Function tests. Existing Node module-type warnings remain.
+- Supabase SQL test selection validation passed for all 10 SQL tests without opening a database connection. SQL assertions and live app behavior were not exercised.
+
+### Critical production integration blocker
+
+A read-only migration listing and documented dry run were performed against the linked project, which is **production**. The migration listing showed 23 local migration entries pending; no migration was applied. A later direct ledger query corrected the earlier interpretation of the duplicate version: production has no `202611180001` ledger row. See section 63 for the current evidence and schema discrepancies.
+
+Two checked-in migrations share version `202611180001`: `202611180001_batter_preparation_date.sql` and `202611180001_remove_business_day_session_expiration.sql`. Both appear among pending entries, while the remote ledger has no row for that version. Yet production schema metadata shows some session-removal effects and not the batter preparation-date effects. The exact provenance remains unresolved, so stop before `db push`; the administrator must reconcile schema and deployment logs, then the ordered result must be validated against a Development database.
+
+### Session-policy implementation update
+
+The latest checked-in SQL replaces business-day time expiration with active-profile and valid-Auth-session checks, removes the restrictive business-session policies and triggers, and preserves role/branch authorization. The current three-branch SQL test was updated to expect a still-valid session after configured closing; a persistent-session pgTAP test now covers Owner and assigned-Staff sessions across recorded business dates, no countdown, branch isolation, deactivation, and Auth-session revocation. These database assertions remain **UNVERIFIED** because the approved Development database was not available.
+
+The linked production history predates the latest session-policy migration and is missing many migrations. Therefore production must **not** be reported as satisfying persistent-session behavior until its history is reconciled and the correct forward migration is safely deployed.
+
+### Progress
+
+- **Current Phase:** Phase 1 audit; source-level session policy and regression-test repair.
+- **Overall Completion:** Source implementation is substantial but only partially verified; production readiness is **BLOCKED** by migration-history ambiguity and missing migrations. No defensible production-completion percentage is available.
+- **Files Modified:** `README.md`, `backend/README.md`, `AUDIT_REPORT.md`, and the two session-policy SQL tests.
+- **Features Completed:** Source defines no business-hour session deadline; local Auth/session checks continue to cover active accounts and revocation.
+- **Features Still Incomplete:** Production migration reconciliation and deployment; hosted RLS/RPC tests; real catalog/recipe/account verification; device smoke tests; persistent alert preferences/push delivery; sale reversal/refund and branch transfers.
+- **Bugs Fixed:** Replaced a stale SQL integration assertion that expected business-hour expiration; removed obsolete timed-session expectations from the database regression suite; corrected stale Owner portal and discrepancy status documentation.
+- **Database Changes:** No schema migration was applied. Added/updated rollback-only pgTAP regression coverage.
+- **API Endpoints Implemented:** None in this update. Existing API/RPC source was not changed.
+- **Tests Passed:** `npm test` (typecheck, 36 frontend test files, 27 Edge tests); SQL runner `-ValidateOnly -AllTests`.
+- **Tests Failed:** None in the local test commands. SQL assertions were not executed.
+- **Current Blockers:** Production has 23 pending migration entries; both local `202611180001` files are pending and the production ledger has no row for that version. The effects of unrecorded schema changes remain ambiguous; no approved Development database was used for this verification.
+- **Next Development Tasks:** Reconcile the migration collision and production history with the project administrator; establish a Development database; validate and run the complete SQL/RLS/concurrency suite there; deploy only an approved, uniquely versioned migration sequence; verify Edge Function deployment and real branch/catalog configuration.
+
+## 61. Owner Web discrepancy-validation integration — 2026-11-19
+
+### Implementation
+
+- Added the existing backend validation workflow to the Owner Web Portal's Daily Checks page.
+- Pending correction requests retain their separate Approve/Reject actions; validated inventory is not changed by those decisions.
+- Submitted counts and approved correction requests now call their respective Owner-authorized validation RPCs, with a required reason and a confirmation before inventory validation.
+- Successful actions reload live discrepancy records so status and pending counts stay current. Refresh failures are surfaced separately from the already-saved action.
+
+### Files modified
+
+- `frontend/owner/OwnerPortalWeb.tsx` — added reasoned Owner review/validation actions and live review refresh.
+- `AUDIT_REPORT.md` — recorded implementation and verification status.
+
+### Verification and status
+
+- `npm run typecheck`: **passed**.
+- `npm run test:frontend`: **passed — 189 tests across 36 files**.
+- Browser visual verification: **BLOCKED**; the shared Owner Portal reports Metro disconnected. No login credentials were used.
+- Owner Web physical-count discrepancy review: **improved in source; hosted RPC/RLS and browser behavior remain unverified**.
+
+**Next Development Task:** Remove Owner Portal placeholder branch records and derive its branch selectors/summaries only from Supabase data. Separately, production migration deployment remains blocked by the duplicate migration version and 23 pending migrations documented above.
+
+## 62. Owner Portal live branch data — 2026-11-19
+
+### Implementation
+
+- Removed hardcoded branch labels and fabricated branch fallback records from the Owner Portal Dashboard, Branches, and Inventory views.
+- Branch summaries now use branch IDs from live Supabase inventory and sales data, so branches with no inventory remain visible with zero counts.
+- Inventory branch filters use the live branch list. Missing branch data displays an explicit empty state rather than invented branch cards.
+- Added focused summary/filter tests, including normal, low-stock, out-of-stock, and near-expiry classification.
+
+### Files modified
+
+- `frontend/owner/OwnerPortalWeb.tsx` — live branch records for dashboard, branch summaries, and inventory filters.
+- `frontend/owner/ownerPortalBranches.ts` — branch filtering and branch-ID summary helpers.
+- `frontend/owner/ownerPortalBranches.test.mjs` — focused regression coverage.
+- `AUDIT_REPORT.md` — implementation checklist and progress record.
+
+### Verification and completion checklist
+
+- [x] Dynamic branch labels and summaries come from Supabase records.
+- [x] Empty branches remain visible; no placeholder branch records are generated.
+- [x] TypeScript typecheck passed.
+- [x] `npm test` passed: 192 frontend tests and 27 Staff-auth Edge Function tests.
+- [x] Focused branch-data tests passed: 3 tests.
+- [x] `git diff --check` passed; Git reported only its existing LF/CRLF conversion warnings.
+- [ ] Browser visual verification remains blocked by the disconnected Metro session.
+- [ ] Hosted Supabase behavior remains unverified by integration tests. Read-only production catalog/RLS metadata and an aggregate branch count were queried; no SQL assertions, data mutations, or migrations were run.
+
+The mobile source estimate remains **89.7%** (31 complete and 8 partial stories); this Owner Web Portal task does not change mobile story classifications. Production readiness remains **BLOCKED** by unresolved production migration/schema drift, 23 pending migration entries, and the lack of an approved Development target.
+
+**Next highest-priority task:** Reconcile the duplicate migration version and production migration history with the project administrator, then establish an approved Development Supabase target before attempting the SQL/RLS integration suite. Do not deploy migrations or implement schema-dependent refund/transfer workflows until this gate is cleared.
+
+## 63. Database reconciliation and production metadata audit — 2026-11-19
+
+### Scope and safety
+
+- Inventoried all 39 local migration files (38 distinct versions) and compared the local migration list with the linked production ledger.
+- Used read-only production catalog/function/policy queries and one aggregate branch-count query. No business records were retrieved.
+- No migration, seed, reset, repair, write, or PostgreSQL assertion was run against production. The result is a metadata audit, not a production integration test.
+- `SUPABASE_DEV_PROJECT_NAME` is unset, and the current accessible project list has no project named `TakoSync-Development`. Section 48 records an earlier user confirmation that ref `lofltjhvivcjuyezxaif` was the dedicated Development project; however, on 2026-11-19 the Supabase CLI lists that same ref as project `TakoSync`, and the linked database target reports **production**. The user has since confirmed that this target is **Production**. Treat it as production; no remote database operations were performed for the mobile audit.
+
+### Migration history reconciliation
+
+The production ledger query returned 16 recorded versions:
+
+`202610280001`, `202610280002`, `202610300001`, `202610300002`, `202610310001`, `202611020000`, `202611020001`, `202611020002`, `202611020003`, `202611020004`, `202611020005`, `202611020006`, `202611040001`, `202611040002`, `202611130005`, `202611180004`.
+
+The local migration list contains 23 pending entries:
+
+`202611020007`, `202611020008`, `202611020009`, `202611050001`, `202611050002`, `202611050003`, `202611050004`, `202611050005`, `202611050006`, `202611050007`, `202611050008`, `202611050009`, `202611130001`, `202611130002`, `202611130003`, `202611130004`, `202611160001`, `202611160002`, `202611170001`, `202611180001` (`batter_preparation_date`), `202611180001` (`remove_business_day_session_expiration`), `202611180002`, and `202611180003`.
+
+The production ledger contains no row for `202611180001`, despite the earlier audit note that it did. Both local files with that version are pending. Production nevertheless has some session-removal effects, while the batter-preparation-date column and overload are absent. This is insufficient to identify what SQL was applied, when, or by which migration; other unrecorded/partial schema effects are also present. The production migration history and schema cannot be conclusively reconciled from available evidence.
+
+**Required administrator action:** do not run `db push`, migration repair, or a reset. Have the Supabase project administrator compare the production schema with deployment logs and the exact SQL previously applied, especially any manual/session-policy changes and the duplicate `202611180001` files. The user has confirmed ref `lofltjhvivcjuyezxaif` is Production; provision or identify a separate approved Development project and keep its private connection/access settings local. Only after migration provenance is reconciled should unapplied changes receive unique forward versions and be tested in order on Development.
+
+### Production schema and application alignment
+
+- **Branches:** a read-only aggregate returned exactly 3 branches, all active. This verifies the current count only; no database invariant prevents privileged changes from adding or removing branches.
+- **RLS metadata:** RLS is enabled on the inspected core tables (`branches`, `profiles`, `branch_inventory`, `ingredient_batches`, `inventory_movements`, `sales`, `sale_items`, daily checks/count lines, batter batches, drafts, discrepancy adjustments, and audit logs). The inspected branch/role policy names and `can_access_branch` function are present. No inspected table had `FORCE ROW LEVEL SECURITY`; no cross-branch integration test was executed. Static policy presence does not prove complete access isolation.
+- **Business sessions:** production has no `business_session_required` policy. `is_business_session_active()` checks for an active profile but does not check `auth.sessions`; it does not enforce a business closing time. The desired no-business-hours-expiry effect is partly present, but production is not verified to end access on explicit logout/session revocation as required.
+- **Prepared batter:** the production schema lacks `batter_preparation_batches.preparation_date`, the four-argument `prepare_batter_batch` overload used by the current service, and `next_batter_batch_reference`. Only the older two-argument `prepare_batter_batch(uuid,text)` was found. The current service/database contract is therefore mismatched.
+- **Physical inventory counts:** production `submit_daily_stock_check` has only the older `(uuid,date,text,jsonb)` signature; `daily_stock_checks.request_id` and `request_payload_hash` are absent. The correction-request and count-validation tables and their current RPCs are also absent, although the frontend calls this workflow. The current inventory-count workflow is not integrated with this production schema.
+- **Draft/count workflow drift:** the draft table and draft RPCs exist even though `202611180003` is pending. Likewise, `profiles.employee_id`, `must_change_password`, `username`, and inventory revision columns exist despite their corresponding pending migrations. These objects' provenance is unknown and must not be used to infer migration application.
+- **Inventory transaction idempotency:** the current idempotent transaction RPC is absent. Existing movement/history tables and their RLS policies do not prove retry-safe operation.
+- **Sales:** production has sale-inventory processing/snapshot structures and the local migration set contains atomic sale processing, but current sales payload/security migrations remain pending. End-to-end sale deduction, cancellation/failure behavior, recipe math, and no-double-deduction behavior were not database-tested.
+- **Audit/configuration:** audit and discrepancy-adjustment structures/policies exist. Seeded starter prices and shared-batter defaults are source facts, not confirmation that they match approved business configuration. No business records were changed.
+- A source-level name comparison found no missing frontend `.from()` table/view references or `.rpc()` names in the local migration set. This does not verify production columns, overloads, grants, request/response semantics, or runtime behavior.
+- `backend/supabase/config.toml` specifies PostgreSQL major version 15 while the linked production project reports PostgreSQL 17.11. This is a compatibility/configuration difference requiring review; it was not changed.
+
+### Requirements checklist
+
+- [x] **COMPLETE** — exactly three configured branches currently exist and are active (read-only production aggregate, 2026-11-19).
+- [ ] **NOT IMPLEMENTED** — a database invariant enforcing exactly three branches.
+- [ ] **PARTIALLY COMPLETE** — Staff-only-assigned-branch and Owner-all-branches behavior; source and selected policy metadata inspected, runtime isolation tests blocked.
+- [ ] **PARTIALLY COMPLETE** — completed sales deduct inventory and failed/cancelled sales do not; source/schema inspected, hosted transaction behavior unverified.
+- [ ] **BLOCKED** — recipe ingredient consumption, prepared-batter raw-stock deduction at preparation, prepared-batter consumption on sale without double-deduction; production batter RPC/schema mismatch and no Development tests.
+- [ ] **BLOCKED** — physical count submission without stock overwrite and Owner-authorized adjustments; production lacks the current correction/validation schema and RPCs.
+- [ ] **PARTIALLY COMPLETE** — stock-in, waste, low-stock/expiration alerts, and historical traceability; local source/schema exists, production parity and runtime behavior unverified.
+- [ ] **PARTIALLY COMPLETE** — inventory quantity validation and transaction traceability; source/schema inspected, production execution tests not run.
+- [ ] **PARTIALLY COMPLETE** — Owner/Staff role enforcement, assigned-branch restriction, and inactive-account rejection; metadata/source only, permission tests blocked.
+- [ ] **BLOCKED** — no business-hour session expiration with access revoked on logout/deactivation/security revocation; production function does not inspect Auth-session revocation.
+- [ ] **PARTIALLY COMPLETE** — audit history; tables/policies exist, write-path and retention tests not run.
+- [ ] Full migration-history reconciliation — **BLOCKED**.
+- [ ] PostgreSQL assertions, owner/staff RLS tests, sales/inventory tests, batter/count tests, and five shell integration/concurrency tests — **BLOCKED / NOT RUN**. The `-ValidateOnly -AllTests` runner selected 10 SQL files but did not connect or execute assertions; it does not run the five shell tests.
+- [ ] Production deployment readiness — **BLOCKED**. No migration should be applied until the administrator resolves history/schema provenance and Development validation passes.
+
+### Batch record and validation
+
+- **Files modified in this documentation/audit batch:** `README.md`, `backend/README.md`, `AUDIT_REPORT.md`.
+- **Database migrations created/applied:** none.
+- **Database tests executed:** none. Offline SQL test-selection validation previously passed for 10 `.test.sql` files; this is not database verification.
+- **Validation:** `git diff --check` passed with only existing LF/CRLF conversion warnings.
+- Existing source implementation changes and their tests are recorded in sections 60–62; this audit batch did not change application code.
+- **Next highest-priority task:** administrator-led migration/schema provenance reconciliation and provisioning the isolated Development project. No safe schema-dependent implementation or migration can be completed until that gate is cleared.
+
+The mobile source estimate remains **89.7%** (31 complete and 8 partial stories); this database audit does not change that source-only estimate. Database finalization and production readiness remain **BLOCKED**.
+
+## 64. Expanded production schema, security, and RPC audit — 2026-11-19
+
+### Production catalog findings (read-only)
+
+- The public schema has **34 tables and 2 views**. RLS is enabled on all 34 tables; none has `FORCE ROW LEVEL SECURITY`. There are **52 policies across 32 tables**. `business_day_sessions` and `business_day_settings` have RLS enabled but no client policies, so direct client access is denied; they are accessed through database functions.
+- The `inventory` and `inventory_transactions` views both use `security_invoker=true`, preserving base-table RLS.
+- The catalog reports **60 check constraints, 60 foreign keys, 34 primary keys, and 21 unique constraints**; all are validated. It reports **85 indexes, all valid and ready**. These catalog checks establish object validity, not correctness of every business rule or performance under load.
+- **17 non-internal triggers** were found: 16 on public tables and the Auth-user profile-bootstrap trigger. They include branch/ingredient/variant provisioning, inventory revision tracking, daily-count revision snapshotting, inventory movement and daily-count audit, and profile access-change protection.
+- `profiles.id` has a validated FK to `auth.users(id) ON DELETE CASCADE`; `profiles.branch_id` references `branches`. Profile checks require Owners to have no branch and active Staff to have an assignment. The production employee-ID/username constraints and indexes exist, but their migration provenance remains unverified.
+
+### Authorization and database write boundaries
+
+- Every inspected public `SECURITY DEFINER` function pins `search_path` to `public, pg_temp`; none was missing a fixed search path.
+- `can_access_branch` requires an active branch and active profile, permitting Owners across branches and Staff only on their assigned branch. `is_active_owner` independently checks active Owner role.
+- `record_inventory_transactions` requires an active profile and authorized branch, rejects Staff adjustments, locks the inventory row, checks non-zero movement and non-negative resulting stock, updates batch balances, and records the movement. Its production signature is the older two-argument form; it is not the idempotent RPC used by current retry-safe service calls.
+- `submit_sale` checks active profile/branch access, current product visibility and prices, payload total, and transaction reference/payload consistency before persisting a sale and invoking inventory processing. Its current six-argument production signature matches the service call. Direct client table writes to sales remain unavailable; checkout uses the RPC. Hosted transaction tests were not run.
+- Owner inventory settings use an Owner-only write policy and Staff read-only policy. Production grants only the `minimum_stock` column update on `branch_inventory` and `expiration_date` column update on `ingredient_batches`; their corresponding RLS update policies require an active Owner. No table-level INSERT/UPDATE/DELETE grants were found for `anon` or `authenticated`. In particular, clients cannot update inventory quantity or directly insert sales.
+- The discrepancy-adjustment RPC requires an active Owner and writes through the inventory transaction path. Current correction-request/validation tables and functions are absent, so the existing Owner review/validation UI cannot complete that workflow against this production schema.
+- Static source search found the service-role key referenced only as an Edge Function environment variable and in a test mock; no service-role key reference was found in frontend source. This does not substitute for auditing hosted secrets or deployed Edge Function configuration.
+
+### Backend behavior and frontend contract gaps
+
+- Production `is_business_session_active()` checks only `profiles.active`. It does not check `auth.sessions` or a closing time. Deactivation is checked by this helper; explicit sign-out/revocation behavior was not runtime-tested. This does not establish that production implements the checked-in persistent-session migration.
+- Production `prepare_batter_batch(uuid,text)` authorizes the active profile and branch, checks configured recipe units, deducts raw ingredients, and stocks prepared batter. It uses the recipe quantity as the bottle count and does not take a preparation date. The frontend calls the four-argument date/quantity RPC; the five-bottle/date behavior is therefore not compatible or verified in production.
+- Production `submit_daily_stock_check(uuid,date,text,jsonb)` records physical quantities and differences without changing stock. It does not accept the frontend's request ID/revision payload; production lacks `request_id`, `request_payload_hash`, correction request/validation tables, and their current RPCs. The current physical-count and owner-validation service flows are incompatible with production.
+- The current Staff service calls `record_inventory_transactions_idempotent(uuid,uuid,jsonb)` for retry-safe inventory writes; that RPC is absent. The older `record_inventory_transactions(uuid,jsonb)` exists and enforces branch/role/quantity checks, but retry safety is not provided by that signature.
+- The daily-stock draft table/RPCs, employee/username fields, inventory revision fields, and other objects exist despite their corresponding migrations being pending. Their presence cannot be treated as proof that the associated migrations ran.
+- Current services refer to production-missing correction/validation objects. Local name-level matching against migrations does not guarantee production columns, overloads, grants, or return formats; an exhaustive column-by-column local/production comparison and hosted request/response tests remain **NOT VERIFIED**.
+
+### Safe migration disposition
+
+No corrected migration was created or applied in this batch. The two `202611180001` files remain untouched. Because production has no ledger row for that version but has partial effects from other pending migrations, any replay or forward replacement would risk either losing intended behavior or colliding with unrecorded DDL. There is also no approved Development project, so the required migration sequence and security behavior cannot be validated.
+
+Preserving-state reconciliation plan:
+
+1. The administrator must export the production migration ledger and a schema-only snapshot, then compare both with deployment history and the exact contents of the two duplicate-version files. Do not change the production ledger or apply SQL during this step.
+2. Record which parts of each migration and other pending migrations are already present, absent, or modified. Keep existing business records and current working database objects unchanged.
+3. Resolve the project-identity conflict. Provision or identify a separate approved `TakoSync-Development` project that is not the production target, then configure the existing test runner's Development-only credentials outside source control.
+4. Preserve both original migration files. After step 2, construct only uniquely versioned, forward-only reconciliation migrations for confirmed missing behavior; use guarded/idempotent DDL where appropriate, and do not duplicate objects or claim unrecorded migrations were applied.
+5. Apply the resolved sequence to Development first; run all 10 SQL tests and all 5 shell integration/concurrency tests, then verify the exact frontend RPC signatures and RLS behavior. Return to production only after a separately reviewed, explicitly approved deployment plan.
+
+### Final classification
+
+- **COMPLETE:** current production branch count is three active branches; all existing public tables have RLS; inspected core constraints are validated; all 85 indexes are valid; compatibility views are security-invoker.
+- **PARTIAL:** branch/role authorization, inventory movement and audit structures, base sales processing, and Owner/Staff role protections exist in source/production metadata. Behavior is not integration-tested, and production is missing current retry-safe/count/batter APIs.
+- **NOT IMPLEMENTED:** database invariant enforcing exactly three branches; cancellation/refund inventory reversal; production correction-request and count-validation objects.
+- **BLOCKED:** migration-history reconciliation, corrected migration rollout, current batter/date/five-bottle service compatibility, idempotent inventory writes, and current physical-count/correction workflows.
+- **NOT VERIFIED:** exhaustive local-to-production column/type/return-shape diff; Auth session restoration/revocation behavior; all role/branch isolation cases; sales/batter/count transaction tests; Edge deployment configuration; Development database tests.
+
+**Files changed in this audit batch:** `AUDIT_REPORT.md`, `README.md`, and `backend/README.md`. **Migrations changed/created/applied:** none. `git diff --check` passes; SQL test-selection validation selected 10 SQL tests without database access, and no SQL assertions or shell tests were executed.
+
+**Next highest-priority task:** obtain administrator reconciliation of the production schema/migration history and access to an approved Development project distinct from Production. No safe migration can be applied or validated before those gates are cleared. Production readiness remains **BLOCKED**.
+
+## 65. Final Staff and Owner Mobile implementation audit — 2026-11-19
+
+### Scope and database safety
+
+- Scope is Staff Mobile, Owner Mobile, and shared mobile authentication, services, navigation, theme, and state. The Owner Web Portal is excluded.
+- The user has confirmed that the linked Supabase project is Production. This mobile audit performed no Supabase CLI commands, SQL, migrations, remote database tests, or data reads/writes. Production compatibility statements below are cited from the prior **read-only** metadata audit in section 64, not a new connection.
+- The supplied Charter, Staff stories ST-01–ST-20, Owner Mobile stories OM-01–OM-19, story summary, and sticker sheet remain the requirements basis. Existing detailed evidence links are retained and updated below.
+
+### Completion calculation
+
+The mobile **source implementation** score is **89.7%**, independently recomputed from the 39-story matrix: 31 stories have complete source paths and 8 remain partial; partial stories receive 0.5 credit: `(31 + 0.5 × 8) / 39 = 89.74%`.
+
+- **Staff Mobile:** `(16 + 0.5 × 4) / 20 = 90.0%`.
+- **Owner Mobile:** `(15 + 0.5 × 4) / 19 = 89.5%`.
+- **Shared auth/services integration:** **70%** on a separate five-area rubric: local login/session restoration and explicit logout (complete), local active-role checks (complete), persistent-session behavior (partial pending live Auth verification), branch/RLS enforcement (partial pending database tests), and service/RPC/retry compatibility (partial because production schema mismatches are documented in section 64). This is a diagnostic overlay and is not added again to the 39-story score.
+- The previous estimate was 89.7%; the recalculated source score remains **89.7%**. The mobile UI and service changes below fix false/mock presentation and design inconsistencies but do not substitute for Development database or device verification. **Production readiness is not represented by this source percentage.**
+
+### Current story coverage
+
+“Source status” describes the implementation found in the repository. “Runtime verification” is separate: database-dependent stories remain blocked from live verification because the only confirmed target is Production, and no approved Development project is configured. “Device” means real Android/iOS layout, keyboard, and navigation testing.
+
+| Story | Source status | Runtime verification | Evidence |
+|---|---|---|---|
+| ST-01 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; device not verified | [frontend/App.tsx](frontend/App.tsx), [frontend/services/staffAuthentication.ts](frontend/services/staffAuthentication.ts), [frontend/services/staffAuthentication.integration.test.mjs](frontend/services/staffAuthentication.integration.test.mjs) |
+| ST-02 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; sale/inventory atomicity and device checkout not verified | [frontend/staff/MenuWorkspace.tsx](frontend/staff/MenuWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts), [frontend/services/saleCheckoutRecovery.test.mjs](frontend/services/saleCheckoutRecovery.test.mjs) |
+| ST-03 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted catalog and visibility not verified | [frontend/services/productCatalog.ts](frontend/services/productCatalog.ts), [frontend/staff/MenuWorkspace.tsx](frontend/staff/MenuWorkspace.tsx) |
+| ST-04 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; branch RLS not verified | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| ST-05 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted receipt joins and device sharing not verified | [frontend/staff/saleReceipt.ts](frontend/staff/saleReceipt.ts), [frontend/staff/saleReceipt.test.mjs](frontend/staff/saleReceipt.test.mjs) |
+| ST-06 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted saved-sale data not verified | [frontend/services/staffDailySales.ts](frontend/services/staffDailySales.ts), [frontend/services/staffDailySales.test.mjs](frontend/services/staffDailySales.test.mjs) |
+| ST-07 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; production batter RPC signature is mismatched | [frontend/services/batterPreparation.ts](frontend/services/batterPreparation.ts), [backend/supabase/migrations/202611130002_staff_prepared_batter_five_bottle_batches.sql](backend/supabase/migrations/202611130002_staff_prepared_batter_five_bottle_batches.sql) |
+| ST-08 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted stock-in transaction not tested | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| ST-09 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted waste deduction not tested | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/staff/staffInventoryWorkflow.test.mjs](frontend/staff/staffInventoryWorkflow.test.mjs) |
+| ST-10 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; alerts are in-app and not push delivery | [frontend/staff/inventoryAlerts.ts](frontend/staff/inventoryAlerts.ts), [frontend/staff/inventoryAlerts.test.mjs](frontend/staff/inventoryAlerts.test.mjs) |
+| ST-11 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; current count/correction RPCs are missing from the Production metadata audit | [frontend/services/inventoryCountSnapshot.ts](frontend/services/inventoryCountSnapshot.ts), [frontend/services/inventoryCountCorrectionRecovery.test.mjs](frontend/services/inventoryCountCorrectionRecovery.test.mjs) |
+| ST-12 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted reporting queries not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx) |
+| ST-13 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted balances not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [frontend/staff/inventoryReports.test.mjs](frontend/staff/inventoryReports.test.mjs) |
+| ST-14 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted categories not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [frontend/staff/inventoryReports.test.mjs](frontend/staff/inventoryReports.test.mjs) |
+| ST-15 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted thresholds not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [frontend/staff/inventoryReports.test.mjs](frontend/staff/inventoryReports.test.mjs) |
+| ST-16 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; assigned-branch summary not tested against RLS | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| ST-17 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; discrepancy history and RLS not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [backend/supabase/migrations/202611130003_staff_inventory_count_correction_workflow.sql](backend/supabase/migrations/202611130003_staff_inventory_count_correction_workflow.sql) |
+| ST-18 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; count history RPC/schema not tested | [frontend/staff/inventoryReports.ts](frontend/staff/inventoryReports.ts), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| ST-19 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; history visibility and branch RLS not tested | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| ST-20 | PARTIALLY COMPLETE | NOT VERIFIED on device; push-notification delivery is not implemented | [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx), [frontend/staff/alertPreferences.test.mjs](frontend/staff/alertPreferences.test.mjs) |
+| OM-01 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; live Auth/profile behavior not verified | [frontend/owner/OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-02 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; live cross-branch dashboard/RLS not verified | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/owner/ownerDashboardSummary.test.mjs](frontend/owner/ownerDashboardSummary.test.mjs) |
+| OM-03 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted sales queries not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-04 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted daily data not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/owner/ownerSalesPeriod.test.mjs](frontend/owner/ownerSalesPeriod.test.mjs) |
+| OM-05 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted weekly data not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/owner/ownerSalesPeriod.test.mjs](frontend/owner/ownerSalesPeriod.test.mjs) |
+| OM-06 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted monthly data not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/owner/ownerSalesPeriod.test.mjs](frontend/owner/ownerSalesPeriod.test.mjs) |
+| OM-07 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; Owner branch visibility/RLS not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-08 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; production sale-item/product joins not verified | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/owner/ownerSalesSummary.test.mjs](frontend/owner/ownerSalesSummary.test.mjs) |
+| OM-09 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; live branch inventory and batch access not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/owner/ownerInventoryStatus.test.mjs](frontend/owner/ownerInventoryStatus.test.mjs) |
+| OM-10 | PARTIALLY COMPLETE | BLOCKED BY DATABASE VERIFICATION; notification delivery and hosted threshold settings not verified | [frontend/owner/OwnerStockExpirationSettings.tsx](frontend/owner/OwnerStockExpirationSettings.tsx), [frontend/owner/ownerAlerts.test.mjs](frontend/owner/ownerAlerts.test.mjs) |
+| OM-11 | COMPLETE in source | BLOCKED BY DATABASE VERIFICATION; Production lacks the current correction/validation schema and RPCs | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts), [backend/supabase/migrations/202611130003_staff_inventory_count_correction_workflow.sql](backend/supabase/migrations/202611130003_staff_inventory_count_correction_workflow.sql) |
+| OM-12 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted activity records and RLS not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-13 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted transaction data not tested | [frontend/owner/OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-14 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted consumption movements not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/transactionLabels.ts](frontend/services/transactionLabels.ts) |
+| OM-15 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted stock-in history not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-16 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted waste history not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-17 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted count records and RLS not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+| OM-18 | COMPLETE | BLOCKED BY DATABASE VERIFICATION; hosted adjustment audit records not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [backend/supabase/migrations/202611020005_owner_discrepancy_adjustments.sql](backend/supabase/migrations/202611020005_owner_discrepancy_adjustments.sql) |
+| OM-19 | COMPLETE | NOT VERIFIED on device; live profile and Auth behavior not tested | [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [frontend/services/takosync.ts](frontend/services/takosync.ts) |
+
+Additional Owner Mobile configuration screens requested in the audit are present in source but are not added as extra story IDs or to the 39-story denominator: products/menu and ingredients/categories/recipes in [frontend/owner/OwnerIngredientsRecipes.tsx](frontend/owner/OwnerIngredientsRecipes.tsx); stock/expiration rules in [frontend/owner/OwnerStockExpirationSettings.tsx](frontend/owner/OwnerStockExpirationSettings.tsx); business-day settings in [frontend/owner/OwnerBusinessDaySettings.tsx](frontend/owner/OwnerBusinessDaySettings.tsx); and staff accounts in [frontend/owner/OwnerStaffAccounts.tsx](frontend/owner/OwnerStaffAccounts.tsx). Their Supabase write/read contracts and Owner-only enforcement still require approved Development verification.
+
+### Implementation batches
+
+**Batch 1 — Owner Mobile live inventory and discrepancy workflow**
+
+- `frontend/owner/OwnerMobileWorkspace.tsx`: replaced visible fixture inventory, branch comparison, and discrepancy actions with loaded Owner data and existing RPC-backed services. Branch selectors now use returned branches; inventory uses actual quantities, minimums, batch references, expiry dates, loading/error/retry states, and empty results. Discrepancy decisions/validation no longer simulate local success; they submit reasons, report service errors, and refresh after success.
+- `frontend/owner/ownerInventoryMock.ts` (subsequently removed and replaced in section 66): added initial expired-status and configured-window handling; minimum-stock equality is treated as low stock.
+- Validation: `npm.cmd run typecheck` passed. This was source-level validation only; the database workflow remains blocked.
+- Checklist after Batch 1: [x] live Owner data/actions wired; [x] no mock-success path on these screens; [x] typecheck; [ ] Development database/RLS tests. **Next task:** align mobile design tokens/controls and cover inventory-status boundaries without changing business flows.
+
+**Batch 2 — Mobile design consistency and regression tests**
+
+- `frontend/App.tsx`, `frontend/theme/ThemeProvider.tsx`, `frontend/navigation/BottomNavigation.tsx`, `frontend/staff/StaffWorkspace.tsx`, `frontend/staff/MenuWorkspace.tsx`, `frontend/staff/StaffChangePasswordScreen.tsx`, `frontend/owner/OwnerIngredientsRecipes.tsx`, `frontend/owner/OwnerMobileWorkspace.tsx`, `frontend/owner/OwnerSalesWorkspace.tsx`, `frontend/owner/OwnerStaffAccounts.tsx`, `frontend/owner/OwnerStockExpirationSettings.tsx`, and `frontend/owner/OwnerLoginScreen.tsx`: centralized brand colors on shared tokens, standardized owner sales controls to 48px/40px with 8px control radii, set Owner login controls to 48px, removed the login-card shadow, and applied Poppins to the Staff password-change screen.
+- `frontend/owner/ownerInventoryMock.test.mjs` (superseded by [frontend/owner/ownerInventoryStatus.test.mjs](frontend/owner/ownerInventoryStatus.test.mjs)): added initial regression cases for zero/threshold quantities and expiration-window boundaries.
+- `README.md`, `backend/README.md`, and `AUDIT_REPORT.md`: refreshed project-identity wording and documented the mobile score, story-by-story verification gaps, test results, and readiness blockers.
+- Validation after this batch: `npm.cmd run typecheck` passed; `npm.cmd run test:frontend` passed **194/194 tests across 38 files**; `npm.cmd run test:edge` passed **27/27 tests**; `git diff --check` passed (only existing LF/CRLF warnings).
+- No mobile emulator/device/browser visual run was performed. Existing legacy shadows and small secondary text remain in other screens; this batch did not claim a complete UI redesign.
+- Checklist after Batch 2: [x] shared brand tokens/primary control sizing aligned in targeted screens; [x] focused inventory-status tests added; [x] typecheck and all local suites pass; [ ] device visual/accessibility testing. **Next task:** obtain isolated Development credentials and complete database-backed mobile integration tests.
+
+### Fixed issues
+
+1. Owner Mobile inventory and branch comparison no longer present hardcoded ingredient quantities/branch names on the normal data path.
+2. Owner Mobile discrepancy review no longer presents fixture records or a local-only approval/validation as if persisted.
+3. Inventory stock status now distinguishes expired stock and uses the configured alert window; equality at the minimum-stock limit is consistently low stock.
+4. Key Owner/Staff mobile accents use the sticker-sheet palette; login/password controls and Owner sales actions align more closely with the 48px/40px control standard.
+
+### Remaining issues and external blockers
+
+- **Code / service compatibility:** the prior read-only Production schema audit (section 64) found the four-argument `prepare_batter_batch` overload, `next_batter_batch_reference`, the current count-correction/validation RPCs and related count-idempotency columns absent; it also found the current idempotent inventory-write RPC absent. Current app calls therefore cannot be assumed compatible with Production.
+- **Database-dependent behavior:** completed sale deduction, prepared-batter quantities, physical-count correction/Owner authorization, branch RLS, session revocation, and audit history have not been tested against an approved Development database. The duplicate `202611180001` version and 23 pending migration entries remain unresolved. Do not run these tests or migrations against Production.
+- **UI/UX:** source-level styling is improved but not fully normalized. Legacy card shadows, small secondary/report labels, keyboard behavior, safe-area spacing, and real-device layouts require targeted Android/iOS review.
+- **Functional:** in-app low-stock/expiry views exist; push notification delivery is not implemented. Staff alert preferences are not a hosted notification service.
+- **Live-device testing:** no Android/iOS device or emulator run was performed; back behavior, keyboard interaction, scrolling, safe areas, and minimum touch targets remain NOT VERIFIED.
+
+### Readiness and checklist
+
+- [x] Reviewed existing Staff and Owner Mobile story matrices and retained the 20 + 19 story denominator.
+- [x] Replaced mock-only Owner Mobile inventory/comparison/discrepancy presentation with existing data/service paths.
+- [x] Added inventory status regression tests.
+- [x] TypeScript typecheck, frontend tests, Edge Function tests, and whitespace validation passed.
+- [x] Confirmed current project identity as Production from the user; no remote database operation was performed.
+- [ ] Resolve duplicate migration version and production schema/ledger provenance with the Supabase administrator.
+- [ ] Provision an approved, separate `TakoSync-Development` project and run the complete migration/RLS/inventory/sales/batter/count test suite there.
+- [ ] Exercise Staff and Owner workflows on Android and iOS, including keyboard, safe-area, accessibility/touch targets, offline/retry, and back navigation.
+- [ ] Decide whether push notification delivery and persistent notification preferences are required for acceptance, then implement only after service/backend contracts are approved.
+
+**Internal testing:** NOT READY for authenticated integration testing; first configure a separate Development Supabase target. **UAT:** NOT READY. **Production deployment:** NOT READY. **Overall release state:** BLOCKED BY DATABASE VERIFICATION and live-device testing. The 89.7% figure is source implementation coverage only, not a claim of 89.7% verified production readiness.
+
+**Next highest-priority task:** administrator-led migration/schema provenance reconciliation and an isolated Development project. After that gate, run the prepared Supabase migration, authorization, idempotency, sale, batter, and inventory-count tests in Development, then repeat device QA. No production migration, SQL, or data change is authorized by this report.
+
+## 66. Owner Mobile inventory live-data hardening — 2026-11-19
+
+### Scope and safety
+
+This focused batch removes mock-success data paths from Owner Mobile inventory, batch, alert, and related inventory-record screens. It uses existing authenticated Supabase service functions only. The linked project is confirmed Production; this batch performed no remote reads or writes, SQL, migration commands, or database tests. Actual schema/RLS compatibility remains **BLOCKED BY DATABASE VERIFICATION**.
+
+### Implementation completed
+
+- [frontend/services/takosync.ts](frontend/services/takosync.ts): `loadOwnerInventory()` now returns every positive-quantity active batch, including batches without an expiration date, with undated batches ordered last. A seven-day alert window is used only when the Owner settings row is absent; query failures still surface.
+- [frontend/owner/ownerInventoryStatus.ts](frontend/owner/ownerInventoryStatus.ts): moved status and quantity formatting out of the mock module. Status uses the current Manila date and the required order (Not tracked, Expired, Out of Stock, Near Expiration, Low Stock, Normal); ingredient balances and individual batch status are kept distinct. Branch comparison preserves missing records as `null`, leaves explicit zero as zero, and does not add batch quantities to the inventory balance.
+- [frontend/owner/OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx): inventory cards display all active batches with each available batch reference, quantity, expiry date, and per-batch status. Dashboard inventory summaries and alerts use the selected branch’s loaded inventory. Comparison uses the same live branch/inventory/batch snapshot. Stale inventory is not shown as a successful refresh, and the sample “Stock-In saved” toast was removed.
+- [frontend/owner/ownerAlerts.ts](frontend/owner/ownerAlerts.ts): removed forced/mock alert states, handles null quantities without classifying them as out of stock, sorts date-only expirations independently of local timezone, and filters alert counts with the selected branch.
+- [frontend/owner/StockInRecordsScreen.tsx](frontend/owner/StockInRecordsScreen.tsx), [frontend/owner/stockInRepository.ts](frontend/owner/stockInRepository.ts), [frontend/owner/WasteSpillageRecordsScreen.tsx](frontend/owner/WasteSpillageRecordsScreen.tsx), and [frontend/owner/wasteSpillageRepository.ts](frontend/owner/wasteSpillageRepository.ts): removed seeded success paths. Stock-In and Waste/Spillage records now map authenticated transaction history, with surfaced errors and retry behavior.
+- [frontend/owner/PhysicalCountRecordsScreen.tsx](frontend/owner/PhysicalCountRecordsScreen.tsx), [frontend/owner/physicalCountRepository.ts](frontend/owner/physicalCountRepository.ts), [frontend/owner/AuthorizedAdjustmentRecordsScreen.tsx](frontend/owner/AuthorizedAdjustmentRecordsScreen.tsx), and [frontend/owner/authorizedAdjustmentRepository.ts](frontend/owner/authorizedAdjustmentRepository.ts): removed forced mock-success records; screens rely on their existing Owner-authenticated history/review service paths and expose load failures.
+- [frontend/App.tsx](frontend/App.tsx): added a request lock so rapid refresh triggers cannot start overlapping Owner dashboard loads.
+- Removed the mock-only `frontend/owner/ownerInventoryMock.ts` module; added [frontend/owner/ownerInventoryStatus.test.mjs](frontend/owner/ownerInventoryStatus.test.mjs). Updated [frontend/owner/ownerAlerts.test.mjs](frontend/owner/ownerAlerts.test.mjs), [frontend/owner/ownerDashboardSummary.test.mjs](frontend/owner/ownerDashboardSummary.test.mjs), [frontend/owner/stockInRepository.test.mjs](frontend/owner/stockInRepository.test.mjs), [frontend/owner/wasteSpillageRepository.test.mjs](frontend/owner/wasteSpillageRepository.test.mjs), and [frontend/owner/physicalCountRepository.test.mjs](frontend/owner/physicalCountRepository.test.mjs).
+
+### Focused source-completion estimate
+
+This estimate scores four local-source criteria equally: live service data rather than fixtures; correct record/status projection; branch and missing-versus-zero behavior with explicit loading/error handling; focused regression coverage. It excludes hosted database and device verification, which are reported separately and remain blocked.
+
+- Owner inventory and active batches: **100% source path** (4/4 criteria).
+- Dashboard inventory summaries: **100% source path** (4/4).
+- Inventory alerts: **100% source path** (4/4).
+- Three-branch inventory comparison: **100% source path** (4/4).
+- Stock-In, Waste/Spillage, Physical Count, and Authorized Adjustment history screens now use live service paths, but their database compatibility is **NOT VERIFIED**.
+- The overall mobile source estimate remains **89.7%** under the 39-story rubric. OM-09’s source path is improved, but its hosted branch/batch access and device behavior are not verified; no global score or readiness claim is inflated by local-only tests.
+
+### Validation and remaining work
+
+- `npm.cmd test` — **PASSED**: TypeScript typecheck, 193/193 frontend tests across 38 files, and 27/27 Edge Function tests.
+- `git diff --check` — **PASSED**; Git reported LF/CRLF normalization warnings only.
+- No remote database test, schema query, migration, or deployment was run. No Development project is approved/configured in this task.
+- Database objects/RLS used by the inventory and history services: **BLOCKED BY DATABASE VERIFICATION**. Android/iOS rendering, touch targets, scrolling, safe areas, and back behavior: **NOT VERIFIED**.
+- Production deployment readiness: **NOT READY**. Continue only after administrator confirmation of an isolated Development project; run schema/RLS and inventory/alert/history integration tests there before any production action.
+
+**Next highest-priority task:** obtain the separate Development Supabase project and verify `inventory`, `ingredient_batches`, `owner_inventory_settings`, `inventory_transactions`, and Owner history/review RPC contracts with staff/owner branch-isolation tests. Do not use the confirmed Production project for this verification.
+
+## 67. Production safety and Development workflow hardening — 2026-11-19
+
+### Findings and implementation
+
+- The user reconfirmed that the linked Supabase target is **Production**. No Supabase CLI, remote SQL, remote test, database read/write, migration, reset, repair, or deployment was performed in this batch.
+- The previous GitHub Actions workflow was triggered by pushes to `main` and could apply every pending migration to `supabase-production`. That behavior was unsafe while the production ledger is unresolved and the local migration set has a duplicate version.
+- `.github/workflows/supabase-migrations.yml` is now manual-only and targets a protected `supabase-development` environment. It requires explicit workflow-dispatch confirmation, distinct configured Development/Production project refs, explicit Development and migration-reconciliation approval, and a unique local migration-version check before any remote connection. It uses only the Development environment's database URL, previews changes, and applies only to the configured Development target. No automatic Production deployment remains.
+- The workflow's duplicate-version guard currently blocks before remote access because both `202611180001` files remain unchanged. No migration file was renamed, removed, rewritten, or applied; no history record was fabricated.
+- Updated [README.md](README.md) and [backend/README.md](backend/README.md) to remove remote Production `db push`/SQL/seed instructions, clarify the unresolved migration conflict, document required Development approval/configuration, and correct profile bootstrap and account-management descriptions.
+- Source inspection confirmed client session restoration checks Supabase Auth session presence and then validates the active profile and Staff branch in [frontend/services/takosync.ts](frontend/services/takosync.ts). The `manilaHour` use in [frontend/App.tsx](frontend/App.tsx) is for Owner sales-chart grouping, not a login/session gate. This is source evidence only; hosted Auth revocation and RLS remain unverified.
+
+### Validation and remaining work
+
+- Development test configuration variables (`SUPABASE_DEV_PROJECT_NAME`, `SUPABASE_DEV_PROJECT_REF`, `SUPABASE_DEV_PROJECT_URL`, and `PG*`) were checked for presence only; all are absent. No secret values were read or printed.
+- No SQL or shell integration/concurrency tests were run. The five shell tests require a disposable local PostgreSQL database and explicitly target localhost; no test database was configured. The ten pgTAP tests require an approved Development database, which is not available.
+- Local migration inventory validation found 39 files, 38 distinct 12-digit versions, and exactly one duplicate version: `202611180001`. The workflow's matching guard is expected to stop before remote access until that source conflict is reconciled.
+- `npm.cmd test` — **PASSED**: TypeScript `tsc --noEmit`, 193/193 frontend tests across 38 files, and 27/27 Edge Function tests. `git diff --check` — **PASSED** with line-ending normalization warnings only. Workflow YAML parsing and assertions for manual-only trigger and Development environment — **PASSED**.
+- The prior mobile source score remains **89.7%** (Staff 90.0%, Owner 89.5%); this operational hardening does not change story implementation credit. Production readiness remains **BLOCKED**.
+- **Files modified:** `.github/workflows/supabase-migrations.yml`, `README.md`, `backend/README.md`, `AUDIT_REPORT.md`.
+- **Migrations changed/created/applied:** none.
+
+**Required administrator action:** provide the identity of a separate `TakoSync-Development` Supabase project and explicitly approve it for testing. Reconcile the Production migration ledger/schema using the administrator's deployment records without altering Production history. Only after that, assign unique forward-only migration versions and set the protected Development workflow configuration. Production deployment remains a separate approved step after Development integration tests pass.
+
+## 68. Owner Web Portal completion and live-service improvements — 2026-11-19
+
+> Historical baseline: this assessment predates the final reporting/configuration implementation below. Its 90% ten-area estimate and gap statements are superseded by section 69.
+
+### Scope and estimate
+
+- This section assesses the Owner Web Portal separately. It does not change the Staff/Owner Mobile score of **89.7%** in section 65.
+- No standalone Owner Web story-ID list was available during this audit; no `OW-01`–`OW-25` mapping is claimed. The estimate uses ten source-level areas evidenced by the active route: authentication, dashboard/branch data, inventory, sales reports, audit/activity, discrepancy review, Staff accounts, product/menu editing, recipe/configuration, and browser responsiveness.
+- **Owner Web source completion estimate: 90.0%** (8 areas complete in source, 2 partial; partial areas receive half credit: `(8 + 0.5 × 2) / 10`). The two partial areas are the broader recipe/configuration surface and browser/device responsiveness. This is not a Production-readiness score.
+- Hosted Supabase behavior for all database-backed operations remains **BLOCKED BY DATABASE VERIFICATION**. Browser visual behavior was not verified in this implementation batch.
+
+### Implementation
+
+- [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) now uses the existing live data services for sales reports with reporting-period and branch selection, while retaining actual returned branches (including those with no sales).
+- The inventory view uses the tested [frontend/owner/ownerPortalInventory.ts](frontend/owner/ownerPortalInventory.ts) projection for null-versus-zero quantities, tracked expiry dates, Manila date boundaries, and all positive active batch references. Its focused cases are in [frontend/owner/ownerPortalInventory.test.mjs](frontend/owner/ownerPortalInventory.test.mjs).
+- Report totals and branch/product summaries are calculated from the selected live sale set by [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts), with focused tests in [frontend/owner/ownerPortalReports.test.mjs](frontend/owner/ownerPortalReports.test.mjs).
+- The active Settings screen now creates and edits products through the existing Supabase catalog service, validates independent prices for all standard variants, and edits product availability. The helper is [frontend/owner/ownerPortalProducts.ts](frontend/owner/ownerPortalProducts.ts), covered by [frontend/owner/ownerPortalProducts.test.mjs](frontend/owner/ownerPortalProducts.test.mjs).
+- Corrected the active Settings screen's expiration validation to the service-supported range of 1–365 days; added positive recipe-quantity and non-negative threshold validation; fixed the threshold selector's selected-value contract.
+- Owner Staff create/update/deactivate failures, discrepancy-review failures, profile failures, and refresh failures are now sent to the error banner rather than reported as success. Staff actions guard against repeated submissions and require a username/branch before submission. Empty selectors are disabled instead of indexing an empty option list.
+- Inventory/configuration refreshes reload their related live data after successful writes. No screen was switched to mock data.
+
+### Owner Web status
+
+| Area | Source status | Remaining verification |
+|---|---|---|
+| Owner sign-in, session restore, role gate | COMPLETE | Hosted Auth, inactive-account behavior, and session revocation remain not verified. |
+| Dashboard and live branch summaries | COMPLETE | Production data/RLS and browser rendering remain not verified. |
+| Inventory, batch detail, branch filter, stock status | COMPLETE | Hosted schema/RLS and live inventory results remain not verified. |
+| Date/branch-filtered sales reporting | COMPLETE | Hosted report query/schema and browser behavior remain not verified. |
+| Audit/activity history | COMPLETE | Hosted audit visibility and RLS remain not verified. |
+| Physical-count discrepancy review and validation | COMPLETE in source | Owner authorization/RPC behavior remains blocked by database verification. |
+| Staff account create, edit, and activation | COMPLETE in source | Edge Function/RLS behavior and duplicate-account handling on the hosted project remain not verified. |
+| Product create/edit, independent variant pricing, availability | COMPLETE in source | Hosted catalog schema/RLS and Staff menu visibility remain not verified. |
+| Recipe, ingredient/category, stock-setting breadth | PARTIALLY COMPLETE | Active Web Settings does not provide complete ingredient/category management. |
+| Browser responsiveness and keyboard/focus behavior | PARTIALLY COMPLETE | Browser/responsive visual validation is outstanding. |
+
+### Files changed and verification
+
+- Added [frontend/owner/ownerPortalProducts.ts](frontend/owner/ownerPortalProducts.ts) and [frontend/owner/ownerPortalProducts.test.mjs](frontend/owner/ownerPortalProducts.test.mjs).
+- Added [frontend/owner/ownerPortalInventory.ts](frontend/owner/ownerPortalInventory.ts), [frontend/owner/ownerPortalInventory.test.mjs](frontend/owner/ownerPortalInventory.test.mjs), [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts), and [frontend/owner/ownerPortalReports.test.mjs](frontend/owner/ownerPortalReports.test.mjs).
+- Updated [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) and this report.
+- `npm.cmd run typecheck` — **PASSED**.
+- Targeted `node --test` for Owner Portal product, inventory, and report helpers — **PASSED: 8 tests**.
+- `npm.cmd test` — **PASSED**: TypeScript check, **201 frontend tests**, and **27 Edge Function tests**.
+- `git diff --check` — **PASSED**; Git emitted only line-ending normalization warnings.
+- No Supabase CLI, remote query, SQL, database test, migration, or deployment was performed. No Production records or migration history were changed.
+
+### Remaining blockers and readiness
+
+- **Code:** Complete ingredient/category management and recipe configuration are not available in the active Owner Web Settings page.
+- **UI/UX:** Browser-based layout, keyboard/focus behavior, and smaller viewport behavior were not verified in this batch.
+- **Database:** All hosted Owner services, RLS permissions, branch boundaries, and Edge Function behavior remain **BLOCKED BY DATABASE VERIFICATION**; the only confirmed Supabase target is Production and must not be used for testing.
+- **Readiness:** Owner Web is improved and locally tested, but is **NOT READY for Production deployment** until the schema/migration conflict is reconciled by an administrator and an approved Development project verifies the service/RLS paths. Internal/acceptance browser testing is still needed.
+
+**Next highest-priority task:** obtain an approved Development Supabase project and run the existing Owner service/RLS integration tests there; separately complete active Web ingredient/category settings and perform browser responsiveness validation. Do not run these checks against Production.
+
+## 69. Owner Web story completion and acceptance evidence — 2026-11-19
+
+### Scope and score
+
+This assessment covers Owner Web stories OW-01 through OW-25 from the [user-story summary](docs/User_Story_v5.11.11.2026%20-%20SUMMARY.pdf). It excludes Staff/Owner mobile completion, which remains reported separately at 89.7% in the mobile sections above.
+
+**Owner Web acceptance-readiness estimate: 44%**. The scoring is story-weighted: COMPLETE = 1 point, PARTIALLY COMPLETE = 0.5 points, NOT IMPLEMENTED = 0 points, and BLOCKED BY DATABASE VERIFICATION = 0 points; total points divided by 25 stories. There are 22 PARTIALLY COMPLETE stories and 3 BLOCKED BY DATABASE VERIFICATION stories, yielding `(22 × 0.5 + 3 × 0) / 25 = 44%`. No story is called COMPLETE because full acceptance depends on hosted Auth/data/RLS behavior that was not safely testable. This is a conservative acceptance score, not a source-code-only percentage and is not directly comparable to section 68's prior ten-area estimate.
+
+The source implementation is substantially broader than the score alone suggests: the active portal has dashboard and report workflows, existing live Supabase service calls, inventory/configuration forms, and review flows. However, source presence does not prove correct production data, authorization, schema compatibility, or browser usability. Local source checks are reported separately below.
+
+### OW-01 through OW-25
+
+| Story | Status | Source evidence and remaining work |
+|---|---|---|
+| OW-01 — Owner Login and Account Access | BLOCKED BY DATABASE VERIFICATION | Owner login, session restoration, active-profile/role routing, and logout are implemented in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) and [frontend/services/takosync.ts](frontend/services/takosync.ts). Hosted role rejection, RLS, session revocation, and Staff denial remain unverified. |
+| OW-02 — Centralized Owner Dashboard | PARTIALLY COMPLETE | Dashboard period/branch filters, sales by branch, inventory/expiration alerts, recent activity, and pending discrepancies are implemented in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Live values, all-three-branch completeness, and browser behavior remain unverified. Failed requests now surface errors rather than success-shaped zero summaries. |
+| OW-03 — Multi-Branch Sales Monitoring | PARTIALLY COMPLETE | [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) and [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts) provide date/period and branch filtering, sales/product summaries, and transaction details. Hosted data/RLS and display behavior remain unverified. |
+| OW-04 — Multi-Branch Inventory Monitoring | PARTIALLY COMPLETE | Branch-filtered inventory, stock states, and batch/expiration detail use [frontend/owner/ownerPortalInventory.ts](frontend/owner/ownerPortalInventory.ts) and the existing services. Confirm prepared-batter coverage, branch comparisons, units, and real batch data against an approved Development database. |
+| OW-05 — Sales Report Generation | PARTIALLY COMPLETE | The active portal exposes report-period and branch controls, loading/empty/error states, and report navigation in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Only completed sales with completed inventory processing feed totals; hosted query behavior remains unverified. |
+| OW-06 — Total Sales Report | PARTIALLY COMPLETE | Combined totals are calculated from the filtered completed-sale set by [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts). Verify currency/date boundaries and the underlying sales records in Development. |
+| OW-07 — Branch Sales Report | PARTIALLY COMPLETE | Branch summaries retain returned branches with zero sales in the selected range; helper evidence is in [frontend/owner/ownerPortalReports.test.mjs](frontend/owner/ownerPortalReports.test.mjs). Verify all branch data and RLS in Development. |
+| OW-08 — Products Sold Report | PARTIALLY COMPLETE | Product quantity and amount summaries are derived from sale items in [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts). Verify product joins and historical data on Development. |
+| OW-09 — Transaction Summary Report | PARTIALLY COMPLETE | Transaction reference, timestamp, payment method, and saved-amount details are displayed by [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Verify the hosted schema and saved transaction fields in Development. |
+| OW-10 — Inventory Report Generation | PARTIALLY COMPLETE | A navigable Inventory Reports view provides the six distinct report types through [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Browser printing/layout and live report data remain unverified. |
+| OW-11 — Expected Stock Quantity Report | PARTIALLY COMPLETE | Expected quantities and units are projected from inventory/batch source data in [frontend/owner/ownerPortalInventory.ts](frontend/owner/ownerPortalInventory.ts). Validate the projection against live balances and prepared-batter records. |
+| OW-12 — Stock-In Report | PARTIALLY COMPLETE | Stock-in movements are filtered separately by date and branch in [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts). Validate audit references and employee attribution against Development records. |
+| OW-13 — Sales Consumption Report | PARTIALLY COMPLETE | Sales-consumption movements have a separate report filter; completed-sale totals exclude incomplete or inventory-pending sales. Verify transaction-to-movement consistency on Development. |
+| OW-14 — Waste and Spillage Report | PARTIALLY COMPLETE | Waste/spillage movements remain separate from stock-in, consumption, and adjustments in [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts). Verify recorded reasons, quantities, units, and actors on Development. |
+| OW-15 — Physical Inventory Count and Discrepancy Report | PARTIALLY COMPLETE | Count status, submitter, inventory revision, and available correction history are projected separately in [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts). Hosted revision/audit completeness remains unverified. |
+| OW-16 — Authorized Adjustment Report | PARTIALLY COMPLETE | The report selects Owner-approved discrepancy adjustments rather than treating generic adjustment movements as authorized; implementation is in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Verify owner authorization and audit linkage through the approved Development backend. |
+| OW-17 — Product and Menu Configuration | PARTIALLY COMPLETE | Product create/edit, availability/descriptions, and standard variant price validation use [frontend/owner/ownerPortalProducts.ts](frontend/owner/ownerPortalProducts.ts) and the existing catalog service. Verify Staff menu visibility and historical-sales preservation against Development. |
+| OW-18 — Ingredient and Recipe Configuration | PARTIALLY COMPLETE | Active Web Settings now supports ingredient/category operations and product recipe configuration through [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) and existing services. Verify units, recipe persistence, and future-only consumption behavior on Development. |
+| OW-19 — Prepared Batter Configuration | PARTIALLY COMPLETE | The batter editor reuses the versioned recipe service, multiplies per-bottle ingredient quantities by five, and persists five bottles/125 pieces per batch. Verify prepared-batter preparation and subsequent sale consumption on Development. |
+| OW-20 — Stock Threshold and Expiration Settings | PARTIALLY COMPLETE | Minimum-stock and expiration settings use the existing inventory configuration service and supported validation. Verify settings' effect on live alerts and branch-specific balances. |
+| OW-21 — Inventory Reconciliation and Authorized Adjustments | BLOCKED BY DATABASE VERIFICATION | Owner review/decision/validation flows are present in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) and [frontend/services/takosync.ts](frontend/services/takosync.ts). Do not apply adjustments or claim authorization correctness until RPC, RLS, and immutable audit behavior pass in approved Development. |
+| OW-22 — Employee Account and Branch Assignment Management | BLOCKED BY DATABASE VERIFICATION | Staff account actions use the existing Owner UI and `staff-auth` backend path. Six-account allocation, individual credentials, activation, branch isolation, duplicate handling, and hosted authorization require Development verification. |
+| OW-23 — Business and Inventory Configuration | PARTIALLY COMPLETE | Product, ingredient/category, recipe, batter, stock-threshold, and expiration controls exist across portal Settings. Business-day and full branch configuration parity are not available in the active Web Settings; verify remaining supported configuration scope with acceptance owners. |
+| OW-24 — Inventory Audit History | PARTIALLY COMPLETE | Activity reads now include movement details, actor attribution, count submitters, and inventory revisions through [frontend/services/takosync.ts](frontend/services/takosync.ts), displayed in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Verify audit completeness/visibility and employee identity joins on Development. |
+| OW-25 — Owner Profile, Settings, and Logout | PARTIALLY COMPLETE | Owner session restoration and logout handling are in [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx). Profile/security-setting coverage and hosted session termination still require verification. |
+
+### Implemented in this batch
+
+- Added the usable six-report Inventory Reports view and separate movement-type, branch, and date filtering; count reports retain status and revision information.
+- Completed dashboard branch/period controls, branch sales summaries, recent activity, pending discrepancy visibility, and explicit load errors.
+- Tightened sales report calculations to exclude cancelled/incomplete and inventory-processing-pending sales; transaction details display available payment and timestamp fields.
+- Expanded activity loading with actor, count-submitter, and inventory-revision fields.
+- Added active Web ingredient/category and batter recipe configuration using existing service operations; batter production remains five bottles and 25 pieces per bottle.
+- Improved narrow-window layout, navigation accessibility labels, sales timestamps, and logout failure visibility.
+
+### Files changed for Owner Web work
+
+- [frontend/owner/OwnerPortalWeb.tsx](frontend/owner/OwnerPortalWeb.tsx) — dashboard, reports, audit/activity, configuration, layout, and logout handling.
+- [frontend/owner/ownerPortalReports.ts](frontend/owner/ownerPortalReports.ts) and [frontend/owner/ownerPortalReports.test.mjs](frontend/owner/ownerPortalReports.test.mjs) — report filters/projections and regression coverage.
+- [frontend/owner/ownerPortalInventory.ts](frontend/owner/ownerPortalInventory.ts) — ingredient identity in inventory report projections.
+- [frontend/services/takosync.ts](frontend/services/takosync.ts) — activity audit fields and attribution.
+- [frontend/owner/ownerPortalProducts.ts](frontend/owner/ownerPortalProducts.ts) and [frontend/owner/ownerPortalProducts.test.mjs](frontend/owner/ownerPortalProducts.test.mjs) — product variant validation and coverage from the preceding Owner Web batch.
+- [frontend/owner/ownerPortalInventory.test.mjs](frontend/owner/ownerPortalInventory.test.mjs) — inventory projection regressions from the preceding Owner Web batch.
+- [README.md](README.md) — current Owner Web reporting/configuration scope and verification limitation.
+- [AUDIT_REPORT.md](AUDIT_REPORT.md) — OW-01–OW-25 evidence and revised acceptance score.
+
+### Verification results
+
+- `npm.cmd run typecheck` — **PASSED** (`tsc --noEmit`).
+- `node --test frontend/owner/ownerPortalProducts.test.mjs frontend/owner/ownerPortalInventory.test.mjs frontend/owner/ownerPortalReports.test.mjs` — **PASSED: 11 tests**.
+- `npm.cmd test` — **PASSED**: TypeScript `tsc --noEmit`, **204/204 frontend tests**, and **27/27 Edge Function tests**.
+- `npx expo export --platform web` — **PASSED**: web bundle exported to ignored `dist/`; Metro bundled 448 modules.
+- `npm.cmd run` — confirmed that no lint script is defined; no lint command was run.
+- `git diff --check` — passed for Owner Web implementation files; Git reported only a line-ending normalization warning.
+- No browser/viewport test was performed. No Supabase query, remote SQL, migration, database test, or Production operation was performed.
+
+### Remaining issues and readiness
+
+- **Code/functional:** business-day configuration is absent from the active Web Settings; verify complete product/recipe/history contracts and branch comparisons against the story requirements.
+- **UI/UX:** responsive adjustments are source-level only; actual browser widths, table overflow, keyboard/focus behavior, printing, and screen-reader behavior have not been tested.
+- **Database:** all hosted Owner Auth, schema, RLS, Edge Function, audit attribution, and RPC behavior remain **BLOCKED BY DATABASE VERIFICATION**. The only confirmed linked target is Production and is prohibited for testing.
+- **Testing:** local unit/type/build checks do not replace authenticated integration tests, browser acceptance, or a full story-specific UI suite.
+- **Readiness:** not ready for UAT or Production. Internal authenticated testing is also blocked until an approved Development project is identified and its schema/migration provenance is reconciled.
+
+**Next highest-priority task:** obtain explicit approval and identity for an isolated Development Supabase project, then run Owner Auth/RLS/report/discrepancy integration tests there. Follow with browser acceptance at desktop and narrow viewport widths; do not use Production.
+
+## 70. Mobile authentication and first-login hardening — 2026-11-19
+
+### Findings and changes
+
+- Session restoration previously treated every active profile role other than `owner` as `Staff`. It now accepts only the known `owner` and `staff` roles; an unsupported role signs out and fails closed rather than opening a Staff workspace. The `getCurrentUser` service accepts the same injected client pattern used by other service methods so the behavior can be regression-tested without Supabase.
+- An earlier implementation routed Staff with `must_change_password` set to a mandatory password-change screen. Follow-up review found that this gate is not specified in the checked-in Charter or Staff story; section 73 records its removal. The flag is still loaded and cleared after a password change, but does not block the Staff workspace.
+- A password change is now available from Staff Profile & settings; after a successful update, the app reloads the profile and verifies the server-cleared flag. Logout failures remain visible. Authentication routing and unexpected sign-out behavior remain covered by focused tests.
+- A valid Staff session remains usable after closing time; no business-day session expiry was added. ST-01 remains PARTIALLY COMPLETE until hosted role, branch, deactivation, Auth-revocation, and session behavior is verified in approved Development. The 39-story denominator and 89.7% source estimate are unchanged.
+
+### Files changed
+
+- [frontend/services/takosync.ts](frontend/services/takosync.ts) — reject unknown profile roles during session restoration and allow test-client injection.
+- [frontend/App.tsx](frontend/App.tsx) — route sign-in/restoration through the required-password gate and verify the profile after password update.
+- [frontend/services/authSessionEvents.ts](frontend/services/authSessionEvents.ts) and [frontend/services/authSessionEvents.test.mjs](frontend/services/authSessionEvents.test.mjs) — centralize and test authenticated mobile destination selection.
+- [frontend/staff/StaffChangePasswordScreen.tsx](frontend/staff/StaffChangePasswordScreen.tsx) — surface logout failures and prevent repeated logout taps while busy.
+- [frontend/services/staffAuthentication.integration.test.mjs](frontend/services/staffAuthentication.integration.test.mjs) — add unknown-role, session-restoration, and closing-time regressions; correct the pending-password test description.
+
+### Validation and limits
+
+- Targeted `node --test frontend/services/authSessionEvents.test.mjs frontend/services/staffAuthentication.integration.test.mjs` — **PASSED: 20 tests**.
+- `npm.cmd test` — **PASSED**: TypeScript `tsc --noEmit`, **209/209 frontend tests**, and **27/27 Edge Function tests**.
+- `npx expo export --platform android` — **PASSED**: Android JavaScript bundle exported to ignored `dist/` (724 modules). This is a bundle/export check, not an APK install or emulator/device test.
+- `git diff --check` — **PASSED**; Git reported line-ending normalization warnings only.
+- No Supabase query, remote SQL, migration, database test, or Production operation was performed. No Android emulator/physical-device test was run.
+
+**Next highest-priority mobile task:** verify optional password changes, persistent sessions, role/deactivation checks, branch isolation, sale/batter/count RPC contracts, and retry/idempotency against an explicitly approved Development project, then complete Android device workflow tests. Do not use Production.
+
+## 71. Staff POS checkout correctness and recovery hardening — 2026-11-19
+
+### Implementation batches
+
+**Batch 1 — Definitive checkout failures and payload validation**
+
+- `frontend/services/ownerSalesStatus.ts`: added typed payload-validation and definitive-rejection errors; sale and add-on quantities must be positive integers, and duplicate variants/add-ons are rejected before persistence.
+- `frontend/services/takosync.ts`: known backend rejections (transaction-reference conflict, branch conflict, insufficient stock, and unavailable product) are classified as definitive rather than uncertain.
+- `frontend/staff/StaffWorkspace.tsx` and `frontend/staff/MenuWorkspace.tsx`: only uncertain outcomes and recorded sales with unfinished inventory processing are retained/offered for retry. A saved checkout that receives a definitive rejection is removed from local recovery; if removal fails, the error is surfaced and the saved request is not silently discarded.
+- `frontend/services/takosync.test.mjs` and `frontend/services/takosync.staff.integration.test.mjs`: cover quantity/duplicate validation, retry classification, and prove invalid checkout payloads do not call the sale RPC.
+
+**Batch 2 — Exact currency and catalog-price validation**
+
+- `frontend/staff/menuPreviewData.ts` and `frontend/staff/MenuWorkspace.tsx`: cart, add-on, and checkout totals now accumulate/round to cents so binary floating-point artifacts do not incorrectly reject exact cash amounts.
+- `frontend/services/productCatalog.ts` and `frontend/services/takosync.ts`: Staff catalog loading rejects null, blank, non-finite, or negative variant/add-on prices instead of converting malformed values to zero.
+- `frontend/staff/menuPreviewData.test.mjs` and `frontend/services/productCatalog.test.mjs`: cover exact decimal totals and malformed price rejection.
+
+### Validation and completion
+
+- Focused command `node --test frontend/services/productCatalog.test.mjs frontend/services/takosync.test.mjs frontend/services/takosync.staff.integration.test.mjs frontend/staff/menuPreviewData.test.mjs` — **PASSED: 47/47 tests**.
+- `npm.cmd run typecheck` — **PASSED**.
+- `npm.cmd test` — **PASSED**: TypeScript `tsc --noEmit`, **214/214 frontend tests across 41 files**, and **27/27 Edge Function tests**.
+- `npx.cmd expo export --platform android --output-dir C:\Users\Jea\.copilot\session-state\b1fc9790-0ee6-41f3-b6b8-062071bb0fdd\files\staff-pos-export` — **PASSED**: Android JavaScript bundle exported, **724 modules**. This does not produce/install an APK and is not emulator/device verification.
+- `git diff --check` — **PASSED**; Git reported existing LF/CRLF normalization warnings only.
+- No lint script or production-build script is defined in `package.json`; no lint command or native production build was available to run.
+- No Supabase CLI, remote query, SQL, migration, or database test was run. The Production target was not accessed. There is still no approved Development environment; atomic sale/inventory behavior, hosted prices/visibility, RLS, and actual receipts remain unverified. No Android emulator or device was used.
+
+### Story and progress assessment
+
+The story score uses the existing audit rubric: complete story = 1, partial story = 0.5. The separate runtime status is not included in this source score.
+
+- **Staff POS:** **50% source-story score** — ST-02 remains PARTIALLY COMPLETE; local UI, validation, catalog, and service tests do not verify hosted persistence or actual branch/inventory behavior.
+- **Staff Mobile sales workflow:** **87.5% source-story score** across ST-02, ST-05, ST-06, and ST-07: `(3 complete + 0.5 partial) / 4`. ST-02 remains PARTIALLY COMPLETE pending approved Development and device verification.
+- **Owner Mobile sales integration:** **85.7% source-story score** for OM-02 through OM-08: `(5 complete + 2 × 0.5 partial) / 7`. Hosted sale visibility and report joins remain unverified.
+- **Overall mobile source estimate remains 89.7%** under the 39-story rubric. This sprint does not upgrade ST-02 or imply production readiness.
+- Runtime verification remains blocked for these three categories; these source-story scores do not claim live database or device coverage.
+
+### Checklist and next task
+
+- [x] Reject fractional quantities and duplicate sale lines before the RPC.
+- [x] Do not queue definitive backend rejections as uncertain retries.
+- [x] Preserve same-reference recovery for uncertain outcomes and incomplete inventory processing.
+- [x] Avoid floating-point currency-total errors and reject malformed catalog prices.
+- [x] Run focused tests, full frontend/Edge tests, typecheck, Android JS export, and whitespace validation.
+- [ ] Verify `submit_sale`, atomic inventory processing, branch authorization/RLS, and hosted catalog against an explicitly approved Development project.
+- [ ] Verify receipt/history and Owner Mobile sales visibility using persisted test sales in Development.
+- [ ] Exercise checkout, offline/timeout recovery, and responsive/touch behavior on an Android device or emulator.
+
+**Next highest-priority task:** obtain approval and credentials for an isolated Development Supabase project, then test the current sale/inventory RPC contracts and RLS end to end before changing any backend schema. Continue to avoid Production operations.
+
+## 72. Mobile authentication UI accessibility and consistency — 2026-11-19
+
+### Review scope and evidence
+
+This mobile-only pass reviewed the Project Charter, Staff and Owner mobile user-story PDFs, story summary, Sticker Sheet (including its Android navigation, control, label, and feedback guidance), `README.md`, `backend/README.md`, the existing mobile story matrix, and the active app/auth/navigation source paths. The Owner Web Portal was excluded. The extracted reference text and the sticker palette were reviewed locally; no external service was used.
+
+### Problems found and fixed
+
+- **Owner login had no visible way back.** `OwnerLoginScreen` received the `onBack` callback used by the app router but did not render it. Added a labeled Back button with a 48px minimum height and pressed feedback, without changing authentication or routing permissions.
+- **Staff password change was not keyboard-safe or screen-reader complete.** The form had no keyboard-avoiding/scroll container, input accessibility labels or keyboard focus order; its logout control was also below the 48px target. Added a keyboard-aware scroll view, new-password autofill hints, required input labels and next/done focus behavior, explicit button roles/states, visible pressed/disabled feedback, and 48px primary/logout controls. The screen now uses the shared sticker-sheet canvas/card/divider palette and more readable Poppins text sizes. A later requirements audit made this an optional account action; see section 73.
+- **README documentation was stale.** It said the Charter was absent and that the package had no test script. Updated it to point to the checked-in references and document the actual typecheck, frontend, Edge Function, full-test, and Android export commands. `backend/README.md` was reviewed and required no change for this UI-only batch.
+
+### Files changed
+
+- [frontend/owner/OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx) — restore the supplied Back-to-welcome action accessibly.
+- [frontend/staff/StaffChangePasswordScreen.tsx](frontend/staff/StaffChangePasswordScreen.tsx) — make the password form scrollable with the keyboard, labeled, focusable, and consistent with 48px controls.
+- [README.md](README.md) — correct the Charter/test-script guidance and document current local validation commands.
+- [AUDIT_REPORT.md](AUDIT_REPORT.md) — record this review, fixes, validation, and remaining limitations.
+
+### Validation and story status
+
+- `npm.cmd run typecheck` — **PASSED**.
+- `npm.cmd test` — **PASSED**: **214/214 frontend tests across 41 files** and **27/27 Edge Function tests**; its typecheck stage passed.
+- `npm.cmd run test:edge` — **PASSED: 27/27 tests**.
+- `npx.cmd expo export --platform android` — **PASSED**: Android JavaScript bundle, **724 modules**. This is not a native APK or device test.
+- `git diff --check` — **PASSED**; Git emitted only line-ending normalization warnings.
+- No emulator or physical Android device was available, so keyboard resizing, talkback behavior, and real-device touch targets remain NOT VERIFIED. No Supabase access, database test, or Production operation occurred.
+- A lint script and native production-build script are not present in `package.json`.
+- **ST-01 and OM-01 remain PARTIALLY COMPLETE.** This UI/accessibility work does not satisfy the remaining Auth/session/device criteria. The 39-story denominator and **89.7%** overall mobile source score are unchanged.
+
+### Checklist and next task
+
+- [x] Review the mobile requirements and sticker-sheet control/accessibility guidance.
+- [x] Restore Owner login back navigation and improve mandatory Staff password-change usability.
+- [x] Update the stale root README instructions.
+- [x] Run typecheck, complete tests, explicit Edge tests, Android JS export, and whitespace validation.
+- [ ] Verify keyboard, scrolling, focus, TalkBack labels, and 48px controls on Android devices/emulators.
+- [ ] Complete the broader screen-by-screen visual/accessibility pass at actual mobile sizes; smaller secondary labels and compact filters remain unverified.
+- [ ] Verify authentication, role/branch isolation, and password-change behavior against an approved Development Supabase project.
+
+**Next highest-priority task:** run a focused Android device accessibility pass on login/password-change and primary Staff/Owner navigation, then fix only issues reproduced at actual device sizes. Keep database verification blocked until an isolated Development project is approved.
+
+## 73. Staff initial-password requirement and optional password changes — 2026-11-19
+
+### Requirements and findings
+
+- The Staff story (`docs/User_Story_v5.11.11.2026 - STAFF (MOBILE APP).pdf`, ST-01, page 1) names the Employee ID as the initial password. Its postcondition says the authenticated Staff member reaches the POS. It does not require changing the initial password before entering the workspace.
+- The Project Charter (`docs/PROJECT_CHARTER_v5.09.11.2026.docx.pdf`, section 2.1, page 15) requires validating the employee-name/Employee-ID credentials, restoring a secure session, enforcing assigned-branch access, and redirecting Staff to POS. It does not require a first-login password change. The story summary (page 3) likewise describes Employee ID as the initial password. No minimum password length was found in these references.
+- The prior forced first-login gate was therefore not supported by the checked-in acceptance criteria and prevented otherwise authenticated Staff from reaching POS. The app already had a password-change form and Auth update endpoint, but the form was only reachable through that gate, and the endpoint rejected changes when no first-login change was pending.
+- Local migration files show conflicting versions of the branch-access rule: `202611160002_staff_initial_password_policy.sql` and `202611180001_remove_business_day_session_expiration.sql` make pending password changes a branch-access condition, while `202611180004_allow_staff_initial_password_access.sql` later replaces that function to allow active Staff branch access without a forced change. No migration was edited or applied; the effective hosted policy is unknown.
+
+### Implementation
+
+- Staff sign-in and session restoration now route authenticated Staff to the workspace regardless of the `must_change_password` flag; Owner routing and fail-closed role checks are unchanged.
+- Added an optional Change password action to Staff Profile & settings, with a way to return to the workspace. The password screen keeps the existing 8-character minimum, Employee-ID inequality check, keyboard handling, accessible controls, and logout action.
+- The existing `staff-auth` action now permits an authenticated active Staff profile to change its password whether or not a first-login change is pending. It continues to reject inactive or non-Staff accounts, updates the password through Supabase Admin Auth, and clears the pending flag. No branch authorization or session-expiration rules were changed.
+
+### Files changed
+
+- [frontend/App.tsx](frontend/App.tsx) — remove the forced gate, expose the optional screen, and verify password-update state.
+- [frontend/services/authSessionEvents.ts](frontend/services/authSessionEvents.ts) and [frontend/services/authSessionEvents.test.mjs](frontend/services/authSessionEvents.test.mjs) — simplify authenticated destinations and test Staff/Owner routing.
+- [frontend/staff/StaffWorkspace.tsx](frontend/staff/StaffWorkspace.tsx) — expose the password action in Staff Profile & settings.
+- [frontend/staff/StaffChangePasswordScreen.tsx](frontend/staff/StaffChangePasswordScreen.tsx) — clarify optional use and add a return-to-workspace action.
+- [backend/supabase/functions/staff-auth/handler.ts](backend/supabase/functions/staff-auth/handler.ts) — allow active Staff to update passwords when the first-login flag is false, preserving role and active-account checks.
+- [backend/supabase/functions/staff-auth/handler.test.mjs](backend/supabase/functions/staff-auth/handler.test.mjs) — cover optional changes and reject inactive Staff and Owner callers.
+- [AUDIT_REPORT.md](AUDIT_REPORT.md) — record the source-of-truth correction, local migration conflict, and validation status.
+
+### Validation and limitations
+
+- `npm.cmd run typecheck` — **PASSED**.
+- `node --test frontend/services/authSessionEvents.test.mjs frontend/services/staffAuthentication.integration.test.mjs` — **PASSED: 20/20 tests**.
+- `npm.cmd test` — **PASSED**: **214/214 frontend tests across 41 files**, **30/30 Edge Function tests**, and its TypeScript typecheck.
+- `npm.cmd run test:edge` — **PASSED: 30/30 tests**.
+- `npx.cmd expo export --platform android` — **PASSED**: Android JavaScript bundle exported, **724 modules**. This is not a native APK or device test.
+- `git diff --check` — **PASSED**; Git reports line-ending normalization warnings only.
+- No lint script is defined in `package.json`.
+- No Production queries, SQL, migrations, or database changes were performed. The local migration files are source evidence only, not proof of the hosted schema or applied migration order. No Android emulator or physical device was used.
+
+### Story status and next work
+
+- ST-01 remains PARTIALLY COMPLETE; hosted session restoration, role/deactivation enforcement, branch isolation, and the effective database policy have not been verified. No acceptance criterion is being reclassified.
+- The 39-story denominator and 89.7% source estimate remain unchanged. No Owner Mobile sales integration or other story classification changed.
+- [ ] Verify optional password changes and Staff/Owner access against an explicitly approved Development Supabase project.
+- [ ] Resolve the migration-order and branch-policy compatibility there before any deployment.
+- [ ] Verify password form keyboard/back behavior on an Android emulator or physical device.
+
+**Next highest-priority task:** obtain approval for an isolated Development Supabase project and verify the effective Staff branch-access/RLS policy and password update flow there. Do not use Production.
+
+## 74. ST-01 / OM-01 authentication contract and branch authorization sprint — 2026-11-19
+
+### Requirements and implementation
+
+- ST-01 uses the approved Staff username/Employee-ID credential flow without requiring a first-login password change. The local branch-access candidate requires an active Auth session, an active profile and branch, and the Staff member's assigned branch.
+- OM-01 requires Owner Mobile to accept an authorized Owner email and password. Owner Mobile now uses a separate `owner-email-login` Edge Function action, reports unknown email and incorrect password on their respective fields, blocks duplicate submission, and shows a blocking loading overlay.
+- The existing `owner-login` username action and `signInOwner` service remain intact for the separate Owner Web Portal. The mobile app uses `signInOwnerWithEmail`; Edge login still validates active Owner role and matches the resulting Auth UID to the profile.
+- An additive SQL candidate wraps the existing integrity-aware sale inventory helper with explicit active-session and sale-branch checks, preserves the existing inventory processor, and revokes direct client execution of internal helpers. It does not add a second inventory deduction.
+- pgTAP coverage now includes branch/session helper privileges and denial of cross-branch sale processing.
+
+### Files changed for this slice
+
+- `frontend/owner/OwnerLoginScreen.tsx` — Owner Mobile Email field, field-specific credential errors, and processing overlay.
+- `frontend/services/ownerAuthentication.ts` — typed Owner login error codes and user-facing messages.
+- `frontend/services/takosync.ts` — separate `signInOwnerWithEmail` service; existing username service retained.
+- `frontend/App.tsx` — routes the mobile Owner login through the email service.
+- `backend/supabase/functions/staff-auth/handler.ts` — adds the normalized email action while preserving username login.
+- `frontend/services/staffAuthentication.integration.test.mjs` and `backend/supabase/functions/staff-auth/handler.test.mjs` — email normalization, session installation, unknown email, invalid password, role rejection, and compatibility tests.
+- `backend/supabase/migrations/202611190001_enforce_authenticated_branch_access.sql` — candidate session/branch/RPC authorization changes; not applied.
+- `backend/supabase/tests/202611180001_persistent_business_sessions.test.sql` and `backend/supabase/tests/202611130006_three_branch_rls_and_session_integration.test.sql` — pgTAP regression assertions.
+- `README.md`, `backend/README.md`, and `backend/types/TAKOSYNC_MOBILE_FINAL_REQUIREMENTS.md` — clarify the mobile login contract, source-only migration candidate, evidence limits, and unchanged story baseline.
+
+### Validation
+
+- `node --test frontend/services/staffAuthentication.integration.test.mjs` — **passed: 18/18**.
+- `node --test backend/supabase/functions/staff-auth/handler.test.mjs` — **passed: 32/32**.
+- `npm.cmd run typecheck` — **passed**.
+- `npm.cmd test` — **passed: 217/217 frontend tests and 32/32 Edge Function tests**, with typecheck included.
+- `npm.cmd run test:edge` — **passed: 32/32**.
+- `npx.cmd expo export --platform android` — **passed; Android JavaScript bundle exported (725 modules)**. This is not a native APK or device test.
+- `git diff --check` — **passed**; Git emitted line-ending normalization warnings only.
+- No lint script is defined in `package.json`.
+- Static pgTAP plan-count check — **passed: 23/23 and 48/48 assertions**. PostgreSQL/pgTAP was not run.
+- No database was contacted; no SQL, migration, seed, reset, hosted Edge Function, emulator, or physical-device test was performed.
+
+### Story assessment and blockers
+
+ST-01 and OM-01 are advanced locally but remain **PARTIALLY COMPLETE**. The baseline remains **31 complete / 8 partial out of 39 stories (89.7%)**; no story classification changed. Remaining evidence includes the duplicate local migration version `202611180001`, an administrator-approved Development database, migration-sequence reconciliation, deployed Edge Function verification, live RLS/session and sale-processing tests, and Android device behavior. Production must not be used.
+
+**Next highest-priority task:** obtain an explicitly approved isolated Development Supabase project and reconcile the duplicate migration version and applied history. Then run the branch/session/sale pgTAP tests there before making any deployment decision.

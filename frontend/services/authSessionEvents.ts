@@ -7,6 +7,15 @@ export type AuthSessionEvent =
   | 'USER_UPDATED'
   | 'MFA_CHALLENGE_VERIFIED';
 
+export type AuthenticatedMobileDestination = 'dashboard' | 'staffWorkspace';
+
+export function getAuthenticatedMobileDestination(
+  role: 'Owner' | 'Staff',
+): AuthenticatedMobileDestination {
+  if (role === 'Owner') return 'dashboard';
+  return 'staffWorkspace';
+}
+
 /**
  * An explicit logout already drives its own navigation. Other SIGNED_OUT
  * events must clear the mobile session immediately so revoked or expired Auth

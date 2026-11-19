@@ -1,80 +1,1329 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { createIngredient, createProduct, decideOwnerInventoryCountCorrection, getCurrentUser, loadIngredientRecipeConfiguration, loadOwnerActivityData, loadOwnerDiscrepancyReviews, loadOwnerInventory, loadOwnerSalesData, loadProductManagement, loadStaffAccounts, loadStockExpirationSettings, saveProductRecipe, saveStaffAccount, signInOwner, signOut, updateIngredient, updateMinimumStock, updateNearExpirationDays, updateOwnerProfile, updateProduct, type AppUser } from '../services/takosync';
+import {
+  createIngredient,
+  createIngredientCategory,
+  createProduct,
+  decideOwnerInventoryCountCorrection,
+  getCurrentUser,
+  loadBranches,
+  isOwnerDiscrepancyActionable,
+  isOwnerDiscrepancyValidatable,
+  loadIngredientRecipeConfiguration,
+  loadOwnerActivityData,
+  loadOwnerDiscrepancyReviews,
+  loadOwnerInventory,
+  loadOwnerSalesData,
+  loadProductManagement,
+  loadSharedRecipes,
+  loadStaffAccounts,
+  loadStockExpirationSettings,
+  saveProductRecipe,
+  saveSharedRecipe,
+  saveStaffAccount,
+  signInOwner,
+  signOut,
+  updateIngredient,
+  updateMinimumStock,
+  updateNearExpirationDays,
+  updateOwnerProfile,
+  updateProduct,
+  validateOwnerInventoryCountCorrection,
+  validateOwnerSubmittedInventoryCount,
+  type AppUser,
+  type OwnerDiscrepancyReview,
+  type ProductManagementItem,
+  type SharedRecipeRecord,
+} from '../services/takosync';
+import { getConfiguredRecipeQuantity, getPerBottleRecipeQuantity } from '../services/batterRecipeQuantities';
+import { standardProductVariants } from '../services/productCatalog';
+import { getManilaReportingRange, manilaDateKey, type ReportingPeriod } from '../services/businessDaySettings';
+import {
+  filterOwnerPortalInventory,
+  summarizeOwnerPortalBranches,
+  type OwnerPortalBranch,
+} from './ownerPortalBranches';
+import { buildOwnerPortalInventoryRows, type OwnerPortalInventoryRow } from './ownerPortalInventory';
+import { buildOwnerPortalVariantPrices } from './ownerPortalProducts';
+import {
+  buildOwnerPortalCountReportRows,
+  filterOwnerPortalConfirmedSales,
+  filterOwnerPortalReportMovements,
+  summarizeOwnerPortalSalesByBranch,
+  summarizeOwnerPortalSalesByProduct,
+  totalOwnerPortalSales,
+  type OwnerPortalMovementReport,
+} from './ownerPortalReports';
 import { reviewStyles } from './ownerPortalReviewStyles';
 
-type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
+type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Reports' | 'Inventory Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
 type Branch = string;
-type InventoryRow = { name: string; category: string; qty: number; unit: string; branch: string; status: string; expiry: string };
-const branchLabels = ["Gelo's Takoyaki · Branch 1", "Gelo's Takoyaki · Branch 2", "Gelo's Takoyaki · Branch 3"];
-const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
+type InventoryRow = OwnerPortalInventoryRow;
+const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Reports', '▤'], ['Inventory Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function OwnerPortalWeb() {
-  const { width } = useWindowDimensions(); const compact = width < 1050;
+  const { width } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
   const [page, setPage] = useState<Page>('Dashboard'); const [branch, setBranch] = useState<Branch>('All Branches');
   const [dark, setDark] = useState(false); const [username, setUsername] = useState(''); const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false); const [user, setUser] = useState<AppUser | null>(null);
-  const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [logoutBusy, setLogoutBusy] = useState(false); const [error, setError] = useState('');
   const [dataError, setDataError] = useState(''); const [query, setQuery] = useState(''); const [toast, setToast] = useState('');
   const [inventoryData, setInventoryData] = useState<Awaited<ReturnType<typeof loadOwnerInventory>> | null>(null);
   const [salesData, setSalesData] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(null);
   const [activityData, setActivityData] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
   const [reviews, setReviews] = useState<Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>>>([]);
   const [staff, setStaff] = useState<Awaited<ReturnType<typeof loadStaffAccounts>>>([]);
-  const [configuration, setConfiguration] = useState<any>(null); const [products, setProducts] = useState<any[]>([]); const [stockSettings, setStockSettings] = useState<any>(null);
-  const notify = (message: string) => { setToast(message); setTimeout(() => setToast(''), 2400); };
-  useEffect(() => { getCurrentUser().then((current) => { if (current?.role === 'Owner') setUser(current); else if (current) { setError('This account does not have Owner access.'); void signOut(); } }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to restore the Supabase session.')).finally(() => setAuthBusy(false)); }, []);
-  useEffect(() => { if (!user) return; let active = true; setBusy(true); setDataError(''); const end = new Date(); const start = new Date(end.getFullYear(), end.getMonth(), 1); Promise.allSettled([loadOwnerInventory(), loadOwnerSalesData({ start, end, branchId: null }), loadOwnerActivityData({ start, end, branchId: null }), loadOwnerDiscrepancyReviews(null), loadStaffAccounts()]).then((results) => { if (!active) return; const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected'); if (failures.length) setDataError(failures.map((failure) => failure.reason instanceof Error ? failure.reason.message : 'A Supabase data request failed.').join(' ')); const [inventory, sales, activity, discrepancy, accounts] = results; if (inventory.status === 'fulfilled') setInventoryData(inventory.value); if (sales.status === 'fulfilled') setSalesData(sales.value); if (activity.status === 'fulfilled') setActivityData(activity.value); if (discrepancy.status === 'fulfilled') setReviews(discrepancy.value); if (accounts.status === 'fulfilled') setStaff(accounts.value); }).finally(() => { if (active) setBusy(false); }); return () => { active = false; }; }, [user]);
-  useEffect(() => { if (!user) return; Promise.allSettled([loadProductManagement(), loadIngredientRecipeConfiguration(), loadStockExpirationSettings()]).then(([productResult, configurationResult, stockResult]) => { if (productResult.status === 'fulfilled') setProducts(productResult.value); if (configurationResult.status === 'fulfilled') setConfiguration(configurationResult.value); if (stockResult.status === 'fulfilled') setStockSettings(stockResult.value); }); }, [user]);
-  const rows = useMemo<InventoryRow[]>(() => { if (!inventoryData) return []; const ingredients = new Map(inventoryData.ingredients.map((item) => [item.id, item])); const categories = new Map(inventoryData.categories.map((item) => [item.id, item.name])); const names = new Map(inventoryData.branches.map((item) => [item.id, item.name])); return inventoryData.inventory.flatMap((item) => { const ingredient = ingredients.get(item.ingredient_id); const branchName = names.get(item.branch_id); if (!ingredient || !branchName) return []; const batch = inventoryData.batches.find((candidate) => candidate.branch_id === item.branch_id && candidate.ingredient_id === item.ingredient_id); const qty = Number(item.quantity); const minimum = Number(item.minimum_stock); const days = batch?.expiration_date ? Math.ceil((new Date(`${batch.expiration_date}T00:00:00`).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000) : null; const status = qty <= 0 ? 'Out of Stock' : qty <= minimum ? 'Low Stock' : days !== null && days <= inventoryData.nearExpirationDays ? 'Near Expiry' : 'Normal'; return [{ name: ingredient.name, category: categories.get(ingredient.category_id) ?? 'Other', qty, unit: ingredient.unit, branch: branchName, status, expiry: batch?.expiration_date ?? '—' }]; }); }, [inventoryData]);
-  const visibleRows = rows.filter((row) => (branch === 'All Branches' || row.branch === branch) && row.name.toLowerCase().includes(query.toLowerCase()));
+  const [configuration, setConfiguration] = useState<any>(null); const [products, setProducts] = useState<ProductManagementItem[]>([]); const [stockSettings, setStockSettings] = useState<any>(null);
+  const notify = (message: string, isError = false) => {
+    if (isError) {
+      setDataError(message);
+      return;
+    }
+    setToast(message);
+    setTimeout(() => setToast(''), 2400);
+  };
+  useEffect(() => { getCurrentUser().then(async (current) => { if (current?.role === 'Owner') setUser(current); else if (current) { setError('This account does not have Owner access.'); await signOut(); } }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to restore the Supabase session.')).finally(() => setAuthBusy(false)); }, []);
+  useEffect(() => {
+    if (!user) {
+      setInventoryData(null);
+      setSalesData(null);
+      setActivityData(null);
+      setReviews([]);
+      setStaff([]);
+      setBusy(false);
+      return;
+    }
+
+    let active = true;
+    setBusy(true);
+    setDataError('');
+    const reportingRange = getManilaReportingRange('This Month');
+    if (!reportingRange) {
+      setDataError('Unable to determine the current Manila reporting month.');
+      setBusy(false);
+      return () => { active = false; };
+    }
+    Promise.allSettled([
+      loadOwnerInventory(),
+      loadOwnerSalesData({
+        start: reportingRange.start,
+        end: reportingRange.end,
+        branchId: null,
+      }),
+      loadOwnerActivityData({
+        start: reportingRange.start,
+        end: reportingRange.end,
+        branchId: null,
+      }),
+      loadOwnerDiscrepancyReviews(null),
+      loadStaffAccounts(),
+    ]).then((results) => {
+      if (!active) return;
+      const failures = results.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (failures.length) {
+        setDataError(failures
+          .map((failure) => failure.reason instanceof Error
+            ? failure.reason.message
+            : 'A Supabase data request failed.')
+          .join(' '));
+      }
+      const [inventory, sales, activity, discrepancy, accounts] = results;
+      if (inventory.status === 'fulfilled') setInventoryData(inventory.value);
+      if (sales.status === 'fulfilled') setSalesData(sales.value);
+      if (activity.status === 'fulfilled') setActivityData(activity.value);
+      if (discrepancy.status === 'fulfilled') setReviews(discrepancy.value);
+      if (accounts.status === 'fulfilled') setStaff(accounts.value);
+    }).finally(() => {
+      if (active) setBusy(false);
+    });
+    return () => { active = false; };
+  }, [user]);
+  useEffect(() => {
+    if (!user) {
+      setProducts([]);
+      setConfiguration(null);
+      setStockSettings(null);
+      return;
+    }
+    let active = true;
+    Promise.allSettled([
+      loadProductManagement(),
+      loadIngredientRecipeConfiguration(),
+      loadStockExpirationSettings(),
+    ]).then(([productResult, configurationResult, stockResult]) => {
+      if (!active) return;
+      const failures = [productResult, configurationResult, stockResult]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failures.length) {
+        setDataError((current) => [
+          current,
+          ...failures.map((failure) => failure.reason instanceof Error
+            ? failure.reason.message
+            : 'An Owner configuration request failed.'),
+        ].filter(Boolean).join(' '));
+      }
+      if (productResult.status === 'fulfilled') setProducts(productResult.value);
+      if (configurationResult.status === 'fulfilled') setConfiguration(configurationResult.value);
+      if (stockResult.status === 'fulfilled') setStockSettings(stockResult.value);
+    });
+    return () => { active = false; };
+  }, [user]);
+  const rows = useMemo(() => buildOwnerPortalInventoryRows(inventoryData), [inventoryData]);
+  const visibleRows = filterOwnerPortalInventory(rows, branch).filter((row) =>
+    row.name.toLowerCase().includes(query.toLowerCase()),
+  );
   const login = async () => { if (!username.trim() || !password) { setError('Enter your username and password.'); return; } setBusy(true); setError(''); try { setUser(await signInOwner(username, password)); } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : 'Unable to sign in with Supabase.'); } finally { setBusy(false); } };
+  const logout = async () => {
+    setLogoutBusy(true);
+    setDataError('');
+    try {
+      await signOut();
+      setUser(null);
+    } catch (reason: unknown) {
+      notify(reason instanceof Error ? reason.message : 'Unable to end the Supabase session.', true);
+    } finally {
+      setLogoutBusy(false);
+    }
+  };
   if (authBusy) return <View style={styles.center}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Restoring secure Supabase session…</Text></View>;
-  if (!user) return <Login username={username} password={password} error={error} busy={busy} showPassword={showPassword} setUsername={setUsername} setPassword={setPassword} setShowPassword={setShowPassword} login={login} />;
-  const refreshInventory = async (message: string) => { notify(message); try { setInventoryData(await loadOwnerInventory()); } catch (reason: unknown) { setDataError(reason instanceof Error ? reason.message : 'Inventory refresh failed.'); } };
-  const refreshStaff = async (message: string) => { notify(message); try { setStaff(await loadStaffAccounts()); } catch (reason: unknown) { setDataError(reason instanceof Error ? reason.message : 'Staff refresh failed.'); } };
-  return <View style={[styles.app, dark && styles.dark]}><View style={[styles.sidebar, compact && styles.sidebarSmall]}><View style={styles.brand}><Text style={styles.logo}>T</Text>{!compact && <View><Text style={styles.brandName}>TakoSync</Text><Text style={styles.brandSub}>OWNER PORTAL</Text></View>}</View><Text style={styles.menu}>WORKSPACE</Text><ScrollView>{nav.map(([label, icon]) => <Pressable key={label} onPress={() => setPage(label)} style={[styles.nav, page === label && styles.navActive]}><Text style={styles.navIcon}>{icon}</Text>{!compact && <Text style={styles.navText}>{label}</Text>}{label === 'Daily Checks' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}</Pressable>)}</ScrollView><View style={styles.profile}><Text style={styles.avatar}>GD</Text>{!compact && <View><Text style={styles.profileName}>{user.displayName}</Text><Text style={styles.profileRole}>Owner · {user.email}</Text></View>}</View><Pressable onPress={() => { void signOut(); setUser(null); }}><Text style={styles.logout}>↪ {!compact && 'Log out'}</Text></Pressable></View><View style={styles.main}><View style={styles.header}><View><Text style={styles.eyebrow}>OWNER MANAGEMENT / {page.toUpperCase()}</Text><Text style={styles.title}>{page}</Text></View><View style={styles.headerActions}><Text style={styles.livePill}>LIVE SUPABASE</Text><Pressable onPress={() => setDark(!dark)} style={styles.iconButton}><Text>{dark ? '☀' : '☾'}</Text></Pressable></View></View><ScrollView contentContainerStyle={styles.content}>{dataError && <View style={styles.errorBanner}><Text style={styles.errorText}>{dataError}</Text></View>}{busy && <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading live Owner data…</Text></View>}{page === 'Dashboard' && <Dashboard rows={rows} sales={salesData} branch={branch} setBranch={setBranch} notify={notify} />}{page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}{page === 'Inventory' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} query={query} setQuery={setQuery} />}{page === 'Stock Movements' && <Movements activity={activityData?.transactions ?? []} />}{page === 'Daily Checks' && <Checks reviews={reviews} notify={notify} />}{page === 'Reports' && <Reports sales={salesData} />}{page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}{page === 'Settings' && <><SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} /><ProfileEditor user={user} onSaved={notify} /></>}{page === 'Audit History' && <Audit activity={activityData} />}</ScrollView>{toast && <View style={styles.toast}><Text style={styles.toastText}>✓ {toast}</Text></View>}</View></View>;
+  if (!user) return <Login username={username} password={password} error={error} busy={busy} showPassword={showPassword} setUsername={setUsername} setPassword={setPassword} setShowPassword={setShowPassword} login={login} narrow={narrow} />;
+  const refreshInventory = async (message: string, isError = false) => {
+    if (isError) {
+      notify(message, true);
+      return;
+    }
+    notify(message);
+    try {
+      const [inventory, managedProducts, nextConfiguration, nextStockSettings] = await Promise.all([
+        loadOwnerInventory(),
+        loadProductManagement(),
+        loadIngredientRecipeConfiguration(),
+        loadStockExpirationSettings(),
+      ]);
+      setInventoryData(inventory);
+      setProducts(managedProducts);
+      setConfiguration(nextConfiguration);
+      setStockSettings(nextStockSettings);
+      setDataError('');
+    } catch (reason: unknown) {
+      notify(reason instanceof Error ? reason.message : 'Owner inventory and product refresh failed.', true);
+    }
+  };
+  const refreshStaff = async (message: string, isError = false) => {
+    if (isError) {
+      notify(message, true);
+      return;
+    }
+    notify(message);
+    try {
+      setStaff(await loadStaffAccounts());
+    } catch (reason: unknown) {
+      notify(reason instanceof Error ? reason.message : 'Staff refresh failed.', true);
+    }
+  };
+  const refreshReviews = async () => {
+    setReviews(await loadOwnerDiscrepancyReviews(null));
+  };
+  return (
+    <View style={[styles.app, dark && styles.dark, narrow && { flexDirection: 'column' }]}>
+      <View style={[styles.sidebar, compact && styles.sidebarSmall, narrow && { width: '100%', height: 58, padding: 8, paddingTop: 8, flexDirection: 'row', alignItems: 'center' }]}>
+        <View style={[styles.brand, narrow && { marginBottom: 0, marginRight: 6 }]}>
+          <Text style={styles.logo}>T</Text>
+          {!compact && <View><Text style={styles.brandName}>TakoSync</Text><Text style={styles.brandSub}>OWNER PORTAL</Text></View>}
+        </View>
+        {!narrow && <Text style={styles.menu}>WORKSPACE</Text>}
+        <ScrollView horizontal={narrow} contentContainerStyle={narrow ? { alignItems: 'center' } : undefined} style={narrow ? { flex: 1 } : undefined}>
+          {nav.map(([label, icon]) => (
+            <Pressable key={label} accessibilityRole="button" accessibilityLabel={label} onPress={() => setPage(label)} style={[styles.nav, page === label && styles.navActive, narrow && { marginBottom: 0, paddingHorizontal: 8 }]}>
+              <Text style={styles.navIcon}>{icon}</Text>
+              {!compact && <Text style={styles.navText}>{label}</Text>}
+              {label === 'Daily Checks' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}
+            </Pressable>
+          ))}
+        </ScrollView>
+        {!narrow && <View style={styles.profile}>
+          <Text style={styles.avatar}>{user.displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</Text>
+          {!compact && <View><Text style={styles.profileName}>{user.displayName}</Text><Text style={styles.profileRole}>Owner · {user.email}</Text></View>}
+        </View>}
+        <Pressable disabled={logoutBusy} onPress={() => void logout()}>
+          <Text style={styles.logout}>{logoutBusy ? 'Signing out…' : `↪ ${compact ? '' : 'Log out'}`}</Text>
+        </Pressable>
+      </View>
+      <View style={styles.main}>
+        <View style={[styles.header, narrow && { paddingHorizontal: 16, paddingTop: 16, minHeight: 76 }]}>
+          <View><Text style={styles.eyebrow}>OWNER MANAGEMENT / {page.toUpperCase()}</Text><Text style={styles.title}>{page}</Text></View>
+          <View style={styles.headerActions}>
+            <Text style={styles.livePill}>LIVE SUPABASE</Text>
+            <Pressable onPress={() => setDark(!dark)} style={styles.iconButton}><Text>{dark ? '☀' : '☾'}</Text></Pressable>
+          </View>
+        </View>
+        <ScrollView contentContainerStyle={[styles.content, narrow && { padding: 16, paddingBottom: 40 }]}>
+          {dataError && <View style={styles.errorBanner}><Text style={styles.errorText}>{dataError}</Text></View>}
+          {busy && <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading live Owner data…</Text></View>}
+          {page === 'Dashboard' && (
+            <Dashboard
+              rows={rows}
+              inventoryAvailable={inventoryData !== null}
+              branches={inventoryData?.branches ?? []}
+              branch={branch}
+              setBranch={setBranch}
+            />
+          )}
+          {page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}
+          {page === 'Inventory' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
+          {page === 'Stock Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+          {page === 'Daily Checks' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
+          {page === 'Reports' && <Reports sales={salesData} />}
+          {page === 'Inventory Reports' && (
+            <InventoryReports
+              branch={branch}
+              setBranch={setBranch}
+              branches={inventoryData?.branches ?? []}
+              inventoryRows={rows}
+              inventoryAvailable={inventoryData !== null}
+            />
+          )}
+          {page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
+          {page === 'Settings' && <><SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} /><ProfileEditor user={user} onSaved={notify} /></>}
+          {page === 'Audit History' && <Audit activity={activityData} reviews={reviews} sales={salesData} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+        </ScrollView>
+        {toast && <View style={styles.toast}><Text style={styles.toastText}>✓ {toast}</Text></View>}
+      </View>
+    </View>
+  );
 }
 
-function Login({ username, password, error, busy, showPassword, setUsername, setPassword, setShowPassword, login }: any) { return <View style={styles.login}><View style={styles.loginPanel}><View style={styles.loginBrand}><Text style={styles.logo}>T</Text><Text style={styles.brandName}>TakoSync</Text></View><Text style={styles.kicker}>OWNER WEB MANAGEMENT PORTAL</Text><Text style={styles.loginTitle}>Welcome back, Gelo.</Text><Text style={styles.loginSub}>Sign in with your Supabase Owner account.</Text><View style={styles.form}><Text style={styles.label}>Username</Text><TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} autoComplete="username" style={styles.input} placeholder="Enter your username" /><Text style={styles.label}>Password</Text><View style={styles.password}><TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} style={styles.passwordInput} placeholder="Enter your password" /><Pressable onPress={() => setShowPassword(!showPassword)}><Text style={styles.pinkText}>{showPassword ? 'Hide' : 'Show'}</Text></Pressable></View>{error && <Text style={styles.errorText}>{error}</Text>}<Pressable onPress={login} disabled={busy} style={styles.loginButton}>{busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.loginButtonText}>Sign in to portal →</Text>}</Pressable></View><Text style={styles.loginFooter}>Authentication and access are enforced by Supabase.</Text></View><View style={styles.loginArt}><Text style={styles.artEmoji}>🐙</Text><Text style={styles.artTitle}>Make every count count.</Text><Text style={styles.artCopy}>One secure view across all three Gelo's Takoyaki branches.</Text></View></View>; }
-function Toolbar({ branch, setBranch }: any) { return <View style={styles.toolbar}><Text style={styles.section}>Live overview</Text><Select value={branch} options={['All Branches', ...branchLabels]} onChange={setBranch} /></View>; }
-function Dashboard({ rows, sales, branch, setBranch, notify }: any) { const total = sales?.sales.reduce((sum: number, item: any) => sum + Number(item.total_amount), 0) ?? 0; const low = rows.filter((row: InventoryRow) => row.status === 'Low Stock').length; const out = rows.filter((row: InventoryRow) => row.status === 'Out of Stock').length; return <><Toolbar branch={branch} setBranch={setBranch} /><View style={styles.grid}>{[['Total Sales', peso(total), 'From Supabase sales'], ['Inventory Items', String(rows.length), 'Live branch inventory'], ['Low-Stock Alerts', String(low), 'Needs attention'], ['Out of Stock', String(out), 'Live inventory status']].map(([label, value, note]) => <View style={styles.metric} key={label}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricValue}>{value}</Text><Text style={styles.muted}>{note}</Text></View>)}</View><View style={styles.two}><Panel title="Branch inventory health">{branchLabels.map((name) => { const items = rows.filter((row: InventoryRow) => row.branch === name); const lowItems = items.filter((row: InventoryRow) => row.status !== 'Normal').length; return <View style={styles.line} key={name}><Text style={styles.body}>{name}</Text><Text style={styles.strong}>{items.length - lowItems}/{items.length} normal</Text></View>; })}</Panel><Panel title="Recent live activity" action={() => notify('Activity is loaded from Supabase')}><Text style={styles.muted}>{sales?.sales.length ?? 0} sales loaded for this month.</Text><Text style={styles.muted}>{rows.filter((row: InventoryRow) => row.status === 'Near Expiry').length} near-expiration items.</Text><Text style={styles.muted}>Owner permissions are enforced by RLS.</Text></Panel></View></>; }
-function Branches({ rows, sales, branches }: any) { return <><Text style={styles.section}>Branch management</Text><Text style={styles.muted}>Actual branches and inventory returned by Supabase.</Text><View style={styles.grid}>{(branches.length ? branches : branchLabels.map((name) => ({ id: name, name }))).map((branchItem: any) => { const items = rows.filter((row: InventoryRow) => row.branch === branchItem.name); const branchSales = (sales?.sales ?? []).filter((sale: any) => sale.branch_id === branchItem.id); return <Panel title={branchItem.name} key={branchItem.id}><Text style={styles.metricValue}>{items.length}</Text><Text style={styles.muted}>inventory records</Text><Text style={styles.body}>{items.filter((row: InventoryRow) => row.status === 'Low Stock').length} low-stock items</Text><Text style={styles.body}>{peso(branchSales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount), 0))} loaded sales</Text></Panel>; })}</View></>; }
-function Inventory({ rows, branch, setBranch, query, setQuery }: any) { return <><Toolbar branch={branch} setBranch={setBranch} /><TextInput value={query} onChangeText={setQuery} placeholder="Search live ingredients..." style={styles.search} /><Table headers={['Ingredient', 'Category', 'Branch', 'Quantity', 'Status', 'Expiration']} rows={rows.map((row: InventoryRow) => [row.name, row.category, row.branch, `${row.qty} ${row.unit}`, row.status, row.expiry])} /></>; }
-function Movements({ activity }: any) { return <><Text style={styles.section}>Stock movements</Text><Text style={styles.muted}>Inventory transaction history from Supabase.</Text><Table headers={['Reference', 'Movement', 'Ingredient', 'Quantity', 'Branch', 'Timestamp']} rows={activity.map((item: any) => [item.reference, item.type, item.ingredient_id, `${item.quantity} ${item.unit}`, item.branch_id, new Date(item.transaction_date).toLocaleString()])} /></>; }
-function Checks({ reviews, notify }: any) { const [saving, setSaving] = useState<string | null>(null); const decide = async (review: any, decision: 'approved' | 'rejected') => { setSaving(review.correctionRequestId); try { await decideOwnerInventoryCountCorrection({ requestId: review.correctionRequestId, decision, reason: decision === 'approved' ? 'Approved by Owner in web portal.' : 'Rejected by Owner in web portal.' }); notify(`Correction ${decision}. Refresh the page to reload live status.`); } catch (reason: unknown) { notify(reason instanceof Error ? reason.message : 'Unable to save the correction decision.'); } finally { setSaving(null); } }; return <><Text style={styles.section}>Daily checks & reconciliation</Text><Text style={styles.muted}>Physical counts and correction requests from the existing workflow.</Text>{reviews.map((review: any) => <View style={reviewStyles.card} key={review.correctionRequestId}><View style={styles.row}><Text style={styles.strong}>{review.reference} · {review.ingredient}</Text><Text style={styles.body}>{review.branch}</Text></View><Text style={styles.muted}>Expected {review.expected} {review.unit} · Actual {review.actual} {review.unit} · Difference {review.difference} {review.unit}</Text><Text style={styles.muted}>Status: {review.status}</Text>{review.status === 'Pending' && <View style={reviewStyles.actions}><Pressable disabled={!!saving} onPress={() => void decide(review, 'approved')} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>{saving === review.correctionRequestId ? 'Saving…' : 'Approve'}</Text></Pressable><Pressable disabled={!!saving} onPress={() => void decide(review, 'rejected')} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Reject</Text></Pressable></View>}</View>)}{reviews.length === 0 && <Text style={styles.empty}>No discrepancy records returned.</Text>}</>; }
-function Reports({ sales }: any) { const [report, setReport] = useState('Total Sales Report'); const total = sales?.sales.reduce((sum: number, item: any) => sum + Number(item.total_amount), 0) ?? 0; const records = sales?.sales ?? []; return <><View style={styles.row}><View><Text style={styles.section}>Reports</Text><Text style={styles.muted}>Confirmed Supabase records only.</Text></View><View style={styles.headerActions}><Select value={report} options={['Total Sales Report', 'Branch Sales Report', 'Transaction Summary']} onChange={setReport} /><Pressable disabled={!records.length} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={styles.outline}><Text style={styles.pinkText}>Print / Export</Text></Pressable></View></View><Panel title={report}><Text style={styles.metricValue}>{peso(total)}</Text><Text style={styles.muted}>{records.length} completed sales in the current period.</Text>{records.slice(0, 10).map((sale: any) => <View style={styles.line} key={sale.id}><Text style={styles.body}>{sale.transaction_reference}</Text><Text style={styles.body}>{new Date(sale.created_at).toLocaleDateString()}</Text><Text style={styles.strong}>{peso(Number(sale.total_amount))}</Text></View>)}{!records.length && <Text style={styles.empty}>No confirmed sales exist for this period.</Text>}</Panel></>; }
+function Login({ username, password, error, busy, showPassword, setUsername, setPassword, setShowPassword, login, narrow }: any) {
+  return (
+    <View style={[styles.login, narrow && { flexDirection: 'column' }]}>
+      <View style={[styles.loginPanel, narrow && { padding: 24, minHeight: 520 }]}>
+        <View style={[styles.loginBrand, narrow && { position: 'relative', top: 0, left: 0, marginBottom: 48 }]}>
+          <Text style={styles.logo}>T</Text><Text style={styles.brandName}>TakoSync</Text>
+        </View>
+        <Text style={styles.kicker}>OWNER WEB MANAGEMENT PORTAL</Text>
+        <Text style={styles.loginTitle}>Welcome back, Gelo.</Text>
+        <Text style={styles.loginSub}>Sign in with your Supabase Owner account.</Text>
+        <View style={[styles.form, narrow && { width: '100%' }]}>
+          <Text style={styles.label}>Username</Text>
+          <TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} autoComplete="username" style={styles.input} placeholder="Enter your username" />
+          <Text style={styles.label}>Password</Text>
+          <View style={styles.password}>
+            <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} style={styles.passwordInput} placeholder="Enter your password" />
+            <Pressable onPress={() => setShowPassword(!showPassword)}><Text style={styles.pinkText}>{showPassword ? 'Hide' : 'Show'}</Text></Pressable>
+          </View>
+          {error && <Text style={styles.errorText}>{error}</Text>}
+          <Pressable onPress={login} disabled={busy} style={styles.loginButton}>
+            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.loginButtonText}>Sign in to portal →</Text>}
+          </Pressable>
+        </View>
+        <Text style={[styles.loginFooter, narrow && { left: 24, bottom: 12 }]}>Authentication and access are enforced by Supabase.</Text>
+      </View>
+      {!narrow && <View style={styles.loginArt}><Text style={styles.artEmoji}>🐙</Text><Text style={styles.artTitle}>Make every count count.</Text><Text style={styles.artCopy}>One secure view across all three Gelo's Takoyaki branches.</Text></View>}
+    </View>
+  );
+}
+function Toolbar({ branch, setBranch, branches }: { branch: string; setBranch: (value: string) => void; branches: OwnerPortalBranch[] }) {
+  return (
+    <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
+      <Text style={styles.section}>Live overview</Text>
+      <Select
+        value={branch}
+        options={['All Branches', ...branches.map((item) => item.name)]}
+        onChange={setBranch}
+      />
+    </View>
+  );
+}
+
+function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
+  rows: InventoryRow[];
+  inventoryAvailable: boolean;
+  branches: OwnerPortalBranch[];
+  branch: string;
+  setBranch: (value: string) => void;
+}) {
+  const narrow = useWindowDimensions().width < 720;
+  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [startDate, setStartDate] = useState(() => manilaDateKey());
+  const [endDate, setEndDate] = useState(() => manilaDateKey());
+  const [sales, setSales] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(null);
+  const [activity, setActivity] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
+  const [reviews, setReviews] = useState<Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const range = useMemo(
+    () => getManilaReportingRange(period, new Date(), startDate, endDate),
+    [period, startDate, endDate],
+  );
+  const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+
+  useEffect(() => {
+    let active = true;
+    if (!range) {
+      setSales(null);
+      setActivity(null);
+      setReviews(null);
+      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
+      setLoading(false);
+      return () => { active = false; };
+    }
+
+    setLoading(true);
+    setError('');
+    setSales(null);
+    setActivity(null);
+    setReviews(null);
+    Promise.allSettled([
+      loadOwnerSalesData({ start: range.start, end: range.end, branchId }),
+      loadOwnerActivityData({ start: range.start, end: range.end, branchId }),
+      loadOwnerDiscrepancyReviews(branchId),
+    ]).then(([salesResult, activityResult, reviewsResult]) => {
+      if (!active) return;
+      const failures = [salesResult, activityResult, reviewsResult]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      setError(failures.map((failure) => failure.reason instanceof Error
+        ? failure.reason.message
+        : 'A dashboard data request failed.').join(' '));
+      if (salesResult.status === 'fulfilled') setSales(salesResult.value);
+      if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
+      if (reviewsResult.status === 'fulfilled') setReviews(reviewsResult.value);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [range, branchId]);
+
+  const confirmedSales = sales ? filterOwnerPortalConfirmedSales(sales.sales) : null;
+  const branchSales = confirmedSales ? summarizeOwnerPortalSalesByBranch(confirmedSales, branches) : [];
+  const selectedRows = filterOwnerPortalInventory(rows, branch);
+  const pendingReviews = reviews?.filter((review) => review.status === 'Pending') ?? null;
+  const branchNameById = new Map(branches.map((item) => [item.id, item.name]));
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const saleRows = (confirmedSales ?? []).slice(0, 5).map((sale) => [
+    sale.transaction_reference,
+    branchNameById.get(sale.branch_id) ?? 'Branch unavailable',
+    dateFormatter.format(new Date(sale.created_at)),
+    peso(Number(sale.total_amount)),
+  ]);
+  const recentMovements = (activity?.transactions ?? []).slice(0, 5);
+  const movementRows = recentMovements.map((item) => [
+    item.reference,
+    item.type,
+    branchNameById.get(item.branch_id) ?? item.branch_id,
+    item.actor_name,
+    dateFormatter.format(new Date(item.transaction_date)),
+  ]);
+  const visibleReviews = pendingReviews?.slice(0, 5) ?? [];
+
+  return (
+    <>
+      <View style={styles.toolbar}>
+        <Text style={styles.section}>Live overview</Text>
+        <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
+        <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
+      </View>
+      {period === 'Custom' ? (
+        <View style={[styles.row, { flexWrap: 'wrap' }]}>
+          <TextInput value={startDate} onChangeText={setStartDate} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+          <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+        </View>
+      ) : null}
+      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading dashboard data…</Text></View> : null}
+      <View style={styles.grid}>
+        {[
+          ['Recorded Sales', confirmedSales ? peso(totalOwnerPortalSales(confirmedSales)) : '—', 'Confirmed sales in selected period'],
+          ['Inventory Items', inventoryAvailable ? String(selectedRows.length) : '—', 'Current branch inventory'],
+          ['Low-Stock Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Low Stock').length) : '—', 'Needs attention'],
+          ['Expiration Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Near Expiry' || row.status === 'Expired').length) : '—', 'Near expiry or expired'],
+        ].map(([label, value, note]) => (
+          <View style={styles.metric} key={label}>
+            <Text style={styles.metricLabel}>{label}</Text>
+            <Text style={styles.metricValue}>{value}</Text>
+            <Text style={styles.muted}>{note}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={styles.two}>
+        <Panel title="Sales by branch">
+          {branchSales.length ? <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchSales.map((item) => [item.name, String(item.salesCount), peso(item.totalSales)])} /> : (
+            <Text style={styles.empty}>{sales ? 'No confirmed sales exist for this period.' : 'Sales data is unavailable.'}</Text>
+          )}
+        </Panel>
+        <Panel title="Pending inventory discrepancies">
+          {pendingReviews === null ? <Text style={styles.muted}>{loading ? 'Loading pending reviews…' : 'Review data is unavailable.'}</Text> : visibleReviews.length ? visibleReviews.map((review) => (
+            <View key={review.countLineId} style={styles.line}>
+              <Text style={styles.body}>{review.reference} · {review.ingredient} · {review.branch}</Text>
+              <Text style={styles.strong}>{review.difference} {review.unit}</Text>
+            </View>
+          )) : <Text style={styles.empty}>No pending discrepancies require review.</Text>}
+        </Panel>
+      </View>
+      <View style={styles.two}>
+        <Panel title="Recent confirmed sales">
+          {confirmedSales === null ? <Text style={styles.muted}>{loading ? 'Loading sales…' : 'Sales data is unavailable.'}</Text> : saleRows.length ? (
+            <Table headers={['Reference', 'Branch', 'Timestamp (Manila)', 'Total']} rows={saleRows} />
+          ) : <Text style={styles.empty}>No confirmed sales exist for this period.</Text>}
+        </Panel>
+        <Panel title="Recent inventory activity">
+          {activity === null ? <Text style={styles.muted}>{loading ? 'Loading activity…' : 'Inventory activity is unavailable.'}</Text> : movementRows.length ? (
+            <Table headers={['Reference', 'Movement', 'Branch', 'Employee', 'Timestamp (Manila)']} rows={movementRows} />
+          ) : <Text style={styles.empty}>No inventory activity exists for this period.</Text>}
+        </Panel>
+      </View>
+      <Panel title="Branch inventory health">
+        {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : branches.length ? branches.map((branchItem) => {
+          const branchRows = rows.filter((row) => row.branchId === branchItem.id);
+          return (
+            <View style={styles.line} key={branchItem.id}>
+              <Text style={styles.body}>{branchItem.name}</Text>
+              <Text style={styles.strong}>{branchRows.filter((row) => row.status === 'Normal').length}/{branchRows.length} normal</Text>
+            </View>
+          );
+        }) : <Text style={styles.empty}>No branch records returned.</Text>}
+      </Panel>
+    </>
+  );
+}
+
+function Branches({ rows, sales, branches }: { rows: InventoryRow[]; sales: any; branches: OwnerPortalBranch[] }) {
+  const confirmedSales = sales ? filterOwnerPortalConfirmedSales(sales.sales) : [];
+  const branchSummaries = summarizeOwnerPortalBranches(branches, rows, confirmedSales);
+
+  return (
+    <>
+      <Text style={styles.section}>Branch management</Text>
+      <Text style={styles.muted}>Actual branches and inventory returned by Supabase.</Text>
+      <View style={styles.grid}>
+        {branchSummaries.map((branchItem) => (
+          <Panel title={branchItem.name} key={branchItem.id}>
+            <Text style={styles.metricValue}>{branchItem.inventoryCount}</Text>
+            <Text style={styles.muted}>inventory records</Text>
+            <Text style={styles.body}>{branchItem.lowStockCount} low-stock items</Text>
+            <Text style={styles.body}>{branchItem.outOfStockCount} out-of-stock items</Text>
+            <Text style={styles.body}>{sales ? peso(branchItem.salesTotal) : '—'} recorded sales</Text>
+          </Panel>
+        ))}
+      </View>
+      {branchSummaries.length === 0 && <Text style={styles.empty}>No branch records returned.</Text>}
+    </>
+  );
+}
+
+function Inventory({ rows, branch, setBranch, branches, query, setQuery }: { rows: InventoryRow[]; branch: string; setBranch: (value: string) => void; branches: OwnerPortalBranch[]; query: string; setQuery: (value: string) => void }) {
+  return (
+    <>
+      <Toolbar branch={branch} setBranch={setBranch} branches={branches} />
+      <TextInput value={query} onChangeText={setQuery} placeholder="Search live ingredients..." style={styles.search} />
+      <Table
+        headers={['Ingredient', 'Category', 'Branch', 'Quantity', 'Status', 'Expiration', 'Active batches']}
+        rows={rows.map((row) => [row.name, row.category, row.branch, `${row.quantityLabel} ${row.unit}`, row.status, row.expiry, row.batches])}
+      />
+    </>
+  );
+}
+function Movements({ activity, branches, inventoryRows }: {
+  activity: Awaited<ReturnType<typeof loadOwnerActivityData>>['transactions'];
+  branches: OwnerPortalBranch[];
+  inventoryRows: InventoryRow[];
+}) {
+  const branchNames = new Map(branches.map((item) => [item.id, item.name]));
+  const itemNames = new Map(inventoryRows.map((item) => [
+    `${item.branchId}:${item.ingredientId}`,
+    item.name,
+  ]));
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  return (
+    <>
+      <Text style={styles.section}>Stock movements</Text>
+      <Text style={styles.muted}>Inventory transaction history from Supabase.</Text>
+      <Table
+        headers={['Reference', 'Movement', 'Ingredient', 'Quantity', 'Branch', 'Employee', 'Timestamp (Manila)']}
+        rows={activity.map((item) => [
+          item.reference,
+          item.type,
+          itemNames.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
+          `${item.quantity} ${item.unit}`,
+          branchNames.get(item.branch_id) ?? item.branch_id,
+          item.actor_name,
+          dateFormatter.format(new Date(item.transaction_date)),
+        ])}
+      />
+      {activity.length === 0 ? <Text style={styles.empty}>No inventory movements were returned for this period.</Text> : null}
+    </>
+  );
+}
+type ChecksProps = {
+  reviews: OwnerDiscrepancyReview[];
+  notify: (message: string, isError?: boolean) => void;
+  onRefresh: () => Promise<void>;
+};
+
+function Checks({ reviews, notify, onRefresh }: ChecksProps) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+
+  const runAction = async (
+    review: OwnerDiscrepancyReview,
+    action: 'approved' | 'rejected' | 'validate',
+  ) => {
+    const reason = reasons[review.countLineId]?.trim() ?? '';
+    if (!reason) {
+      notify('Enter a reason before submitting this review.', true);
+      return;
+    }
+
+    if (action === 'validate' && typeof window !== 'undefined') {
+      const message = `Authorize this count for ${review.ingredient}? Expected: ${review.expected} ${review.unit}; actual: ${review.actual} ${review.unit}. Inventory may change.`;
+      if (!window.confirm(message)) return;
+    }
+
+    setSaving(review.countLineId);
+    let successMessage: string;
+    try {
+      if (action === 'approved' || action === 'rejected') {
+        await decideOwnerInventoryCountCorrection({
+          requestId: review.correctionRequestId,
+          decision: action,
+          reason,
+        });
+        successMessage = `Correction request ${action}.`;
+      } else {
+        if (review.validationTarget === 'correction_request') {
+          await validateOwnerInventoryCountCorrection({
+            requestId: review.correctionRequestId,
+            reason,
+          });
+        } else {
+          await validateOwnerSubmittedInventoryCount({
+            countLineId: review.countLineId,
+            reason,
+          });
+        }
+        successMessage = 'Count validated through the authorized inventory workflow.';
+      }
+    } catch (reasonError: unknown) {
+      notify(reasonError instanceof Error ? reasonError.message : 'Unable to save the Owner review.', true);
+      setSaving(null);
+      return;
+    }
+
+    try {
+      await onRefresh();
+      setReasons((current) => ({ ...current, [review.countLineId]: '' }));
+      notify(successMessage);
+    } catch (refreshError: unknown) {
+      notify(
+        `The review was saved, but the latest records could not be loaded: ${
+          refreshError instanceof Error ? refreshError.message : 'refresh failed.'
+        }`,
+        true,
+      );
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <>
+      <Text style={styles.section}>Daily checks & reconciliation</Text>
+      <Text style={styles.muted}>Review submitted counts; validating a count is a separate, authorized inventory action.</Text>
+      {reviews.map((review) => {
+        const actionable = isOwnerDiscrepancyActionable(review);
+        const validatable = isOwnerDiscrepancyValidatable(review);
+        const isSaving = saving === review.countLineId;
+        const disabled = saving !== null;
+
+        return (
+          <View style={reviewStyles.card} key={review.correctionRequestId}>
+            <View style={styles.row}>
+              <Text style={styles.strong}>{review.reference} · {review.ingredient}</Text>
+              <Text style={styles.body}>{review.branch}</Text>
+            </View>
+            <Text style={styles.muted}>
+              Expected {review.expected} {review.unit} · Actual {review.actual} {review.unit} · Difference {review.difference} {review.unit}
+            </Text>
+            <Text style={styles.muted}>Status: {review.status}</Text>
+            {actionable || validatable ? (
+              <>
+                <TextInput
+                  accessibilityLabel={`Owner review reason for ${review.ingredient}`}
+                  value={reasons[review.countLineId] ?? ''}
+                  onChangeText={(value) => setReasons((current) => ({
+                    ...current,
+                    [review.countLineId]: value,
+                  }))}
+                  placeholder="Reason required for this action"
+                  maxLength={1000}
+                  style={styles.search}
+                />
+                <View style={reviewStyles.actions}>
+                  {actionable ? (
+                    <>
+                      <Pressable
+                        disabled={disabled}
+                        onPress={() => void runAction(review, 'approved')}
+                        style={[reviewStyles.approve, disabled && { opacity: 0.6 }]}
+                      >
+                        <Text style={reviewStyles.approveText}>{isSaving ? 'Saving…' : 'Approve'}</Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={disabled}
+                        onPress={() => void runAction(review, 'rejected')}
+                        style={[reviewStyles.reject, disabled && { opacity: 0.6 }]}
+                      >
+                        <Text style={reviewStyles.rejectText}>Reject</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+                  {validatable ? (
+                    <Pressable
+                      disabled={disabled}
+                      onPress={() => void runAction(review, 'validate')}
+                      style={[reviewStyles.approve, disabled && { opacity: 0.6 }]}
+                    >
+                      <Text style={reviewStyles.approveText}>
+                        {isSaving ? 'Saving…' : 'Validate Count'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </>
+            ) : null}
+          </View>
+        );
+      })}
+      {reviews.length === 0 && <Text style={styles.empty}>No discrepancy records returned.</Text>}
+    </>
+  );
+}
+function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof loadOwnerSalesData>> | null }) {
+  const narrow = useWindowDimensions().width < 720;
+  const reportOptions = [
+    'Total Sales Report',
+    'Branch Sales Report',
+    'Products Sold Report',
+    'Transaction Summary Report',
+  ];
+  const [report, setReport] = useState(reportOptions[0]);
+  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [startDate, setStartDate] = useState(() => manilaDateKey());
+  const [endDate, setEndDate] = useState(() => manilaDateKey());
+  const [branch, setBranch] = useState('All Branches');
+  const [branches, setBranches] = useState<OwnerPortalBranch[]>([]);
+  const [sales, setSales] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(initialSales ?? null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const range = useMemo(
+    () => getManilaReportingRange(period, new Date(), startDate, endDate),
+    [period, startDate, endDate],
+  );
+  const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+
+  useEffect(() => {
+    let active = true;
+    loadBranches().then((records) => {
+      if (active) setBranches(records);
+    }).catch((reason: unknown) => {
+      if (active) setError(reason instanceof Error ? reason.message : 'Unable to load branches.');
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!range) {
+      setSales(null);
+      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
+      setLoading(false);
+      return () => { active = false; };
+    }
+
+    setLoading(true);
+    setError('');
+    setSales(null);
+    loadOwnerSalesData({ start: range.start, end: range.end, branchId })
+      .then((result) => {
+        if (active) setSales(result);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the sales report.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [range, branchId]);
+
+  const records = sales ? filterOwnerPortalConfirmedSales(sales.sales) : [];
+  const items = sales?.items ?? [];
+  const total = totalOwnerPortalSales(records);
+  const visibleBranches = branchId ? branches.filter((item) => item.id === branchId) : branches;
+  const branchSummary = summarizeOwnerPortalSalesByBranch(records, visibleBranches);
+  const productSummary = summarizeOwnerPortalSalesByProduct(records, items);
+  const branchNames = new Map(branches.map((item) => [item.id, item.name]));
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const transactionRows = records.map((sale) => [
+    sale.transaction_reference,
+    branchNames.get(sale.branch_id) ?? 'Branch unavailable',
+    sale.recorded_by_name ?? 'Staff unavailable',
+    sale.payment_method,
+    dateFormatter.format(new Date(sale.created_at)),
+    peso(Number(sale.total_amount)),
+  ]);
+  const branchRows = branchSummary.map((item) => [
+    item.name,
+    String(item.salesCount),
+    peso(item.totalSales),
+  ]);
+  const productRows = productSummary.map((item) => [
+    item.name,
+    String(item.quantity),
+    peso(item.totalSales),
+  ]);
+
+  return (
+    <>
+      <View style={styles.row}>
+        <View>
+          <Text style={styles.section}>Reports</Text>
+          <Text style={styles.muted}>Supabase sales in the selected Manila reporting period.</Text>
+        </View>
+        <Pressable
+          disabled={loading || !records.length}
+          onPress={() => { if (typeof window !== 'undefined') window.print(); }}
+          style={styles.outline}
+        >
+          <Text style={styles.pinkText}>Print / Export</Text>
+        </Pressable>
+      </View>
+      <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
+        <Select
+          value={period}
+          options={['Today', 'This Week', 'This Month', 'Custom']}
+          onChange={(value) => setPeriod(value as ReportingPeriod)}
+        />
+        <Select
+          value={branch}
+          options={['All Branches', ...branches.map((item) => item.name)]}
+          onChange={setBranch}
+        />
+        <Select value={report} options={reportOptions} onChange={setReport} />
+      </View>
+      {period === 'Custom' ? (
+        <View style={[styles.row, { flexWrap: 'wrap' }]}>
+          <TextInput
+            value={startDate}
+            onChangeText={setStartDate}
+            placeholder="Start date (YYYY-MM-DD)"
+            style={[styles.search, narrow && { width: '100%' }]}
+          />
+          <TextInput
+            value={endDate}
+            onChangeText={setEndDate}
+            placeholder="End date (YYYY-MM-DD)"
+            style={[styles.search, narrow && { width: '100%' }]}
+          />
+        </View>
+      ) : null}
+      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {loading ? (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator color={C.pink} />
+          <Text style={styles.muted}>Loading sales report…</Text>
+        </View>
+      ) : null}
+      {!loading && sales ? (
+        <Panel title={report}>
+          {report === 'Total Sales Report' ? (
+            <>
+              <Text style={styles.metricValue}>{peso(total)}</Text>
+              <Text style={styles.muted}>{records.length} completed sales.</Text>
+            </>
+          ) : null}
+          {report === 'Branch Sales Report' ? (
+            <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchRows} />
+          ) : null}
+          {report === 'Products Sold Report' ? (
+            <Table headers={['Product', 'Quantity Sold', 'Sales Total']} rows={productRows} />
+          ) : null}
+          {report === 'Transaction Summary Report' ? (
+            <Table
+              headers={['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total']}
+              rows={transactionRows}
+            />
+          ) : null}
+          {!records.length ? <Text style={styles.empty}>No confirmed sales exist for this period.</Text> : null}
+        </Panel>
+      ) : null}
+    </>
+  );
+}
+
+type InventoryReportPage = 'Expected Stock Quantity Report' | OwnerPortalMovementReport |
+  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report';
+
+function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable }: {
+  branch: string;
+  setBranch: (value: string) => void;
+  branches: OwnerPortalBranch[];
+  inventoryRows: InventoryRow[];
+  inventoryAvailable: boolean;
+}) {
+  const narrow = useWindowDimensions().width < 720;
+  const reportOptions: InventoryReportPage[] = [
+    'Expected Stock Quantity Report',
+    'Stock-In Report',
+    'Sales Consumption Report',
+    'Waste and Spillage Report',
+    'Physical Inventory Count and Discrepancy Report',
+    'Authorized Adjustment Report',
+  ];
+  const [report, setReport] = useState<InventoryReportPage>(reportOptions[0]);
+  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [startDate, setStartDate] = useState(() => manilaDateKey());
+  const [endDate, setEndDate] = useState(() => manilaDateKey());
+  const [activity, setActivity] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
+  const [reviews, setReviews] = useState<Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const range = useMemo(
+    () => getManilaReportingRange(period, new Date(), startDate, endDate),
+    [period, startDate, endDate],
+  );
+  const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+
+  useEffect(() => {
+    let active = true;
+    if (report === 'Expected Stock Quantity Report') {
+      setActivity(null);
+      setReviews(null);
+      setError('');
+      setLoading(false);
+      return () => { active = false; };
+    }
+    if (!range) {
+      setActivity(null);
+      setReviews(null);
+      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
+      setLoading(false);
+      return () => { active = false; };
+    }
+
+    setLoading(true);
+    setError('');
+    setActivity(null);
+    setReviews(null);
+    Promise.allSettled([
+      loadOwnerActivityData({ start: range.start, end: range.end, branchId }),
+      loadOwnerDiscrepancyReviews(branchId),
+    ]).then(([activityResult, reviewResult]) => {
+      if (!active) return;
+      const failures = [activityResult, reviewResult]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      setError(failures.map((failure) => failure.reason instanceof Error
+        ? failure.reason.message
+        : 'An inventory report request failed.').join(' '));
+      if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
+      if (reviewResult.status === 'fulfilled') setReviews(reviewResult.value);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [range, branchId, report]);
+
+  const branchNameById = new Map(branches.map((item) => [item.id, item.name]));
+  const itemNameById = new Map(inventoryRows.map((item) => [
+    `${item.branchId}:${item.ingredientId}`,
+    item.name,
+  ]));
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const filteredInventory = filterOwnerPortalInventory(inventoryRows, branch);
+  const isMovementReport = report === 'Stock-In Report'
+    || report === 'Sales Consumption Report'
+    || report === 'Waste and Spillage Report';
+  const movementRows = activity && range && isMovementReport
+    ? filterOwnerPortalReportMovements(activity.transactions, report as OwnerPortalMovementReport, {
+      branchId,
+      start: range.start,
+      end: range.end,
+    }).map((item) => [
+      item.reference,
+      branchNameById.get(item.branch_id) ?? item.branch_id,
+      itemNameById.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
+      `${item.quantity} ${item.unit}`,
+      `${item.before_quantity} → ${item.after_quantity} ${item.unit}`,
+      item.actor_name,
+      item.reason || item.notes || '—',
+      dateFormatter.format(new Date(item.transaction_date)),
+    ])
+    : [];
+  const countRows = activity && range && report === 'Physical Inventory Count and Discrepancy Report'
+    ? buildOwnerPortalCountReportRows({
+      checks: activity.dailyChecks,
+      lines: activity.countLines,
+      correctionHistory: reviews?.map((review) => ({
+        countLineId: review.countLineId,
+        status: review.status,
+        correctedActual: review.correctedActual,
+        unit: review.unit,
+        correctionReason: review.correctionReason,
+        decisionReason: review.decisionReason,
+        validationReason: review.validationReason,
+      })),
+      branchId,
+      start: range.start,
+      end: range.end,
+      branchNames: branchNameById,
+      itemNames: itemNameById,
+    }).map((row) => [
+      row.reference,
+      row.branch,
+      row.ingredient,
+      row.expected,
+      row.physical,
+      row.difference,
+      row.status,
+      row.inventoryRevision,
+      row.submittedBy,
+      dateFormatter.format(new Date(row.timestamp)),
+      row.revisionHistory,
+    ])
+    : [];
+  const adjustmentRows = report === 'Authorized Adjustment Report' && range
+    ? (reviews ?? []).flatMap((review) => {
+      if (!review.adjustment || (branchId && review.branchId !== branchId)) return [];
+      const approvedAt = new Date(review.adjustment.approvedAt).getTime();
+      if (!Number.isFinite(approvedAt) || approvedAt < range.start.getTime() || approvedAt >= range.end.getTime()) return [];
+      return [[
+        review.adjustment.movementReference,
+        review.reference,
+        review.branch,
+        review.ingredient,
+        `${review.adjustment.beforeQuantity} → ${review.adjustment.afterQuantity} ${review.unit}`,
+        review.adjustment.reason,
+        review.adjustment.approvingOwner,
+        dateFormatter.format(new Date(review.adjustment.approvedAt)),
+      ]];
+    })
+    : [];
+  const hasReportData = report === 'Expected Stock Quantity Report'
+    ? inventoryAvailable && filteredInventory.length > 0
+    : report === 'Physical Inventory Count and Discrepancy Report'
+      ? countRows.length > 0
+      : report === 'Authorized Adjustment Report'
+        ? adjustmentRows.length > 0
+        : movementRows.length > 0;
+
+  return (
+    <>
+      <View style={styles.row}>
+        <View>
+          <Text style={styles.section}>Inventory reports</Text>
+          <Text style={styles.muted}>Live Owner inventory data; movement categories remain separate.</Text>
+        </View>
+        <Pressable disabled={loading || !hasReportData} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={styles.outline}>
+          <Text style={styles.pinkText}>Print / Export</Text>
+        </Pressable>
+      </View>
+      <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
+        <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
+        <Select value={report} options={reportOptions} onChange={(value) => setReport(value as InventoryReportPage)} />
+        <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
+      </View>
+      {period === 'Custom' && report !== 'Expected Stock Quantity Report' ? (
+        <View style={[styles.row, { flexWrap: 'wrap' }]}>
+          <TextInput value={startDate} onChangeText={setStartDate} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+          <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+        </View>
+      ) : null}
+      {report === 'Expected Stock Quantity Report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
+      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
+      {!loading && report === 'Expected Stock Quantity Report' ? (
+        <Table
+          headers={['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches']}
+          rows={filteredInventory.map((item) => [item.name, item.category, item.branch, `${item.quantityLabel} ${item.unit}`, item.status, item.expiry, item.batches])}
+        />
+      ) : null}
+      {!loading && isMovementReport ? (
+        <Table
+          headers={['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)']}
+          rows={movementRows}
+        />
+      ) : null}
+      {!loading && report === 'Physical Inventory Count and Discrepancy Report' ? (
+        <Table
+          headers={['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History']}
+          rows={countRows}
+        />
+      ) : null}
+      {!loading && report === 'Authorized Adjustment Report' ? (
+        <Table
+          headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)']}
+          rows={adjustmentRows}
+        />
+      ) : null}
+      {!loading && !error && !hasReportData ? (
+        <Text style={styles.empty}>
+          {report === 'Expected Stock Quantity Report' && !inventoryAvailable
+            ? 'Expected stock data is unavailable.'
+            : report === 'Authorized Adjustment Report' && reviews === null
+              ? 'Authorized adjustment data is unavailable.'
+              : report === 'Physical Inventory Count and Discrepancy Report' && activity === null
+                ? 'Physical count data is unavailable.'
+                : 'No records exist for the selected branch and reporting period.'}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 function StaffPage({ accounts }: any) { const [saving, setSaving] = useState<string | null>(null); const toggle = async (account: any) => { setSaving(account.id); try { await saveStaffAccount({ id: account.id, username: account.username, branchId: account.branch_id, active: !account.active }); } catch { /* the caller reloads accounts on the next session refresh */ } finally { setSaving(null); } }; return <><Text style={styles.section}>Staff accounts</Text><Text style={styles.muted}>Employee IDs are generated by Supabase and are also the initial passwords for new or explicitly reset Staff accounts.</Text><Table headers={['Employee ID', 'Name', 'Branch', 'Status', 'Created', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', new Date(account.created_at).toLocaleDateString(), saving === account.id ? 'Saving…' : 'Toggle status'])} /><View>{accounts.map((account: any) => <Pressable key={account.id} onPress={() => void toggle(account)} style={styles.outline}><Text style={styles.pinkText}>{account.active ? `Deactivate ${account.full_name}` : `Activate ${account.full_name}`}</Text></Pressable>)}</View></>; }
 function Settings({ products, configuration, stockSettings, onSaved }: any) { const [selected, setSelected] = useState<any>(null); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('0'); const [ingredientName, setIngredientName] = useState(''); const [unit, setUnit] = useState('kg'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false); const saveProduct = async () => { setSaving(true); try { const variants = selected?.variants?.map((variant: any) => ({ id: variant.id, price: Number(price) })) ?? [{ variant_code: '4pcs', size_label: '4 PCS', piece_count: 4, price: Number(price) }, { variant_code: '8pcs', size_label: '8 PCS', piece_count: 8, price: Number(price) }, { variant_code: '10plus1pcs', size_label: '10+1 PCS', piece_count: 11, price: Number(price) }]; if (selected) await updateProduct(selected.id, { product_name: name, description, is_available: true, variants }); else await createProduct({ product_name: name, description, is_available: true, variants }); onSaved('Product saved through the existing catalog service.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Product save failed.'); } finally { setSaving(false); } }; const saveIngredient = async () => { setSaving(true); try { if (selected?.ingredient) await updateIngredient(selected.ingredient.id, { name: ingredientName, category_id: selected.ingredient.category_id, unit }); else await createIngredient({ name: ingredientName, category_id: configuration?.categories?.[0]?.id ?? '', unit }); onSaved('Ingredient saved through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.'); } finally { setSaving(false); } }; const saveDays = async () => { setSaving(true); try { await updateNearExpirationDays(Number(days)); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Settings save failed.'); } finally { setSaving(false); } }; return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Live catalog, recipe, ingredient, and threshold configuration.</Text><View style={styles.grid}><Panel title="Products & Menu"><Text style={styles.muted}>Create or edit products without changing historical sales.</Text>{products.map((product: any) => <Pressable key={product.id} onPress={() => { setSelected(product); setName(product.product_name); setDescription(product.description); setPrice(String(product.price)); }}><Text style={styles.pinkText}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text></Pressable>)}<TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} /><TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} /><TextInput value={price} onChangeText={setPrice} placeholder="4 PCS selling price" keyboardType="decimal-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveProduct()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : selected ? 'Save product' : 'Add product'}</Text></Pressable></Panel><Panel title="Ingredients & Recipes"><Text style={styles.muted}>{configuration?.ingredients.length ?? 0} ingredients · {configuration?.recipeIngredients.length ?? 0} recipe lines</Text><TextInput value={ingredientName} onChangeText={setIngredientName} placeholder="Ingredient or supply name" style={styles.input} /><TextInput value={unit} onChangeText={setUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveIngredient()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Add ingredient'}</Text></Pressable><Text style={styles.muted}>Recipe edits use saveProductRecipe and affect future calculations only.</Text></Panel><Panel title="Prepared Batter"><Text style={styles.body}>5 bottles per batch · 25 pieces per bottle.</Text><Text style={styles.muted}>Raw ingredients are consumed during preparation; sales consume prepared batter only.</Text></Panel><Panel title="Stock thresholds & expiration"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day near-expiration alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>Save alert period</Text></Pressable><Text style={styles.muted}>{stockSettings?.inventory.length ?? 0} inventory thresholds loaded. Per-item minimum stock editing remains available through updateMinimumStock.</Text></Panel></View></>; }
-function Audit({ activity }: any) { const [filter, setFilter] = useState('All activity'); const transactions = (activity?.transactions ?? []).filter((item: any) => filter === 'All activity' || item.type === filter); const logs = activity?.auditLogs ?? []; return <><View style={styles.row}><View><Text style={styles.section}>Audit history</Text><Text style={styles.muted}>Actual inventory transactions and audit logs from Supabase.</Text></View><Select value={filter} options={['All activity', 'stock_in', 'sales_consumption', 'waste', 'spoilage', 'adjustment']} onChange={setFilter} /></View><Table headers={['Reference', 'Type', 'Branch', 'Ingredient', 'Date']} rows={transactions.map((item: any) => [item.reference, item.type, item.branch_id, item.ingredient_id, new Date(item.transaction_date).toLocaleString()])} />{logs.length > 0 && <><Text style={styles.panelTitle}>Audit log events</Text><Table headers={['Action', 'Branch', 'Description', 'Date']} rows={logs.map((log: any) => [log.action, log.branch_id ?? '—', log.description, new Date(log.created_at).toLocaleString()])} /></>}</>; }
-function Panel({ title, action, children }: any) { return <View style={styles.panel}><View style={styles.row}><Text style={styles.panelTitle}>{title}</Text>{action && <Pressable onPress={action}><Text style={styles.pinkText}>Refresh</Text></Pressable>}</View>{children}</View>; }
-function Table({ headers, rows }: { headers: string[]; rows: string[][] }) { return <View style={styles.table}><View style={styles.tableHead}>{headers.map((header) => <Text style={styles.headCell} key={header}>{header}</Text>)}</View>{rows.length ? rows.map((row, index) => <View style={styles.tableRow} key={`${row[0]}-${index}`}>{row.map((cell, cellIndex) => <Text style={[styles.cell, cellIndex === 0 && styles.strong]} key={`${cell}-${cellIndex}`}>{cell}</Text>)}</View>) : <Text style={styles.empty}>No live records returned.</Text>}</View>; }
-function Select({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) { return <Pressable onPress={() => onChange(options[(options.indexOf(value) + 1) % options.length])} style={styles.select}><Text style={styles.body}>{value}⌄</Text></Pressable>; }
+function Audit({ activity, reviews, sales, branches, inventoryRows }: {
+  activity: Awaited<ReturnType<typeof loadOwnerActivityData>> | null;
+  reviews: Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>>;
+  sales: Awaited<ReturnType<typeof loadOwnerSalesData>> | null;
+  branches: OwnerPortalBranch[];
+  inventoryRows: InventoryRow[];
+}) {
+  const [filter, setFilter] = useState('All activity');
+  const transactions = (activity?.transactions ?? []).filter((item) =>
+    filter === 'All activity' || item.type === filter,
+  );
+  const logs = activity?.auditLogs ?? [];
+  const branchNames = new Map(branches.map((item) => [item.id, item.name]));
+  const itemNames = new Map(inventoryRows.map((item) => [
+    `${item.branchId}:${item.ingredientId}`,
+    item.name,
+  ]));
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const confirmedSales = sales ? filterOwnerPortalConfirmedSales(sales.sales) : null;
+  const saleRows = (confirmedSales ?? []).map((sale) => [
+    sale.transaction_reference,
+    branchNames.get(sale.branch_id) ?? sale.branch_id,
+    sale.recorded_by_name ?? 'Employee unavailable',
+    sale.payment_method,
+    dateFormatter.format(new Date(sale.created_at)),
+    peso(Number(sale.total_amount)),
+  ]);
+  const countRows = (activity?.dailyChecks ?? []).flatMap((check) =>
+    (activity?.countLines ?? [])
+      .filter((line) => line.daily_stock_check_id === check.id)
+      .map((line) => [
+        check.reference,
+        branchNames.get(check.branch_id) ?? check.branch_id,
+        itemNames.get(`${check.branch_id}:${line.ingredient_id}`) ?? line.ingredient_id,
+        `${line.recorded_quantity} ${line.unit}`,
+        `${line.physical_quantity} ${line.unit}`,
+        `${line.difference} ${line.unit}`,
+        check.status,
+        line.inventory_revision == null ? '—' : String(line.inventory_revision),
+        check.submitted_by_name,
+        dateFormatter.format(new Date(check.created_at)),
+      ]),
+  );
+  const discrepancyRows = reviews.map((review) => [
+    review.reference,
+    review.branch,
+    review.ingredient,
+    `${review.expected} ${review.unit}`,
+    `${review.actual} → ${review.correctedActual} ${review.unit}`,
+    review.status,
+    review.staff,
+    review.decisionOwner ?? '—',
+    review.decisionReason ?? review.correctionReason,
+    dateFormatter.format(new Date(review.decisionAt ?? review.submittedAt)),
+  ]);
+  const adjustmentRows = reviews.flatMap((review) => review.adjustment ? [[
+    review.adjustment.movementReference,
+    review.reference,
+    review.branch,
+    review.ingredient,
+    `${review.adjustment.beforeQuantity} → ${review.adjustment.afterQuantity} ${review.unit}`,
+    review.adjustment.reason,
+    review.adjustment.approvingOwner,
+    dateFormatter.format(new Date(review.adjustment.approvedAt)),
+  ]] : []);
 
-function StaffManager({ accounts, branches, onSaved }: any) {
+  return (
+    <>
+      <View style={styles.row}>
+        <View>
+          <Text style={styles.section}>Audit history</Text>
+          <Text style={styles.muted}>Completed sales, inventory movements, submitted counts, reviews, and authorized adjustments from Supabase.</Text>
+        </View>
+        <Select value={filter} options={['All activity', 'stock_in', 'sales_consumption', 'waste', 'spoilage', 'adjustment']} onChange={setFilter} />
+      </View>
+      {filter === 'All activity' ? (
+        <>
+          <Text style={styles.panelTitle}>Confirmed sales</Text>
+          {sales === null ? <Text style={styles.muted}>Sales history is unavailable.</Text> : saleRows.length ? (
+            <Table headers={['Transaction Reference', 'Branch', 'Employee', 'Payment', 'Timestamp (Manila)', 'Total']} rows={saleRows} />
+          ) : <Text style={styles.empty}>No confirmed sales were returned for this period.</Text>}
+        </>
+      ) : null}
+      <Text style={styles.panelTitle}>Inventory transactions</Text>
+      {activity === null ? <Text style={styles.muted}>Inventory transaction history is unavailable.</Text> : transactions.length ? (
+        <Table
+          headers={['Reference', 'Type', 'Branch', 'Ingredient', 'Quantity', 'Employee', 'Timestamp (Manila)']}
+          rows={transactions.map((item) => [
+            item.reference,
+            item.type,
+            branchNames.get(item.branch_id) ?? item.branch_id,
+            itemNames.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
+            `${item.quantity} ${item.unit}`,
+            item.actor_name,
+            dateFormatter.format(new Date(item.transaction_date)),
+          ])}
+        />
+      ) : <Text style={styles.empty}>No inventory transactions were returned for this period.</Text>}
+      {filter === 'All activity' ? (
+        <>
+          <Text style={styles.panelTitle}>Physical count history and revisions</Text>
+          {activity === null ? <Text style={styles.muted}>Physical count history is unavailable.</Text> : countRows.length ? (
+            <Table headers={['Count Reference', 'Branch', 'Ingredient', 'Expected', 'Physical', 'Difference', 'Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)']} rows={countRows} />
+          ) : <Text style={styles.empty}>No physical counts were returned for this period.</Text>}
+          <Text style={styles.panelTitle}>Discrepancy review history</Text>
+          {reviews.length ? (
+            <Table headers={['Count Reference', 'Branch', 'Ingredient', 'Expected', 'Actual → Corrected', 'Status', 'Submitted By', 'Reviewed By', 'Review Detail', 'Timestamp (Manila)']} rows={discrepancyRows} />
+          ) : <Text style={styles.empty}>No discrepancy review history was returned.</Text>}
+          <Text style={styles.panelTitle}>Authorized adjustments</Text>
+          {adjustmentRows.length ? (
+            <Table headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Before → After', 'Reason', 'Approving Owner', 'Authorized At (Manila)']} rows={adjustmentRows} />
+          ) : <Text style={styles.empty}>No authorized adjustments were returned.</Text>}
+          {logs.length ? (
+            <>
+              <Text style={styles.panelTitle}>Audit log events</Text>
+              <Table headers={['Action', 'Branch', 'Description', 'Actor', 'Timestamp (Manila)']} rows={logs.map((log) => [
+                log.action,
+                log.branch_id ? branchNames.get(log.branch_id) ?? log.branch_id : '—',
+                log.description,
+                log.actor_name,
+                dateFormatter.format(new Date(log.created_at)),
+              ])} />
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
+function Panel({ title, action, children }: any) { return <View style={styles.panel}><View style={styles.row}><Text style={styles.panelTitle}>{title}</Text>{action && <Pressable onPress={action}><Text style={styles.pinkText}>Refresh</Text></Pressable>}</View>{children}</View>; }
+function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ minWidth: '100%' }}>
+      <View style={styles.table}>
+        <View style={styles.tableHead}>
+          {headers.map((header) => <Text style={styles.headCell} key={header}>{header}</Text>)}
+        </View>
+        {rows.length ? rows.map((row, index) => (
+          <View style={styles.tableRow} key={`${row[0]}-${index}`}>
+            {row.map((cell, cellIndex) => (
+              <Text style={[styles.cell, cellIndex === 0 && styles.strong]} key={`${cell}-${cellIndex}`}>
+                {cell}
+              </Text>
+            ))}
+          </View>
+        )) : <Text style={styles.empty}>No live records returned.</Text>}
+      </View>
+    </ScrollView>
+  );
+}
+function Select({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) {
+  const disabled = options.length === 0;
+  const nextIndex = (options.indexOf(value) + 1) % options.length;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => onChange(options[nextIndex])}
+      style={[styles.select, disabled && { opacity: 0.6 }]}
+    >
+      <Text style={styles.body}>{value}⌄</Text>
+    </Pressable>
+  );
+}
+
+type OwnerPortalNotify = (message: string, isError?: boolean) => void | Promise<void>;
+
+function StaffManager({ accounts, branches, onSaved }: {
+  accounts: Awaited<ReturnType<typeof loadStaffAccounts>>;
+  branches: OwnerPortalBranch[];
+  onSaved: OwnerPortalNotify;
+}) {
   const [username, setUsername] = useState('');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
-  const [editing, setEditing] = useState<any>(null);
+  const [editing, setEditing] = useState<(typeof accounts)[number] | null>(null);
   const [createdAccount, setCreatedAccount] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [savingAccountId, setSavingAccountId] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState('');
   const save = async () => {
+    if (!username.trim() || !branchId) {
+      await onSaved('Enter a username and choose an assigned branch.', true);
+      return;
+    }
     setSaving(true);
     try {
       const account = await saveStaffAccount({ id: editing?.id, username: username.trim(), branchId, active: editing?.active ?? true });
-      onSaved(editing ? 'Staff account updated securely.' : 'Staff account created securely.');
+      await onSaved(editing ? 'Staff account updated securely.' : 'Staff account created securely.');
       if (!editing) setCreatedAccount(account);
       setUsername('');
       setEditing(null);
     } catch (reason: unknown) {
-      onSaved(reason instanceof Error ? reason.message : 'Staff account save failed.');
+      await onSaved(reason instanceof Error ? reason.message : 'Staff account save failed.', true);
     } finally { setSaving(false); }
   };
   const copyEmployeeId = async () => {
     if (!createdAccount?.employee_id || typeof navigator === 'undefined' || !navigator.clipboard) return;
-    await navigator.clipboard.writeText(createdAccount.employee_id);
-    setCopyMessage('Copied. Share it securely with the employee.');
+    try {
+      await navigator.clipboard.writeText(createdAccount.employee_id);
+      setCopyMessage('Copied. Share it securely with the employee.');
+    } catch (reason: unknown) {
+      setCopyMessage(reason instanceof Error ? reason.message : 'Unable to copy the Employee ID.');
+    }
+  };
+  const toggleAccount = async (account: (typeof accounts)[number]) => {
+    setSavingAccountId(account.id);
+    try {
+      await saveStaffAccount({
+        id: account.id,
+        username: account.username,
+        branchId: account.branch_id,
+        active: !account.active,
+      });
+      await onSaved('Staff account status updated securely.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Status update failed.', true);
+    } finally {
+      setSavingAccountId(null);
+    }
   };
   return <>
     <Text style={styles.section}>Staff accounts</Text>
@@ -84,10 +1333,10 @@ function StaffManager({ accounts, branches, onSaved }: any) {
     <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : editing ? 'Save staff account' : 'Create staff account'}</Text></Pressable>
     {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
     <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', 'Edit'])} />
-    {accounts.map((account: any) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable onPress={() => void saveStaffAccount({ id: account.id, username: account.username, branchId: account.branch_id, active: !account.active }).then(() => onSaved('Staff account status updated securely.')).catch((reason: unknown) => onSaved(reason instanceof Error ? reason.message : 'Status update failed.'))}><Text style={styles.pinkText}>{account.active ? 'Deactivate' : 'Activate'}</Text></Pressable></View>)}
+    {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable></View>)}
   </>;
 }
-function SettingsEditor({ products, configuration, stockSettings, onSaved }: any) {
+function LegacySettingsEditor({ products, configuration, stockSettings, onSaved }: any) {
   const [productId, setProductId] = useState(products[0]?.id ?? ''); const [ingredientId, setIngredientId] = useState(configuration?.ingredients?.[0]?.id ?? '');
   const [recipeQty, setRecipeQty] = useState('1'); const [recipeUnit, setRecipeUnit] = useState('kg'); const [thresholdId, setThresholdId] = useState(stockSettings?.inventory?.[0]?.ingredient_id ?? ''); const [thresholdBranch, setThresholdBranch] = useState(stockSettings?.inventory?.[0]?.branch_id ?? ''); const [threshold, setThreshold] = useState('0'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false);
   const saveRecipe = async () => { if (!productId || !ingredientId) { onSaved('Choose a product and ingredient first.'); return; } setSaving(true); try { const existing = configuration.recipeIngredients.filter((line: any) => line.product_id === productId && line.ingredient_id !== ingredientId).map((line: any) => ({ ingredient_id: line.ingredient_id, quantity_required: Number(line.quantity_required), unit_of_measure: line.unit_of_measure })); await saveProductRecipe(productId, [...existing, { ingredient_id: ingredientId, quantity_required: Number(recipeQty), unit_of_measure: recipeUnit }]); onSaved('Recipe line saved for future sales calculations.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Recipe save failed.'); } finally { setSaving(false); } };
@@ -96,7 +1345,632 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: any
   return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text><View style={styles.grid}><Panel title="Product recipes"><Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text><Select value={products.find((item: any) => item.id === productId)?.product_name ?? 'Choose product'} options={products.map((item: any) => item.product_name)} onChange={(value) => setProductId(products.find((item: any) => item.product_name === value)?.id ?? '')} /><Select value={configuration?.ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'} options={(configuration?.ingredients ?? []).map((item: any) => item.name)} onChange={(value) => setIngredientId(configuration.ingredients.find((item: any) => item.name === value)?.id ?? '')} /><TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} /><TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text></Pressable><Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text></Panel><Panel title="Minimum stock thresholds"><Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text><Select value={thresholdBranch ? 'Selected branch inventory' : 'Choose inventory record'} options={['Choose inventory record', ...(stockSettings?.inventory ?? []).map((item: any) => `${item.branch_id} · ${item.ingredient_id}`)]} onChange={(value) => { const match = (stockSettings?.inventory ?? []).find((item: any) => `${item.branch_id} · ${item.ingredient_id}` === value); if (match) { setThresholdBranch(match.branch_id); setThresholdId(match.ingredient_id); setThreshold(String(match.minimum_stock)); } }} /><TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save threshold'}</Text></Pressable></Panel><Panel title="Prepared batter rules"><Text style={styles.body}>1 batch = 5 bottles = 125 pieces.</Text><Text style={styles.muted}>Raw ingredients are deducted during preparation; completed sales consume prepared batter and do not deduct raw batter ingredients again.</Text></Panel><Panel title="Expiration alerts"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save alert period'}</Text></Pressable><Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text></Panel></View></>;
 }
 
-function ProfileEditor({ user, onSaved }: any) { const [name, setName] = useState(user.displayName); const [password, setPassword] = useState(''); const [saving, setSaving] = useState(false); const save = async () => { setSaving(true); try { await updateOwnerProfile({ fullName: name, newPassword: password || undefined }); setPassword(''); onSaved('Owner profile updated securely through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Profile update failed.'); } finally { setSaving(false); } }; return <Panel title="Owner profile & security"><Text style={styles.body}>{user.email}</Text><TextInput value={name} onChangeText={setName} placeholder="Owner full name" style={styles.input} /><TextInput value={password} onChangeText={setPassword} placeholder="New password (8+ characters)" secureTextEntry style={styles.input} /><Pressable disabled={saving} onPress={() => void save()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save profile / password'}</Text></Pressable></Panel>; }
+function OwnerProductEditor({ products, onSaved }: {
+  products: ProductManagementItem[];
+  onSaved: OwnerPortalNotify;
+}) {
+  const [productId, setProductId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [available, setAvailable] = useState(true);
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({
+    '4pcs': '',
+    '8pcs': '',
+    '10plus1pcs': '',
+  });
+  const [saving, setSaving] = useState(false);
+  const selectedProduct = products.find((product) => product.id === productId);
+
+  useEffect(() => {
+    if (!selectedProduct) {
+      setName('');
+      setDescription('');
+      setAvailable(true);
+      setPriceDrafts({ '4pcs': '', '8pcs': '', '10plus1pcs': '' });
+      return;
+    }
+
+    setName(selectedProduct.product_name);
+    setDescription(selectedProduct.description);
+    setAvailable(selectedProduct.is_available);
+    setPriceDrafts(Object.fromEntries(standardProductVariants.map((variant) => {
+      const current = selectedProduct.variants.find((item) => item.variant_code === variant.variant_code);
+      return [variant.variant_code, current ? String(current.price) : ''];
+    })));
+  }, [selectedProduct]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const variantPrices = buildOwnerPortalVariantPrices(priceDrafts, standardProductVariants);
+      const productInput = {
+        product_name: name,
+        description,
+        is_available: available,
+      };
+
+      if (selectedProduct) {
+        const missingVariant = standardProductVariants.find((variant) =>
+          !selectedProduct.variants.some((current) => current.variant_code === variant.variant_code),
+        );
+        if (missingVariant) {
+          throw new Error(`Cannot edit this product because its ${missingVariant.size_label} variant is missing.`);
+        }
+        const pricesByCode = new Map(variantPrices.map((variant) => [variant.variant_code, variant.price]));
+        await updateProduct(selectedProduct.id, {
+          ...productInput,
+          variants: selectedProduct.variants.map((variant) => ({
+            id: variant.id,
+            price: pricesByCode.get(variant.variant_code) ?? variant.price,
+          })),
+        });
+      } else {
+        await createProduct({ ...productInput, variants: variantPrices });
+      }
+
+      await onSaved(selectedProduct ? 'Product updated through Supabase.' : 'Product created through Supabase.');
+      if (!selectedProduct) setProductId('');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Product save failed.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel title="Products & menu">
+      <Text style={styles.muted}>Create products or edit each variant price and product availability independently.</Text>
+      {products.map((product) => (
+        <Pressable
+          key={product.id}
+          accessibilityRole="button"
+          onPress={() => setProductId(product.id)}
+          style={styles.line}
+        >
+          <Text style={styles.body}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text>
+          <Text style={styles.pinkText}>{productId === product.id ? 'Selected' : 'Edit'}</Text>
+        </Pressable>
+      ))}
+      <Pressable accessibilityRole="button" onPress={() => setProductId('')} style={styles.outline}>
+        <Text style={styles.pinkText}>Add product</Text>
+      </Pressable>
+      <TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} />
+      <TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} />
+      {standardProductVariants.map((variant) => (
+        <TextInput
+          key={variant.variant_code}
+          value={priceDrafts[variant.variant_code]}
+          onChangeText={(value) => setPriceDrafts((current) => ({
+            ...current,
+            [variant.variant_code]: value,
+          }))}
+          keyboardType="decimal-pad"
+          placeholder={`${variant.size_label} selling price`}
+          style={styles.input}
+        />
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ checked: available }}
+        onPress={() => setAvailable((current) => !current)}
+        style={styles.outline}
+      >
+        <Text style={styles.pinkText}>{available ? 'Available to Staff' : 'Unavailable to Staff'} · tap to toggle</Text>
+      </Pressable>
+      <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}>
+        <Text style={styles.loginButtonText}>{saving ? 'Saving…' : selectedProduct ? 'Save product' : 'Create product'}</Text>
+      </Pressable>
+    </Panel>
+  );
+}
+
+function IngredientConfigurationEditor({ configuration, onSaved }: {
+  configuration: Awaited<ReturnType<typeof loadIngredientRecipeConfiguration>> | null;
+  onSaved: OwnerPortalNotify;
+}) {
+  const [ingredientId, setIngredientId] = useState('');
+  const [name, setName] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [unit, setUnit] = useState('kg');
+  const [categoryName, setCategoryName] = useState('');
+  const [savingIngredient, setSavingIngredient] = useState(false);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const ingredients = configuration?.ingredients ?? [];
+  const categories = configuration?.categories ?? [];
+  const selectedIngredient = ingredients.find((item) => item.id === ingredientId);
+  const unitOptions = [...new Set(['g', 'kg', 'ml', 'L', 'pcs', 'bottle', 'pack', 'tsp', 'tbsp', unit])];
+
+  const selectIngredient = (value: string) => {
+    const selected = ingredients.find((item) => item.name === value);
+    setIngredientId(selected?.id ?? '');
+    setName(selected?.name ?? '');
+    setCategoryId(selected?.category_id ?? categories[0]?.id ?? '');
+    setUnit(selected?.unit ?? 'kg');
+  };
+
+  const saveIngredient = async () => {
+    if (!configuration) {
+      await onSaved('Ingredient configuration is unavailable.', true);
+      return;
+    }
+    if (!name.trim() || !categoryId || !unit.trim()) {
+      await onSaved('Enter an ingredient name, category, and unit.', true);
+      return;
+    }
+    setSavingIngredient(true);
+    try {
+      if (ingredientId) {
+        await updateIngredient(ingredientId, { name, category_id: categoryId, unit });
+      } else {
+        await createIngredient({ name, category_id: categoryId, unit });
+      }
+      await onSaved(ingredientId ? 'Ingredient updated.' : 'Ingredient created.');
+      setIngredientId('');
+      setName('');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.', true);
+    } finally {
+      setSavingIngredient(false);
+    }
+  };
+
+  const saveCategory = async () => {
+    if (!categoryName.trim()) {
+      await onSaved('Enter a category name.', true);
+      return;
+    }
+    setSavingCategory(true);
+    try {
+      const category = await createIngredientCategory(categoryName);
+      setCategoryId(category.id);
+      setCategoryName('');
+      await onSaved('Ingredient category saved.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Category save failed.', true);
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  return (
+    <Panel title="Ingredients, categories & units">
+      {configuration === null ? <Text style={styles.muted}>Ingredient configuration is unavailable.</Text> : (
+        <>
+          <Text style={styles.muted}>{ingredients.length} ingredients · {categories.length} categories</Text>
+          <Select
+            value={selectedIngredient?.name ?? 'Create ingredient'}
+            options={['Create ingredient', ...ingredients.map((item) => item.name)]}
+            onChange={selectIngredient}
+          />
+          <TextInput value={name} onChangeText={setName} placeholder="Ingredient or supply name" style={styles.input} />
+          <Select
+            value={categories.find((category) => category.id === categoryId)?.name ?? 'Choose category'}
+            options={categories.map((category) => category.name)}
+            onChange={(value) => setCategoryId(categories.find((category) => category.name === value)?.id ?? '')}
+          />
+          <Select value={unit} options={unitOptions} onChange={setUnit} />
+          <Pressable disabled={savingIngredient} onPress={() => void saveIngredient()} style={styles.loginButton}>
+            <Text style={styles.loginButtonText}>{savingIngredient ? 'Saving…' : ingredientId ? 'Save ingredient' : 'Add ingredient'}</Text>
+          </Pressable>
+          <View style={styles.line}>
+            <TextInput value={categoryName} onChangeText={setCategoryName} placeholder="New category name" style={[styles.input, { flex: 1 }]} />
+            <Pressable disabled={savingCategory} onPress={() => void saveCategory()} style={styles.outline}>
+              <Text style={styles.pinkText}>{savingCategory ? 'Saving…' : 'Add category'}</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+type PreparedBatterDraftLine = {
+  key: string;
+  ingredientId: string;
+  quantity: string;
+};
+
+function PreparedBatterEditor({ ingredients, products, onSaved }: {
+  ingredients: Array<{ id: string; name: string; unit: string }>;
+  products: ProductManagementItem[];
+  onSaved: OwnerPortalNotify;
+}) {
+  const [recipes, setRecipes] = useState<SharedRecipeRecord[]>([]);
+  const [selectedRecipeId, setSelectedRecipeId] = useState('');
+  const [recipeCode, setRecipeCode] = useState('shared-batter');
+  const [recipeName, setRecipeName] = useState('Shared Takoyaki Batter');
+  const [active, setActive] = useState(false);
+  const [automaticConsumption, setAutomaticConsumption] = useState(false);
+  const [productIds, setProductIds] = useState<string[]>([]);
+  const [lines, setLines] = useState<PreparedBatterDraftLine[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const selectedRecipe = recipes.find((recipe) => recipe.id === selectedRecipeId);
+
+  useEffect(() => {
+    let activeRequest = true;
+    loadSharedRecipes().then((records) => {
+      if (!activeRequest) return;
+      setRecipes(records);
+      setSelectedRecipeId(records[0]?.id ?? '');
+    }).catch((reason: unknown) => {
+      if (activeRequest) setError(reason instanceof Error ? reason.message : 'Unable to load prepared-batter recipes.');
+    }).finally(() => {
+      if (activeRequest) setLoading(false);
+    });
+    return () => { activeRequest = false; };
+  }, []);
+
+  useEffect(() => {
+    if (selectedRecipe) {
+      setRecipeCode(selectedRecipe.recipe_code);
+      setRecipeName(selectedRecipe.name);
+      setActive(selectedRecipe.active);
+      setAutomaticConsumption(selectedRecipe.automatic_consumption_enabled);
+      setProductIds(selectedRecipe.productIds);
+      try {
+        setLines(selectedRecipe.ingredientLines.map((line, index) => ({
+          key: `${selectedRecipe.id}-${index}`,
+          ingredientId: line.ingredient_id,
+          quantity: String(getPerBottleRecipeQuantity(line.quantity_required, selectedRecipe.prepared_quantity)),
+        })));
+        setError('');
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : 'The saved batter recipe has invalid quantities.');
+      }
+    } else {
+      setRecipeCode('shared-batter');
+      setRecipeName('Shared Takoyaki Batter');
+      setActive(false);
+      setAutomaticConsumption(false);
+      setProductIds([]);
+      setLines([]);
+    }
+  }, [selectedRecipe]);
+
+  const save = async () => {
+    if (saving || loading) return;
+    setError('');
+    if (!recipeCode.trim() || !recipeName.trim() || lines.length === 0) {
+      setError('Enter a recipe code and name and add at least one raw ingredient.');
+      return;
+    }
+    const usedIngredients = new Set<string>();
+    const ingredientLines = [];
+    for (const line of lines) {
+      const ingredient = ingredients.find((item) => item.id === line.ingredientId);
+      const quantity = Number(line.quantity);
+      if (!ingredient || usedIngredients.has(line.ingredientId)) {
+        setError('Choose a different configured ingredient for every recipe line.');
+        return;
+      }
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        setError(`Enter a positive per-bottle quantity for ${ingredient.name}.`);
+        return;
+      }
+      usedIngredients.add(line.ingredientId);
+      ingredientLines.push({
+        ingredient_id: ingredient.id,
+        quantity_required: getConfiguredRecipeQuantity(quantity, 5),
+        unit_of_measure: ingredient.unit,
+        automatic_consumption_enabled: automaticConsumption,
+      });
+    }
+
+    setSaving(true);
+    try {
+      await saveSharedRecipe({
+        id: selectedRecipe?.id,
+        recipe_code: recipeCode,
+        name: recipeName,
+        estimated_yield_pieces: 125,
+        prepared_quantity: 5,
+        prepared_unit: 'bottle',
+        active,
+        automatic_consumption_enabled: automaticConsumption,
+        ingredientLines,
+        productIds,
+      });
+      await onSaved('Prepared-batter recipe saved as a new version; historical sales are unchanged.');
+      const updatedRecipes = await loadSharedRecipes();
+      setRecipes(updatedRecipes);
+      const saved = updatedRecipes.find((recipe) => recipe.id === selectedRecipe?.id)
+        ?? updatedRecipes.find((recipe) => recipe.recipe_code === recipeCode.trim());
+      setSelectedRecipeId(saved?.id ?? '');
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'Prepared-batter recipe save failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addIngredientLine = () => {
+    const nextIngredient = ingredients.find((ingredient) =>
+      !lines.some((line) => line.ingredientId === ingredient.id),
+    );
+    if (!nextIngredient) {
+      setError('Add another configured ingredient before adding a recipe line.');
+      return;
+    }
+    setError('');
+    setLines((current) => [...current, {
+      key: `${Date.now()}-${nextIngredient.id}`,
+      ingredientId: nextIngredient.id,
+      quantity: '',
+    }]);
+  };
+
+  return (
+    <Panel title="Prepared-batter recipe">
+      <Text style={styles.muted}>A batch is fixed at 5 bottles; yield is fixed at 25 takoyaki pieces per bottle (125 per batch).</Text>
+      {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading shared recipe…</Text></View> : null}
+      {!loading && recipes.length ? (
+        <Select
+          value={selectedRecipe?.name ?? 'Choose recipe'}
+          options={recipes.map((recipe) => recipe.name)}
+          onChange={(value) => setSelectedRecipeId(recipes.find((recipe) => recipe.name === value)?.id ?? '')}
+        />
+      ) : null}
+      {!loading && !recipes.length ? <Text style={styles.muted}>No shared recipe was returned; a new one can be configured from the existing recipe service.</Text> : null}
+      <TextInput value={recipeCode} onChangeText={setRecipeCode} placeholder="Recipe code" style={styles.input} />
+      <TextInput value={recipeName} onChangeText={setRecipeName} placeholder="Recipe name" style={styles.input} />
+      {lines.map((line) => {
+        const ingredient = ingredients.find((item) => item.id === line.ingredientId);
+        return (
+          <View key={line.key} style={styles.line}>
+            <View style={{ flex: 1 }}>
+              <Select
+                value={ingredient?.name ?? 'Choose ingredient'}
+                options={ingredients.map((item) => item.name)}
+                onChange={(value) => {
+                  const nextIngredient = ingredients.find((item) => item.name === value);
+                  if (nextIngredient) setLines((current) => current.map((item) =>
+                    item.key === line.key ? { ...item, ingredientId: nextIngredient.id } : item,
+                  ));
+                }}
+              />
+              <TextInput
+                value={line.quantity}
+                onChangeText={(quantity) => setLines((current) => current.map((item) =>
+                  item.key === line.key ? { ...item, quantity } : item,
+                ))}
+                keyboardType="decimal-pad"
+                placeholder={`Quantity per bottle (${ingredient?.unit ?? 'unit'})`}
+                style={styles.input}
+              />
+            </View>
+            <Pressable onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={styles.outline}>
+              <Text style={styles.pinkText}>Remove</Text>
+            </Pressable>
+          </View>
+        );
+      })}
+      <Pressable disabled={loading || ingredients.length === 0} onPress={addIngredientLine} style={styles.outline}>
+        <Text style={styles.pinkText}>Add raw ingredient</Text>
+      </Pressable>
+      <View style={styles.line}>
+        <Pressable onPress={() => setActive((current) => !current)} style={styles.outline}>
+          <Text style={styles.pinkText}>{active ? 'Active' : 'Inactive'} · tap to toggle</Text>
+        </Pressable>
+        <Pressable onPress={() => setAutomaticConsumption((current) => !current)} style={styles.outline}>
+          <Text style={styles.pinkText}>{automaticConsumption ? 'Automatic consumption on' : 'Automatic consumption off'}</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.muted}>Raw ingredients are deducted during preparation. Completed sales consume prepared batter only, preventing a second raw-ingredient deduction.</Text>
+      <Text style={styles.panelTitle}>Applicable products</Text>
+      <View style={styles.line}>
+        {products.filter((product) => product.is_available).map((product) => {
+          const selected = productIds.includes(product.id);
+          return (
+            <Pressable key={product.id} onPress={() => setProductIds((current) => selected
+              ? current.filter((id) => id !== product.id)
+              : [...current, product.id])} style={styles.outline}>
+              <Text style={styles.pinkText}>{selected ? '✓ ' : ''}{product.product_name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      <Pressable disabled={saving || loading} onPress={() => void save()} style={styles.loginButton}>
+        <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save batter recipe'}</Text>
+      </Pressable>
+    </Panel>
+  );
+}
+
+function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
+  products: ProductManagementItem[];
+  configuration: any;
+  stockSettings: any;
+  onSaved: OwnerPortalNotify;
+}) {
+  const [productId, setProductId] = useState(products[0]?.id ?? '');
+  const [ingredientId, setIngredientId] = useState(configuration?.ingredients?.[0]?.id ?? '');
+  const [recipeQty, setRecipeQty] = useState('1');
+  const [recipeUnit, setRecipeUnit] = useState('kg');
+  const [thresholdId, setThresholdId] = useState(stockSettings?.inventory?.[0]?.ingredient_id ?? '');
+  const [thresholdBranch, setThresholdBranch] = useState(stockSettings?.inventory?.[0]?.branch_id ?? '');
+  const [threshold, setThreshold] = useState('0');
+  const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7));
+  const [saving, setSaving] = useState(false);
+  const recipeLines = configuration?.recipeIngredients ?? [];
+  const ingredients = configuration?.ingredients ?? [];
+  const inventorySettings = stockSettings?.inventory ?? [];
+  const selectedThreshold = inventorySettings.find((item: any) =>
+    item.branch_id === thresholdBranch && item.ingredient_id === thresholdId,
+  );
+  const thresholdOptions = [
+    'Choose inventory record',
+    ...inventorySettings.map((item: any) => `${item.branch_id} · ${item.ingredient_id}`),
+  ];
+
+  const saveRecipe = async () => {
+    const quantity = Number(recipeQty);
+    if (!productId || !ingredientId || !configuration) {
+      await onSaved('Choose a product and ingredient after configuration data has loaded.', true);
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0 || !recipeUnit.trim()) {
+      await onSaved('Enter a positive recipe quantity and its unit of measure.', true);
+      return;
+    }
+    setSaving(true);
+    try {
+      const existing = recipeLines
+        .filter((line: any) => line.product_id === productId && line.ingredient_id !== ingredientId)
+        .map((line: any) => ({
+          ingredient_id: line.ingredient_id,
+          quantity_required: Number(line.quantity_required),
+          unit_of_measure: line.unit_of_measure,
+        }));
+      await saveProductRecipe(productId, [
+        ...existing,
+        { ingredient_id: ingredientId, quantity_required: quantity, unit_of_measure: recipeUnit.trim() },
+      ]);
+      await onSaved('Recipe line saved for future sales calculations.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Recipe save failed.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveThreshold = async () => {
+    const minimumStock = Number(threshold);
+    if (!thresholdBranch || !thresholdId) {
+      await onSaved('Choose a branch inventory record first.', true);
+      return;
+    }
+    if (!Number.isFinite(minimumStock) || minimumStock < 0) {
+      await onSaved('Minimum stock must be a non-negative number.', true);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateMinimumStock(thresholdBranch, thresholdId, minimumStock);
+      await onSaved('Minimum stock threshold updated.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Threshold save failed.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveDays = async () => {
+    const parsed = Number(days);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+      await onSaved('Expiration alert period must be a whole number from 1 to 365 days.', true);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateNearExpirationDays(parsed);
+      await onSaved('Expiration alert period updated.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Expiration settings save failed.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <Text style={styles.section}>Settings & configuration</Text>
+      <Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text>
+      <View style={styles.grid}>
+        <OwnerProductEditor products={products} onSaved={onSaved} />
+        <IngredientConfigurationEditor configuration={configuration} onSaved={onSaved} />
+        <Panel title="Product recipes">
+          <Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text>
+          <Select
+            value={products.find((item) => item.id === productId)?.product_name ?? 'Choose product'}
+            options={products.map((item) => item.product_name)}
+            onChange={(value) => setProductId(products.find((item) => item.product_name === value)?.id ?? '')}
+          />
+          <Select
+            value={ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'}
+            options={ingredients.map((item: any) => item.name)}
+            onChange={(value) => setIngredientId(ingredients.find((item: any) => item.name === value)?.id ?? '')}
+          />
+          <TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} />
+          <TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} />
+          <Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}>
+            <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text>
+          </Pressable>
+          <Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text>
+        </Panel>
+        <Panel title="Minimum stock thresholds">
+          <Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text>
+          <Select
+            value={selectedThreshold
+              ? `${selectedThreshold.branch_id} · ${selectedThreshold.ingredient_id}`
+              : 'Choose inventory record'}
+            options={thresholdOptions}
+            onChange={(value) => {
+              const match = inventorySettings.find((item: any) =>
+                `${item.branch_id} · ${item.ingredient_id}` === value,
+              );
+              if (match) {
+                setThresholdBranch(match.branch_id);
+                setThresholdId(match.ingredient_id);
+                setThreshold(String(match.minimum_stock));
+              }
+            }}
+          />
+          <TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} />
+          <Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}>
+            <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save threshold'}</Text>
+          </Pressable>
+        </Panel>
+        <PreparedBatterEditor ingredients={ingredients} products={products} onSaved={onSaved} />
+        <Panel title="Expiration alerts">
+          <Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text>
+          <TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days (1–365)" style={styles.input} />
+          <Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}>
+            <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save alert period'}</Text>
+          </Pressable>
+          <Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text>
+        </Panel>
+      </View>
+    </>
+  );
+}
+
+function ProfileEditor({ user, onSaved }: {
+  user: AppUser;
+  onSaved: OwnerPortalNotify;
+}) {
+  const [name, setName] = useState(user.displayName);
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!name.trim()) {
+      await onSaved('Owner name is required.', true);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateOwnerProfile({ fullName: name.trim(), newPassword: password || undefined });
+      setPassword('');
+      await onSaved('Owner profile updated securely through Supabase.');
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Profile update failed.', true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Panel title="Owner profile & security">
+      <Text style={styles.body}>{user.email}</Text>
+      <TextInput value={name} onChangeText={setName} placeholder="Owner full name" style={styles.input} />
+      <TextInput value={password} onChangeText={setPassword} placeholder="New password (8+ characters)" secureTextEntry style={styles.input} />
+      <Pressable disabled={saving} onPress={() => void save()} style={styles.outline}>
+        <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save profile / password'}</Text>
+      </Pressable>
+    </Panel>
+  );
+}
 
 const C = { pink: '#EC1358', navy: '#0F1025', bg: '#F5F5F4', surface: '#FDFDFC', border: '#E3E3E6', muted: '#858591' };
 const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });

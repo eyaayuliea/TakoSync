@@ -52,6 +52,7 @@ test('summarizes normal, low-stock, and out-of-stock inventory separately', () =
     { quantity: 10, minimum_stock: 5 },
     { quantity: 5, minimum_stock: 5 },
     { quantity: 0, minimum_stock: 5 },
+    { quantity: null, minimum_stock: 5 },
     { quantity: 'invalid', minimum_stock: 5 },
   ]), { normal: 1, lowStock: 1, outOfStock: 1 });
 });

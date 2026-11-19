@@ -12,6 +12,10 @@ const {
   submitDailyStockCheck,
   submitSale,
 } = await import('./takosync.ts');
+const {
+  SaleSubmissionRejectedError,
+  isRetryableSaleSubmissionError,
+} = await import('./ownerSalesStatus.ts');
 import {
   createPendingDailyStockCheckStore,
   sameDailyStockCheckPayload,
@@ -159,6 +163,44 @@ test('real Staff prepared batter and POS services call their production RPCs', a
   assert.equal(client.calls[1].args.p_branch_id, 'branch-a');
   assert.deepEqual(client.calls[1].args.p_addons, [{ addon_id: 'addon-1', quantity: 1, unit_price: 1.5 }]);
   assert.equal(client.calls[2].args.p_sale_id, 'sale-1');
+});
+
+test('Staff sale service rejects fractional quantities before calling Supabase', async () => {
+  const client = new RecordingSupabase();
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-FRACTIONAL', paymentMethod: 'Cash', totalAmount: 15,
+      items: [{ variantId: 'variant-1', quantity: 1.5, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    /positive whole-number quantity/,
+  );
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-DUPLICATE-LINE', paymentMethod: 'Cash', totalAmount: 20,
+      items: [
+        { variantId: 'variant-1', quantity: 1, unitPrice: 10 },
+        { variantId: 'variant-1', quantity: 1, unitPrice: 10 },
+      ],
+      addons: [],
+    }, clientForTests(client)),
+    /variant may only appear once/,
+  );
+  assert.equal(client.calls.length, 0);
+});
+
+test('Staff sale service classifies known inventory rejection as non-retryable', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale', 'sale exceeds available stock');
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-OUT-OF-STOCK', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    (error) => error instanceof SaleSubmissionRejectedError
+      && !isRetryableSaleSubmissionError(error)
+      && /Insufficient inventory/.test(error.message),
+  );
+  assert.equal(client.calls.filter((call) => call.name === 'submit_sale').length, 1);
 });
 
 test('Staff sale submission refuses to present an unresolved inventory sale as completed', async () => {

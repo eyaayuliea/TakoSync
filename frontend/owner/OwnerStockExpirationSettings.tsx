@@ -17,11 +17,12 @@ import {
   type StockExpirationSettingsData,
 } from '../services/takosync';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { ownerColors } from './shared/ownerTokens';
 
 const colors = {
-  pink: '#F20D55',
-  navy: '#101027',
-  orange: '#FF9418',
+  pink: ownerColors.primary,
+  navy: ownerColors.navy,
+  orange: ownerColors.orange,
   ink: '#171724',
   muted: '#858591',
   pale: '#F5F5F7',

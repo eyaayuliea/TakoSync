@@ -37,6 +37,22 @@ test('menu cart totals update for quantities and ignore missing catalog rows', (
   ], products), { count: 3, total: 157 });
 });
 
+test('menu cart and add-on totals use exact currency cents', () => {
+  const products = [
+    { id: 'small', productId: 'p1', productName: 'Takoyaki', sizeLabel: '1 PCS', pieceCount: 1, category: 'Flavors', name: 'Takoyaki', description: '', price: 0.1, isAvailable: true },
+    { id: 'extra', productId: 'p2', productName: 'Extra', sizeLabel: '1 PCS', pieceCount: 1, category: 'Flavors', name: 'Extra', description: '', price: 0.29, isAvailable: true },
+  ];
+
+  assert.equal(calculateMenuCart([
+    { productId: 'small', quantity: 3 },
+    { productId: 'extra', quantity: 1 },
+  ], products).total, 0.59);
+  assert.equal(calculateSelectedAddonTotal([
+    { id: 'sauce', price: 0.1, isAvailable: true },
+    { id: 'flakes', price: 0.2, isAvailable: true },
+  ], ['sauce', 'flakes']), 0.3);
+});
+
 test('menu products group by live product ID and keep sizes in ascending piece order', () => {
   const products = [
     { id: 'v8', productId: 'p1', productName: 'Octobits Takoyaki', sizeLabel: '8 PCS', pieceCount: 8, category: 'Flavors', name: 'Octobits Takoyaki - 8 PCS', description: '', price: 89, isAvailable: true },

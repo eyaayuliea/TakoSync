@@ -16,6 +16,7 @@ import {
 test('classifies stock at the threshold and distinguishes zero stock', () => {
   assert.equal(classifyOwnerStockAlert(5, 5), 'Low Stock');
   assert.equal(classifyOwnerStockAlert(0, 5), 'Out of Stock');
+  assert.equal(classifyOwnerStockAlert(null, 5), null);
   assert.equal(classifyOwnerStockAlert(6, 5), null);
 });
 
@@ -64,7 +65,7 @@ test('Owner alert counts fail closed while inventory refresh is loading or faile
   assert.deepEqual(countOwnerAlertsWhenReady(counts, false, ''), counts);
 });
 
-test('builds deduplicated low-stock and expiration projections with consistent counts', () => {
+test('builds deduplicated stock alerts and evaluates each active batch independently', () => {
   const snapshot = buildOwnerAlertSnapshot({
     branches: [
       { id: 'branch-1', name: 'Branch 1' },
@@ -85,6 +86,7 @@ test('builds deduplicated low-stock and expiration projections with consistent c
     ],
     batches: [
       { id: 'late', branch_id: 'branch-2', ingredient_id: 'sauce', batch_reference: 'S-2', expiration_date: '2026-11-30', quantity_remaining: 2 },
+      { id: 'near', branch_id: 'branch-2', ingredient_id: 'sauce', batch_reference: 'S-3', expiration_date: '2026-11-20', quantity_remaining: 1 },
       { id: 'expired', branch_id: 'branch-1', ingredient_id: 'flour', batch_reference: 'F-1', expiration_date: '2026-11-15', quantity_remaining: 2 },
       { id: 'ignored', branch_id: 'branch-1', ingredient_id: 'oil', batch_reference: 'O-1', expiration_date: '2026-11-17', quantity_remaining: 2 },
       { id: 'empty', branch_id: 'branch-1', ingredient_id: 'flour', batch_reference: 'F-0', expiration_date: '2026-11-17', quantity_remaining: 0 },
@@ -101,9 +103,10 @@ test('builds deduplicated low-stock and expiration projections with consistent c
   ]);
   assert.deepEqual(snapshot.expiration.map((item) => [item.id, item.status]), [
     ['expired', 'Expired'],
+    ['near', 'Near Expiration'],
     ['late', 'Near Expiration'],
   ]);
-  assert.deepEqual(snapshot.counts, { lowStock: 3, expiration: 2 });
+  assert.deepEqual(snapshot.counts, { lowStock: 3, expiration: 3 });
 });
 
 test('buildOwnerAlertSnapshot applies each branch filter to both categories', () => {
@@ -123,6 +126,21 @@ test('buildOwnerAlertSnapshot applies each branch filter to both categories', ()
   };
   assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-1' }).lowStock.map((item) => item.branchId), ['branch-1']);
   assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-2' }).expiration.map((item) => item.branchId), ['branch-2']);
-  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.lowStock, 2);
-  assert.equal(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts.expiration, 2);
+  assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-1' }).counts, { lowStock: 1, expiration: 1 });
+  assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-2' }).counts, { lowStock: 1, expiration: 1 });
+  assert.deepEqual(buildOwnerAlertSnapshot({ ...base, branchId: 'branch-3' }).counts, { lowStock: 0, expiration: 0 });
+});
+
+test('does not turn a missing balance or null quantity into an out-of-stock alert', () => {
+  const snapshot = buildOwnerAlertSnapshot({
+    branches: [{ id: 'branch-1', name: 'Branch 1' }],
+    ingredients: [{ id: 'flour', name: 'Flour', unit: 'kg', expiration_tracking: true }],
+    inventory: [{ branch_id: 'branch-1', ingredient_id: 'flour', quantity: null, minimum_stock: 2 }],
+    batches: [],
+    nearExpirationDays: 7,
+    branchId: null,
+    now: new Date('2026-11-16T04:00:00.000Z'),
+  });
+  assert.deepEqual(snapshot.lowStock, []);
+  assert.deepEqual(snapshot.counts, { lowStock: 0, expiration: 0 });
 });

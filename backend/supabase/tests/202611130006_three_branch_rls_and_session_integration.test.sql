@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(46);
+select plan(48);
 
 -- This fixture deliberately uses the three production branch rows.  The test is
 -- rolled back, so it cannot alter a hosted or local database beyond its session.
@@ -148,6 +148,11 @@ select is((select count(*)::int from daily_stock_checks where reference like 'RL
 select is((select count(*)::int from batter_preparation_batches where batch_reference like 'RLS-%'), 1, 'Branch 1 staff sees only Branch 1 batter');
 select is((select count(*)::int from inventory_discrepancy_adjustments), 0, 'Staff cannot read adjustment audit rows');
 select throws_ok($$select * from record_inventory_transactions('00000000-0000-4000-8000-000000000002', '[{"ingredient_id":"flour","type":"stock_in","quantity":1}]'::jsonb)$$, 'P0001', 'Branch access denied', 'Branch 1 staff cannot write Branch 2');
+select throws_ok(
+  format('select public.process_sale_inventory(%L)', (select sale_2_id from rls_fixture)),
+  '42501', 'Sale processing access denied',
+  'Branch 1 Staff cannot process a Branch 2 sale'
+);
 
 select set_config('request.jwt.claims', (select jsonb_build_object('sub', staff_2_id, 'role', 'authenticated', 'session_id', staff_2_session_id)::text from rls_fixture), true);
 select is((select count(*)::int from branch_inventory where ingredient_id = 'flour'), 1, 'Branch 2 staff sees only Branch 2 inventory');
@@ -218,11 +223,16 @@ update public.business_day_settings set normal_closing_time = time '00:00:01', e
 where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
 set local role authenticated;
 select set_config('request.jwt.claims', (select jsonb_build_object('sub', owner_id, 'role', 'authenticated', 'session_id', owner_session_id)::text from rls_fixture), true);
-select is(business_session_status() ->> 'active', 'false', 'expired business session is rejected');
+select is(business_session_status() ->> 'active', 'true', 'business closing time does not expire an active Auth session');
 reset role;
 delete from auth.sessions where id = (select owner_session_id from rls_fixture);
 set local role authenticated;
 select is(business_session_status() ->> 'active', 'false', 'revoked Auth session is rejected');
+select throws_ok(
+  format('select public.process_sale_inventory(%L)', (select sale_1_id from rls_fixture)),
+  '42501', 'Authentication session is not active',
+  'sale processing rejects a revoked Auth session'
+);
 reset role;
 update public.profiles set active = false where id = (select owner_id from rls_fixture);
 set local role authenticated;

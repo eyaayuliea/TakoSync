@@ -1,33 +1,64 @@
 name: Supabase migrations
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - backend/supabase/migrations/**
-      - .github/workflows/supabase-migrations.yml
   workflow_dispatch:
+    inputs:
+      confirm_development_target:
+        description: Confirm this run targets the approved TakoSync Development project
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: supabase-production-migrations
+  group: supabase-development-migrations
   cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
-    environment: supabase-production
+    if: >-
+      inputs.confirm_development_target == true &&
+      vars.TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED == 'true' &&
+      vars.TAKOSYNC_MIGRATIONS_RECONCILED == 'true' &&
+      vars.SUPABASE_DEVELOPMENT_PROJECT_REF != '' &&
+      vars.SUPABASE_PRODUCTION_PROJECT_REF != ''
+    environment: supabase-development
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+
+      - name: Validate unique local migration versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import re
+          import sys
+
+          migration_dir = Path("backend/supabase/migrations")
+          migrations = sorted(migration_dir.glob("*.sql"))
+          versions = [re.match(r"^(\d{12})_", path.name) for path in migrations]
+          invalid = [path.name for path, match in zip(migrations, versions) if match is None]
+          counts = Counter(match.group(1) for match in versions if match)
+          duplicates = sorted(version for version, count in counts.items() if count > 1)
+          if invalid or duplicates:
+              print("::error title=Migration source::Migration filenames must use unique 12-digit versions.")
+              if invalid:
+                  print("Invalid filenames: " + ", ".join(invalid))
+              if duplicates:
+                  print("Duplicate versions: " + ", ".join(duplicates))
+              sys.exit(1)
+          print(f"Validated {len(migrations)} uniquely versioned migration files.")
+          PY
 
       - name: Validate migration connection secret
         shell: bash
@@ -75,6 +106,16 @@ jobs:
               fail("SUPABASE_DB_URL has an empty database username or password")
           if not re.fullmatch(r"postgres\.[a-z0-9-]+", unquote(username)):
               fail("SUPABASE_DB_URL must use the Supabase postgres.<project-ref> user")
+          development_ref = os.environ.get("SUPABASE_DEVELOPMENT_PROJECT_REF", "")
+          production_ref = os.environ.get("SUPABASE_PRODUCTION_PROJECT_REF", "")
+          if not re.fullmatch(r"[a-z0-9]{10,30}", development_ref):
+              fail("SUPABASE_DEVELOPMENT_PROJECT_REF is missing or invalid")
+          if not re.fullmatch(r"[a-z0-9]{10,30}", production_ref):
+              fail("SUPABASE_PRODUCTION_PROJECT_REF is missing or invalid")
+          if development_ref == production_ref:
+              fail("The Development project reference must differ from Production")
+          if unquote(username) != f"postgres.{development_ref}":
+              fail("The database URL username does not match the approved Development project")
           if re.search(r"[\s@\[\]]|%(?![0-9a-fA-F]{2})", password):
               fail("SUPABASE_DB_URL contains invalid password encoding")
           if ":" not in hostport:
@@ -131,6 +172,8 @@ jobs:
           PY
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DEVELOPMENT_PROJECT_REF: ${{ vars.SUPABASE_DEVELOPMENT_PROJECT_REF }}
+          SUPABASE_PRODUCTION_PROJECT_REF: ${{ vars.SUPABASE_PRODUCTION_PROJECT_REF }}
 
       - name: Validate remote migration ordering
         shell: bash
@@ -179,5 +222,5 @@ jobs:
       - name: Preview pending migration SQL (database connectivity and migration preview)
         run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --dry-run
 
-      - name: Apply reviewed migrations (migration apply)
+      - name: Apply migrations to the approved Development project
         run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --yes

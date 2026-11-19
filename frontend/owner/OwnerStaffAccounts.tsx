@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { loadBranches, loadStaffAccounts, provisionExistingStaffAccounts, resetStaffPasswordToEmployeeId, saveStaffAccount, type StaffAccount } from '../services/takosync';
+import { ownerColors } from './shared/ownerTokens';
 
 const colors = {
-  pink: '#F20D55',
-  navy: '#101027',
-  orange: '#FF9418',
+  pink: ownerColors.primary,
+  navy: ownerColors.navy,
+  orange: ownerColors.orange,
   ink: '#171724',
   muted: '#858591',
   line: '#EEEEF1',

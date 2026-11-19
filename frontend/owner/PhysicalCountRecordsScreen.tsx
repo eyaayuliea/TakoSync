@@ -9,15 +9,13 @@ import {
   OwnerRecordHeader,
   OwnerRecordLoadingState,
   OwnerRecordReadOnlyPill,
-} from './WasteSpillageRecordsScreen';
+} from './shared/ownerComponents';
 import { OwnerMenuIcon } from './OwnerMenuScreens';
 import {
   formatPhysicalCountDate,
   formatPhysicalCountDateTime,
   formatPhysicalCountDifference,
   formatPhysicalCountQuantity,
-  getForcedPhysicalCountState,
-  getPhysicalCountMockRecords,
   loadPhysicalCountRecords,
   type PhysicalCountBranch,
   type PhysicalCountRecord,
@@ -54,49 +52,44 @@ export default function PhysicalCountRecordsScreen({
   const [records, setRecords] = useState<PhysicalCountRecord[]>([]);
   const [selected, setSelected] = useState<PhysicalCountRecord | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const requestId = useRef(0);
 
   const loadRecords = () => {
+    const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
     setRecords([]);
     if (inventoryLoading) return;
+    if (inventoryError) {
+      setError(true);
+      setLoading(false);
+      return;
+    }
     if (branches.length === 0) {
-      if (inventoryError) {
-        setError(true);
-        setLoading(false);
-      } else {
-        onRefresh();
-      }
+      setError(true);
+      setLoading(false);
+      onRefresh();
       return;
     }
 
-    const forced = getForcedPhysicalCountState();
-    setTimeout(() => {
-      if (forced === 'error') {
-        setError(true);
-        setLoading(false);
-      } else if (forced === 'loading') {
-        return;
-      } else if (forced === 'empty') {
-        setRecords([]);
-        setLoading(false);
-      } else {
-        const request = forced === 'success'
-          ? Promise.resolve(getPhysicalCountMockRecords())
-          : loadPhysicalCountRecords(branches);
-        void request.then((loadedRecords) => {
-          setRecords(loadedRecords);
-          setLoading(false);
-        }).catch((loadError: unknown) => {
-          console.error('Unable to load Physical Count records.', loadError);
-          setError(true);
-          setLoading(false);
-        });
-      }
-    }, 450);
+    void loadPhysicalCountRecords(branches).then((loadedRecords) => {
+      if (currentRequestId !== requestId.current) return;
+      setRecords(loadedRecords);
+      setLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== requestId.current) return;
+      console.error('Unable to load Physical Count records.', loadError);
+      setError(true);
+      setLoading(false);
+    });
   };
 
-  useEffect(loadRecords, [branches, inventoryError, inventoryLoading]);
+  useEffect(() => {
+    loadRecords();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [branches, inventoryError, inventoryLoading]);
 
   const back = () => {
     if (view === 'details') {
@@ -187,7 +180,7 @@ export default function PhysicalCountRecordsScreen({
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={() => branches.length === 0 ? onRefresh() : loadRecords()} />
+        <OwnerRecordErrorState onRetry={() => inventoryError || branches.length === 0 ? onRefresh() : loadRecords()} />
       ) : records.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (

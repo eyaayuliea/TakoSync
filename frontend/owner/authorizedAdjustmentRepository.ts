@@ -1,7 +1,5 @@
 import type { OwnerDiscrepancyReview } from '../services/takosync.ts';
 
-export type AuthorizedAdjustmentForcedState = 'success' | 'empty' | 'loading' | 'error' | null;
-
 export type AuthorizedAdjustmentRecord = {
   id: string;
   ingredientName: string;
@@ -15,19 +13,6 @@ export type AuthorizedAdjustmentRecord = {
   approvedAt: string;
   relatedDiscrepancy: string;
 };
-
-const mockRecords: AuthorizedAdjustmentRecord[] = [
-  { id: 'adjustment-flour', ingredientName: 'All-Purpose Flour', branchName: 'Branch 1', previousExpectedQuantity: 12, actualQuantity: 10, adjustedQuantity: 10, unit: 'kg', reason: 'Recount verified', approvingOwner: 'Owner', approvedAt: '2026-11-12T11:02:00+08:00', relatedDiscrepancy: 'DISC-1112-0007' },
-  { id: 'adjustment-sauce', ingredientName: 'Takoyaki Sauce', branchName: 'Branch 1', previousExpectedQuantity: 2.5, actualQuantity: 2, adjustedQuantity: 2, unit: 'L', reason: 'Recount verified', approvingOwner: 'Owner', approvedAt: '2026-11-12T10:15:00+08:00', relatedDiscrepancy: 'DISC-1112-0006' },
-  { id: 'adjustment-mayonnaise', ingredientName: 'Mayonnaise', branchName: 'Branch 3', previousExpectedQuantity: 4.4, actualQuantity: 4, adjustedQuantity: 4, unit: 'kg', reason: 'Recount verified', approvingOwner: 'Owner', approvedAt: '2026-11-12T09:40:00+08:00', relatedDiscrepancy: 'DISC-1112-0005' },
-];
-
-export function getForcedAuthorizedAdjustmentState(): AuthorizedAdjustmentForcedState {
-  const value = typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_FORCE_AUTHORIZED_ADJUSTMENT_STATE : undefined;
-  return value === 'success' || value === 'empty' || value === 'loading' || value === 'error' ? value : null;
-}
-
-export function getAuthorizedAdjustmentMockRecords(): AuthorizedAdjustmentRecord[] { return mockRecords.map((record) => ({ ...record })); }
 
 export function formatAuthorizedAdjustmentQuantity(value: number, unit: string): string {
   return `${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(value)} ${unit}`;

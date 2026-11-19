@@ -1,6 +1,24 @@
 export type OwnerSaleStatus = 'pending' | 'completed' | 'cancelled';
 export type OwnerInventoryProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
+export class SalePayloadValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SalePayloadValidationError';
+  }
+}
+
+export class SaleSubmissionRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SaleSubmissionRejectedError';
+  }
+}
+
+export function isRetryableSaleSubmissionError(error: unknown): boolean {
+  return !(error instanceof SalePayloadValidationError || error instanceof SaleSubmissionRejectedError);
+}
+
 export function validateSaleSubmission(input: {
   transactionReference?: string | null;
   branchId?: string | null;
@@ -10,41 +28,55 @@ export function validateSaleSubmission(input: {
   addons?: Array<{ addonId?: string | null; quantity?: number; unitPrice?: number }>;
 }): void {
   if (!input.transactionReference?.trim()) {
-    throw new Error('A transaction reference is required before confirming the sale.');
+    throw new SalePayloadValidationError('A transaction reference is required before confirming the sale.');
   }
   if (!input.branchId?.trim()) {
-    throw new Error('An assigned branch is required before confirming the sale.');
+    throw new SalePayloadValidationError('An assigned branch is required before confirming the sale.');
   }
   const paymentMethod = input.paymentMethod?.trim().toLowerCase();
   if (paymentMethod !== 'cash' && paymentMethod !== 'qr') {
-    throw new Error('Select Cash or QR before confirming the sale.');
+    throw new SalePayloadValidationError('Select Cash or QR before confirming the sale.');
   }
   if (!Number.isFinite(input.totalAmount) || (input.totalAmount ?? 0) <= 0) {
-    throw new Error('The sale total must be greater than zero.');
+    throw new SalePayloadValidationError('The sale total must be greater than zero.');
   }
 
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) {
-    throw new Error('Please add at least one item to the order.');
+    throw new SalePayloadValidationError('Please add at least one item to the order.');
   }
   for (const item of items) {
-    if (!item?.variantId?.trim()) throw new Error('Each sale item must identify a product variant.');
-    if (!Number.isFinite(item.quantity) || (item.quantity ?? 0) <= 0) {
-      throw new Error('Each sale item must have a quantity greater than zero.');
+    if (typeof item?.variantId !== 'string' || !item.variantId.trim()) {
+      throw new SalePayloadValidationError('Each sale item must identify a product variant.');
+    }
+    if (!Number.isInteger(item.quantity) || (item.quantity ?? 0) <= 0) {
+      throw new SalePayloadValidationError('Each sale item must have a positive whole-number quantity.');
     }
     if (!Number.isFinite(item.unitPrice) || (item.unitPrice ?? 0) < 0) {
-      throw new Error('Each sale item must have a valid price.');
+      throw new SalePayloadValidationError('Each sale item must have a valid price.');
     }
   }
 
+  if (findDuplicateSaleVariantIds(items).length > 0) {
+    throw new SalePayloadValidationError('Each product variant may only appear once in a sale.');
+  }
+
+  const seenAddonIds = new Set<string>();
   for (const addon of Array.isArray(input.addons) ? input.addons : []) {
-    if (!addon?.addonId?.trim()) throw new Error('Each add-on must identify an add-on record.');
+    if (typeof addon?.addonId !== 'string' || !addon.addonId.trim()) {
+      throw new SalePayloadValidationError('Each add-on must identify an add-on record.');
+    }
+    const addonId = addon.addonId.trim();
+    if (seenAddonIds.has(addonId)) {
+      throw new SalePayloadValidationError('Each add-on may only appear once in a sale.');
+    }
+    seenAddonIds.add(addonId);
     const quantity = addon.quantity ?? 1;
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      throw new Error('Each add-on must have a quantity greater than zero.');
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new SalePayloadValidationError('Each add-on must have a positive whole-number quantity.');
     }
     if (!Number.isFinite(addon.unitPrice) || (addon.unitPrice ?? 0) < 0) {
-      throw new Error('Each add-on must have a valid price.');
+      throw new SalePayloadValidationError('Each add-on must have a valid price.');
     }
   }
 }
@@ -189,7 +221,7 @@ export function findDuplicateSaleVariantIds(
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const item of items) {
-    const variantId = item.variantId?.trim();
+    const variantId = typeof item?.variantId === 'string' ? item.variantId.trim() : '';
     if (!variantId) continue;
     if (seen.has(variantId)) {
       duplicates.add(variantId);

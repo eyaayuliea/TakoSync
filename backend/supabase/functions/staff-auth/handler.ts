@@ -42,6 +42,10 @@ function normalizeOwnerUsername(value: string) {
   return value.normalize('NFKC').trim().toLocaleLowerCase();
 }
 
+function normalizeOwnerEmail(value: string) {
+  return value.normalize('NFKC').trim().toLocaleLowerCase();
+}
+
 function usernameHash(value: string) {
   let hash = 0x811c9dc5;
   for (const character of value) {
@@ -229,14 +233,35 @@ async function loginOwner(
   admin: ReturnType<HandlerOptions['createClient']>,
 ) {
   const username = normalizeOwnerUsername(usernameValue);
-  if (!username) return response({ ok: false, code: 'unknown_username' });
+  return await loginOwnerByIdentifier(username, password, auth, admin, 'username', 'unknown_username');
+}
+
+async function loginOwnerWithEmail(
+  emailValue: string,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+) {
+  const email = normalizeOwnerEmail(emailValue);
+  return await loginOwnerByIdentifier(email, password, auth, admin, 'email', 'email_not_found');
+}
+
+async function loginOwnerByIdentifier(
+  identifier: string,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+  identifierColumn: 'username' | 'email',
+  unknownCode: 'unknown_username' | 'email_not_found',
+) {
+  if (!identifier) return response({ ok: false, code: unknownCode });
   if (!password) return response({ ok: false, code: 'incorrect_password' });
 
   let profileResult;
   try {
     profileResult = await admin.from('profiles')
       .select('id, email, role, active')
-      .eq('username', username)
+      .eq(identifierColumn, identifier)
       .maybeSingle();
   } catch (error) {
     console.error('[staff-auth] Owner profile lookup threw', {
@@ -261,7 +286,7 @@ async function loginOwner(
     hasEmail: typeof profile?.email === 'string' && Boolean(profile.email.trim()),
   });
   if (!profile) {
-    return response({ ok: false, code: 'unknown_username' });
+    return response({ ok: false, code: unknownCode });
   }
   if (profile.role !== 'owner' || !profile.active) {
     return response({ ok: false, code: 'unauthorized_access' });
@@ -501,14 +526,13 @@ async function changePassword(
   const { data: userData, error: userError } = await admin.auth.getUser(token);
   if (userError || !userData?.user) throw new HttpError(401, 'Authentication is invalid or expired.');
   const { data: profile, error: profileError } = await admin.from('profiles')
-    .select('id, role, active, employee_id, must_change_password')
+    .select('id, role, active, employee_id')
     .eq('id', userData.user.id)
     .maybeSingle();
   if (profileError) throw profileError;
   if (!profile || profile.role !== 'staff' || !profile.active) {
     throw new HttpError(403, 'Only an active Staff account may change this password.');
   }
-  if (!profile.must_change_password) throw new HttpError(409, 'A first-login password change is not pending.');
   if (newPassword === profile.employee_id) throw new HttpError(400, 'Choose a password different from your Employee ID.');
 
   const { error: passwordError } = await admin.auth.admin.updateUserById(profile.id, { password: newPassword });
@@ -518,7 +542,7 @@ async function changePassword(
     .eq('id', profile.id)
     .eq('role', 'staff')
     .eq('active', true);
-  if (flagError) throw new HttpError(500, 'Password updated, but the first-login state could not be cleared.');
+  if (flagError) throw new HttpError(500, 'Password updated, but the Staff password-change state could not be cleared.');
   return response({ ok: true });
 }
 
@@ -541,6 +565,9 @@ export function createStaffAuthHandler(options: HandlerOptions) {
       }
       if (body.action === 'owner-login') {
         return await loginOwner(inputString(body.username), typeof body.password === 'string' ? body.password : '', auth, admin);
+      }
+      if (body.action === 'owner-email-login') {
+        return await loginOwnerWithEmail(inputString(body.email), typeof body.password === 'string' ? body.password : '', auth, admin);
       }
       if (body.action === 'provision-existing') {
         return await provisionExistingStaff(request, admin, url, anonKey, options.createClient);

@@ -32,6 +32,7 @@ import {
   RecordsMenuScreen,
 } from './OwnerMenuScreens';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { ownerColors } from './shared/ownerTokens';
 import {
   decideOwnerInventoryCountCorrection,
   createProduct,
@@ -52,39 +53,29 @@ import {
 } from '../services/takosync';
 import { standardProductVariants } from '../services/productCatalog';
 import { inventoryTransactionLabel } from '../services/transactionLabels';
+import { manilaDateKey } from '../services/businessDaySettings';
 import {
-  OWNER_ALERT_TOAST_DURATION_MS,
   OWNER_ALERT_EMPTY_MESSAGE,
   OWNER_ALERT_LOAD_ERROR,
   buildOwnerAlertSnapshot,
-  buildOwnerAlertsMockSnapshot,
   countOwnerAlertsWhenReady,
   filterOwnerRecordsByBranch,
-  getForcedOwnerAlertsState,
 } from './ownerAlerts';
-import {
-  OWNER_DISCREPANCIES_SAVE_ERROR,
-  forceOwnerDiscrepancySaveError,
-  getForcedOwnerDiscrepanciesState,
-  ownerDiscrepancyMock,
-  type OwnerDiscrepancy,
-} from './ownerDiscrepancies';
 import { summarizeOwnerDashboardSales, summarizeOwnerInventoryStatus } from './ownerDashboardSummary';
 import { sortOwnerActivities } from './ownerActivities';
 import {
+  buildOwnerInventoryComparisonRows,
   formatInventoryQuantity,
   getInventoryStockStatus,
-  OWNER_INVENTORY_INGREDIENTS,
-  OWNER_INVENTORY_RECORDS,
-  type InventoryIngredient,
   type InventoryStockStatus,
-} from './ownerInventoryMock';
+} from './ownerInventoryStatus';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
+const EMPTY_BRANCHES: OwnerData['branches'] = [];
 type ProductRecord = ProductManagementItem;
 type OwnerActivity = {
   id: string;
@@ -98,9 +89,9 @@ type OwnerActivity = {
 };
 
 const colors = {
-  pink: '#F20D55',
-  navy: '#101027',
-  orange: '#FF9418',
+  pink: ownerColors.primary,
+  navy: ownerColors.navy,
+  orange: ownerColors.orange,
   ink: '#171724',
   muted: '#858591',
   secondaryText: '#858591',
@@ -113,13 +104,13 @@ const colors = {
   paleRed: '#FCE9EB',
   yellow: '#FFF2C4',
   paleOrange: '#FFF1D8',
-  alertCrimson: '#EC1358',
-  alertNavy: '#0F1025',
+  alertCrimson: ownerColors.primary,
+  alertNavy: ownerColors.navy,
   alertGrayFill: '#F5F5F7',
   alertDivider: '#EEEEF1',
   alertLowStock: '#FDE672',
   alertOutStock: '#C92F3C',
-  alertNearExpiration: '#FCA639',
+  alertNearExpiration: ownerColors.orange,
   alertSuccess: '#589144',
   alertLavender: '#EEEAFE',
   alertDarkText: '#343440',
@@ -156,10 +147,14 @@ function compactDate(value: string) {
   });
 }
 
-function inventoryStatus(quantity: number, minimum: number) {
-  if (quantity <= 0) return { label: 'Out of stock', tone: 'low' as const };
-  if (minimum > 0 && quantity <= minimum) return { label: 'Low stock', tone: 'low' as const };
-  return { label: 'In stock', tone: 'good' as const };
+function manilaDateLabel(value: string) {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00+08:00`);
+  return date.toLocaleDateString('en-PH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Manila',
+  });
 }
 
 function StatusBadge({ label, tone }: { label: string; tone: 'low' | 'good' | 'warning' }) {
@@ -178,7 +173,7 @@ function InventoryStatusBadge({ status }: { status: InventoryStockStatus }) {
   const styles = useStyles();
   const style =
     status === 'Normal' ? styles.omInventoryBadgeNormal
-      : status === 'Out of Stock' ? styles.omInventoryBadgeOut
+      : status === 'Out of Stock' || status === 'Expired' ? styles.omInventoryBadgeOut
         : status === 'Near Expiration' ? styles.omInventoryBadgeNear
           : status === 'Not tracked' ? styles.omInventoryBadgeNotTracked
             : styles.omInventoryBadgeLow;
@@ -186,10 +181,10 @@ function InventoryStatusBadge({ status }: { status: InventoryStockStatus }) {
     <View style={[styles.omInventoryBadge, style]}>
       <Text style={[
         styles.omInventoryBadgeText,
-        (status === 'Normal' || status === 'Out of Stock') && styles.omInventoryBadgeTextWhite,
+        (status === 'Normal' || status === 'Out of Stock' || status === 'Expired') && styles.omInventoryBadgeTextWhite,
         status === 'Not tracked' && styles.omInventoryBadgeTextMuted,
       ]}>
-        {status === 'Normal' ? '✓ ' : status === 'Out of Stock' ? '! ' : status === 'Near Expiration' ? '▣ ' : ''}
+        {status === 'Normal' ? '✓ ' : status === 'Out of Stock' || status === 'Expired' ? '! ' : status === 'Near Expiration' ? '▣ ' : ''}
         {status}
       </Text>
     </View>
@@ -321,8 +316,6 @@ export default function OwnerMobileWorkspace({
   const [activityReturnPage, setActivityReturnPage] = useState<'Dashboard' | 'Records'>('Dashboard');
   const [inventorySearch, setInventorySearch] = useState('');
   const [alertCategory, setAlertCategory] = useState<'Low Stock' | 'Expiration'>('Low Stock');
-  const [alertToast, setAlertToast] = useState<string | null>(null);
-  const [lastKnownAlertCounts, setLastKnownAlertCounts] = useState<{ lowStock: number; expiration: number } | null>(null);
   const [recordType, setRecordType] = useState<'All' | 'Sales' | 'Inventory' | 'Counts' | 'Audit'>('All');
   const [productRecords, setProductRecords] = useState<ProductRecord[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -349,27 +342,17 @@ export default function OwnerMobileWorkspace({
   const [discrepancyLoading, setDiscrepancyLoading] = useState(false);
   const [discrepancyError, setDiscrepancyError] = useState('');
   const [discrepancyFeedback, setDiscrepancyFeedback] = useState('');
-  const [discrepancyFilter, setDiscrepancyFilter] = useState<'Pending' | 'Approved' | 'Rejected' | 'Validated'>('Pending');
   const [selectedDiscrepancyId, setSelectedDiscrepancyId] = useState<string | null>(null);
   const [discrepancyAction, setDiscrepancyAction] = useState<'approve' | 'reject' | 'validate' | null>(null);
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentError, setAdjustmentError] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
-  const [discrepancyView, setDiscrepancyView] = useState<'list' | 'details' | 'validate' | 'correction'>('list');
-  const [selectedMockDiscrepancyId, setSelectedMockDiscrepancyId] = useState<string | null>(null);
+  const [discrepancyView, setDiscrepancyView] = useState<'list' | 'details'>('list');
   const [discrepancyBranchFilter, setDiscrepancyBranchFilter] = useState<string | null>(null);
-  const [discrepancyStatusFilter, setDiscrepancyStatusFilter] = useState<'All status' | 'Pending Review' | 'Adjusted'>('All status');
+  const [discrepancyStatusFilter, setDiscrepancyStatusFilter] = useState<'All status' | OwnerDiscrepancyReview['status']>('All status');
   const [discrepancyDraftBranch, setDiscrepancyDraftBranch] = useState<string | null>(null);
-  const [discrepancyDraftStatus, setDiscrepancyDraftStatus] = useState<'All status' | 'Pending Review' | 'Adjusted'>('All status');
+  const [discrepancyDraftStatus, setDiscrepancyDraftStatus] = useState<'All status' | OwnerDiscrepancyReview['status']>('All status');
   const [discrepancyFilterVisible, setDiscrepancyFilterVisible] = useState(false);
-  const [mockDiscrepancies, setMockDiscrepancies] = useState<OwnerDiscrepancy[]>(ownerDiscrepancyMock);
-  const [validateReason, setValidateReason] = useState('');
-  const [validateReasonTouched, setValidateReasonTouched] = useState(false);
-  const [validateConfirmVisible, setValidateConfirmVisible] = useState(false);
-  const [validateSaving, setValidateSaving] = useState(false);
-  const [validateSaveError, setValidateSaveError] = useState('');
-  const [adjustmentSavedVisible, setAdjustmentSavedVisible] = useState(false);
-  const [correctionResult, setCorrectionResult] = useState<'approved' | 'rejected' | null>(null);
   const [periodSheetVisible, setPeriodSheetVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [activityDetailModalVisible, setActivityDetailModalVisible] = useState(false);
@@ -378,27 +361,9 @@ export default function OwnerMobileWorkspace({
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [calendarSelectedDate, setCalendarSelectedDate] = useState<string>(customStart);
-  const [inventoryMockLoading, setInventoryMockLoading] = useState(false);
-  const [inventoryMockError, setInventoryMockError] = useState(false);
-  const [compareIngredient, setCompareIngredient] = useState<InventoryIngredient | null>(null);
+  const [compareIngredient, setCompareIngredient] = useState<OwnerData['ingredients'][number] | null>(null);
   const [ingredientSheetVisible, setIngredientSheetVisible] = useState(false);
   const [ingredientSearch, setIngredientSearch] = useState('');
-  const [comparisonLoading, setComparisonLoading] = useState(false);
-  const [comparisonError, setComparisonError] = useState(false);
-
-  useEffect(() => {
-    if (typeof process === 'undefined') return undefined;
-    const shouldTrigger = process.env.EXPO_PUBLIC_TRIGGER_OWNER_ALERTS_TOAST === 'true';
-    if (!shouldTrigger) return undefined;
-    setAlertToast('Stock-In saved in Branch 3');
-    return undefined;
-  }, []);
-
-  useEffect(() => {
-    if (!alertToast) return undefined;
-    const timeout = setTimeout(() => setAlertToast(null), OWNER_ALERT_TOAST_DURATION_MS);
-    return () => clearTimeout(timeout);
-  }, [alertToast]);
 
   useEffect(() => {
     if (page !== 'Sales' && page !== 'Inventory' && page !== 'Alerts') return;
@@ -409,49 +374,11 @@ export default function OwnerMobileWorkspace({
     void onRefresh();
   }, [page]);
 
-  useEffect(() => {
-    if (page !== 'Inventory') return undefined;
-    const state = typeof process !== 'undefined'
-      ? process.env.EXPO_PUBLIC_FORCE_OWNER_INVENTORY_STATE
-      : undefined;
-    setInventoryMockError(state === 'error');
-    if (state === 'loading' || state === 'error') {
-      setInventoryMockLoading(state === 'loading');
-      return undefined;
-    }
-    setInventoryMockLoading(true);
-    const timeout = setTimeout(() => setInventoryMockLoading(false), 450);
-    return () => clearTimeout(timeout);
-  }, [page, branchId]);
-
-  useEffect(() => {
-    if (page !== 'CompareInventory' || !compareIngredient) {
-      setComparisonLoading(false);
-      return undefined;
-    }
-    setComparisonError(false);
-    const state = typeof process !== 'undefined'
-      ? process.env.EXPO_PUBLIC_FORCE_OWNER_INVENTORY_STATE
-      : undefined;
-    if (state === 'error') {
-      setComparisonError(true);
-      setComparisonLoading(false);
-      return undefined;
-    }
-    setComparisonLoading(true);
-    const timeout = setTimeout(() => setComparisonLoading(false), 450);
-    return () => clearTimeout(timeout);
-  }, [page, compareIngredient]);
-
-  const branches = data?.branches ?? [];
+  const branches = data?.branches ?? EMPTY_BRANCHES;
   const branchNames = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
   const ingredients = useMemo(() => new Map((data?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient])), [data?.ingredients]);
   const categories = useMemo(() => new Map((data?.categories ?? []).map((category) => [category.id, category.name])), [data?.categories]);
-  const forcedOwnerAlertsState = getForcedOwnerAlertsState();
   const alertSnapshot = useMemo(() => {
-    if (forcedOwnerAlertsState === 'success' || forcedOwnerAlertsState === 'empty') {
-      return buildOwnerAlertsMockSnapshot(branchId);
-    }
     return buildOwnerAlertSnapshot({
       inventory: data?.inventory ?? [],
       batches: data?.batches ?? [],
@@ -465,16 +392,37 @@ export default function OwnerMobileWorkspace({
       nearExpirationDays: data?.nearExpirationDays ?? 7,
       branchId,
     });
-  }, [branchId, branches, data, forcedOwnerAlertsState]);
+  }, [branchId, branches, data]);
   const selectedInventory = filterOwnerRecordsByBranch(data?.inventory ?? [], branchId);
   const inventoryRows = selectedInventory.flatMap((record) => {
     const ingredient = ingredients.get(record.ingredient_id);
     if (!ingredient) return [];
-    const quantity = Number(record.quantity);
+    const quantity = record.quantity === null ? null : Number(record.quantity);
     const minimumStock = Number(record.minimum_stock);
-    const batch = (data?.batches ?? []).find((item) =>
-      item.branch_id === record.branch_id && item.ingredient_id === record.ingredient_id,
-    );
+    const activeBatches = (data?.batches ?? [])
+      .filter((item) => item.branch_id === record.branch_id
+        && item.ingredient_id === record.ingredient_id
+        && Number(item.quantity_remaining) > 0)
+      .sort((left, right) => {
+        const leftExpiry = left.expiration_date ?? '9999-12-31';
+        const rightExpiry = right.expiration_date ?? '9999-12-31';
+        return leftExpiry.localeCompare(rightExpiry) || left.id.localeCompare(right.id);
+      });
+    const batchRows = activeBatches.map((batch) => ({
+      id: batch.id,
+      reference: batch.batch_reference,
+      expirationDate: batch.expiration_date,
+      quantityRemaining: Number(batch.quantity_remaining),
+      status: ingredient.expiration_tracking && batch.expiration_date
+        ? getInventoryStockStatus(
+          Number(batch.quantity_remaining),
+          0,
+          batch.expiration_date,
+          manilaDateKey(new Date()),
+          data?.nearExpirationDays ?? 7,
+        )
+        : null,
+    }));
     return [{
       id: `${record.branch_id}:${record.ingredient_id}`,
       ingredientId: record.ingredient_id,
@@ -486,14 +434,17 @@ export default function OwnerMobileWorkspace({
       minimumStock,
       unit: ingredient.unit,
       expirationTracking: ingredient.expiration_tracking,
-      nextExpiration: batch?.expiration_date ?? null,
+      status: getInventoryStockStatus(quantity, minimumStock),
+      batches: batchRows,
     }];
   });
-  const dashboardLowStock = inventoryRows.filter((item) => item.quantity <= item.minimumStock);
-  const inventoryStatusCounts = summarizeOwnerInventoryStatus(selectedInventory);
+  const dashboardLowStock = inventoryRows.filter((item) => item.status === 'Low Stock' || item.status === 'Out of Stock');
+  const inventoryStatusCounts = summarizeOwnerInventoryStatus(inventoryRows.map((item) => ({
+    quantity: item.quantity,
+    minimum_stock: item.minimumStock,
+  })));
   const lowStock = alertSnapshot.lowStock;
   const sortedExpirationItems = alertSnapshot.expiration;
-  const expirationWindow = data?.nearExpirationDays ?? 7;
   const selectedSales = salesData?.sales ?? [];
   const salesSummary = summarizeOwnerDashboardSales(selectedSales, branches, branchId);
   const totalSelectedSales = salesSummary.total;
@@ -520,7 +471,10 @@ export default function OwnerMobileWorkspace({
       status: check.status,
     }];
   });
-  const visibleDiscrepancies = discrepancyReviews.filter((review) => review.status === discrepancyFilter);
+  const visibleDiscrepancies = discrepancyReviews.filter((review) =>
+    (discrepancyStatusFilter === 'All status' || review.status === discrepancyStatusFilter)
+    && (!discrepancyBranchFilter || review.branchId === discrepancyBranchFilter),
+  );
   const pendingDiscrepancyCount = discrepancyReviews.filter((review) => review.status === 'Pending').length;
   const selectedDiscrepancy = discrepancyReviews.find((review) => review.correctionRequestId === selectedDiscrepancyId) ?? null;
   const dashboardDiscrepancies = discrepancyReviewsLoaded
@@ -584,24 +538,7 @@ export default function OwnerMobileWorkspace({
   const filteredInventory = inventoryRows.filter((item) =>
     `${item.name} ${item.category} ${item.branch}`.toLowerCase().includes(inventorySearch.trim().toLowerCase()),
   );
-  const forcedAlertLoading = forcedOwnerAlertsState === 'loading';
-  const forcedAlertError = forcedOwnerAlertsState === 'error';
-  const alertCounts = forcedOwnerAlertsState === 'empty'
-    ? { lowStock: 0, expiration: 0 }
-    : forcedAlertLoading || forcedAlertError
-      ? { lowStock: 0, expiration: 0 }
-      : countOwnerAlertsWhenReady(alertSnapshot.counts, inventoryLoading, inventoryError);
-
-  useEffect(() => {
-    if (page !== 'Alerts') return;
-    if (forcedOwnerAlertsState === 'empty') {
-      setLastKnownAlertCounts({ lowStock: 0, expiration: 0 });
-    } else if (forcedOwnerAlertsState === 'loading' || forcedOwnerAlertsState === 'error') {
-      return;
-    } else if (!inventoryLoading && !inventoryError) {
-      setLastKnownAlertCounts(alertSnapshot.counts);
-    }
-  }, [alertSnapshot.counts, forcedOwnerAlertsState, inventoryError, inventoryLoading, page]);
+  const alertCounts = countOwnerAlertsWhenReady(alertSnapshot.counts, inventoryLoading, inventoryError);
   const visibleProducts = productRecords.filter((product) =>
     `${product.product_name} ${product.description}`.toLowerCase().includes(productSearch.trim().toLowerCase()),
   );
@@ -648,8 +585,8 @@ export default function OwnerMobileWorkspace({
     if (page !== 'Dashboard' && page !== 'Discrepancies' && page !== 'More') return;
     setDiscrepancyReviews([]);
     setDiscrepancyReviewsLoaded(false);
-    void refreshDiscrepancyReviews(page === 'Discrepancies' && selectedDiscrepancyId ? null : branchId);
-  }, [page, branchId, selectedDiscrepancyId]);
+    void refreshDiscrepancyReviews(page === 'Discrepancies' ? null : branchId);
+  }, [page, branchId]);
 
   const submitDiscrepancyAction = async () => {
     if (!selectedDiscrepancy) return;
@@ -695,6 +632,7 @@ export default function OwnerMobileWorkspace({
       setSelectedDiscrepancyId(null);
       setDiscrepancyAction(null);
       setAdjustmentReason('');
+      setDiscrepancyView('list');
       await refreshDiscrepancyReviews();
       await onRefresh();
     } catch (error) {
@@ -702,25 +640,6 @@ export default function OwnerMobileWorkspace({
     } finally {
       setAdjustmentSubmitting(false);
     }
-  };
-
-  const saveMockAdjustment = async () => {
-    if (validateSaving) return;
-    setValidateConfirmVisible(false);
-    setValidateSaving(true);
-    setValidateSaveError('');
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    if (forceOwnerDiscrepancySaveError()) {
-      setValidateSaveError(OWNER_DISCREPANCIES_SAVE_ERROR);
-      setValidateSaving(false);
-      return;
-    }
-    setMockDiscrepancies((current) => current.map((item) =>
-      item.id === selectedMockDiscrepancyId
-        ? { ...item, expected: item.actual, status: 'Adjusted' as const }
-        : item));
-    setValidateSaving(false);
-    setAdjustmentSavedVisible(true);
   };
 
   const resetProductForm = (mode: 'add' | 'edit', product?: ProductRecord) => {
@@ -827,7 +746,6 @@ export default function OwnerMobileWorkspace({
     || page === 'PhysicalCountRecords'
     || page === 'AuthorizedAdjustmentRecords';
   const isMenuFlowPage = isOwnerMenuPage || page === 'SalesTransactions';
-  const mockSelectedDiscrepancy = mockDiscrepancies.find((item) => item.id === selectedMockDiscrepancyId) ?? null;
 
   const calendarYear = calendarCursor.getFullYear();
   const calendarMonth = calendarCursor.getMonth();
@@ -851,7 +769,11 @@ export default function OwnerMobileWorkspace({
   );
 
   const renderInventoryRow = (item: (typeof inventoryRows)[number]) => {
-    const status = inventoryStatus(item.quantity, item.minimumStock);
+    const statusTone = item.status === 'Low Stock' || item.status === 'Out of Stock' || item.status === 'Expired'
+      ? 'low'
+      : item.status === 'Near Expiration' || item.status === 'Not tracked'
+        ? 'warning'
+        : 'good';
     return (
       <View key={item.id} style={styles.lowStockCard}>
         <View style={styles.lowStockIcon}>
@@ -863,7 +785,7 @@ export default function OwnerMobileWorkspace({
             {item.branch} | Expected: {item.quantity} {item.unit} / Min: {item.minimumStock} {item.unit}
           </Text>
         </View>
-        <StatusBadge label="Low Stock" tone="low" />
+        <StatusBadge label={item.status} tone={statusTone} />
       </View>
     );
   };
@@ -1191,8 +1113,8 @@ export default function OwnerMobileWorkspace({
       ) : <EmptyState text="No sales recorded yet." />}
 
       <SectionHeading title="Inventory Status" action="Inventory" onAction={() => setPage('Inventory')} />
-      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading && !data ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading inventory…</Text></View>
+      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
+        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
       ) : inventoryRows.length === 0 ? (
         <EmptyState text="No inventory records yet." />
       ) : (
@@ -1218,23 +1140,27 @@ export default function OwnerMobileWorkspace({
       )}
 
       <SectionHeading title="Low-Stock Items" action="See all" onAction={() => { setAlertCategory('Low Stock'); setPage('Alerts'); }} />
-      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : dashboardLowStock.length ? dashboardLowStock.slice(0, 4).map((item) => renderInventoryRow(item)) : (
-        <EmptyState text={inventoryLoading ? 'Loading expected inventory…' : 'No low-stock items.'} />
+      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
+        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
+      ) : dashboardLowStock.length ? dashboardLowStock.slice(0, 4).map((item) => renderInventoryRow(item)) : (
+        <EmptyState text="No low-stock items." />
       )}
 
       <SectionHeading title="Expiration Alerts" action="See all" onAction={() => { setAlertCategory('Expiration'); setPage('Alerts'); }} />
-      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : sortedExpirationItems.length ? sortedExpirationItems.slice(0, 4).map((item) => (
+      {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
+        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing expiration alerts…</Text></View>
+      ) : sortedExpirationItems.length ? sortedExpirationItems.slice(0, 4).map((item) => (
         <View key={item.id} style={styles.listCard}>
           <View style={[styles.itemMark, item.days < 0 ? styles.itemMarkLow : styles.itemMarkWarning]}>
             <Text style={styles.itemMarkText}>!</Text>
           </View>
           <View style={styles.listCopy}>
             <Text style={styles.listTitle}>{item.name}</Text>
-            <Text style={styles.listMeta}>{item.branch} · Expires {new Date(`${item.expirationDate}T00:00:00`).toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+            <Text style={styles.listMeta}>{item.branch} · Expires {manilaDateLabel(item.expirationDate)}</Text>
           </View>
           <StatusBadge label={item.days < 0 ? 'Expired' : 'Near Expiration'} tone={item.days < 0 ? 'low' : 'warning'} />
         </View>
-      )) : <EmptyState text={inventoryLoading ? 'Loading expiration dates…' : 'No expiration alerts.'} />}
+      )) : <EmptyState text="No expiration alerts." />}
 
       <SectionHeading title="Recent Activities" action="See all" onAction={() => setPage('Records')} />
       {activityError ? showError(OWNER_ALERT_LOAD_ERROR) : activityLoading && !activityData ? (
@@ -1310,19 +1236,15 @@ export default function OwnerMobileWorkspace({
         ) : null}
       </View>
       <View style={styles.omInventoryBranchRow}>
-        {[
-          { id: null, name: 'Branch 1', mockId: 'branch-1' },
-          { id: 'branch-2', name: 'Branch 2', mockId: 'branch-2' },
-          { id: 'branch-3', name: 'Branch 3', mockId: 'branch-3' },
-        ].map((branch) => {
-          const selected = branch.mockId === (branchId ?? 'branch-1');
+        {[{ id: null, name: 'All branches' }, ...branches].map((branch) => {
+          const selected = branch.id === branchId;
           return (
             <Pressable
-              key={branch.mockId}
+              key={branch.id ?? 'all'}
               accessibilityRole="button"
-              accessibilityState={{ selected, disabled: inventoryMockLoading }}
-              disabled={inventoryMockLoading}
-              onPress={() => onBranchChange(branch.mockId)}
+              accessibilityState={{ selected, disabled: inventoryLoading }}
+              disabled={inventoryLoading}
+              onPress={() => onBranchChange(branch.id)}
               style={[styles.omInventoryBranchChip, selected && styles.omInventoryBranchChipSelected]}
             >
               <Text style={[styles.omInventoryBranchChipText, selected && styles.omInventoryBranchChipTextSelected]}>{branch.name}</Text>
@@ -1339,106 +1261,91 @@ export default function OwnerMobileWorkspace({
         <Text style={styles.omCompareButtonText}>Compare Branches</Text>
       </Pressable>
 
-      {inventoryMockLoading ? (
+      {inventoryLoading ? (
         <View style={styles.omInventoryLoadingCenter}>
-          <View style={styles.omSpinner}><Text style={styles.omSpinnerText}>•</Text></View>
-          <Text style={styles.omInventoryLoadingText}>Loading {branchNames.get(branchId ?? '') ?? 'Branch 1'} inventory…</Text>
+          <ActivityIndicator size="large" color={colors.pink} />
+          <Text style={styles.omInventoryLoadingText}>
+            Loading {branchId ? branchNames.get(branchId) ?? 'selected branch' : 'all branch'} inventory…
+          </Text>
         </View>
-      ) : inventoryMockError ? (
+      ) : inventoryError ? (
         <View style={styles.omInventoryErrorCenter}>
           <Text style={styles.omWifiOffIcon}>≋</Text>
-          <Text style={styles.omInventoryErrorText}>Unable to load data. Please check your internet connection and try again.</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setInventoryMockError(false);
-              setInventoryMockLoading(true);
-              setTimeout(() => setInventoryMockLoading(false), 450);
-            }}
-            style={styles.omInventoryRetry}
-          >
+          <Text style={styles.omInventoryErrorText}>{inventoryError}</Text>
+          <Pressable accessibilityRole="button" onPress={() => void onRefresh()} style={styles.omInventoryRetry}>
             <Text style={styles.omInventoryRetryIcon}>↻</Text>
             <Text style={styles.omInventoryRetryText}>Retry</Text>
           </Pressable>
         </View>
-      ) : (
+      ) : filteredInventory.length ? (
         <>
-          {(() => {
-            const activeMockBranch = branchId ?? 'branch-1';
-            const term = inventorySearch.trim().toLowerCase();
-            const visibleIngredients = OWNER_INVENTORY_INGREDIENTS.filter((ingredient) =>
-              ingredient.displayName.toLowerCase().includes(term),
-            );
-            if (!visibleIngredients.length) {
-              return <EmptyState text="No ingredients match your search." />;
-            }
-            return visibleIngredients.map((ingredient) => {
-              const record = OWNER_INVENTORY_RECORDS.find((item) =>
-                item.ingredientId === ingredient.id && item.branchId === activeMockBranch,
-              );
-              const quantity = record?.quantity ?? null;
-              const status = getInventoryStockStatus(quantity, ingredient.minimumStock, record?.expirationDate);
-              const listStatus: InventoryStockStatus = ingredient.id === 'sauce' ? 'Normal' : status;
-              return (
-                <View key={ingredient.id} style={styles.omInventoryCard}>
-                  <View style={styles.omInventoryCardTop}>
-                    <View style={styles.omInventoryCardCopy}>
-                      <Text style={styles.omInventoryIngredientName}>{ingredient.displayName}</Text>
-                      <Text style={styles.omInventoryExpected}>
-                        <Text style={styles.omInventoryMetaLabel}>Expected </Text>
-                        <Text style={styles.omInventoryExpectedValue}>{formatInventoryQuantity(quantity)} {ingredient.unit}</Text>
-                      </Text>
-                      <Text style={styles.omInventoryMinimum}>Min {ingredient.minimumStock} {ingredient.unit}</Text>
-                    </View>
-                    <InventoryStatusBadge status={listStatus} />
+          {filteredInventory.map((record) => {
+            return (
+              <View key={record.id} style={styles.omInventoryCard}>
+                <View style={styles.omInventoryCardTop}>
+                  <View style={styles.omInventoryCardCopy}>
+                    <Text style={styles.omInventoryIngredientName}>{record.name}</Text>
+                    <Text style={styles.omInventoryMetaLabel}>{record.branch}</Text>
+                    <Text style={styles.omInventoryExpected}>
+                      <Text style={styles.omInventoryMetaLabel}>Expected </Text>
+                      <Text style={styles.omInventoryExpectedValue}>{formatInventoryQuantity(record.quantity)} {record.unit}</Text>
+                    </Text>
+                    <Text style={styles.omInventoryMinimum}>Min {record.minimumStock} {record.unit}</Text>
                   </View>
-                  {ingredient.id === 'sauce' && record?.expirationDate && (
-                    <View style={styles.omInventoryExpiryRow}>
-                      <Text style={styles.omInventoryExpiryLabel}>▣  Earliest expiry: {new Date(`${record.expirationDate}T00:00:00`).toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
-                      <InventoryStatusBadge status="Near Expiration" />
-                    </View>
-                  )}
+                  <InventoryStatusBadge status={record.status} />
                 </View>
-              );
-            });
-          })()}
+                {record.batches.length > 0 && (
+                  <View style={styles.omInventoryBatchList}>
+                    <Text style={styles.omInventoryBatchHeading}>
+                      Active batches ({record.batches.length})
+                    </Text>
+                    {record.batches.map((batch) => (
+                      <View key={batch.id} style={styles.omInventoryBatchRow}>
+                        <View style={styles.omInventoryBatchCopy}>
+                          <Text style={styles.omInventoryBatchReference} numberOfLines={1}>
+                            {batch.reference ? `Batch ${batch.reference}` : 'Batch reference unavailable'}
+                          </Text>
+                          <Text style={styles.omInventoryExpiryLabel}>
+                            {formatInventoryQuantity(batch.quantityRemaining)} {record.unit}
+                            {record.expirationTracking
+                              ? batch.expirationDate
+                                ? ` · Expires ${manilaDateLabel(batch.expirationDate)}`
+                                : ' · Expiration not recorded'
+                              : ' · Expiration tracking disabled'}
+                          </Text>
+                        </View>
+                        {batch.status && <InventoryStatusBadge status={batch.status} />}
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            );
+          })}
           <View style={styles.omInventoryFooterNote}>
             <Text style={styles.omInventoryFooterIcon}>i</Text>
-            <Text style={styles.omInventoryFooterText}>Read-only. Configuration is on the web portal.</Text>
+            <Text style={styles.omInventoryFooterText}>Read-only. Configuration is managed by the Owner.</Text>
           </View>
         </>
+      ) : (
+        <EmptyState text="No inventory records match the selected branch and search." />
       )}
     </>
   );
 
   const renderCompareInventory = () => {
     const comparisonRows = compareIngredient
-      ? ['branch-1', 'branch-2', 'branch-3'].map((branchIdValue, index) => {
-          const record = OWNER_INVENTORY_RECORDS.find((item) =>
-            item.ingredientId === compareIngredient.id && item.branchId === branchIdValue,
-          );
-          const quantity = record?.quantity ?? null;
-          const status = getInventoryStockStatus(quantity, compareIngredient.minimumStock, record?.expirationDate);
-          return {
-            branchId: branchIdValue,
-            branchName: `Branch ${index + 1}`,
-            quantity,
-            unit: compareIngredient.unit,
-            batchCode: record?.batchCode,
-            status,
-          };
-        })
-      : ['branch-1', 'branch-2', 'branch-3'].map((branchIdValue, index) => ({
-          branchId: branchIdValue,
-          branchName: `Branch ${index + 1}`,
-          quantity: null,
-          unit: 'kg',
-          batchCode: undefined,
-          status: null as InventoryStockStatus | null,
-        }));
+      ? buildOwnerInventoryComparisonRows({
+        branches,
+        inventory: data?.inventory ?? [],
+        batches: data?.batches ?? [],
+        ingredientId: compareIngredient.id,
+        unit: compareIngredient.unit,
+      })
+      : [];
 
-    const filteredIngredients = OWNER_INVENTORY_INGREDIENTS.filter((ingredient) =>
-      ingredient.sheetLabel.toLowerCase().includes(ingredientSearch.trim().toLowerCase()),
+    const filteredIngredients = (data?.ingredients ?? []).filter((ingredient) =>
+      ingredient.name.toLowerCase().includes(ingredientSearch.trim().toLowerCase()),
     );
 
     return (
@@ -1463,7 +1370,7 @@ export default function OwnerMobileWorkspace({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Select ingredient"
-          disabled={comparisonLoading}
+          disabled={inventoryLoading}
           onPress={() => {
             setIngredientSearch('');
             setIngredientSheetVisible(true);
@@ -1474,34 +1381,26 @@ export default function OwnerMobileWorkspace({
             styles.omCompareDropdownText,
             !compareIngredient && styles.omCompareDropdownPlaceholder,
           ]}>
-            {compareIngredient?.displayName ?? 'Select an ingredient.'}
+            {compareIngredient?.name ?? 'Select an ingredient.'}
           </Text>
           <Text style={styles.omCompareDropdownChevron}>⌄</Text>
         </Pressable>
 
-        {comparisonLoading ? (
+        {inventoryLoading ? (
           <View style={styles.omComparisonLoadingCenter}>
-            <View style={styles.omSpinner}><Text style={styles.omSpinnerText}>•</Text></View>
-            <Text style={styles.omInventoryLoadingText}>Loading comparison…</Text>
+            <ActivityIndicator size="large" color={colors.pink} />
+            <Text style={styles.omInventoryLoadingText}>Loading branch inventory…</Text>
           </View>
-        ) : comparisonError ? (
+        ) : inventoryError ? (
           <View style={styles.omInventoryErrorCenter}>
             <Text style={styles.omWifiOffIcon}>≋</Text>
-            <Text style={styles.omInventoryErrorText}>Unable to load data. Please check your internet connection and try again.</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setComparisonError(false);
-                setComparisonLoading(true);
-                setTimeout(() => setComparisonLoading(false), 450);
-              }}
-              style={styles.omInventoryRetry}
-            >
+            <Text style={styles.omInventoryErrorText}>{inventoryError}</Text>
+            <Pressable accessibilityRole="button" onPress={() => void onRefresh()} style={styles.omInventoryRetry}>
               <Text style={styles.omInventoryRetryIcon}>↻</Text>
               <Text style={styles.omInventoryRetryText}>Retry</Text>
             </Pressable>
           </View>
-        ) : (
+        ) : compareIngredient ? (
           <>
             <View style={styles.omCompareCards}>
               {comparisonRows.map((row) => (
@@ -1509,21 +1408,17 @@ export default function OwnerMobileWorkspace({
                   <Text style={styles.omCompareCardHeader}>{row.branchName}</Text>
                   <View style={styles.omCompareCardDivider} />
                   <Text style={styles.omCompareQuantity}>
-                    {compareIngredient
-                      ? formatInventoryQuantity(row.quantity)
-                      : '0'}
+                    {formatInventoryQuantity(row.quantity)}
                   </Text>
                   <Text style={styles.omCompareUnit}>
-                    {!compareIngredient
-                      ? 'kg'
-                      : row.quantity === null
-                        ? 'No record'
-                        : row.unit}
+                    {row.hasRecord ? row.unit : 'No record'}
                   </Text>
                   {row.batchCode ? (
                     <Text style={styles.omCompareBatchCode} numberOfLines={1} ellipsizeMode="tail">
-                      <Text style={styles.omCompareBatchIcon}>▣ </Text>{row.batchCode}
+                      <Text style={styles.omCompareBatchIcon}>▣ </Text>{row.batchCode} · {row.batchCount} active
                     </Text>
+                  ) : row.batchCount > 0 ? (
+                    <Text style={styles.omCompareBatchCode}>{row.batchCount} active batches</Text>
                   ) : null}
                   {row.status && <InventoryStatusBadge status={row.status} />}
                 </View>
@@ -1533,10 +1428,12 @@ export default function OwnerMobileWorkspace({
               <Text style={styles.omCompareInfoIcon}>▣</Text>
               <View style={styles.omCompareInfoCopy}>
                 <Text style={styles.omCompareInfoTitle}>Read-only expected quantities.</Text>
-                <Text style={styles.omCompareInfoText}>Configuration is done on the web portal.</Text>
+                <Text style={styles.omCompareInfoText}>Configuration is managed by the Owner.</Text>
               </View>
             </View>
           </>
+        ) : (
+          <EmptyState text="Select an ingredient to compare stock across branches." />
         )}
 
         <Modal
@@ -1595,7 +1492,7 @@ export default function OwnerMobileWorkspace({
                       styles.omIngredientRowText,
                       selected && styles.omIngredientRowTextSelected,
                       selected && !ingredientSearch.trim() && styles.omIngredientRowTextSolidSelected,
-                    ]}>{ingredient.sheetLabel}</Text>
+                    ]}>{ingredient.name}</Text>
                     {selected && (
                       <Text style={[
                         styles.omIngredientCheck,
@@ -1620,12 +1517,11 @@ export default function OwnerMobileWorkspace({
   };
 
   const renderAlerts = () => {
-    const loading = forcedOwnerAlertsState === 'loading' || (inventoryLoading && !data);
-    const offlineError = forcedOwnerAlertsState === 'error' || Boolean(inventoryError);
-    const isEmpty = forcedOwnerAlertsState === 'empty'
-      || (!loading && !offlineError && (
-        alertCategory === 'Low Stock' ? alertSnapshot.lowStock.length === 0 : alertSnapshot.expiration.length === 0
-      ));
+    const loading = inventoryLoading;
+    const offlineError = Boolean(inventoryError);
+    const isEmpty = !loading && !offlineError && (
+      alertCategory === 'Low Stock' ? alertSnapshot.lowStock.length === 0 : alertSnapshot.expiration.length === 0
+    );
 
     const formatExpirationDate = (value: string) => {
       const date = new Date(`${value.slice(0, 10)}T12:00:00`);
@@ -1634,16 +1530,8 @@ export default function OwnerMobileWorkspace({
     };
 
     const countLabel = (category: 'Low Stock' | 'Expiration') => {
-      if (loading || offlineError) {
-        return lastKnownAlertCounts
-          ? ` (${category === 'Low Stock' ? lastKnownAlertCounts.lowStock : lastKnownAlertCounts.expiration})`
-          : '';
-      }
-      const count = forcedOwnerAlertsState === 'empty'
-        ? 0
-        : category === 'Low Stock'
-          ? alertCounts.lowStock
-          : alertCounts.expiration;
+      if (loading || offlineError) return '';
+      const count = category === 'Low Stock' ? alertCounts.lowStock : alertCounts.expiration;
       return ` (${count})`;
     };
 
@@ -1805,38 +1693,67 @@ export default function OwnerMobileWorkspace({
           </View>
         )}
 
-        {alertToast && page === 'Alerts' ? (
-          <View style={styles.alertUpdateToast}>
-            <View style={styles.alertToastCheck}><Text style={styles.alertToastCheckText}>✓</Text></View>
-            <View style={styles.alertToastCopy}>
-              <Text style={styles.alertToastTitle}>Alerts updated</Text>
-              <Text style={styles.alertToastSubtitle}>{alertToast}</Text>
-            </View>
-          </View>
-        ) : null}
       </View>
     );
   };
 
   const renderDiscrepancies = () => {
-    const forcedState = getForcedOwnerDiscrepanciesState();
-    const selected = mockDiscrepancies.find((item) => item.id === selectedMockDiscrepancyId) ?? null;
-    const formatQuantity = (value: number, unit: string) => `${Number.isInteger(value) ? value : String(value).replace(/0+$/, '').replace(/\.$/, '')} ${unit}`;
+    const formatQuantity = (value: number, unit: string) =>
+      `${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(value)} ${unit}`;
     const formatDifference = (value: number, unit: string) => {
       const magnitude = Math.abs(value);
-      const amount = Number.isInteger(magnitude) ? String(magnitude) : String(magnitude).replace(/0+$/, '').replace(/\.$/, '');
+      const amount = new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(magnitude);
       return `${value < 0 ? '−' : value > 0 ? '+' : ''}${amount} ${unit}`;
     };
-
-    const submitAdjustment = async () => {
-      await saveMockAdjustment();
+    const statusStyle = (status: OwnerDiscrepancyReview['status']) =>
+      status === 'Validated' ? styles.omStatusAdjusted
+        : status === 'Pending' ? styles.omStatusPending
+          : styles.omStatusCorrection;
+    const statusTextStyle = (status: OwnerDiscrepancyReview['status']) =>
+      status === 'Validated' ? styles.omStatusAdjustedText
+        : status === 'Pending' ? styles.omStatusPendingText
+          : styles.omStatusCorrectionText;
+    const openAction = (action: 'approve' | 'reject' | 'validate') => {
+      if (!selectedDiscrepancy) return;
+      setAdjustmentReason('');
+      setAdjustmentError('');
+      setDiscrepancyAction(action);
     };
 
-    if (discrepancyView === 'details' && selected) {
+    if (discrepancyView === 'details') {
+      if (!selectedDiscrepancy) {
+        return (
+          <View style={styles.omInventoryErrorCenter}>
+            {discrepancyLoading ? (
+              <ActivityIndicator size="large" color={colors.pink} />
+            ) : discrepancyError ? (
+              <>
+                <Text style={styles.omInventoryErrorText}>{discrepancyError}</Text>
+                <Pressable accessibilityRole="button" onPress={() => void refreshDiscrepancyReviews(null)} style={styles.omInventoryRetry}>
+                  <Text style={styles.omInventoryRetryText}>Retry</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Text style={styles.omInventoryErrorText}>This discrepancy is no longer available.</Text>
+            )}
+            <Pressable accessibilityRole="button" onPress={() => {
+              setSelectedDiscrepancyId(null);
+              setDiscrepancyView('list');
+            }} style={styles.omInventoryRetry}>
+              <Text style={styles.omInventoryRetryText}>Back to discrepancies</Text>
+            </Pressable>
+          </View>
+        );
+      }
+
+      const selected = selectedDiscrepancy;
       return (
         <View>
           <View style={styles.omDiscrepancySubHeader}>
-            <Pressable accessibilityRole="button" onPress={() => setDiscrepancyView('list')} style={styles.omBackButton}>
+            <Pressable accessibilityRole="button" onPress={() => {
+              setSelectedDiscrepancyId(null);
+              setDiscrepancyView('list');
+            }} style={styles.omBackButton}>
               <Text style={styles.omBackText}>‹</Text>
             </Pressable>
             <Text style={styles.omHeaderTitle}>Discrepancy Details</Text>
@@ -1845,19 +1762,22 @@ export default function OwnerMobileWorkspace({
           <View style={styles.omDiscrepancyCard}>
             <View style={styles.omDiscrepancyCardHeader}>
               <Text style={styles.omDiscrepancyName}>{selected.ingredient}</Text>
-              <View style={[styles.omStatusBadge, selected.status === 'Adjusted' ? styles.omStatusAdjusted : styles.omStatusPending]}>
-                <Text style={[styles.omStatusBadgeText, selected.status === 'Adjusted' ? styles.omStatusAdjustedText : styles.omStatusPendingText]}>
-                  {selected.status === 'Adjusted' ? '✓ ' : '● '}{selected.status}
+              <View style={[styles.omStatusBadge, statusStyle(selected.status)]}>
+                <Text style={[styles.omStatusBadgeText, statusTextStyle(selected.status)]}>
+                  {selected.status}
                 </Text>
               </View>
             </View>
             {[
               ['Branch', selected.branch],
+              ['Count reference', selected.reference],
               ['Expected quantity', formatQuantity(selected.expected, selected.unit)],
               ['Actual quantity', formatQuantity(selected.actual, selected.unit)],
+              ['Corrected actual quantity', formatQuantity(selected.correctedActual, selected.unit)],
               ['Difference', formatDifference(selected.difference, selected.unit)],
-              ['Date & time', selected.dateTime],
-              ['Submitted by (employee account)', selected.submittedBy],
+              ['Date & time', compactDate(selected.submittedAt)],
+              ['Submitted by', selected.staff],
+              ['Correction request reason', selected.correctionReason],
               ['Staff remarks', selected.remarks],
             ].map(([label, value]) => (
               <View key={label} style={styles.omDiscrepancyDetailRow}>
@@ -1867,173 +1787,53 @@ export default function OwnerMobileWorkspace({
                 </Text>
               </View>
             ))}
+            {selected.decisionReason ? (
+              <View style={styles.omDiscrepancyDetailRow}>
+                <Text style={styles.omDiscrepancyDetailLabel}>Owner decision</Text>
+                <Text style={styles.omDiscrepancyDetailValue}>{selected.decisionReason}</Text>
+              </View>
+            ) : null}
+            {selected.validationReason ? (
+              <View style={styles.omDiscrepancyDetailRow}>
+                <Text style={styles.omDiscrepancyDetailLabel}>Validation reason</Text>
+                <Text style={styles.omDiscrepancyDetailValue}>{selected.validationReason}</Text>
+              </View>
+            ) : null}
           </View>
-          {selected.status !== 'Adjusted' && (
+          {selected.adjustment ? (
+            <View style={styles.adjustmentAudit}>
+              <Text style={styles.omDiscrepancyDetailLabel}>Authorized inventory movement</Text>
+              <Text style={styles.auditDetail}>Reference: {selected.adjustment.movementReference}</Text>
+              <Text style={styles.auditDetail}>
+                {formatQuantity(selected.adjustment.beforeQuantity, selected.unit)} → {formatQuantity(selected.adjustment.afterQuantity, selected.unit)}
+              </Text>
+              <Text style={styles.auditDetail}>Authorized by {selected.adjustment.approvingOwner}</Text>
+            </View>
+          ) : null}
+          {isOwnerDiscrepancyActionable(selected) ? (
+            <View style={styles.discrepancyActions}>
+              <Pressable accessibilityRole="button" onPress={() => openAction('approve')} style={[styles.omPrimaryButton, styles.discrepancyActionButton]}>
+                <Text style={styles.omPrimaryButtonText}>Approve request</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={() => openAction('reject')} style={[styles.omCorrectionRejectButton, styles.discrepancyActionButton]}>
+                <Text style={styles.omCorrectionRejectText}>Reject request</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {isOwnerDiscrepancyValidatable(selected) ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setValidateReason('');
-                setValidateReasonTouched(false);
-                setValidateSaveError('');
-                setDiscrepancyView('validate');
-              }}
+              onPress={() => openAction('validate')}
               style={styles.omPrimaryButton}
             >
               <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
             </Pressable>
-          )}
+          ) : null}
         </View>
       );
     }
 
-    if (discrepancyView === 'validate' && selected) {
-      const reasonRequired = validateReasonTouched && !validateReason.trim();
-      return (
-        <View style={styles.omValidateScreen}>
-          <View style={styles.omDiscrepancySubHeader}>
-            <Pressable disabled={validateSaving} accessibilityRole="button" onPress={() => setDiscrepancyView('details')} style={styles.omBackButton}>
-              <Text style={styles.omBackText}>‹</Text>
-            </Pressable>
-            <Text style={styles.omHeaderTitle}>Validate Count</Text>
-            <View style={styles.omHeaderSpacer} />
-          </View>
-          <ScrollView contentContainerStyle={styles.omValidateScroll} showsVerticalScrollIndicator={false}>
-            <Text style={styles.omValidateSubtitle}>{selected.ingredient} · {selected.branch}</Text>
-            {[
-              ['Previous expected quantity', formatQuantity(selected.expected, selected.unit)],
-              ['Counted actual quantity', formatQuantity(selected.actual, selected.unit)],
-              ['Adjusted quantity', formatQuantity(selected.actual, selected.unit)],
-            ].map(([label, value], index) => (
-              <View key={label} style={styles.omValidateField}>
-                <Text style={styles.omValidateLabel}>{label}</Text>
-                <View style={styles.omValidateReadOnly}>
-                  <Text style={styles.omValidateReadOnlyText}>{value}</Text>
-                </View>
-                {index === 2 && <Text style={styles.omValidateHelper}>Equals the validated actual quantity.</Text>}
-              </View>
-            ))}
-            <View style={styles.omValidateField}>
-              <Text style={styles.omValidateLabel}>Reason <Text style={styles.omRequiredStar}>*</Text></Text>
-              <TextInput
-                editable={!validateSaving}
-                value={validateReason}
-                onChangeText={(value) => {
-                  setValidateReason(value);
-                  if (value.trim()) setValidateReasonTouched(false);
-                }}
-                onBlur={() => setValidateReasonTouched(true)}
-                placeholder="Enter the reason for this adjustment"
-                placeholderTextColor={colors.muted}
-                multiline
-                style={[styles.omValidateInput, (validateReason.length > 0 || reasonRequired) && styles.omValidateInputFocused]}
-              />
-              {reasonRequired && <Text style={styles.omValidateError}>Reason is required.</Text>}
-            </View>
-            {validateSaveError !== '' && (
-              <View style={styles.omSaveErrorBanner}>
-                <Text style={styles.omSaveErrorIcon}>≋</Text>
-                <View style={styles.omSaveErrorCopy}>
-                  <Text style={styles.omSaveErrorText}>{validateSaveError}</Text>
-                  <Pressable accessibilityRole="button" onPress={() => void submitAdjustment()} style={styles.omRetryPill}>
-                    <Text style={styles.omRetryPillText}>Retry</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-            <View style={styles.omInfoBanner}>
-              <Text style={styles.omInfoBannerText}>Confirming overwrites the expected quantity with the validated actual quantity.</Text>
-            </View>
-          </ScrollView>
-          <View style={styles.omValidateActions}>
-            <Pressable
-              disabled={validateSaving}
-              accessibilityRole="button"
-              onPress={() => setDiscrepancyView('details')}
-              style={[styles.omSecondaryButton, validateSaving && styles.omDisabled]}
-            >
-              <Text style={styles.omSecondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              disabled={validateSaving}
-              accessibilityRole="button"
-              onPress={() => {
-                setValidateReasonTouched(true);
-                if (validateReason.trim()) setValidateConfirmVisible(true);
-              }}
-              style={[styles.omPrimaryButton, styles.omValidateActionButton, validateSaving && styles.omDisabled]}
-            >
-              {validateSaving ? (
-                <View style={styles.omSavingButtonRow}>
-                  <ActivityIndicator size="small" color={colors.white} />
-                  <Text style={styles.omPrimaryButtonText}>Saving…</Text>
-                </View>
-              ) : <Text style={styles.omPrimaryButtonText}>Confirm</Text>}
-            </Pressable>
-          </View>
-        </View>
-      );
-    }
-
-    if (discrepancyView === 'correction' && selected?.correctionRequest) {
-      const request = selected.correctionRequest;
-      return (
-        <View>
-          <View style={styles.omDiscrepancySubHeader}>
-            <Pressable accessibilityRole="button" onPress={() => setDiscrepancyView('list')} style={styles.omBackButton}>
-              <Text style={styles.omBackText}>‹</Text>
-            </Pressable>
-            <Text style={styles.omHeaderTitle}>Correction Request</Text>
-            <View style={styles.omHeaderSpacer} />
-          </View>
-          <View style={styles.omDiscrepancyCard}>
-            <View style={styles.omDiscrepancyCardHeader}>
-              <Text style={styles.omDiscrepancyName}>{selected.ingredient} · {selected.branch}</Text>
-              <View style={styles.omStatusCorrection}>
-                <Text style={styles.omStatusCorrectionText}>! Correction Request</Text>
-              </View>
-            </View>
-            {[
-              ['Requested by (employee account)', request.requestedBy],
-              ['Date & time', request.dateTime],
-              ['Original value', formatQuantity(request.originalValue, selected.unit)],
-              ['Revised value', formatQuantity(request.revisedValue, selected.unit)],
-              ['Reason', request.reason],
-            ].map(([label, value]) => (
-              <View key={label} style={styles.omDiscrepancyDetailRow}>
-                <Text style={styles.omDiscrepancyDetailLabel}>{label}</Text>
-                <Text style={[styles.omDiscrepancyDetailValue, label === 'Revised value' && styles.omDiscrepancyRevised]}>{value}</Text>
-              </View>
-            ))}
-          </View>
-          <Pressable accessibilityRole="button" onPress={() => {
-            setMockDiscrepancies((current) => current.map((item) =>
-              item.id === selected.id
-                ? { ...item, actual: item.correctionRequest?.revisedValue ?? item.actual, status: 'Adjusted' as const }
-                : item));
-            setCorrectionResult('approved');
-          }} style={styles.omPrimaryButton}>
-            <Text style={styles.omPrimaryButtonText}>Approve Correction</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => setCorrectionResult('rejected')} style={styles.omCorrectionRejectButton}>
-            <Text style={styles.omCorrectionRejectText}>Reject Correction</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setValidateReason('');
-              setValidateReasonTouched(false);
-              setValidateSaveError('');
-              setDiscrepancyView('validate');
-            }}
-            style={styles.omCorrectionValidateButton}
-          >
-            <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    if (forcedState === 'loading') {
+    if (discrepancyLoading && !discrepancyReviewsLoaded) {
       return (
         <View style={styles.omLoadingCenter}>
           <ActivityIndicator size="large" color={colors.pink} />
@@ -2041,11 +1841,11 @@ export default function OwnerMobileWorkspace({
         </View>
       );
     }
-    if (forcedState === 'error') {
+    if (discrepancyError) {
       return (
         <View style={styles.alertErrorCenter}>
           <Text style={styles.alertWifiIcon}>≋</Text>
-          <Text style={styles.alertErrorText}>{OWNER_ALERT_LOAD_ERROR}</Text>
+          <Text style={styles.alertErrorText}>{discrepancyError}</Text>
           <Pressable accessibilityRole="button" onPress={() => void refreshDiscrepancyReviews()} style={styles.alertRetryButton}>
             <Text style={styles.alertRetryIcon}>↻</Text><Text style={styles.alertRetryText}>Retry</Text>
           </Pressable>
@@ -2053,17 +1853,13 @@ export default function OwnerMobileWorkspace({
       );
     }
 
-    const visible = forcedState === 'empty' ? [] : mockDiscrepancies
-      .filter((item) => !discrepancyBranchFilter || item.branchId === discrepancyBranchFilter)
-      .filter((item) => discrepancyStatusFilter === 'All status' || item.status === discrepancyStatusFilter);
-
     return (
       <View>
         <Text style={styles.omPageTitle}>Discrepancies</Text>
         <View style={styles.omFilterDropdownRow}>
           <Pressable accessibilityRole="button" onPress={() => { setDiscrepancyDraftBranch(discrepancyBranchFilter); setDiscrepancyDraftStatus(discrepancyStatusFilter); setDiscrepancyFilterVisible(true); }} style={styles.omFilterDropdown}>
             <Text style={styles.omFilterDropdownIcon}>⌖</Text>
-            <Text style={styles.omFilterDropdownText}>{discrepancyBranchFilter ? `Branch ${discrepancyBranchFilter.slice(-1)}` : 'All branches'}</Text>
+            <Text style={styles.omFilterDropdownText}>{discrepancyBranchFilter ? branchNames.get(discrepancyBranchFilter) ?? 'Selected branch' : 'All branches'}</Text>
             <Text style={styles.omFilterDropdownChevron}>⌄</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => { setDiscrepancyDraftBranch(discrepancyBranchFilter); setDiscrepancyDraftStatus(discrepancyStatusFilter); setDiscrepancyFilterVisible(true); }} style={styles.omFilterDropdown}>
@@ -2072,22 +1868,20 @@ export default function OwnerMobileWorkspace({
             <Text style={styles.omFilterDropdownChevron}>⌄</Text>
           </Pressable>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            // TODO(onEditPressed): Define the discrepancy Edit action.
-          }}
-          style={styles.omEditButton}
-        >
-          <Text style={styles.omEditButtonText}>Edit</Text>
-        </Pressable>
-        {visible.length ? visible.map((item) => (
+        {discrepancyFeedback ? <Text style={styles.noticeText}>{discrepancyFeedback}</Text> : null}
+        {discrepancyLoading ? (
+          <View style={styles.salesLoadingCompact}>
+            <ActivityIndicator size="small" color={colors.pink} />
+            <Text style={styles.loadingText}>Refreshing discrepancies…</Text>
+          </View>
+        ) : null}
+        {visibleDiscrepancies.length ? visibleDiscrepancies.map((item) => (
           <Pressable
-            key={item.id}
+            key={item.correctionRequestId}
             accessibilityRole="button"
             onPress={() => {
-              setSelectedMockDiscrepancyId(item.id);
-              setDiscrepancyView(item.correctionRequest ? 'correction' : 'details');
+              setSelectedDiscrepancyId(item.correctionRequestId);
+              setDiscrepancyView('details');
             }}
             style={styles.omDiscrepancyListCard}
           >
@@ -2096,14 +1890,14 @@ export default function OwnerMobileWorkspace({
                 <Text style={styles.omDiscrepancyName}>{item.ingredient}</Text>
                 <Text style={styles.omDiscrepancyNegative}>{formatDifference(item.difference, item.unit)}</Text>
               </View>
-              <Text style={styles.omDiscrepancyMeta}>{item.branch} · {item.dateTime}</Text>
+              <Text style={styles.omDiscrepancyMeta}>{item.branch} · {compactDate(item.submittedAt)}</Text>
               <View style={styles.omBadgeRow}>
-                <View style={[styles.omStatusBadge, item.status === 'Adjusted' ? styles.omStatusAdjusted : styles.omStatusPending]}>
-                  <Text style={[styles.omStatusBadgeText, item.status === 'Adjusted' ? styles.omStatusAdjustedText : styles.omStatusPendingText]}>
-                    {item.status === 'Adjusted' ? '✓ ' : '● '}{item.status}
+                <View style={[styles.omStatusBadge, statusStyle(item.status)]}>
+                  <Text style={[styles.omStatusBadgeText, statusTextStyle(item.status)]}>
+                    {item.status}
                   </Text>
                 </View>
-                {item.correctionRequest && (
+                {item.validationTarget === 'correction_request' && (
                   <View style={styles.omStatusCorrection}>
                     <Text style={styles.omStatusCorrectionText}>! Correction Request</Text>
                   </View>
@@ -2115,7 +1909,7 @@ export default function OwnerMobileWorkspace({
         )) : (
           <View style={styles.alertEmptyState}>
             <View style={styles.alertEmptyBellCircle}><Text style={styles.alertEmptyBell}>▤</Text></View>
-            <Text style={styles.alertEmptyTitle}>{OWNER_ALERT_EMPTY_MESSAGE}</Text>
+            <Text style={styles.alertEmptyTitle}>No discrepancy records match the selected filters.</Text>
           </View>
         )}
 
@@ -2127,19 +1921,18 @@ export default function OwnerMobileWorkspace({
               <Text style={styles.omFilterSheetTitle}>Filter</Text>
               <Text style={styles.omFilterSectionLabel}>Branch</Text>
               <View style={styles.omFilterChipWrap}>
-                {[null, 'branch-1', 'branch-2', 'branch-3'].map((branchId) => {
-                  const label = branchId ? `Branch ${branchId.slice(-1)}` : 'All branches';
-                  const selected = discrepancyDraftBranch === branchId;
+                {[{ id: null, name: 'All branches' }, ...branches].map((branch) => {
+                  const selected = discrepancyDraftBranch === branch.id;
                   return (
-                    <Pressable key={label} accessibilityRole="button" onPress={() => setDiscrepancyDraftBranch(branchId)} style={[styles.omFilterChip, selected && styles.omFilterChipSelected]}>
-                      <Text style={[styles.omFilterChipText, selected && styles.omFilterChipTextSelected]}>{label}</Text>
+                    <Pressable key={branch.id ?? 'all'} accessibilityRole="button" onPress={() => setDiscrepancyDraftBranch(branch.id)} style={[styles.omFilterChip, selected && styles.omFilterChipSelected]}>
+                      <Text style={[styles.omFilterChipText, selected && styles.omFilterChipTextSelected]}>{branch.name}</Text>
                     </Pressable>
                   );
                 })}
               </View>
               <Text style={styles.omFilterSectionLabel}>Status</Text>
               <View style={styles.omFilterChipWrap}>
-                {(['All status', 'Pending Review', 'Adjusted'] as const).map((status) => (
+                {(['All status', 'Pending', 'Approved', 'Rejected', 'Validated'] as const).map((status) => (
                   <Pressable key={status} accessibilityRole="button" onPress={() => setDiscrepancyDraftStatus(status)} style={[styles.omFilterChip, discrepancyDraftStatus === status && styles.omFilterChipSelected]}>
                     <Text style={[styles.omFilterChipText, discrepancyDraftStatus === status && styles.omFilterChipTextSelected]}>{status}</Text>
                   </Pressable>
@@ -2336,29 +2129,24 @@ export default function OwnerMobileWorkspace({
           />
         )}
         {page === 'WasteSpillageRecords' && (
-          <WasteSpillageRecordsScreen onBack={goBackFromMenu} />
+          <WasteSpillageRecordsScreen
+            onBack={goBackFromMenu}
+            branches={branches}
+            inventoryLoading={inventoryLoading}
+            inventoryError={inventoryError}
+            onRefresh={onRefresh}
+          />
         )}
         {page === 'PhysicalCountRecords' && (
           <PhysicalCountRecordsScreen
             onBack={goBackFromMenu}
-            branches={data?.branches ?? []}
+            branches={branches}
             inventoryLoading={inventoryLoading}
             inventoryError={inventoryError}
             onRefresh={onRefresh}
             onOpenDiscrepancy={(record) => {
-              if (record.mockDiscrepancyId) {
-                setSelectedDiscrepancyId(null);
-                setSelectedMockDiscrepancyId(record.mockDiscrepancyId);
-                const mock = mockDiscrepancies.find((item) => item.id === record.mockDiscrepancyId);
-                setDiscrepancyView(mock?.correctionRequest ? 'correction' : 'details');
-                setPage('Discrepancies');
-                return;
-              }
-              if (record.discrepancyReviewId) {
-                setSelectedDiscrepancyId(record.discrepancyReviewId);
-              } else {
-                setSelectedDiscrepancyId(null);
-              }
+              setSelectedDiscrepancyId(record.discrepancyReviewId);
+              setDiscrepancyView(record.discrepancyReviewId ? 'details' : 'list');
               setPage('Discrepancies');
             }}
           />
@@ -2574,12 +2362,11 @@ export default function OwnerMobileWorkspace({
       </Modal>
 
       <Modal
-        visible={selectedDiscrepancy !== null}
+        visible={selectedDiscrepancy !== null && discrepancyAction !== null}
         transparent
         animationType="fade"
         onRequestClose={() => {
           if (!adjustmentSubmitting) {
-            setSelectedDiscrepancyId(null);
             setDiscrepancyAction(null);
           }
         }}
@@ -2598,10 +2385,7 @@ export default function OwnerMobileWorkspace({
                 accessibilityRole="button"
                 accessibilityLabel="Close count correction confirmation"
                 disabled={adjustmentSubmitting}
-                onPress={() => {
-                  setSelectedDiscrepancyId(null);
-                  setDiscrepancyAction(null);
-                }}
+                onPress={() => setDiscrepancyAction(null)}
                 style={styles.closeActionButton}
               >
                 <Text style={styles.closeActionText}>×</Text>
@@ -2667,117 +2451,13 @@ export default function OwnerMobileWorkspace({
                 <Pressable
                   accessibilityRole="button"
                   disabled={adjustmentSubmitting}
-                  onPress={() => {
-                    setSelectedDiscrepancyId(null);
-                    setDiscrepancyAction(null);
-                  }}
+                  onPress={() => setDiscrepancyAction(null)}
                   style={styles.modalCancelAction}
                 >
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </Pressable>
               </>
             ) : null}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        visible={validateConfirmVisible || validateSaving}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          if (!validateSaving) setValidateConfirmVisible(false);
-        }}
-      >
-        <View style={styles.omDialogScrim}>
-          {validateSaving ? (
-            <View style={styles.omSavingDialog}>
-              <ActivityIndicator size="small" color={colors.pink} />
-              <Text style={styles.omSavingText}>Saving…</Text>
-            </View>
-          ) : (
-            <View style={styles.omResultDialog}>
-              <Text style={styles.omResultDialogTitle}>Confirm Adjustment</Text>
-              {mockSelectedDiscrepancy && (
-                <>
-                  <Text style={styles.omResultDialogBody}>
-                    {mockSelectedDiscrepancy.ingredient} · {mockSelectedDiscrepancy.branch}
-                  </Text>
-                  <Text style={styles.omResultDialogBody}>
-                    The expected quantity will be overwritten with the validated actual quantity ({mockSelectedDiscrepancy.actual} {mockSelectedDiscrepancy.unit}). Nothing is applied until you confirm.
-                  </Text>
-                </>
-              )}
-              <View style={styles.omResultDialogActions}>
-                <Pressable accessibilityRole="button" onPress={() => setValidateConfirmVisible(false)} style={styles.omDialogCancelButton}>
-                  <Text style={styles.omDialogCancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable accessibilityRole="button" onPress={() => void saveMockAdjustment()} style={styles.omDialogConfirmButton}>
-                  <Text style={styles.omPrimaryButtonText}>Confirm</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-        </View>
-      </Modal>
-      <Modal
-        visible={adjustmentSavedVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => undefined}
-      >
-        <View style={styles.omDialogScrim}>
-          <View style={styles.omResultDialog}>
-            <View style={styles.omSuccessCircle}><Text style={styles.omSuccessCheck}>✓</Text></View>
-            <Text style={styles.omResultDialogTitle}>Adjustment Saved</Text>
-            {mockSelectedDiscrepancy && (
-              <Text style={styles.omResultDialogBody}>
-                {mockSelectedDiscrepancy.ingredient} · {mockSelectedDiscrepancy.branch} expected quantity is now {mockSelectedDiscrepancy.actual} {mockSelectedDiscrepancy.unit}. Discrepancy marked Adjusted. Added to Authorized Adjustment Records and Branch Transaction History.
-              </Text>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setAdjustmentSavedVisible(false);
-                setDiscrepancyView('list');
-              }}
-              style={styles.omResultDoneButton}
-            >
-              <Text style={styles.omPrimaryButtonText}>Done</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        visible={correctionResult !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCorrectionResult(null)}
-      >
-        <View style={styles.omDialogScrim}>
-          <View style={styles.omResultDialog}>
-            <View style={[styles.omSuccessCircle, correctionResult === 'rejected' && styles.omRejectCircle]}>
-              <Text style={styles.omSuccessCheck}>{correctionResult === 'rejected' ? '×' : '✓'}</Text>
-            </View>
-            <Text style={styles.omResultDialogTitle}>
-              {correctionResult === 'approved' ? 'Correction Approved' : 'Correction Rejected'}
-            </Text>
-            {mockSelectedDiscrepancy?.correctionRequest && (
-              <Text style={styles.omResultDialogBody}>
-                {correctionResult === 'approved'
-                  ? `${mockSelectedDiscrepancy.ingredient} · ${mockSelectedDiscrepancy.branch} count updated to ${mockSelectedDiscrepancy.correctionRequest.revisedValue} ${mockSelectedDiscrepancy.unit}. Original value, revised value, editor, date and time are kept.`
-                  : `${mockSelectedDiscrepancy.ingredient} · ${mockSelectedDiscrepancy.branch} count remains unchanged at ${mockSelectedDiscrepancy.expected} ${mockSelectedDiscrepancy.unit}.`}
-              </Text>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setCorrectionResult(null);
-                setDiscrepancyView('list');
-              }}
-              style={styles.omResultDoneButton}
-            >
-              <Text style={styles.omPrimaryButtonText}>Done</Text>
-            </Pressable>
           </View>
         </View>
       </Modal>
@@ -3025,12 +2705,6 @@ function useStyles() {
     alertEmptyBell: { color: colors.alertNavy, fontFamily: font.semibold, fontSize: 20 },
     alertEmptyTitle: { color: colors.alertNavy, fontFamily: font.bold, fontSize: 11, textAlign: 'center' },
     alertEmptySubtext: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', marginTop: 4 },
-    alertUpdateToast: { position: 'absolute', left: 0, right: 0, bottom: 76, minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, borderRadius: 12, backgroundColor: colors.alertNavy, elevation: 8, shadowColor: colors.alertNavy, shadowOpacity: 0.24, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } },
-    alertToastCheck: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 9, marginRight: 8, backgroundColor: colors.alertSuccess },
-    alertToastCheckText: { color: colors.white, fontFamily: font.bold, fontSize: 10 },
-    alertToastCopy: { flex: 1 },
-    alertToastTitle: { color: colors.white, fontFamily: font.bold, fontSize: 10 },
-    alertToastSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: 8, opacity: 0.75, marginTop: 2 },
     omPageTitle: { color: colors.alertNavy, fontFamily: font.bold, fontSize: 20, marginBottom: 12 },
     omFilterDropdownRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
     omFilterDropdown: { flex: 1, height: 32, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9, borderRadius: 12, backgroundColor: colors.alertGrayFill },
@@ -3243,7 +2917,11 @@ function useStyles() {
     omInventoryBadgeOut: { backgroundColor: '#F52F2E' },
     omInventoryBadgeNear: { backgroundColor: '#FCA639' },
     omInventoryBadgeNotTracked: { backgroundColor: '#F5F5F7' },
-    omInventoryExpiryRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7 },
+    omInventoryBatchList: { marginTop: 8, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 7 },
+    omInventoryBatchHeading: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginBottom: 3 },
+    omInventoryBatchRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: colors.line },
+    omInventoryBatchCopy: { flex: 1, minWidth: 0, paddingRight: 6 },
+    omInventoryBatchReference: { color: colors.navy, fontFamily: font.semibold, fontSize: 8 },
     omInventoryExpiryLabel: { color: colors.muted, fontFamily: font.regular, fontSize: 8 },
     omInventoryFooterNote: { minHeight: 32, flexDirection: 'row', alignItems: 'center', marginTop: 4, paddingHorizontal: 4 },
     omInventoryFooterIcon: { width: 17, height: 17, alignItems: 'center', justifyContent: 'center', borderRadius: 9, marginRight: 6, backgroundColor: '#595EC0', color: colors.white, fontFamily: font.bold, fontSize: 8 },

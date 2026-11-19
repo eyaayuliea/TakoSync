@@ -22,6 +22,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
+import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
 import type { MenuCartLine } from './menuPreviewData';
 import {
@@ -98,6 +99,7 @@ import {
   createPendingSaleCheckoutStore,
   type PendingSaleCheckout,
 } from '../services/saleCheckoutRecovery';
+import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import {
   getManilaBusinessDayRange,
   getStaffDailySalesLoadResult,
@@ -155,9 +157,9 @@ const inventoryReportSelectionTitles: Record<InventoryReportKey, string> = {
 };
 
 const colors = {
-  pink: '#F20D55',
-  navy: '#101027',
-  orange: '#FF9418',
+  pink: ownerColors.primary,
+  navy: ownerColors.navy,
+  orange: ownerColors.orange,
   ink: '#171724',
   muted: '#858591',
   pale: '#F5F5F7',
@@ -170,7 +172,7 @@ const colors = {
   yellow: '#FFF2C4',
 } as const;
 
-const alertPink = '#EC1358';
+const alertPink = ownerColors.primary;
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -1001,10 +1003,12 @@ function DatePickerField({
 
 export default function StaffWorkspace({
   onLogout,
+  onChangePassword,
   user,
   appVersion,
 }: {
   onLogout: () => void | Promise<void>;
+  onChangePassword: () => void;
   user: AppUser;
   appVersion: string;
 }) {
@@ -1017,7 +1021,7 @@ export default function StaffWorkspace({
   const colors = {
     ...theme.colors,
     pink: theme.colors.accent,
-    navy: theme.isDark ? theme.colors.surface : '#101027',
+    navy: theme.isDark ? theme.colors.surface : ownerColors.navy,
     orange: theme.colors.action,
     ink: theme.isDark ? theme.colors.text : '#171724',
     muted: theme.colors.secondaryText,
@@ -2439,6 +2443,7 @@ export default function StaffWorkspace({
           transactionReference,
         });
       } catch (error) {
+        if (!isRetryableSaleSubmissionError(error)) throw error;
         try {
           const saved = await pendingSaleCheckoutStore.save({
             ...input,
@@ -2498,6 +2503,24 @@ export default function StaffWorkspace({
       await refreshBackendData();
       openSaleReceipt(sale.id);
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'The checkout was rejected.';
+      if (!isRetryableSaleSubmissionError(error)) {
+        try {
+          setPendingSaleCheckouts(await pendingSaleCheckoutStore.resolve(request.requestId));
+          setPendingSaleCheckoutErrors((current) => ({
+            ...current,
+            [request.requestId]: message,
+          }));
+        } catch (storageError) {
+          setPendingSaleCheckoutErrors((current) => ({
+            ...current,
+            [request.requestId]: `${message} The rejected checkout could not be removed from local recovery: ${
+              storageError instanceof Error ? storageError.message : 'storage error'
+            }`,
+          }));
+        }
+        return;
+      }
       setPendingSaleCheckoutErrors((current) => ({
         ...current,
         [request.requestId]: error instanceof Error
@@ -6779,6 +6802,24 @@ export default function StaffWorkspace({
           </View>
 
           <View style={styles.profileSettingsCard}>
+            <Text style={styles.profileSectionTitle}>Account security</Text>
+            <Text style={styles.profileAccountSecurityCopy}>
+              Your Employee ID is the initial password. You may set a different password at any time.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Change password"
+              onPress={onChangePassword}
+              style={({ pressed }) => [
+                styles.profilePasswordButton,
+                pressed && styles.profilePasswordButtonPressed,
+              ]}
+            >
+              <Text style={styles.profilePasswordButtonText}>Change password</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.profileSettingsCard}>
             <View style={styles.profileSettingsHeading}>
               <Text style={styles.profileSectionTitle}>Alert visibility</Text>
               <Text style={styles.profileSettingsValue}>
@@ -9743,6 +9784,15 @@ function createStaffStyles(theme: AppTheme) {
     paddingHorizontal: 11, paddingVertical: 8, borderRadius: 12, backgroundColor: '#EEEEEF',
     marginBottom: 10,
   },
+  profileAccountSecurityCopy: {
+    color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 4,
+  },
+  profilePasswordButton: {
+    minHeight: 48, alignItems: 'center', justifyContent: 'center',
+    marginTop: 8, borderRadius: 10, backgroundColor: colors.pink,
+  },
+  profilePasswordButtonPressed: { opacity: 0.82 },
+  profilePasswordButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
   profileSettingsHeading: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     minHeight: 30,

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { ownerColors } from '../owner/shared/ownerTokens';
 import {
   activeStaffTab,
   STAFF_NAVIGATION_TOUCH_TARGET,
@@ -13,11 +14,11 @@ export type { StaffRoute, StaffTab } from './staffNavigation';
 export { activeStaffTab };
 
 const colors = {
-  pink: '#F20D55',
-  staffPink: '#EC1358',
-  navy: '#101027',
-  orange: '#FF9418',
-  white: '#FFFFFF',
+  pink: ownerColors.primary,
+  staffPink: ownerColors.primary,
+  navy: ownerColors.navy,
+  orange: ownerColors.orange,
+  white: ownerColors.white,
 } as const;
 
 export type OwnerTab = 'dashboard' | 'sales' | 'inventory' | 'discrepancies' | 'alerts' | 'more';
