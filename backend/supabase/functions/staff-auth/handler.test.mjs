@@ -23,6 +23,8 @@ function createFixture({
   callerUserId = 'owner-id',
   authUserId = 'staff-id',
   authLoginError = null,
+  profileLookupError = null,
+  branchLookupError = null,
   sessionResult = { data: { active: true }, error: null },
   userError = null,
 } = {}) {
@@ -143,6 +145,7 @@ function createFixture({
       }
 
       if (table === 'branches') {
+        if (branchLookupError) return { data: null, error: branchLookupError };
         branches.push({ id: filters.id ?? 'branch-id', name: 'Cebu Branch', city: 'Cebu', code: 'BR-001', active: true });
         const row = { id: filters.id ?? 'branch-id', name: 'Cebu Branch', city: 'Cebu', code: 'BR-001', active: true };
         return resultShape === 'many'
@@ -150,6 +153,9 @@ function createFixture({
           : { data: filters.id ? row : null, error: null };
       }
       if (table !== 'profiles') return { data: null, error: null };
+      if (profileLookupError && (filters.email !== undefined || filters.username !== undefined)) {
+        return { data: null, error: profileLookupError };
+      }
 
       if (filters.id === 'owner-id') {
         profiles.push(ownerProfile);
@@ -483,17 +489,21 @@ test('Owner login diagnostic logs expose only safe stage metadata', async () => 
   assert.doesNotMatch(JSON.stringify(entries), /owner-password|owner@example\.test|access_token|refresh_token|ownergelo/);
 });
 
-test('Owner Auth failure diagnostic logs only its code and HTTP status', async () => {
+test('Owner Auth failure logs a reason and sanitized Auth message', async () => {
   const fixture = createFixture({
-    ownerProfile: { id: 'owner-id', username: "ownergelo'26", email: 'owner@example.test', role: 'owner', active: true },
+    ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'owner', active: true },
     authUserId: 'owner-id',
-    authLoginError: { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' },
+    authLoginError: {
+      status: 400,
+      code: 'invalid_credentials',
+      message: 'Invalid login credentials for OWNER@example.test with password wrong-password; Bearer eyJsecret.payload.signature',
+    },
   });
   const entries = [];
   const originalError = console.error;
   console.error = (...args) => entries.push(args);
   try {
-    const result = await fixture.handler(ownerLoginRequest("ownergelo'26", 'wrong-password'));
+    const result = await fixture.handler(ownerEmailLoginRequest('OWNER@example.test', 'wrong-password'));
     assert.equal(result.status, 200);
   } finally {
     console.error = originalError;
@@ -501,9 +511,116 @@ test('Owner Auth failure diagnostic logs only its code and HTTP status', async (
 
   assert.deepEqual(
     entries.find((args) => args[0] === '[staff-auth] Owner Supabase Auth sign-in failed')[1],
-    { status: 400, code: 'invalid_credentials' },
+    {
+      reason: 'invalid_credentials',
+      code: 'invalid_credentials',
+      status: 400,
+      message: 'Invalid login credentials for [redacted email] with password [redacted]; Bearer [redacted]',
+    },
   );
-  assert.doesNotMatch(JSON.stringify(entries), /wrong-password|owner@example\.test|access_token|refresh_token|ownergelo/);
+  assert.doesNotMatch(JSON.stringify(entries), /wrong-password|owner@example\.test|secret\.payload|access_token|refresh_token/);
+});
+
+test('Owner profile query errors return a server failure and log the sanitized database cause', async () => {
+  const fixture = createFixture({
+    ownerProfile: { id: 'owner-id', email: 'owner@example.test', role: 'owner', active: true },
+    profileLookupError: {
+      code: '42501',
+      status: 403,
+      message: 'permission denied while looking up owner@example.test',
+    },
+  });
+  const entries = [];
+  const originalError = console.error;
+  console.error = (...args) => entries.push(args);
+  try {
+    const result = await fixture.handler(ownerEmailLoginRequest('owner@example.test', 'owner-password'));
+    assert.equal(result.status, 500);
+    assert.deepEqual(await result.json(), {
+      ok: false,
+      error: 'Owner authentication is temporarily unavailable.',
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const lookupLog = entries.find((args) => args[0] === '[staff-auth] Owner profile lookup failed');
+  assert.deepEqual(lookupLog[1], {
+    reason: 'query_error',
+    code: '42501',
+    status: 403,
+    message: 'permission denied while looking up [redacted email]',
+  });
+  assert.doesNotMatch(JSON.stringify(entries), /owner@example\.test|owner-password/);
+});
+
+test('Staff profile query errors are not mapped to an unknown username', async () => {
+  const fixture = createFixture({
+    profileLookupError: {
+      code: '08006',
+      status: 503,
+      message: 'database connection failed for ana_staff',
+    },
+  });
+  const entries = [];
+  const originalError = console.error;
+  console.error = (...args) => entries.push(args);
+  try {
+    const result = await fixture.handler(new Request('https://function.test/staff-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', username: 'ana_staff', password: 'staff-password' }),
+    }));
+    assert.equal(result.status, 500);
+    assert.notEqual((await result.json()).code, 'unknown_username');
+  } finally {
+    console.error = originalError;
+  }
+
+  const lookupLog = entries.find((args) => args[0] === '[staff-auth] Staff profile lookup failed');
+  assert.deepEqual(lookupLog[1], {
+    reason: 'query_error',
+    code: '08006',
+    status: 503,
+    message: 'database connection failed for [redacted]',
+  });
+  assert.doesNotMatch(JSON.stringify(entries), /ana_staff|staff-password/);
+});
+
+test('Staff branch lookup errors return a server failure with a sanitized cause', async () => {
+  const fixture = createFixture({
+    branchLookupError: {
+      code: '08006',
+      status: 503,
+      message: 'branch lookup failed for staff@example.test',
+    },
+  });
+  const entries = [];
+  const originalError = console.error;
+  console.error = (...args) => entries.push(args);
+  try {
+    const result = await fixture.handler(new Request('https://function.test/staff-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', username: 'ana_staff', password: 'staff-password' }),
+    }));
+    assert.equal(result.status, 500);
+    assert.deepEqual(await result.json(), {
+      ok: false,
+      error: 'Staff authentication is temporarily unavailable.',
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const lookupLog = entries.find((args) => args[0] === '[staff-auth] Staff branch lookup failed');
+  assert.deepEqual(lookupLog[1], {
+    reason: 'query_error',
+    code: '08006',
+    status: 503,
+    message: 'branch lookup failed for [redacted email]',
+  });
+  assert.doesNotMatch(JSON.stringify(entries), /staff@example\.test|ana_staff|staff-password/);
 });
 
 test('Owner login rejects missing username or password without authenticating', async () => {

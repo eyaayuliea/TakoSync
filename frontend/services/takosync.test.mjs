@@ -90,34 +90,34 @@ test('sale retry payload normalization is order-independent but price-sensitive'
 });
 
 const sales = [
-  { status: 'completed', inventory_processing_status: 'completed', inventory_processing_error: null },
-  { status: 'completed', inventory_processing_status: 'pending', inventory_processing_error: null },
-  { status: 'completed', inventory_processing_status: 'failed', inventory_processing_error: 'Ingredient deduction failed' },
-  { status: 'cancelled', inventory_processing_status: 'completed', inventory_processing_error: null },
+  { status: 'completed', total_amount: 10, inventory_processing_status: 'completed', inventory_processing_error: null },
+  { status: 'completed', total_amount: 20, inventory_processing_status: 'pending', inventory_processing_error: null },
+  { status: 'completed', total_amount: 30, inventory_processing_status: 'failed', inventory_processing_error: 'Ingredient deduction failed' },
+  { status: 'completed', total_amount: 40, inventory_processing_status: undefined, inventory_processing_error: null },
+  { status: 'cancelled', total_amount: 0, inventory_processing_status: 'completed', inventory_processing_error: null },
 ];
 
-test('owner sales include completed sales regardless of inventory processing status', () => {
+test('Owner summaries include completed sales regardless of inventory processing status', () => {
   const visibleSales = sales.filter(shouldIncludeOwnerSaleInSummary);
-  assert.equal(visibleSales.length, 3);
-  assert.deepEqual(visibleSales.map((sale) => sale.inventory_processing_status), [
-    'completed',
-    'pending',
-    'failed',
-  ]);
+  assert.equal(visibleSales.length, 4);
+  assert.deepEqual(visibleSales.map((sale) => sale.inventory_processing_status), ['completed', 'pending', 'failed', undefined]);
   assert.equal(getOwnerSaleInventoryStatusLabel(sales[0]), 'Completed');
   assert.equal(getOwnerSaleInventoryStatusLabel(sales[1]), 'Pending');
   assert.equal(getOwnerSaleInventoryStatusLabel(sales[2]), 'Failed');
   assert.equal(isInventoryProcessingSuccessful(sales[0]), true);
   assert.equal(isInventoryProcessingSuccessful(sales[1]), false);
   assert.equal(isInventoryProcessingSuccessful(sales[2]), false);
+  assert.equal(isInventoryProcessingSuccessful(sales[3]), false);
   assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'pending' }), 'Pending');
+  assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'completed' }), 'Pending');
+  assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'completed', inventory_processing_status: 'unknown' }), 'Pending');
   assert.equal(getOwnerSaleInventoryStatusLabel({ status: 'cancelled' }), 'Failed');
 });
 
 test('owner sales reconciliation separates recorded sales from inventory-confirmed sales', () => {
-  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'all').map((sale) => sale.inventory_processing_status), ['completed', 'pending', 'failed']);
+  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'all').map((sale) => sale.inventory_processing_status), ['completed', 'pending', 'failed', undefined]);
   assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'confirmed').map((sale) => sale.inventory_processing_status), ['completed']);
-  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'needs_processing').map((sale) => sale.inventory_processing_status), ['pending', 'failed']);
+  assert.deepEqual(filterOwnerSalesByInventoryState(sales, 'needs_processing').map((sale) => sale.inventory_processing_status), ['pending', 'failed', undefined]);
 });
 
 test('sale payload normalization tolerates missing arrays and empty identifiers', () => {
@@ -226,33 +226,26 @@ test('prepared batter calculations follow the configured yield and batch quantit
   assert.equal(calculatePreparedBatterConsumption(0, preparedQuantity, estimatedYieldPieces), 0);
 });
 
-test('cancelled sales are excluded from completed sales totals and summaries', () => {
+test('completed recorded sales enter Owner totals regardless of inventory status', () => {
   const completedSales = sales.filter(shouldIncludeOwnerSaleInSummary);
   const cancelledSales = sales.filter((sale) => sale.status === 'cancelled');
   assert.equal(cancelledSales.length, 1);
-  assert.equal(completedSales.length + cancelledSales.length, sales.length);
-  assert.deepEqual(
-    sales
-      .filter((sale) => sale.status === 'completed')
-      .reduce((sum, sale) => sum + (sale.inventory_processing_status === 'completed' ? 1 : 0), 0),
-    1,
-  );
+  assert.equal(completedSales.length, 4);
   assert.deepEqual(
     sales
       .filter((sale) => sale.status === 'completed')
       .map((sale) => sale.inventory_processing_status),
-    ['completed', 'pending', 'failed'],
+    ['completed', 'pending', 'failed', undefined],
   );
 });
 
-test('completed sales totals include pending and failed inventory processing without being counted as successful inventory completion', () => {
+test('Owner sales totals include pending and failed inventory processing', () => {
   const completedSales = sales.filter(shouldIncludeOwnerSaleInSummary);
-  const totalSalesValue = completedSales.reduce((sum, sale) => sum + (sale.status === 'completed' ? 1 : 0), 0);
-  assert.equal(totalSalesValue, 3);
-  const successfulInventoryCount = completedSales.filter((sale) => sale.inventory_processing_status === 'completed').length;
-  const pendingInventoryCount = completedSales.filter((sale) => sale.inventory_processing_status === 'pending').length;
-  const failedInventoryCount = completedSales.filter((sale) => sale.inventory_processing_status === 'failed').length;
-  assert.equal(successfulInventoryCount, 1);
-  assert.equal(pendingInventoryCount, 1);
-  assert.equal(failedInventoryCount, 1);
+  const totalSalesValue = completedSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+  assert.equal(totalSalesValue, 100);
+  assert.equal(completedSales.filter(isInventoryProcessingSuccessful).length, 1);
+  assert.deepEqual(
+    sales.filter((sale) => sale.status === 'completed').map((sale) => sale.inventory_processing_status),
+    ['completed', 'pending', 'failed', undefined],
+  );
 });

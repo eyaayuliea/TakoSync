@@ -43,7 +43,7 @@ import {
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
-import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
+import { OwnerLoginError } from './ownerAuthentication';
 import {
   buildInventoryReportData,
   buildInventoryCountHistoryRecords,
@@ -204,6 +204,7 @@ export type OwnerSale = {
 export type OwnerSaleItem = {
   id: string;
   sale_id: string;
+  status?: OwnerSale['status'];
   product_id: string;
   product_name: string;
   quantity: number;
@@ -691,25 +692,13 @@ export async function signInOwner(username: string, password: string, clientOver
 
 export async function signInOwnerWithEmail(email: string, password: string, clientOverride?: StaffServiceClient): Promise<AppUser> {
   const normalizedEmail = email.normalize('NFKC').trim().toLocaleLowerCase();
-  if (!normalizedEmail) throw new Error('Please enter your email.');
+  if (!normalizedEmail && !password) throw new Error('Please enter your email and password');
+  if (!normalizedEmail) throw new Error('Please enter your email');
+  if (!password) throw new Error('Please enter your password');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     throw new OwnerLoginError('email_not_found');
   }
-  if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
-  // The Edge action is the only path that can tell an unknown email from a wrong
-  // password. If it is not deployed (function answered with an error), fall back
-  // to direct Supabase Auth; if the device is offline or the service does not
-  // answer within 10 seconds, report the approved connection message instead of
-  // waiting for a second request.
-  const directAuthFallback = async () => {
-    try {
-      return await signIn(normalizedEmail, password, 'Owner', client);
-    } catch (error) {
-      if (isOwnerConnectionFailure(error)) throw new OwnerLoginError('connection_failure');
-      throw error;
-    }
-  };
   let result;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -727,10 +716,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
   if (result.error) {
-    if ((result.error as { name?: string }).name === 'FunctionsFetchError') {
-      throw new OwnerLoginError('connection_failure');
-    }
-    return directAuthFallback();
+    throw new OwnerLoginError('connection_failure');
   }
   const data = result.data as {
     ok?: boolean;
@@ -741,7 +727,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
     if (data?.code === 'email_not_found') throw new OwnerLoginError('email_not_found');
     if (data?.code === 'incorrect_password') throw new OwnerLoginError('incorrect_password');
     if (data?.code === 'unauthorized_access') throw new OwnerLoginError('unauthorized_access');
-    return directAuthFallback();
+    throw new OwnerLoginError('connection_failure');
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
     throw new OwnerLoginError('connection_failure');
@@ -947,6 +933,7 @@ export async function loadOwnerSalesData(input: {
       saleItems.push(...(data ?? []).map((item) => ({
         ...item,
         product_name: '',
+        status: salesById.get(item.sale_id)?.status,
         inventory_processing_status: salesById.get(item.sale_id)?.inventory_processing_status,
       })));
       if ((data?.length ?? 0) < pageSize) break;

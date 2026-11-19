@@ -1,10 +1,21 @@
 import React, { useMemo } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { OwnerMenuIcon, type OwnerMenuIconName } from '../OwnerMenuScreens';
+import { useTheme } from '../../theme/ThemeProvider';
 import { ownerColors, ownerIcon, ownerRadii, ownerSpacing, ownerTypography } from './ownerTokens';
 
 export function OwnerIcon({ name, color = ownerColors.navy, size = ownerIcon.control }: { name: OwnerMenuIconName; color?: string; size?: number }) {
   return <OwnerMenuIcon name={name} color={color} size={size} />;
+}
+
+export function SalesRecordHeader({ title, onBack }: { title: string; onBack: () => void }) {
+  const styles = useSalesRecordHeaderStyles();
+  return <View style={styles.header}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}>
+      <Text style={styles.backChevron}>‹</Text>
+    </Pressable>
+    <Text style={styles.headerTitle}>{title}</Text>
+  </View>;
 }
 
 export function OwnerHeader({ title, onBack, trailing }: { title: string; onBack?: () => void; trailing?: React.ReactNode }) {
@@ -62,6 +73,16 @@ export const OwnerRecordPaginationFooter = OwnerPaginationFooter;
 export const OwnerRecordHeader = OwnerHeader;
 export const OwnerRecordDetailRow = OwnerDetailRow;
 export const OwnerRecordReadOnlyPill = OwnerReadOnlyPill;
+
+function useSalesRecordHeaderStyles() {
+  const theme = useTheme();
+  return useMemo(() => StyleSheet.create({
+    header: { height: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, backgroundColor: ownerColors.white },
+    backButton: { width: 24, height: 44, alignItems: 'flex-start', justifyContent: 'center' },
+    backChevron: { color: theme.colors.salesRecordNavy, fontFamily: 'Poppins_700Bold', fontSize: 24, lineHeight: 28 },
+    headerTitle: { color: theme.colors.salesRecordNavy, fontFamily: 'Poppins_700Bold', fontSize: 16, flexShrink: 1 },
+  }), [theme]);
+}
 
 const stylesStatic = StyleSheet.create({ scrim: { flex: 1, justifyContent: 'center', padding: ownerSpacing.page, backgroundColor: ownerColors.scrim }, modal: { width: '100%', maxWidth: 360, alignSelf: 'center', padding: ownerSpacing.card, borderRadius: ownerRadii.card, backgroundColor: ownerColors.white }, sheetScrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: ownerColors.scrim }, sheet: { padding: ownerSpacing.card, borderTopLeftRadius: ownerRadii.sheet, borderTopRightRadius: ownerRadii.sheet, backgroundColor: ownerColors.white } });
 

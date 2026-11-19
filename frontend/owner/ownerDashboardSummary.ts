@@ -1,8 +1,10 @@
 import { classifyStockLevel } from '../services/inventoryStatusRules.ts';
+import { shouldIncludeOwnerSaleInSummary } from '../services/ownerSalesStatus.ts';
 export type DashboardSale = {
   branch_id: string;
   total_amount: number | string;
   status: string;
+  inventory_processing_status?: string | null;
 };
 
 export type DashboardBranch = {
@@ -41,7 +43,7 @@ export function summarizeOwnerDashboardSales(
 ) {
   const confirmedSales = sales.filter((sale) => {
     const amount = Number(sale.total_amount);
-    return sale.status === 'completed'
+    return shouldIncludeOwnerSaleInSummary(sale)
       && Number.isFinite(amount)
       && amount >= 0
       && (!branchId || sale.branch_id === branchId);

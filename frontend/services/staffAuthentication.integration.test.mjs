@@ -213,30 +213,41 @@ test('Owner Mobile email login normalizes the email and installs the authenticat
   assert.equal(client.currentSession.access_token, 'access-token');
 });
 
-test('Owner Mobile email login falls back to Supabase Auth if the email Edge action is unavailable', async () => {
+test('Owner Mobile email login requires the Edge action and does not fall back to Supabase Auth', async () => {
   const client = new AuthFixture({
     profile: {
       id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
     },
     functionError: { message: 'Edge action not deployed' },
-  });
-  const user = await signInOwnerWithEmail(' OWNER@EXAMPLE.TEST ', 'owner-password', client);
-  assert.equal(user.role, 'Owner');
-  assert.deepEqual(client.loginArgs, [{ email: 'owner@example.test', password: 'owner-password' }]);
-});
-
-test('Owner Mobile direct Auth fallback reports invalid credentials without a connection error', async () => {
-  const client = new AuthFixture({
-    profile: {
-      id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
-    },
-    functionError: { message: 'Edge action not deployed' },
-    loginError: { message: 'Invalid login credentials', status: 400 },
   });
   await assert.rejects(
-    () => signInOwnerWithEmail('owner@example.test', 'wrong-password', client),
-    { message: 'Email or password is incorrect.' },
+    () => signInOwnerWithEmail(' OWNER@EXAMPLE.TEST ', 'owner-password', client),
+    { message: 'Unable to connect. Please check your internet connection and try again.' },
   );
+  assert.deepEqual(client.loginArgs, []);
+});
+
+test('Owner Mobile treats an unrecognized Edge response as a connection failure without fallback', async () => {
+  const client = new AuthFixture();
+  client.loginResult = { ok: false, code: 'unexpected' };
+  await assert.rejects(
+    () => signInOwnerWithEmail('owner@example.test', 'wrong-password', client),
+    { message: 'Unable to connect. Please check your internet connection and try again.' },
+  );
+  assert.deepEqual(client.loginArgs, []);
+});
+
+test('Owner Mobile reports each missing-field validation message', async () => {
+  for (const [email, password, message] of [
+    ['', '', 'Please enter your email and password'],
+    ['', 'password', 'Please enter your email'],
+    ['owner@example.test', '', 'Please enter your password'],
+  ]) {
+    const client = new AuthFixture();
+    await assert.rejects(() => signInOwnerWithEmail(email, password, client), { message });
+    assert.equal(client.functionBody, null);
+    assert.deepEqual(client.loginArgs, []);
+  }
 });
 
 test('Owner Mobile reports the approved connection message when the Edge call cannot reach the network', async () => {
@@ -248,7 +259,7 @@ test('Owner Mobile reports the approved connection message when the Edge call ca
   assert.deepEqual(client.loginArgs, [], 'no second direct Auth request is made while offline');
 });
 
-test('Owner Mobile direct Auth fallback reports the approved connection message when offline', async () => {
+test('Owner Mobile reports a connection failure for other Edge errors without retrying direct Auth', async () => {
   const client = new AuthFixture({
     functionError: { message: 'Edge action not deployed' },
     loginError: { message: 'Failed to fetch', status: 0 },
@@ -257,6 +268,7 @@ test('Owner Mobile direct Auth fallback reports the approved connection message 
     () => signInOwnerWithEmail('owner@example.test', 'password', client),
     { message: 'Unable to connect. Please check your internet connection and try again.' },
   );
+  assert.deepEqual(client.loginArgs, []);
 });
 
 test('Owner Mobile email login maps unknown email and incorrect password to distinct errors', async () => {

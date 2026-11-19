@@ -259,10 +259,12 @@ export function getOwnerSaleInventoryStatusLabel(
         return 'Pending';
       case 'processing':
         return 'Processing';
+      case 'completed':
+        return 'Completed';
       case 'failed':
         return 'Failed';
       default:
-        return 'Completed';
+        return 'Pending';
     }
   }
   return 'Failed';

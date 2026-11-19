@@ -18,6 +18,7 @@ import {
   filterOwnerSalesByInventoryState,
   getOwnerSaleInventoryStatusLabel,
   loadOwnerSalesData,
+  shouldIncludeOwnerSaleInSummary,
   type OwnerSale,
   type OwnerSaleItem,
   type OwnerSalesData,
@@ -547,6 +548,7 @@ export default function OwnerSalesWorkspace({
 
   const data = mode === 'monitoring' ? liveData : reportData;
   const sales = data?.sales ?? [];
+  const summarySales = useMemo(() => sales.filter(shouldIncludeOwnerSaleInSummary), [sales]);
   const unresolvedSales = useMemo(
     () => filterOwnerSalesByInventoryState(sales, 'needs_processing'),
     [sales],
@@ -562,15 +564,19 @@ export default function OwnerSalesWorkspace({
     });
     return sorted;
   }, [productSortDescending, products]);
-  const payments = useMemo(() => summarizePayments(sales), [sales]);
-  const totalSales = sales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+  const payments = useMemo(() => summarizePayments(summarySales), [summarySales]);
+  const totalSales = summarySales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
   const previousSales = data?.previousSales ?? [];
-  const previousTotal = previousSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+  const summaryPreviousSales = useMemo(
+    () => previousSales.filter(shouldIncludeOwnerSaleInSummary),
+    [previousSales],
+  );
+  const previousTotal = summaryPreviousSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
   const salesChange = totalSales - previousTotal;
   const comparisonDays = range
     ? Math.max(1, Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000))
     : 0;
-  const average = sales.length ? totalSales / sales.length : 0;
+  const average = summarySales.length ? totalSales / summarySales.length : 0;
   const productBySale = useMemo(() => {
     const grouped = new Map<string, OwnerSaleItem[]>();
     for (const item of items) grouped.set(item.sale_id, [...(grouped.get(item.sale_id) ?? []), item]);
@@ -579,7 +585,7 @@ export default function OwnerSalesWorkspace({
   const branchMetrics = useMemo(() => branches
     .filter((branch) => !activeBranchId || branch.id === activeBranchId)
     .map((branch) => {
-      const branchSales = sales.filter((sale) => sale.branch_id === branch.id);
+      const branchSales = summarySales.filter((sale) => sale.branch_id === branch.id);
       const total = branchSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
       return {
         id: branch.id,
@@ -589,13 +595,13 @@ export default function OwnerSalesWorkspace({
         average: branchSales.length ? total / branchSales.length : 0,
       };
     })
-    .sort((a, b) => b.total - a.total), [activeBranchId, branches, sales]);
+    .sort((a, b) => b.total - a.total), [activeBranchId, branches, summarySales]);
   const bestBranch = branchMetrics.find((branch) => branch.transactions > 0);
-  const trend = range ? makeTrend(sales, range) : [];
+  const trend = range ? makeTrend(summarySales, range) : [];
   const trendMax = Math.max(...trend.map((point) => point.total), 0);
   const selectedTrend = trend.find((point) => point.label === selectedBucket);
   const paymentTotal = payments.reduce((sum, payment) => sum + payment.total, 0);
-  const paymentSectionAvailable = sales.some((sale) => sale.payment_method.trim() !== '');
+  const paymentSectionAvailable = summarySales.some((sale) => sale.payment_method.trim() !== '');
   const branchName = branches.find((branch) => branch.id === activeBranchId)?.name ?? 'All branches';
   const allTransactionRows = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -641,12 +647,13 @@ export default function OwnerSalesWorkspace({
         range,
         branchName,
         generatedAt,
-        sales,
-        previousSales,
+        sales: summarySales,
+        previousSales: summaryPreviousSales,
         branches: branchMetrics,
         products,
         payments,
-        transactionRows: allTransactionRows,
+        transactionRows: allTransactionRows
+          .filter((row) => shouldIncludeOwnerSaleInSummary(row.sale)),
       });
     } catch (cause) {
       setExportError(cause instanceof Error ? cause.message : 'Unable to export this sales report.');
@@ -792,7 +799,7 @@ export default function OwnerSalesWorkspace({
       .map((branch) => ({
         id: branch.id,
         name: branch.name,
-        total: sales.filter((sale) => sale.branch_id === branch.id)
+        total: summarySales.filter((sale) => sale.branch_id === branch.id)
           .reduce((sum, sale) => sum + Number(sale.total_amount), 0),
       }));
     const branchCombinedTotal = branchSalesCards.reduce((sum, branch) => sum + branch.total, 0);
@@ -816,7 +823,9 @@ export default function OwnerSalesWorkspace({
         row.sale.branch_id === branchDrillDownId &&
         (!search.trim() || row.searchText.includes(search.trim().toLowerCase()) || row.branch.toLowerCase().includes(search.trim().toLowerCase())),
       );
-      const drillTotal = drillRows.reduce((sum, row) => sum + Number(row.sale.total_amount), 0);
+      const drillTotal = drillRows
+        .filter((row) => shouldIncludeOwnerSaleInSummary(row.sale))
+        .reduce((sum, row) => sum + Number(row.sale.total_amount), 0);
       return (
         <View style={styles.omWorkspace}>
           <View style={styles.omHeader}>
@@ -1180,7 +1189,7 @@ export default function OwnerSalesWorkspace({
                 <Text style={styles.omSalesAmount}>
                   {activeSalesTab === 'Branch'
                     ? currency(branchCombinedTotal)
-                    : sales.length ? currency(totalSales) : '₱0'}
+                    : summarySales.length ? currency(totalSales) : '₱0'}
                 </Text>
               </View>
             )}
@@ -1190,7 +1199,7 @@ export default function OwnerSalesWorkspace({
                 <View style={styles.omTransactionsHeader}>
                   <Text style={styles.omTransactionsTitle}>Sales per branch</Text>
                 </View>
-                {!sales.length ? (
+                {!summarySales.length ? (
                   <View style={styles.omEmptyCard}>
                     <Text style={styles.omEmptyIcon}>▤</Text>
                     <Text style={styles.omEmptyText}>No sales recorded for this period.</Text>
@@ -1614,28 +1623,30 @@ export default function OwnerSalesWorkspace({
             </View>
             <View style={[styles.metricCard, styles.transactionMetric, { width: medium ? contentWidth * 0.42 - 6 : contentWidth }]}>
               <Text style={styles.metricLabel}>Completed transactions</Text>
-              <Text style={styles.metricValue}>{sales.length.toLocaleString('en-PH')}</Text>
+              <Text style={styles.metricValue}>{summarySales.length.toLocaleString('en-PH')}</Text>
               <Text style={styles.metricHint}>Recorded as completed</Text>
             </View>
             <View style={[styles.metricCard, { width: twoColumnWidth }]}>
               <Text style={styles.metricLabel}>Average transaction</Text>
-              <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{sales.length ? currency(average) : '—'}</Text>
+              <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{summarySales.length ? currency(average) : '—'}</Text>
               <Text style={styles.metricHint}>Total sales ÷ completed transactions</Text>
             </View>
             <View style={[styles.metricCard, { width: twoColumnWidth }]}>
               <Text style={styles.metricLabel}>Sales today</Text>
               <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>
-                {currency((data.todaySales ?? []).reduce((sum, sale) => sum + Number(sale.total_amount), 0))}
+                {currency((data.todaySales ?? [])
+                  .filter(shouldIncludeOwnerSaleInSummary)
+                  .reduce((sum, sale) => sum + Number(sale.total_amount), 0))}
               </Text>
               <Text style={styles.metricHint}>Current business day</Text>
             </View>
             <View style={[styles.metricCard, { width: twoColumnWidth }]}>
               <Text style={styles.metricLabel}>Sales comparison</Text>
               <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>
-                {previousSales.length ? `${salesChange >= 0 ? '+' : '−'}${currency(Math.abs(salesChange))}` : '—'}
+                {summaryPreviousSales.length ? `${salesChange >= 0 ? '+' : '−'}${currency(Math.abs(salesChange))}` : '—'}
               </Text>
               <Text style={styles.metricHint}>
-                {previousSales.length
+                {summaryPreviousSales.length
                   ? `vs prior ${comparisonDays} ${comparisonDays === 1 ? 'day' : 'days'} · ${previousTotal ? `${((salesChange / previousTotal) * 100).toFixed(1)}%` : 'prior period had no sales'}`
                   : `No completed sales in the prior ${comparisonDays} ${comparisonDays === 1 ? 'day' : 'days'}`}
               </Text>
@@ -1662,7 +1673,7 @@ export default function OwnerSalesWorkspace({
             <View style={[styles.panel, { width: detailLeftWidth }]}>
               <Text style={styles.panelTitle}>Sales performance</Text>
               <Text style={styles.panelCaption}>Recorded sales by {period === 'Daily' || period === 'Today' ? 'time of day' : trend.length > 45 ? 'week' : 'day'}</Text>
-              {sales.length === 0 ? (
+              {summarySales.length === 0 ? (
                 <Text style={styles.bodyText}>No completed sales in this period.</Text>
               ) : (
                 <>
@@ -1758,7 +1769,7 @@ export default function OwnerSalesWorkspace({
             <View style={[styles.panel, { width: twoColumnWidth }]}>
               <Text style={styles.panelTitle}>Payment methods</Text>
               <Text style={styles.panelCaption}>Share of completed recorded sales</Text>
-              {!sales.length ? (
+              {!summarySales.length ? (
                 <Text style={styles.bodyText}>No completed sales are available for payment analysis.</Text>
               ) : !paymentSectionAvailable ? (
                 <Text style={styles.bodyText}>Payment method information is unavailable for these sales.</Text>

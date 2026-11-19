@@ -58,20 +58,25 @@ export default function OwnerLoginScreen({
 
   const submitLogin = async () => {
     if (submissionLock.current) return;
+    const trimmedEmail = email.trim();
+    setEmail(trimmedEmail);
+    const missingEmail = !trimmedEmail;
+    const missingPassword = !password;
+    setFieldErrors({
+      email: missingEmail ? 'Please enter your email.' : undefined,
+      password: missingPassword ? 'Please enter your password.' : undefined,
+    });
+    if (missingEmail || missingPassword) {
+      setLoginError('');
+      return;
+    }
+
     if (!isSupabaseConfigured) {
       setLoginError(supabaseConfigurationError ?? 'Supabase is not configured.');
       return;
     }
 
-    const trimmedEmail = email.trim();
-    const nextErrors: FieldErrors = {};
-    if (!trimmedEmail) nextErrors.email = 'Please enter your email.';
-    if (!password) nextErrors.password = 'Please enter your password.';
-
-    setEmail(trimmedEmail);
-    setFieldErrors(nextErrors);
     setLoginError('');
-    if (Object.keys(nextErrors).length > 0) return;
 
     submissionLock.current = true;
     setSubmitting(true);
@@ -81,9 +86,11 @@ export default function OwnerLoginScreen({
       if (error instanceof OwnerLoginError && error.code === 'email_not_found') {
         setPassword('');
         setFieldErrors({ email: error.message });
+        setLoginError('');
       } else if (error instanceof OwnerLoginError && error.code === 'incorrect_password') {
         setPassword('');
         setFieldErrors({ password: error.message });
+        setLoginError('');
       } else {
         setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
       }
@@ -291,6 +298,7 @@ const styles = StyleSheet.create({
   errorIconText: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 14, lineHeight: 18 },
   errorMessage: { flex: 1, color: '#711433', fontFamily: FONT.regular, fontSize: 10, lineHeight: 16 },
   fieldGroup: { marginBottom: 13 },
+  fieldError: { color: '#FFFFFF', fontFamily: FONT.regular, fontSize: 11, marginTop: 5, lineHeight: 16 },
   label: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 12, marginBottom: 7 },
   input: {
     height: 48,
@@ -305,7 +313,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   inputInvalid: { borderWidth: 1.5, borderColor: '#F52F2E' },
-  fieldError: { color: '#FFFFFF', fontFamily: FONT.regular, fontSize: 11, marginTop: 5, lineHeight: 16 },
   passwordWrap: {
     height: 48,
     flexDirection: 'row',

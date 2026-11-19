@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { SalesRecordHeader } from './shared/ownerComponents';
 import {
   formatConsumptionQuantity,
   getForcedSalesConsumptionState,
@@ -180,12 +181,7 @@ export default function SalesConsumptionRecords({
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
-          <Text style={styles.backChevron}>‹</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>{view === 'details' ? 'Sales Consumption Details' : 'Sales Consumption Records'}</Text>
-      </View>
+      <SalesRecordHeader title={view === 'details' ? 'Sales Consumption Details' : 'Sales Consumption Records'} onBack={back} />
 
       {view === 'details' ? (
         detailLoading ? (
@@ -318,10 +314,6 @@ function useStyles() {
   const theme = useTheme();
   return useMemo(() => StyleSheet.create(createThemedStyles({
     screen: { flex: 1, minHeight: 520 },
-    header: { height: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 },
-    backButton: { width: 24, height: 44, alignItems: 'flex-start', justifyContent: 'center' },
-    backChevron: { color: theme.colors.salesRecordNavy, fontFamily: font.bold, fontSize: 24, lineHeight: 28 },
-    headerTitle: { color: theme.colors.salesRecordNavy, fontFamily: font.bold, fontSize: 16, flexShrink: 1 },
     loadingCenter: { minHeight: 300, flex: 1, alignItems: 'center', justifyContent: 'center' },
     loadingText: { color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 10, marginTop: 8 },
     errorCenter: { minHeight: 300, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },

@@ -32,6 +32,42 @@ function response(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function sanitizeLogText(value: unknown, sensitiveValues: string[] = []): string | null {
+  if (typeof value !== 'string') return null;
+  let text = value.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]');
+  for (const sensitiveValue of sensitiveValues) {
+    if (!sensitiveValue) continue;
+    const escaped = sensitiveValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(escaped, 'gi'), '[redacted]');
+  }
+  return text
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted token]')
+    .replace(/\b(?:sb_secret_|sb_publishable_)[A-Za-z0-9_-]+\b/gi, '[redacted key]')
+    .slice(0, 500);
+}
+
+function logAuthFailure(
+  stage: string,
+  reason: string,
+  error: unknown,
+  sensitiveValues: string[] = [],
+) {
+  const details = error && typeof error === 'object'
+    ? error as { code?: unknown; status?: unknown; message?: unknown }
+    : {};
+  console.error(`[staff-auth] ${stage}`, {
+    reason,
+    code: sanitizeLogText(details.code, sensitiveValues),
+    status: typeof details.status === 'number' ? details.status : null,
+    message: sanitizeLogText(details.message ?? (error instanceof Error ? error.message : error), sensitiveValues),
+  });
+}
+
+function logAuthDecision(stage: string, reason: string, details: Record<string, unknown> = {}) {
+  console.warn(`[staff-auth] ${stage}`, { reason, ...details });
+}
+
 function normalizeUsername(value: string) {
   const normalized = value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
   if (!normalized) return '';
@@ -131,41 +167,71 @@ async function requireOwner(
 
 async function login(usernameValue: string, password: string, auth: ReturnType<HandlerOptions['createClient']>, admin: ReturnType<HandlerOptions['createClient']>) {
   const username = normalizeUsername(usernameValue);
-  if (!username) return response({ ok: false, code: 'unknown_username' });
-  const { data: profile, error } = await admin.from('profiles')
-    .select('id, employee_id, username, email, full_name, role, branch_id, active, must_change_password')
-    .eq('username', username)
-    .maybeSingle();
-  if (error) throw error;
-  if (!profile || profile.role !== 'staff') return response({ ok: false, code: 'unknown_username' });
-  if (!profile.active) return response({ ok: false, code: 'inactive_account' });
-  const { data: branch, error: branchError } = await admin.from('branches')
-    .select('id, city, code, active')
-    .eq('id', profile.branch_id)
-    .maybeSingle();
-  if (branchError) throw branchError;
-  if (!branch || !branch.active) throw new HttpError(403, 'The assigned Staff branch is inactive or unavailable.');
+  if (!username) {
+    logAuthDecision('Staff login rejected', 'username_missing');
+    return response({ ok: false, code: 'unknown_username' });
+  }
+  let profileResult;
+  try {
+    profileResult = await admin.from('profiles')
+      .select('id, employee_id, username, email, full_name, role, branch_id, active, must_change_password')
+      .eq('username', username)
+      .maybeSingle();
+  } catch (error) {
+    logAuthFailure('Staff profile lookup failed', 'query_threw', error, [username, password]);
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  if (profileResult.error) {
+    logAuthFailure('Staff profile lookup failed', 'query_error', profileResult.error, [username, password]);
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  const profile = profileResult.data;
+  if (!profile) {
+    logAuthDecision('Staff login rejected', 'profile_not_found');
+    return response({ ok: false, code: 'unknown_username' });
+  }
+  if (profile.role !== 'staff') {
+    logAuthDecision('Staff login rejected', 'role_mismatch', { role: profile.role ?? null });
+    return response({ ok: false, code: 'unknown_username' });
+  }
+  if (!profile.active) {
+    logAuthDecision('Staff login rejected', 'inactive_account');
+    return response({ ok: false, code: 'inactive_account' });
+  }
+  let branchResult;
+  try {
+    branchResult = await admin.from('branches')
+      .select('id, city, code, active')
+      .eq('id', profile.branch_id)
+      .maybeSingle();
+  } catch (error) {
+    logAuthFailure('Staff branch lookup failed', 'query_threw', error, [username, password]);
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  const { data: branch, error: branchError } = branchResult;
+  if (branchError) {
+    logAuthFailure('Staff branch lookup failed', 'query_error', branchError, [username, password]);
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  if (!branch || !branch.active) {
+    logAuthDecision('Staff login rejected', 'branch_missing_or_inactive');
+    throw new HttpError(403, 'The assigned Staff branch is inactive or unavailable.');
+  }
   let authUserResult;
   try {
     authUserResult = await admin.auth.admin.getUserById(profile.id);
   } catch (lookupError) {
-    console.error('[staff-auth] Staff Auth identity lookup threw', {
-      code: lookupError?.code ?? null,
-      status: lookupError?.status ?? null,
-    });
+    logAuthFailure('Staff Auth identity lookup failed', 'request_threw', lookupError, [username, password]);
     throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
   }
   if (authUserResult.error || !authUserResult.data?.user) {
-    console.error('[staff-auth] Staff Auth identity lookup failed', {
-      code: authUserResult.error?.code ?? null,
-      status: authUserResult.error?.status ?? null,
-    });
+    logAuthFailure('Staff Auth identity lookup failed', 'request_error', authUserResult.error, [username, password]);
     throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
   }
   const authUser = authUserResult.data.user;
   const authEmail = typeof authUser.email === 'string' ? authUser.email.trim() : '';
   if (authUser.id !== profile.id || !authEmail) {
-    console.error('[staff-auth] Staff Auth identity lookup returned an invalid identity', {
+    logAuthDecision('Staff Auth identity lookup failed', 'identity_mismatch', {
       idMatchesProfile: authUser.id === profile.id,
       hasEmail: Boolean(authEmail),
     });
@@ -179,26 +245,29 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
     profileHasEmail: typeof profile.email === 'string' && Boolean(profile.email.trim()),
     authEmailResolved: true,
   });
-  const { data, error: authError } = await auth.auth.signInWithPassword({
-    email: authEmail,
-    password,
-  });
+  let authResult;
+  try {
+    authResult = await auth.auth.signInWithPassword({ email: authEmail, password });
+  } catch (error) {
+    logAuthFailure('Staff Supabase Auth sign-in failed', 'request_threw', error, [authEmail, username, password]);
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  const { data, error: authError } = authResult;
   if (authError) {
     const isInvalidCredentials =
       authError.code === 'invalid_credentials' ||
       (authError.status === 400 && authError.message === 'Invalid login credentials');
+    logAuthFailure(
+      'Staff Supabase Auth sign-in failed',
+      isInvalidCredentials ? 'invalid_credentials' : 'auth_error',
+      authError,
+      [authEmail, username, password],
+    );
     if (isInvalidCredentials) return response({ ok: false, code: 'incorrect_password' });
-
-    console.error('[staff-auth] Supabase Auth sign-in failed', {
-      status: authError.status ?? null,
-      code: authError.code ?? null,
-    });
     throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
   }
   if (!data.session) {
-    console.error('[staff-auth] Supabase Auth returned no session', {
-      code: 'missing_session',
-    });
+    logAuthDecision('Staff Supabase Auth sign-in failed', 'missing_session');
     throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
   }
   return response({
@@ -254,8 +323,14 @@ async function loginOwnerByIdentifier(
   identifierColumn: 'username' | 'email',
   unknownCode: 'unknown_username' | 'email_not_found',
 ) {
-  if (!identifier) return response({ ok: false, code: unknownCode });
-  if (!password) return response({ ok: false, code: 'incorrect_password' });
+  if (!identifier) {
+    logAuthDecision('Owner login rejected', 'identifier_missing');
+    return response({ ok: false, code: unknownCode });
+  }
+  if (!password) {
+    logAuthDecision('Owner login rejected', 'password_missing');
+    return response({ ok: false, code: 'incorrect_password' });
+  }
 
   let profileResult;
   try {
@@ -264,17 +339,11 @@ async function loginOwnerByIdentifier(
       .eq(identifierColumn, identifier)
       .maybeSingle();
   } catch (error) {
-    console.error('[staff-auth] Owner profile lookup threw', {
-      code: error?.code ?? null,
-      status: error?.status ?? null,
-    });
+    logAuthFailure('Owner profile lookup failed', 'query_threw', error, [identifier, password]);
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
   if (profileResult.error) {
-    console.error('[staff-auth] Owner profile lookup failed', {
-      code: profileResult.error.code ?? null,
-      status: profileResult.error.status ?? null,
-    });
+    logAuthFailure('Owner profile lookup failed', 'query_error', profileResult.error, [identifier, password]);
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
 
@@ -286,12 +355,19 @@ async function loginOwnerByIdentifier(
     hasEmail: typeof profile?.email === 'string' && Boolean(profile.email.trim()),
   });
   if (!profile) {
+    logAuthDecision('Owner login rejected', 'profile_not_found');
     return response({ ok: false, code: unknownCode });
   }
-  if (profile.role !== 'owner' || !profile.active) {
+  if (profile.role !== 'owner') {
+    logAuthDecision('Owner login rejected', 'role_mismatch', { role: profile.role ?? null });
+    return response({ ok: false, code: 'unauthorized_access' });
+  }
+  if (!profile.active) {
+    logAuthDecision('Owner login rejected', 'inactive_account');
     return response({ ok: false, code: 'unauthorized_access' });
   }
   if (typeof profile.email !== 'string' || !profile.email.trim()) {
+    logAuthDecision('Owner login rejected', 'profile_email_missing');
     return response({ ok: false, code: 'unauthorized_access' });
   }
 
@@ -299,20 +375,19 @@ async function loginOwnerByIdentifier(
   try {
     authResult = await auth.auth.signInWithPassword({ email: profile.email, password });
   } catch (error) {
-    console.error('[staff-auth] Owner Supabase Auth sign-in threw', {
-      code: error?.code ?? null,
-      status: error?.status ?? null,
-    });
+    logAuthFailure('Owner Supabase Auth sign-in failed', 'request_threw', error, [identifier, profile.email, password]);
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
   if (authResult.error) {
-    console.error('[staff-auth] Owner Supabase Auth sign-in failed', {
-      status: authResult.error.status ?? null,
-      code: authResult.error.code ?? null,
-    });
     const isInvalidCredentials =
       authResult.error.code === 'invalid_credentials' ||
       (authResult.error.status === 400 && authResult.error.message === 'Invalid login credentials');
+    logAuthFailure(
+      'Owner Supabase Auth sign-in failed',
+      isInvalidCredentials ? 'invalid_credentials' : 'auth_error',
+      authResult.error,
+      [identifier, profile.email, password],
+    );
     if (isInvalidCredentials) return response({ ok: false, code: 'incorrect_password' });
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
@@ -325,6 +400,10 @@ async function loginOwnerByIdentifier(
   });
   if (!sessionPresent || !userIdMatchesProfile) {
     try { await auth.auth.signOut(); } catch { /* best effort; do not expose account details */ }
+    logAuthDecision('Owner Supabase Auth sign-in failed', 'session_identity_mismatch', {
+      sessionPresent,
+      userIdMatchesProfile,
+    });
     throw new HttpError(500, 'Owner authentication is temporarily unavailable.');
   }
 
@@ -549,6 +628,7 @@ async function changePassword(
 export function createStaffAuthHandler(options: HandlerOptions) {
   return async (request: Request) => {
     if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+    let sensitiveValues: string[] = [];
     try {
       const { admin, auth, anonKey, url } = getClients(options);
       let body;
@@ -560,6 +640,17 @@ export function createStaffAuthHandler(options: HandlerOptions) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         throw new HttpError(400, 'A valid JSON request body is required.');
       }
+      const account = body.account && typeof body.account === 'object' && !Array.isArray(body.account)
+        ? body.account
+        : {};
+      sensitiveValues = [
+        body.email,
+        body.username,
+        body.password,
+        body.newPassword,
+        account.username,
+        account.employeeId,
+      ].filter((value): value is string => typeof value === 'string' && value.length > 0);
       if (body.action === 'login') {
         return await login(inputString(body.username), typeof body.password === 'string' ? body.password : '', auth, admin);
       }
@@ -594,12 +685,12 @@ export function createStaffAuthHandler(options: HandlerOptions) {
       throw new HttpError(400, 'Unknown Staff authentication action.');
     } catch (error) {
       if (error instanceof HttpError) {
+        if (error.status >= 500) {
+          logAuthFailure('request failed', 'http_error', error, sensitiveValues);
+        }
         return response({ ok: false, error: error.message }, error.status);
       }
-      console.error('[staff-auth] request failed', {
-        code: error?.code ?? null,
-        status: error?.status ?? null,
-      });
+      logAuthFailure('request failed', 'unhandled_error', error, sensitiveValues);
       return response({ ok: false, error: 'Unable to process the request.' }, 500);
     }
   };

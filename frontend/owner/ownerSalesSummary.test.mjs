@@ -8,6 +8,8 @@ import {
 const item = (overrides = {}) => ({
   id: 'line-1',
   sale_id: 'sale-1',
+  status: 'completed',
+  inventory_processing_status: 'completed',
   product_id: 'product-a',
   product_name: 'Takoyaki',
   quantity: 1,
@@ -16,7 +18,7 @@ const item = (overrides = {}) => ({
   ...overrides,
 });
 
-test('products sold aggregates repeated confirmed-sale lines and sorts descending', () => {
+test('products sold aggregates repeated completed-sale lines and sorts descending', () => {
   const summary = summarizeOwnerProducts([
     item({ id: 'line-a1', product_id: 'product-a', product_name: 'Cheese', quantity: 2, subtotal: 50 }),
     item({ id: 'line-b1', product_id: 'product-b', product_name: 'Classic', quantity: 5, subtotal: 100 }),
@@ -37,16 +39,18 @@ test('products sold excludes zero and invalid quantities', () => {
   assert.deepEqual(summary, []);
 });
 
-test('products sold counts every recorded sale, including ones whose inventory update is pending or failed', () => {
+test('products sold includes completed sales regardless of inventory processing status', () => {
   const summary = summarizeOwnerProducts([
-    item({ product_id: 'confirmed', product_name: 'Confirmed', quantity: 4, inventory_processing_status: 'completed' }),
+    item({ product_id: 'completed', product_name: 'Completed', quantity: 4, inventory_processing_status: 'completed' }),
     item({ id: 'pending-line', product_id: 'pending', product_name: 'Pending', quantity: 20, inventory_processing_status: 'pending' }),
     item({ id: 'failed-line', product_id: 'failed', product_name: 'Failed', quantity: 10, inventory_processing_status: 'failed' }),
-    item({ id: 'legacy-line', product_id: 'legacy', product_name: 'Legacy', quantity: 2 }),
+    item({ id: 'processing-line', product_id: 'processing', product_name: 'Processing', quantity: 8, inventory_processing_status: 'processing' }),
+    item({ id: 'status-line', product_id: 'not-completed', product_name: 'Not completed', status: 'pending' }),
+    item({ id: 'legacy-line', product_id: 'legacy', product_name: 'Legacy', quantity: 2, inventory_processing_status: undefined }),
   ]);
 
-  assert.deepEqual(summary.map((product) => product.id), ['pending', 'failed', 'confirmed', 'legacy']);
-  assert.equal(summary.reduce((sum, product) => sum + product.quantity, 0), 36);
+  assert.deepEqual(summary.map((product) => product.id), ['pending', 'failed', 'processing', 'completed', 'legacy']);
+  assert.equal(summary.reduce((sum, product) => sum + product.quantity, 0), 44);
 });
 
 test('empty products sold state uses the exact required message', () => {

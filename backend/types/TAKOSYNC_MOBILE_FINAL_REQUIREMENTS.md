@@ -1,7 +1,7 @@
 # TAKOSYNC — Final Mobile Application Requirements & Implementation Reference
 
 **Status:** Working baseline approved by the project owner  
-**Last updated:** 19 November 2026  
+**Last updated:** 20 November 2026
 **Applies to:** TakoSync Staff Mobile App, Owner Mobile App, and the shared backend/database required by those mobile apps.
 
 ## 1. Source-of-truth policy
@@ -29,6 +29,7 @@ Do not silently invent business rules. If approved documents conflict or do not 
 | Forced password change | No forced first-login password change. The approved stories do not establish such a requirement. Do not block workspace access to force a change. |
 | Staff access | Staff can access only their assigned branch. Enforce this in the backend/database, not only by hiding UI controls. |
 | Owner access | Owner has authorized access to all three branches. Staff credentials must never receive Owner access. |
+| Owner Mobile email login | Require the deployed `staff-auth` `owner-email-login` action for account-specific errors and session creation. Do not fall back to direct Supabase Auth; an unavailable action must show a connection error. |
 | Business-day session expiry | Deferred. Do not implement it in this phase. Do not block login based on business hours or business-day expiry. A normal secure authentication session is still required. |
 | Inventory | Required. Inventory transactions and balances must work with persisted backend data. |
 | POS | Required. Confirmed sales must be saved and trigger the correct inventory consumption exactly once. |
@@ -97,7 +98,12 @@ Implement and verify the acceptance criteria in the Owner Mobile User Stories:
 ### Critical Owner business rules
 
 1. Owner data access covers Branch 1, Branch 2, and Branch 3.
-2. Sales reports include only confirmed and recorded sales.
+2. Sales reports include recorded sales with `status = completed`, regardless of
+   inventory-processing status. A sale with pending, processing, or failed
+   inventory processing remains a recorded sale and must remain available for
+   retry or review; inventory status is reported separately. Cancelled or
+   uncompleted orders are excluded. This follows the current OM-03–OM-08
+   interpretation recorded in `AUDIT_REPORT.md` section 76 and OM-14 criterion 5.
 3. Owner historical sales and inventory record views are read-only, except the explicitly authorized discrepancy/count-correction workflow.
 4. Owner-authorized inventory adjustment must preserve previous expected quantity, actual quantity, adjusted quantity, reason, approving owner, date/time, and related discrepancy reference.
 5. Staff accounts must not receive Owner privileges.
@@ -212,14 +218,14 @@ Any proposed feature not present in the approved sources must be listed as:
 
 Do not implement it until the owner explicitly approves it. Update this file only after a decision is made, and record the decision date and rationale.
 
-## 11. Implementation status snapshot — 19 November 2026
+## 11. Implementation status snapshot — 20 November 2026
 
-The approved 39-story denominator and the established **31 complete / 8 partial (89.7%)** source estimate are unchanged. The authentication work below advances existing stories but does not satisfy all hosted-backend or device acceptance criteria, so no story classification is upgraded.
+The approved 39-story scope is source-complete with Development database and device verification still open, as recorded in `AUDIT_REPORT.md` section 76.5. No story has been verified against Development or on an Android device, so the latest audit claims no completion percentage. Local authentication checks do not establish hosted-backend or device acceptance.
 
 | Story / area | Source implementation advanced | Current status and remaining evidence |
 |---|---|---|
-| ST-01 Staff login and branch access | Staff are not forced to change the Employee ID initial password. A local additive SQL candidate requires a live Auth session and active assigned-branch authorization. | PARTIAL. The candidate migration is unexecuted; hosted Auth/RLS and Android access remain unverified. |
-| OM-01 Owner login and account access | Owner Mobile uses an Email field and a dedicated email-login action, with direct Supabase Auth fallback if that Edge action is unavailable. Both paths validate the active Owner profile and role. The existing username action is retained for the separate Web Portal. | PARTIAL. Local source tests do not verify deployed Edge Function, live Owner account configuration, RLS, or Android behavior. |
+| ST-01 Staff login and branch access | Staff are not forced to change the Employee ID initial password. A local additive SQL candidate requires a live Auth session and active assigned-branch authorization. | Source-complete for approved scope; Development verification remains open. The candidate migration is unexecuted; hosted Auth/RLS and Android access remain unverified. |
+| OM-01 Owner login and account access | Owner Mobile uses an Email field and the required `staff-auth` `owner-email-login` action. The action validates the active Owner profile and role; if unavailable, show a connection error without direct Auth fallback. The existing username action is retained for the separate Web Portal. | Source-complete for approved scope; Development verification remains open. Local source tests do not verify deployed Edge Function, live Owner account configuration, RLS, or Android behavior. |
 | Shared branch / sale processing authorization | The local additive migration validates session and sale-branch access at the public sale-processing entry point and revokes direct execution of internal sale helpers. | Not database-verified. Existing duplicate migration version `202611180001` and lack of an approved Development target block execution or deployment. |
 
 ### Verification boundaries for this snapshot
