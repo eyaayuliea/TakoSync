@@ -126,3 +126,12 @@ export function menuOrderValidationMessage(cartProductCount: number): string {
 export function shouldOfferCheckoutRetry(hasSaleError: boolean, cartProductCount: number): boolean {
   return hasSaleError && cartProductCount > 0;
 }
+
+export const MIN_TOUCH_TARGET = 44;
+
+/** Extra touch area needed so a control of the given visual size reaches the minimum target. */
+export function hitSlopForTarget(width: number, height: number, minimum = MIN_TOUCH_TARGET) {
+  const horizontal = Math.max(0, Math.ceil((minimum - width) / 2));
+  const vertical = Math.max(0, Math.ceil((minimum - height) / 2));
+  return { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
+}

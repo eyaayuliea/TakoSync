@@ -17,8 +17,10 @@ import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
+import { resolveMenuAddons } from './menuAddons';
 import {
   calculateSelectedAddonTotal,
+  hitSlopForTarget,
   calculateMenuCart,
   groupMenuProducts,
   menuOrderValidationMessage,
@@ -62,6 +64,10 @@ const colors = {
   warning: '#FFF2C4',
   error: '#F52F2E',
 } as const;
+
+const REMOVE_BUTTON_SIZE = { width: 22, height: 23 } as const;
+// The visual "×" stays compact; the touch area is padded out to at least 44 x 44.
+const REMOVE_BUTTON_HIT_SLOP = hitSlopForTarget(REMOVE_BUTTON_SIZE.width, REMOVE_BUTTON_SIZE.height);
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -272,7 +278,7 @@ function CartItemCard({
             <Text style={styles.quantityButtonText}>+</Text>
           </Pressable>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${product.name}`} onPress={onRemove}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${product.name}`} hitSlop={REMOVE_BUTTON_HIT_SLOP} onPress={onRemove}>
           <Text style={styles.removeItem}>Remove</Text>
         </Pressable>
       </View>
@@ -325,6 +331,7 @@ function CurrentOrderLine({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Remove ${product.name}`}
+        hitSlop={REMOVE_BUTTON_HIT_SLOP}
         onPress={onRemove}
         style={styles.currentOrderRemove}
       >
@@ -399,15 +406,11 @@ export default function MenuWorkspace({
   }, [catalogLoading, catalogError, products]);
 
   const totals = calculateMenuCart(cart, products);
-  const requestedAddonNames = ['japanese mayo', 'takoyaki sauce', 'flakes'];
-  const activeAddons = addons.filter((addon) => addon.isAvailable);
-  const displayAddons = activeAddons.filter((addon) =>
-    [...requestedAddonNames, 'japanese white sauce'].includes(addon.name.trim().toLowerCase()));
+  const { available: displayAddons, missingLabels: missingAddonNames } = useMemo(
+    () => resolveMenuAddons(addons),
+    [addons],
+  );
   const selectedAddons = displayAddons.filter((addon) => selectedAddonIds.includes(addon.id));
-  const missingAddonNames = requestedAddonNames.filter((name) =>
-    !activeAddons.some((addon) => addon.name.trim().toLowerCase() === name));
-  const hasJapaneseWhiteSauce = activeAddons.some((addon) =>
-    addon.name.trim().toLowerCase() === 'japanese white sauce');
   const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
   const checkoutTotal = Math.round((totals.total + addonsTotal) * 100) / 100;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
@@ -560,9 +563,9 @@ export default function MenuWorkspace({
             <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
           <Text style={styles.paymentLabel}>Add-ons</Text>
-          {addons.length === 0 ? (
+          {displayAddons.length === 0 ? (
             <Text style={styles.paymentMessage}>No add-ons are currently available.</Text>
-          ) : addons.map((addon) => {
+          ) : displayAddons.map((addon) => {
             const selected = selectedAddonIds.includes(addon.id);
             return (
               <Pressable
@@ -822,11 +825,7 @@ export default function MenuWorkspace({
               )}
               {missingAddonNames.length > 0 ? (
                 <Text style={styles.addonUnavailableText}>
-                  Not configured in the live catalog: {missingAddonNames.map((name) =>
-                    name.replace(/\b\w/g, (letter) => letter.toUpperCase())).join(', ')}.
-                  {hasJapaneseWhiteSauce && missingAddonNames.includes('japanese mayo')
-                    ? ' Japanese white sauce is listed separately; it is not labeled as Japanese Mayo.'
-                    : ''}
+                  Not configured in the live catalog: {missingAddonNames.join(', ')}.
                 </Text>
               ) : null}
             </View>
@@ -876,6 +875,7 @@ export default function MenuWorkspace({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${addon.name}`}
+                  hitSlop={REMOVE_BUTTON_HIT_SLOP}
                   onPress={() => setSelectedAddonIds((current) => current.filter((id) => id !== addon.id))}
                   style={styles.currentOrderRemove}
                 >
@@ -1069,7 +1069,7 @@ const styles = StyleSheet.create({
   currentOrderQuantityButton: { width: 21, height: 23, alignItems: 'center', justifyContent: 'center' },
   currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
   currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
-  currentOrderRemove: { width: 22, height: 23, alignItems: 'center', justifyContent: 'center' },
+  currentOrderRemove: { width: REMOVE_BUTTON_SIZE.width, height: REMOVE_BUTTON_SIZE.height, alignItems: 'center', justifyContent: 'center' },
   currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
   currentAddonLine: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,
