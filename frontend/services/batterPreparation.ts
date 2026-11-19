@@ -29,3 +29,62 @@ export function validatePreparedBatterBatch(value: unknown): PreparedBatterBatch
     prepared_unit: 'bottle',
   };
 }
+
+export type StockShortage = {
+  ingredientId: string;
+  name: string;
+  unit: string;
+  required: number;
+  available: number;
+  shortage: number;
+};
+
+function formatStockQuantity(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
+/** Same wording as the database error so staff see one consistent message. */
+export function formatInsufficientStockMessage(shortage: StockShortage): string {
+  return `Insufficient stock for ${shortage.name}: required ${formatStockQuantity(shortage.required)} ${shortage.unit}, `
+    + `available ${formatStockQuantity(shortage.available)} ${shortage.unit}, `
+    + `shortage ${formatStockQuantity(shortage.shortage)} ${shortage.unit}`;
+}
+
+export type BatterRecipeLine = {
+  ingredient_id: string;
+  quantity_required: number;
+  unit_of_measure: string;
+  automatic_consumption_enabled: boolean;
+};
+
+/**
+ * Required raw quantities for one five-bottle batch, scaled from the Owner recipe
+ * (never modified here), compared with the branch's available stock.
+ */
+export function findBatterShortages(
+  recipe: { prepared_quantity: number; ingredientLines: readonly BatterRecipeLine[] },
+  stock: ReadonlyMap<string, { name: string; unit: string; quantity: number }>,
+): StockShortage[] {
+  const shortages: StockShortage[] = [];
+  for (const line of recipe.ingredientLines) {
+    if (!line.automatic_consumption_enabled || line.ingredient_id === 'prepared-batter') continue;
+    const required = line.quantity_required * PREPARED_BATTER_BATCH_BOTTLES / Math.max(1, recipe.prepared_quantity);
+    const item = stock.get(line.ingredient_id);
+    const available = item?.quantity ?? 0;
+    if (available + 1e-9 < required) {
+      shortages.push({
+        ingredientId: line.ingredient_id,
+        name: item?.name ?? line.ingredient_id,
+        unit: item?.unit ?? line.unit_of_measure,
+        required,
+        available,
+        shortage: required - available,
+      });
+    }
+  }
+  return shortages;
+}
+
+export function formatBatterShortages(shortages: readonly StockShortage[]): string {
+  return `Cannot record this batter batch. ${shortages.map(formatInsufficientStockMessage).join('; ')}`;
+}

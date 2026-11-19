@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  calendarDaysUntil,
+  classifyExpirationLevel,
+  classifyStockLevel,
+  manilaCalendarDate,
+  resolveNearExpirationDays,
+} from '../services/inventoryStatusRules.ts';
+import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
@@ -72,10 +79,7 @@ function localDate(value: string) {
 }
 
 function daysUntil(value: string) {
-  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.ceil((date.getTime() - today.getTime()) / 86_400_000);
+  return calendarDaysUntil(value, manilaCalendarDate());
 }
 
 function formatAmount(value: number, precision: number) {
@@ -163,19 +167,21 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
     });
   }, [branchId, data]);
 
-  const lowRows = rows.filter((item) => item.quantity <= item.minimumStock);
+  const lowRows = rows.filter((item) => classifyStockLevel(item.quantity, item.minimumStock) !== 'In Stock');
   const thresholdKeys = useMemo(() => new Set(lowRows.map((item) => item.key)), [lowRows]);
   const batchStatuses = batches.flatMap((batch) => {
     if (!batch.expiration_date) return [];
     return [{ batch, days: daysUntil(batch.expiration_date) }];
   });
-  const expiredCount = batchStatuses.filter((item) => item.days < 0).length;
-  const nearingCount = batchStatuses.filter((item) => item.days >= 0 && item.days <= (data?.nearExpirationDays ?? 7)).length;
+  const expiredCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, resolveNearExpirationDays(data?.nearExpirationDays)) === 'Expired').length;
+  const nearingCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, resolveNearExpirationDays(data?.nearExpirationDays)) === 'Near Expiration').length;
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleRows = rows.filter((item) => {
     const matchesSearch = `${item.ingredientName} ${item.category} ${item.branchName}`.toLocaleLowerCase().includes(normalizedSearch);
     const matchesStatus = stockFilter === 'All'
-      || (stockFilter === 'At/below minimum' ? item.quantity <= item.minimumStock : item.quantity > item.minimumStock);
+      || (stockFilter === 'At/below minimum'
+        ? classifyStockLevel(item.quantity, item.minimumStock) !== 'In Stock'
+        : classifyStockLevel(item.quantity, item.minimumStock) === 'In Stock');
     return matchesSearch && matchesStatus;
   });
   const visibleBatches = batches.filter((batch) => {
@@ -524,8 +530,9 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
           {renderFilterChips(['All batches', 'With date', 'Missing date'] as const, expirationFilter, setExpirationFilter)}
           {visibleBatches.length ? visibleBatches.map((batch) => {
             const days = batch.expiration_date ? daysUntil(batch.expiration_date) : null;
-            const expired = days !== null && days < 0;
-            const nearing = days !== null && days >= 0 && days <= data.nearExpirationDays;
+            const expirationLevel = days === null ? null : classifyExpirationLevel(days, resolveNearExpirationDays(data.nearExpirationDays));
+            const expired = expirationLevel === 'Expired';
+            const nearing = expirationLevel === 'Near Expiration';
             return (
               <View key={batch.id} style={styles.batchCard}>
                 <View style={styles.rowHeading}>

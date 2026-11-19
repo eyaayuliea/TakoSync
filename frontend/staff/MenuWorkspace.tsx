@@ -17,8 +17,10 @@ import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
+import { resolveMenuAddons } from './menuAddons';
 import {
   calculateSelectedAddonTotal,
+  hitSlopForTarget,
   calculateMenuCart,
   groupMenuProducts,
   menuOrderValidationMessage,
@@ -62,6 +64,10 @@ const colors = {
   warning: '#FFF2C4',
   error: '#F52F2E',
 } as const;
+
+const REMOVE_BUTTON_SIZE = { width: 22, height: 23 } as const;
+// The visual "×" stays compact; the touch area is padded out to at least 44 x 44.
+const REMOVE_BUTTON_HIT_SLOP = hitSlopForTarget(REMOVE_BUTTON_SIZE.width, REMOVE_BUTTON_SIZE.height);
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -213,8 +219,7 @@ function SizeOptionCard({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${variant.isAvailable ? 'Add' : 'Unavailable'} ${productName}, ${variant.sizeLabel}, ${money(variant.price)}`}
-        accessibilityState={{ disabled: !variant.isAvailable }}
-        disabled={!variant.isAvailable}
+        accessibilityHint={variant.isAvailable ? undefined : 'Shows that this item is currently unavailable'}
         onPress={onAdd}
         style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
       >
@@ -272,7 +277,7 @@ function CartItemCard({
             <Text style={styles.quantityButtonText}>+</Text>
           </Pressable>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${product.name}`} onPress={onRemove}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${product.name}`} hitSlop={REMOVE_BUTTON_HIT_SLOP} onPress={onRemove}>
           <Text style={styles.removeItem}>Remove</Text>
         </Pressable>
       </View>
@@ -325,6 +330,7 @@ function CurrentOrderLine({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Remove ${product.name}`}
+        hitSlop={REMOVE_BUTTON_HIT_SLOP}
         onPress={onRemove}
         style={styles.currentOrderRemove}
       >
@@ -367,6 +373,7 @@ export default function MenuWorkspace({
   const [saleSubmitting, setSaleSubmitting] = useState(false);
   const [saleError, setSaleError] = useState('');
   const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
+  const [proceedBlocked, setProceedBlocked] = useState(false);
   const [infoProducts, setInfoProducts] = useState<MenuProductGroup[] | null>(null);
   const selectedFlavor = flavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? flavorOptions[0];
   const products: MenuProduct[] = useMemo(
@@ -399,15 +406,11 @@ export default function MenuWorkspace({
   }, [catalogLoading, catalogError, products]);
 
   const totals = calculateMenuCart(cart, products);
-  const requestedAddonNames = ['japanese mayo', 'takoyaki sauce', 'flakes'];
-  const activeAddons = addons.filter((addon) => addon.isAvailable);
-  const displayAddons = activeAddons.filter((addon) =>
-    [...requestedAddonNames, 'japanese white sauce'].includes(addon.name.trim().toLowerCase()));
+  const { available: displayAddons, missingLabels: missingAddonNames } = useMemo(
+    () => resolveMenuAddons(addons),
+    [addons],
+  );
   const selectedAddons = displayAddons.filter((addon) => selectedAddonIds.includes(addon.id));
-  const missingAddonNames = requestedAddonNames.filter((name) =>
-    !activeAddons.some((addon) => addon.name.trim().toLowerCase() === name));
-  const hasJapaneseWhiteSauce = activeAddons.some((addon) =>
-    addon.name.trim().toLowerCase() === 'japanese white sauce');
   const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
   const checkoutTotal = Math.round((totals.total + addonsTotal) * 100) / 100;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
@@ -418,13 +421,21 @@ export default function MenuWorkspace({
   const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
   const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
   const emptyOrderMessage = menuOrderValidationMessage(cartProducts.length);
-  const cancelOrder = () => {
-    if (saleSubmitting) return;
+  const discardOrder = () => {
     setCashReceived('');
     setSelectedAddonIds([]);
     setSaleError('');
+    setSaleRetryAvailable(false);
+    setProceedBlocked(false);
     onCancelOrder();
     onSetPage('menu');
+  };
+  const cancelOrder = () => {
+    if (saleSubmitting) return;
+    Alert.alert('Cancel order?', 'The current order will be cleared. No sale will be saved.', [
+      { text: 'Keep order', style: 'cancel' },
+      { text: 'Cancel Order', style: 'destructive', onPress: discardOrder },
+    ]);
   };
   const clearCurrentOrder = () => {
     if (totals.count === 0 && selectedAddonIds.length === 0) return;
@@ -560,9 +571,9 @@ export default function MenuWorkspace({
             <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
           <Text style={styles.paymentLabel}>Add-ons</Text>
-          {addons.length === 0 ? (
+          {displayAddons.length === 0 ? (
             <Text style={styles.paymentMessage}>No add-ons are currently available.</Text>
-          ) : addons.map((addon) => {
+          ) : displayAddons.map((addon) => {
             const selected = selectedAddonIds.includes(addon.id);
             return (
               <Pressable
@@ -633,7 +644,7 @@ export default function MenuWorkspace({
                   onPress={() => void submitCheckout()}
                   style={styles.retryCheckoutButton}
                 >
-                  <Text style={styles.retryCheckoutText}>{saleSubmitting ? 'Retrying…' : 'Retry checkout'}</Text>
+                  <Text style={styles.retryCheckoutText}>{saleSubmitting ? 'Saving…' : 'Retry'}</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -654,7 +665,7 @@ export default function MenuWorkspace({
             onPress={() => void submitCheckout()}
             style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
           >
-            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Recording…' : 'Confirm Transaction'}</Text>
+            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" disabled={saleSubmitting} onPress={cancelOrder} style={styles.checkoutBackButton}>
             <Text style={styles.checkoutBackText}>Cancel order</Text>
@@ -822,11 +833,7 @@ export default function MenuWorkspace({
               )}
               {missingAddonNames.length > 0 ? (
                 <Text style={styles.addonUnavailableText}>
-                  Not configured in the live catalog: {missingAddonNames.map((name) =>
-                    name.replace(/\b\w/g, (letter) => letter.toUpperCase())).join(', ')}.
-                  {hasJapaneseWhiteSauce && missingAddonNames.includes('japanese mayo')
-                    ? ' Japanese white sauce is listed separately; it is not labeled as Japanese Mayo.'
-                    : ''}
+                  Not configured in the live catalog: {missingAddonNames.join(', ')}.
                 </Text>
               ) : null}
             </View>
@@ -876,6 +883,7 @@ export default function MenuWorkspace({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${addon.name}`}
+                  hitSlop={REMOVE_BUTTON_HIT_SLOP}
                   onPress={() => setSelectedAddonIds((current) => current.filter((id) => id !== addon.id))}
                   style={styles.currentOrderRemove}
                 >
@@ -894,9 +902,14 @@ export default function MenuWorkspace({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Proceed to Payment"
-          disabled={cartProducts.length === 0 || catalogLoading || Boolean(catalogError)}
+          disabled={catalogLoading || Boolean(catalogError)}
           onPress={() => {
-            if (cartProducts.length > 0) onSetPage('checkout');
+            if (cartProducts.length > 0) {
+              setProceedBlocked(false);
+              onSetPage('checkout');
+            } else {
+              setProceedBlocked(true);
+            }
           }}
           style={({ pressed }) => [
             styles.proceedPaymentButton,
@@ -906,6 +919,9 @@ export default function MenuWorkspace({
         >
           <Text style={styles.proceedPaymentText}>Proceed to Payment</Text>
         </Pressable>
+        {proceedBlocked && cartProducts.length === 0 ? (
+          <Text style={styles.paymentError} accessibilityRole="alert">{emptyOrderMessage}</Text>
+        ) : null}
       </View>
       <Modal
         visible={infoProducts !== null}
@@ -1069,7 +1085,7 @@ const styles = StyleSheet.create({
   currentOrderQuantityButton: { width: 21, height: 23, alignItems: 'center', justifyContent: 'center' },
   currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
   currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
-  currentOrderRemove: { width: 22, height: 23, alignItems: 'center', justifyContent: 'center' },
+  currentOrderRemove: { width: REMOVE_BUTTON_SIZE.width, height: REMOVE_BUTTON_SIZE.height, alignItems: 'center', justifyContent: 'center' },
   currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
   currentAddonLine: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,

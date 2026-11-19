@@ -47,3 +47,34 @@ export function staffLoginErrorMessage(code: StaffLoginErrorCode): string {
       return 'Unable to connect. Please check your internet connection and try again.';
   }
 }
+
+export type StaffLoginFeedback = {
+  usernameError: string;
+  passwordError: string;
+  banner: string;
+  clearPassword: boolean;
+};
+
+/**
+ * Maps a failed Staff login to where ST-01 says the message belongs: an unknown
+ * username under the Username field (Password cleared), a wrong password under
+ * the Password field (Password cleared, Username kept), and inactive-account or
+ * connection failures as a banner that keeps the entries.
+ */
+export function staffLoginFeedback(error: unknown): StaffLoginFeedback {
+  const feedback: StaffLoginFeedback = { usernameError: '', passwordError: '', banner: '', clearPassword: false };
+  if (error instanceof StaffLoginError) {
+    if (error.code === 'unknown_username') {
+      feedback.usernameError = error.message;
+      feedback.clearPassword = true;
+    } else if (error.code === 'incorrect_password') {
+      feedback.passwordError = error.message;
+      feedback.clearPassword = true;
+    } else {
+      feedback.banner = error.message;
+    }
+    return feedback;
+  }
+  feedback.banner = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
+  return feedback;
+}

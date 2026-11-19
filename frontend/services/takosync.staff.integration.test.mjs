@@ -4,6 +4,7 @@ import test from 'node:test';
 register('./testTsLoader.mjs', import.meta.url);
 const {
   prepareBatterBatch,
+  reserveBatterBatchReference,
   processSaleInventory,
   recordInventoryTransactionsIdempotently,
   decideOwnerInventoryCountCorrection,
@@ -47,6 +48,8 @@ class RecordingSupabase {
           })),
           error: null,
         };
+      case 'next_batter_batch_reference':
+        return { data: 'BATCH-20261120-0001', error: null };
       case 'prepare_batter_batch':
         return {
           data: { batch_reference: args.p_batch_reference, bottle_count: 5, prepared_quantity: 5, prepared_unit: 'bottle' },
@@ -163,6 +166,17 @@ test('real Staff prepared batter and POS services call their production RPCs', a
   assert.equal(client.calls[1].args.p_branch_id, 'branch-a');
   assert.deepEqual(client.calls[1].args.p_addons, [{ addon_id: 'addon-1', quantity: 1, unit_price: 1.5 }]);
   assert.equal(client.calls[2].args.p_sale_id, 'sale-1');
+});
+
+test('Staff batter preparation reserves a server reference and reuses it for retries', async () => {
+  const client = new RecordingSupabase();
+  const reference = await reserveBatterBatchReference(clientForTests(client));
+  assert.equal(reference, 'BATCH-20261120-0001');
+  await prepareBatterBatch('branch-a', reference, new Date(2026, 10, 20), clientForTests(client));
+  await prepareBatterBatch('branch-a', reference, new Date(2026, 10, 20), clientForTests(client));
+  const prepare = client.calls.filter((call) => call.name === 'prepare_batter_batch');
+  assert.equal(prepare.length, 2);
+  assert.ok(prepare.every((call) => call.args.p_batch_reference === reference));
 });
 
 test('Staff sale service rejects fractional quantities before calling Supabase', async () => {
@@ -319,6 +333,19 @@ test('real Staff service errors preserve retryable checkout state for ambiguous 
     /Checkout status could not be confirmed.*retry the same checkout/,
   );
   assert.equal(client.calls[0].args.p_branch_id, 'branch-a');
+});
+
+test('real Staff sale service reports the approved save-failure message when the network is unreachable', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale', 'TypeError: Failed to fetch');
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-OFFLINE', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    { message: 'Unable to save. Please check your internet connection and try again.' },
+  );
+  assert.equal(client.calls[0].args.p_transaction_reference, 'SALE-OFFLINE');
 });
 
 test('real Staff sale service rejects a mismatched saved sale response', async () => {

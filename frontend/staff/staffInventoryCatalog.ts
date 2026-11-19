@@ -1,70 +1,37 @@
-export type StaffInventoryCatalogItem = {
-  id: string;
-  name: string;
-  category: 'Seafood' | 'Dairy' | 'Meat' | 'Vegetables' | 'Condiments' | 'Dry Goods' | 'Supplies' | 'Prepared';
-  unit: 'g' | 'pcs' | 'ml';
-};
+// Staff inventory is driven entirely by the database (ingredients, ingredient_categories,
+// branch_inventory). This module only provides the display order of categories and a stable
+// sort; it must never filter items or override database names, categories or units.
 
-export const STAFF_INVENTORY_CATALOG: readonly StaffInventoryCatalogItem[] = [
-  { id: 'octopus', name: 'Octopus', category: 'Seafood', unit: 'g' },
-  { id: 'cheese', name: 'Cheese', category: 'Dairy', unit: 'g' },
-  { id: 'crab-sticks', name: 'Crab stick', category: 'Seafood', unit: 'pcs' },
-  { id: 'bacon-bits', name: 'Bacon bits', category: 'Meat', unit: 'g' },
-  { id: 'prepared-batter', name: 'Takoyaki batter', category: 'Prepared', unit: 'ml' },
-  { id: 'cabbage', name: 'Cabbage (chopped)', category: 'Vegetables', unit: 'g' },
-  { id: 'takoyaki-sauce', name: 'Takoyaki sauce', category: 'Condiments', unit: 'ml' },
-  { id: 'japanese-mayonnaise', name: 'Japanese mayonnaise', category: 'Condiments', unit: 'ml' },
-  { id: 'bonito-flakes', name: 'Bonito flakes', category: 'Dry Goods', unit: 'g' },
-  { id: 'packaging', name: 'Packaging', category: 'Supplies', unit: 'pcs' },
+export const STAFF_INVENTORY_CATEGORY_ORDER = [
+  'Seafood',
+  'Dairy',
+  'Meat',
+  'Vegetables',
+  'Condiments',
+  'Dry Goods',
+  'Supplies',
+  'Prepared',
 ] as const;
 
-const catalogById = new Map(STAFF_INVENTORY_CATALOG.map((item) => [item.id, item]));
-
-const approvedIdAliases: Record<string, string> = {
-  'cheese-cubes': 'cheese',
-  'crab-sticks': 'crab-sticks',
-  'bacon-bits': 'bacon-bits',
-  'prepared-batter': 'prepared-batter',
-  cabbage: 'cabbage',
-  sauces: 'takoyaki-sauce',
-  'japanese-mayonnaise': 'japanese-mayonnaise',
-  'bonito-flakes': 'bonito-flakes',
-  packaging: 'packaging',
-  'japanese-white-sauce': 'japanese-white-sauce',
-};
-
-export function getApprovedStaffInventoryItem(
-  id: string,
-  name: string,
-  category: string,
-): StaffInventoryCatalogItem | null {
-  const aliasedId = approvedIdAliases[id] ?? id;
-  const byId = catalogById.get(aliasedId);
-  if (byId) return byId;
-
-  const normalizedName = name.trim().toLowerCase();
-  const normalizedCategory = category.trim().toLowerCase();
-  return STAFF_INVENTORY_CATALOG.find((item) =>
-    item.name.toLowerCase() === normalizedName &&
-    (
-      normalizedCategory === '' ||
-      item.category.toLowerCase() === normalizedCategory ||
-      (normalizedCategory === 'dairy & eggs' && item.category === 'Dairy') ||
-      (normalizedCategory === 'produce' && item.category === 'Vegetables') ||
-      (normalizedCategory === 'prepared inventory' && item.category === 'Prepared')
-    ),
-  ) ?? null;
+function canonicalCategory(category: string): string {
+  const normalized = category.trim().toLowerCase();
+  if (normalized === 'dairy' || normalized === 'dairy & eggs') return 'dairy';
+  if (normalized === 'produce' || normalized === 'vegetables') return 'vegetables';
+  if (normalized === 'prepared inventory' || normalized === 'prepared') return 'prepared';
+  return normalized;
 }
 
-export function approvedStaffInventorySort(left: { id: string; name: string }, right: { id: string; name: string }) {
-  const leftIndex = STAFF_INVENTORY_CATALOG.findIndex((item) =>
-    item.id === (approvedIdAliases[left.id] ?? left.id) || item.name === left.name,
-  );
-  const rightIndex = STAFF_INVENTORY_CATALOG.findIndex((item) =>
-    item.id === (approvedIdAliases[right.id] ?? right.id) || item.name === right.name,
-  );
-  if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
-  if (leftIndex >= 0) return -1;
-  if (rightIndex >= 0) return 1;
+function categoryRank(category: string): number {
+  const canonical = canonicalCategory(category);
+  const index = STAFF_INVENTORY_CATEGORY_ORDER.findIndex((entry) => entry.toLowerCase() === canonical);
+  return index >= 0 ? index : STAFF_INVENTORY_CATEGORY_ORDER.length;
+}
+
+export function staffInventorySort(
+  left: { name: string; category?: string },
+  right: { name: string; category?: string },
+): number {
+  const byCategory = categoryRank(left.category ?? '') - categoryRank(right.category ?? '');
+  if (byCategory !== 0) return byCategory;
   return left.name.localeCompare(right.name);
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { classifyStockLevel, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator,
@@ -12,7 +13,6 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -20,11 +20,12 @@ import {
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
+import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
+import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
-import type { MenuCartLine } from './menuPreviewData';
+import { changeMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
@@ -36,13 +37,33 @@ import {
   getInventoryAlertScreenStatus,
   inventoryAlertEmptyCopy,
   inventoryAlertLabel,
-  isStockAlert,
   runInventoryAlertsRefreshOnce,
   sortInventoryAlerts,
   type InventoryAlertKind,
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
-import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
+import {
+  PREPARED_BATTER_BATCH_BOTTLES,
+  findBatterShortages,
+  formatBatterShortages,
+  formatInsufficientStockMessage,
+} from '../services/batterPreparation';
+import {
+  isDefinitiveInventoryRejection,
+  pendingRequestIsProvablyInvalid,
+  toStoredTransactionUnit,
+} from '../services/inventoryTransactionUnits';
+import {
+  validateStockInForm,
+  validateStockOutForm,
+  validateWasteForm as validateWasteFields,
+} from './inventoryFormValidation';
+import {
+  dailyQuantityErrorText,
+  getDailyCountBasis,
+  isValidDailyQuantity,
+  roundDailyQuantity,
+} from '../services/dailyCountQuantities';
 import {
   getStaffSaleFeedback,
   runInventoryRetryOnce,
@@ -55,6 +76,7 @@ import {
   loadSharedRecipes,
   loadTransactionHistory,
   prepareBatterBatch,
+  reserveBatterBatchReference,
   processSaleInventory,
   submitSale,
   submitDailyStockCheck,
@@ -118,15 +140,6 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
-import { STAFF_INVENTORY_CATALOG } from './staffInventoryCatalog';
-import {
-  DEFAULT_STAFF_ALERT_PREFERENCES,
-  getActiveStaffAlertPreferences,
-  loadStaffAlertPreferences,
-  saveStaffAlertPreferences,
-  type StaffAlertPreferenceKey,
-  type StaffAlertPreferences,
-} from './alertPreferences';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -296,6 +309,8 @@ type DailyCheckLine = {
   inventoryRevision: number;
   physicalQuantity: string;
   unit: string;
+  /** Allowed decimal places for the physical quantity. */
+  precision: number;
 };
 
 type DailyCheckLineRecord = {
@@ -482,26 +497,6 @@ function formatInventoryQuantity(quantity: number, precision: number) {
 function formatInventoryUnitQuantity(quantity: number, unit: string, precision: number) {
   const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
   return `${formatInventoryQuantity(quantity, precision)} ${displayUnit}`;
-}
-
-function roundDailyQuantity(quantity: number, unit: string) {
-  const precision = unit === 'pcs' ? 1 : 100;
-  return Math.round(quantity * precision) / precision;
-}
-
-function isValidDailyQuantity(value: string, unit: string) {
-  const pattern = unit === 'pcs' ? /^\d+$/ : /^\d+(?:\.\d{1,2})?$/;
-  if (!pattern.test(value.trim())) return false;
-  const quantity = Number(value);
-  return Number.isFinite(quantity) && quantity >= 0;
-}
-
-function isValidWasteQuantity(value: string, ingredient: Ingredient) {
-  const precision = ingredient.quantityPrecision;
-  const pattern = precision === 0
-    ? /^\d+$/
-    : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`);
-  return pattern.test(value.trim()) && Number.isFinite(Number(value));
 }
 
 function formatDailyDifference(difference: number, unit: string) {
@@ -1035,6 +1030,8 @@ export default function StaffWorkspace({
     yellow: theme.isDark ? theme.colors.warning : '#FFF2C4',
   };
   const [route, setRoute] = useState<StaffRoute>('menu');
+  // Set when a shared screen (Transaction History, Physical Inventory Check) is opened from the More list.
+  const [navigationOrigin, setNavigationOrigin] = useState<StaffNavigationOrigin>(null);
   const routeRef = useRef(route);
   routeRef.current = route;
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
@@ -1200,10 +1197,6 @@ export default function StaffWorkspace({
   const [logoutError, setLogoutError] = useState('');
   const [logoutPending, setLogoutPending] = useState(false);
   const logoutSubmissionLock = useRef(false);
-  const [alertPreferences, setAlertPreferences] = useState<StaffAlertPreferences>(DEFAULT_STAFF_ALERT_PREFERENCES);
-  const [alertPreferencesHydrated, setAlertPreferencesHydrated] = useState(false);
-  const [alertPreferencesSaving, setAlertPreferencesSaving] = useState(false);
-  const [alertPreferencesError, setAlertPreferencesError] = useState('');
 
   const applyInventorySnapshot = (
     inventory: Awaited<ReturnType<typeof loadInventory>>,
@@ -1214,48 +1207,6 @@ export default function StaffWorkspace({
     setAlertSnapshotBranchId(branchId);
     setAlertDataError('');
     setAlertErrorBranchId(null);
-  };
-
-  useEffect(() => {
-    let active = true;
-    setAlertPreferencesHydrated(false);
-    setAlertPreferencesError('');
-    loadStaffAlertPreferences(AsyncStorage, user.id)
-      .then((preferences) => {
-        if (active) setAlertPreferences(preferences);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setAlertPreferencesError(error instanceof Error
-            ? error.message
-            : 'Unable to load alert preferences. Default alerts remain enabled.');
-        }
-      })
-      .finally(() => {
-        if (active) setAlertPreferencesHydrated(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [user.id]);
-
-  const updateAlertPreference = async (key: StaffAlertPreferenceKey, value: boolean) => {
-    if (!alertPreferencesHydrated || alertPreferencesSaving) return;
-    const previous = alertPreferences;
-    const next = { ...previous, [key]: value };
-    setAlertPreferences(next);
-    setAlertPreferencesSaving(true);
-    setAlertPreferencesError('');
-    try {
-      await saveStaffAlertPreferences(AsyncStorage, user.id, next);
-    } catch (error: unknown) {
-      setAlertPreferences(previous);
-      setAlertPreferencesError(error instanceof Error
-        ? error.message
-        : 'Unable to save alert preferences. Your previous settings were restored.');
-    } finally {
-      setAlertPreferencesSaving(false);
-    }
   };
 
   const retryCountCorrectionRequest = async (request: PendingInventoryCountCorrection) => {
@@ -1455,6 +1406,21 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [user.id, user.branchId]);
+
+  useEffect(() => {
+    if (route !== 'batterBatch' || batterBatchReference !== '' || !user?.branchId) return;
+    let active = true;
+    reserveBatterBatchReference()
+      .then((reference) => {
+        if (active) setBatterBatchReference((current) => current || reference);
+      })
+      .catch(() => {
+        // The server still generates a reference on confirmation if this fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, batterBatchReference, user?.branchId]);
 
   useEffect(() => {
     if (route !== 'stocks' && route !== 'batterBatch') return;
@@ -1816,6 +1782,29 @@ export default function StaffWorkspace({
         });
         return saved;
       } catch (error) {
+        if (isDefinitiveInventoryRejection(error)) {
+          // The server validated and rejected this request before writing anything, so it
+          // is not an unresolved transaction: clear it instead of blocking new entries.
+          try {
+            const resolved = await pendingInventoryTransactionStore.resolve(request.requestId);
+            setPendingInventoryTransactions(resolved);
+            setLastPendingInventoryRequestId(null);
+            setForceNewInventoryRequestFor(null);
+            setPendingInventoryRequestErrors((current) => {
+              const next = { ...current };
+              delete next[request.requestId];
+              return next;
+            });
+          } catch (storageError) {
+            setPendingInventoryStorageError(
+              storageError instanceof Error
+                ? `The request was rejected but its local recovery copy could not be cleared: ${storageError.message}`
+                : 'The request was rejected but its local recovery copy could not be cleared.',
+            );
+          }
+          setDashboardMessage(`The inventory transaction was rejected and nothing was saved: ${error instanceof Error ? error.message : 'validation failed'}`);
+          throw error;
+        }
         try {
           const pending = await pendingInventoryTransactionStore.save({ ...request, status: 'pending' });
           setPendingInventoryTransactions(pending);
@@ -1839,6 +1828,27 @@ export default function StaffWorkspace({
     });
   };
 
+  const storedUnitCatalog = () => new Map(ingredients.map((item) => [
+    item.id,
+    item.id === 'prepared-batter' && item.unit === 'ml' ? 'bottle' : item.unit,
+  ]));
+
+  // A saved request naming an ingredient/unit that does not match the database can never
+  // be accepted (the server requires an exact match), so it is not a real unresolved
+  // transaction. Clear only those; everything else stays retryable.
+  const pruneProvablyInvalidPendingRequests = async () => {
+    if (ingredients.length === 0) return pendingInventoryTransactions;
+    const catalog = storedUnitCatalog();
+    let current = pendingInventoryTransactions;
+    for (const request of pendingInventoryTransactions) {
+      if (request.actorId !== user.id || request.branchId !== user.branchId) continue;
+      if (!pendingRequestIsProvablyInvalid(request.transactions, catalog)) continue;
+      current = await pendingInventoryTransactionStore.resolve(request.requestId);
+    }
+    if (current !== pendingInventoryTransactions) setPendingInventoryTransactions(current);
+    return current;
+  };
+
   const submitNewInventoryRequest = async (
     type: RetrySafeInventoryTransaction['type'],
     transactions: RetrySafeInventoryTransaction[],
@@ -1852,7 +1862,7 @@ export default function StaffWorkspace({
     if (pendingInventoryStorageError !== '') {
       throw new Error('Saved inventory recovery data is unavailable. Do not create another transaction until it can be recovered.');
     }
-    const unresolved = pendingInventoryTransactions.filter((request) =>
+    const unresolved = (await pruneProvablyInvalidPendingRequests()).filter((request) =>
       request.actorId === user.id &&
       request.branchId === user.branchId &&
       sameInventoryTransactionWorkflow(request.transactionType, type),
@@ -1953,7 +1963,7 @@ export default function StaffWorkspace({
   }, [route]);
 
   const selectedIngredient = ingredients.find((item) => item.id === selectedIngredientId);
-  const validateStockInValues = ({
+  const getStockInValidation = ({
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
     transactionDateValue = transactionDate,
@@ -1963,113 +1973,46 @@ export default function StaffWorkspace({
     quantityValue?: string;
     transactionDateValue?: Date | null;
     expirationDateValue?: Date | null;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = ingredients.find((item) => item.id === ingredientId);
-    if (!ingredient) {
-      errors.ingredient = 'Ingredient is required.';
-    }
-
-    if (!quantityValue.trim()) {
-      errors.quantity = 'Quantity is required.';
-    } else {
-      const parsedQuantity = Number(quantityValue);
-      if (Number.isFinite(parsedQuantity) && parsedQuantity <= 0) {
-        errors.quantity = 'Quantity must be greater than zero.';
-      } else {
-        const precision = ingredient?.quantityPrecision ?? 2;
-        const validFormat = precision === 0
-          ? /^\d+$/.test(quantityValue.trim())
-          : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`).test(quantityValue.trim());
-        if (!Number.isFinite(parsedQuantity) || !validFormat) {
-          errors.quantity = 'Enter a valid number greater than zero.';
-        }
-      }
-    }
-
-    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {
-      errors.transactionDate = 'Transaction date is required.';
-    }
-    if (
-      expirationDateValue &&
-      !Number.isFinite(expirationDateValue.getTime())
-    ) {
-      errors.expirationDate = 'Enter a valid expiration date.';
-    } else if (ingredient?.expirationTracking && !expirationDateValue) {
-      errors.expirationDate = 'Expiration date is required for this ingredient.';
-    } else if (
-      transactionDateValue &&
-      expirationDateValue &&
-      new Date(
-        expirationDateValue.getFullYear(),
-        expirationDateValue.getMonth(),
-        expirationDateValue.getDate(),
-      ).getTime() < new Date(
-        transactionDateValue.getFullYear(),
-        transactionDateValue.getMonth(),
-        transactionDateValue.getDate(),
-      ).getTime()
-    ) {
-      errors.expirationDate = 'Expiration date cannot be earlier than Date.';
-    }
-    return errors;
+  } = {}) => validateStockInForm({
+    ingredient: ingredients.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    transactionDate: transactionDateValue,
+    expirationDate: expirationDateValue,
+  });
+  const updateStockInValidation = (values: Parameters<typeof getStockInValidation>[0]) => {
+    const { errors, summary } = getStockInValidation(values);
+    setStockInFieldErrors(errors as Record<string, string>);
+    setFormError(summary);
   };
-  const updateStockInValidation = (values: Parameters<typeof validateStockInValues>[0]) => {
-    const errors = validateStockInValues(values);
-    setStockInFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
-  };
-  const validateStockOutValues = ({
+  const getStockOutValidation = ({
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
     transactionDateValue = transactionDate,
     reasonValue = reason,
+    validateIngredientAndQuantity = true,
   }: {
     ingredientId?: string;
     quantityValue?: string;
     transactionDateValue?: Date | null;
     reasonValue?: string;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = ingredients.find((item) => item.id === ingredientId);
-    if (!ingredient) {
-      errors.ingredient = 'Ingredient is required.';
-    }
-
-    if (!quantityValue.trim()) {
-      errors.quantity = 'Quantity used is required.';
-    } else {
-      const parsedQuantity = Number(quantityValue);
-      const precision = ingredient?.quantityPrecision ?? 2;
-      const validFormat = precision === 0
-        ? /^\d+$/.test(quantityValue.trim())
-        : new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`).test(quantityValue.trim());
-      if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0 || !validFormat) {
-        errors.quantity = precision === 0
-          ? `Enter a whole number of ${ingredient?.unit ?? 'units'} greater than zero.`
-          : `Enter a valid quantity with up to ${precision} decimal places greater than zero.`;
-      } else if (ingredient && parsedQuantity > ingredient.quantity) {
-        errors.quantity = 'Quantity used exceeds the available stock.';
-      }
-    }
-
-    if (!transactionDateValue || !Number.isFinite(transactionDateValue.getTime())) {
-      errors.transactionDate = 'Transaction date is required.';
-    }
-    if (!reasonValue.trim()) {
-      errors.reason = 'Reason is required.';
-    }
-    return errors;
-  };
+    validateIngredientAndQuantity?: boolean;
+  } = {}) => validateStockOutForm({
+    ingredient: ingredients.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    transactionDate: transactionDateValue,
+    reason: reasonValue,
+    validateIngredientAndQuantity,
+  });
+  const validateStockOutValues = (values: Parameters<typeof getStockOutValidation>[0] = {}) =>
+    getStockOutValidation(values).errors as Record<string, string>;
   const updateStockOutValidation = (values: Parameters<typeof validateStockOutValues>[0]) => {
-    const errors = validateStockOutValues(values);
-    setStockOutFieldErrors(errors);
+    const { errors, summary } = getStockOutValidation(values);
+    setStockOutFieldErrors(errors as Record<string, string>);
     setQuantityError(errors.quantity ?? '');
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
   };
   const staffName = user.displayName;
   const staffRole = user.role;
-  const staffEmail = user.email;
   const assignedBranch = user.branch;
   const historyTransactions = backendHistory;
   const selectedHistoryTransaction = historyTransactions.find(
@@ -2170,9 +2113,9 @@ export default function StaffWorkspace({
   };
   const dailyCheckResults = dailyCheckLines.map((line) => {
     const parsedQuantity = Number(line.physicalQuantity);
-    const valid = isValidDailyQuantity(line.physicalQuantity, line.unit);
+    const valid = isValidDailyQuantity(line.physicalQuantity, line.unit, line.precision);
     const difference = valid
-      ? roundDailyQuantity(parsedQuantity - line.recordedQuantity, line.unit)
+      ? roundDailyQuantity(parsedQuantity - line.recordedQuantity, line.unit, line.precision)
       : null;
     return { ...line, parsedQuantity, valid, difference };
   });
@@ -2234,7 +2177,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'nearExpiration'
+      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'nearExpiration'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -2245,7 +2188,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, nearExpirationDays ?? 0) === 'expired'
+      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'expired'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -2302,13 +2245,8 @@ export default function StaffWorkspace({
       detail: `Batch ${batch.reference} · ${formatUnitQuantity(batch.quantityRemaining, item.unit)}\nExpired ${batch.expirationDate ?? 'Not recorded'}\n${Math.abs(daysRemaining)} ${Math.abs(daysRemaining) === 1 ? 'day' : 'days'} past expiration`,
     })),
   ]));
-  const enabledAlerts = inventoryAlerts.filter((item) => {
-    const activeAlertPreferences = getActiveStaffAlertPreferences(alertPreferences, alertPreferencesHydrated);
-    const preference = isStockAlert(item.kind) ? activeAlertPreferences.lowStock : activeAlertPreferences.expiration;
-    return preference;
-  });
-  const enabledAlertCounts = countInventoryAlertsWhenReady(enabledAlerts, backendLoading, backendError);
-  const enabledAlertCount = Object.values(enabledAlertCounts).reduce((total, count) => total + count, 0);
+  const alertBadgeCounts = countInventoryAlertsWhenReady(inventoryAlerts, backendLoading, backendError);
+  const alertBadgeCount = Object.values(alertBadgeCounts).reduce((total, count) => total + count, 0);
   const hasCurrentAlertSnapshot = Boolean(user.branchId) && alertSnapshotBranchId === user.branchId;
   const alertRefreshError = user.branchId
     ? alertErrorBranchId === user.branchId ? alertDataError : ''
@@ -2318,7 +2256,7 @@ export default function StaffWorkspace({
     backendLoading || alertRefreshing,
     alertRefreshError,
   );
-  const alertCounts = countInventoryAlertsForSnapshot(enabledAlerts, hasCurrentAlertSnapshot);
+  const alertCounts = countInventoryAlertsForSnapshot(inventoryAlerts, hasCurrentAlertSnapshot);
   const activeAlertCount = alertCounts
     ? Object.values(alertCounts).reduce((total, count) => total + count, 0)
     : null;
@@ -2327,6 +2265,11 @@ export default function StaffWorkspace({
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
   const visibleLowStockItems = lowStockItems.filter(dashboardMatches);
   const visibleExpiringItems = expiringItems.filter(dashboardMatches);
+
+  useEffect(() => {
+    // Opening a root tab (other than More) ends a flow that was started from More.
+    if (route !== 'more' && !isMoreFlowRoute(route)) setNavigationOrigin(null);
+  }, [route]);
 
   const navigate = (nextRoute: StaffTab) => {
     if (
@@ -2385,7 +2328,7 @@ export default function StaffWorkspace({
       return;
     }
     if (!product.isAvailable) {
-      setDashboardMessage(`${product.name} is unavailable and was not added.`);
+      setDashboardMessage(`${product.name} is currently unavailable and was not added.`);
       return;
     }
     setMenuCart((current) => {
@@ -2400,15 +2343,7 @@ export default function StaffWorkspace({
   };
 
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
-    setMenuCart((current) => {
-      const next = current.flatMap((line) => {
-      if (line.productId !== productId) return [line];
-      const quantity = line.quantity + change;
-      return quantity > 0 ? [{ ...line, quantity }] : [];
-      });
-      if (next.length === 0) setMenuTransactionReference(null);
-      return next;
-    });
+    setMenuCart((current) => changeMenuCartQuantity(current, productId, change));
   };
 
   const removeMenuProduct = (productId: string) => {
@@ -2669,6 +2604,19 @@ export default function StaffWorkspace({
       return;
     }
     setBatterPreparationError('');
+    const recipe = sharedRecipes.find((entry) =>
+      entry.recipe_code === 'shared-batter' || entry.name.toLowerCase().includes('batter'),
+    );
+    if (recipe) {
+      const shortages = findBatterShortages(
+        recipe,
+        new Map(ingredients.map((item) => [item.id, { name: item.name, unit: item.unit, quantity: item.quantity }])),
+      );
+      if (shortages.length > 0) {
+        setBatterPreparationError(formatBatterShortages(shortages));
+        return;
+      }
+    }
     setBatterConfirmationVisible(true);
   };
 
@@ -2693,14 +2641,19 @@ export default function StaffWorkspace({
       applyInventorySnapshot(currentInventory, user.branchId);
       const lines = currentInventory.items
         .filter((item) => item.hasBranchInventory)
-        .map((item) => ({
-          ingredientId: item.id,
-          name: item.name,
-          recordedQuantity: item.quantity,
-          inventoryRevision: item.inventoryRevision,
-          physicalQuantity: '',
-          unit: item.unit,
-        }));
+        .map((item) => {
+          // Batter is displayed in ml but stored and validated in whole bottles.
+          const basis = getDailyCountBasis(item);
+          return {
+            ingredientId: item.id,
+            name: item.name,
+            recordedQuantity: basis.recordedQuantity,
+            inventoryRevision: item.inventoryRevision,
+            physicalQuantity: '',
+            unit: basis.unit,
+            precision: basis.precision,
+          };
+        });
       const draft = await loadStaffDailyStockCheckDraft(user.branchId);
       const draftLines = draft?.lines ?? [];
       setDailyCheckLines(lines.map((line) => {
@@ -2797,7 +2750,7 @@ export default function StaffWorkspace({
           recordedQuantity: line.recordedQuantity,
           inventoryRevision: line.inventoryRevision,
           physicalQuantity,
-          difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit),
+          difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit, line.precision),
           unit: line.unit,
         };
       });
@@ -3000,7 +2953,7 @@ export default function StaffWorkspace({
     }
   };
 
-  const getWasteFieldErrors = ({
+  const getWasteValidation = ({
     inventory = ingredients,
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
@@ -3014,46 +2967,28 @@ export default function StaffWorkspace({
     dateValue?: Date | null;
     reasonValue?: string;
     checkAvailableStock?: boolean;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = inventory.find((item) => item.id === ingredientId);
-    const parsedQuantity = Number(quantityValue);
-
-    if (!ingredient) {
-      errors.item = 'Ingredient is required.';
-    }
-    if (!quantityValue.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      errors.quantity = quantityValue.trim() ? 'Enter a quantity greater than 0.' : 'Quantity Wasted is required.';
-    } else if (ingredient && !isValidWasteQuantity(quantityValue, ingredient)) {
-      errors.quantity = ingredient.quantityPrecision === 0
-        ? 'Enter a whole number of pieces.'
-        : `Enter a quantity with up to ${ingredient.quantityPrecision} decimal places.`;
-    } else if (ingredient && checkAvailableStock && parsedQuantity > ingredient.quantity) {
-      errors.quantity = 'Exceeds available stock.';
-    }
-    if (!dateValue || !Number.isFinite(dateValue.getTime())) {
-      errors.date = 'Transaction date is required.';
-    }
-    if (!wasteReasons.some((option) => option === reasonValue)) {
-      errors.reason = 'Reason is required.';
-    }
-
-    return errors;
-  };
+  } = {}) => validateWasteFields({
+    ingredient: inventory.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    date: dateValue,
+    reason: reasonValue,
+    allowedReasons: wasteReasons,
+    checkAvailableStock,
+  });
 
   const validateWasteForm = (inventory = ingredients) => {
-    const errors = getWasteFieldErrors({ inventory });
+    const { errors, summary } = getWasteValidation({ inventory });
     setWasteValidationAttempted(true);
     setWasteFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
     return Object.keys(errors).length === 0;
   };
 
-  const updateWasteValidation = (values: Parameters<typeof getWasteFieldErrors>[0]) => {
+  const updateWasteValidation = (values: Parameters<typeof getWasteValidation>[0]) => {
     if (!wasteValidationAttempted) return;
-    const errors = getWasteFieldErrors(values);
+    const { errors, summary } = getWasteValidation(values);
     setWasteFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
   };
 
   const changeWasteQuantity = (value: string) => {
@@ -3072,11 +3007,11 @@ export default function StaffWorkspace({
     setSuccessMessage('');
     setFormError('');
     if (route === 'stockIn') {
-      const errors = validateStockInValues();
+      const { errors, summary } = getStockInValidation();
       setStockInValidationAttempted(true);
-      setStockInFieldErrors(errors);
+      setStockInFieldErrors(errors as Record<string, string>);
       if (Object.keys(errors).length > 0) {
-        setFormError('Check the required fields to continue.');
+        setFormError(summary);
         return false;
       }
       return true;
@@ -3084,22 +3019,20 @@ export default function StaffWorkspace({
     if (route === 'stockOut') {
       setStockOutValidationAttempted(true);
       if (usageMode === 'manual') {
-        const errors = validateStockOutValues();
-        setStockOutFieldErrors(errors);
+        const { errors, summary } = getStockOutValidation();
+        setStockOutFieldErrors(errors as Record<string, string>);
         setQuantityError(errors.quantity ?? '');
         if (Object.keys(errors).length > 0) {
-          setFormError('Check the required fields to continue.');
+          setFormError(summary);
           return false;
         }
         return true;
       }
 
-      const errors: Record<string, string> = {};
-      if (!transactionDate) errors.transactionDate = 'Transaction date is required.';
-      if (!reason.trim()) errors.reason = 'Reason is required.';
-      setStockOutFieldErrors(errors);
-      if (Object.keys(errors).length > 0) {
-        setFormError('Check the required fields to continue.');
+      const batchValidation = getStockOutValidation({ validateIngredientAndQuantity: false });
+      setStockOutFieldErrors(batchValidation.errors as Record<string, string>);
+      if (Object.keys(batchValidation.errors).length > 0) {
+        setFormError(batchValidation.summary);
         return false;
       }
       if (!Number.isFinite(parsedBatchCount) || parsedBatchCount <= 0) {
@@ -3109,7 +3042,14 @@ export default function StaffWorkspace({
       const unavailableDeduction = usageDeductions.find((deduction) => deduction.quantity > deduction.previousQuantity);
       if (unavailableDeduction) {
         const ingredient = ingredients.find((item) => item.id === unavailableDeduction.ingredientId);
-        setFormError(`${ingredient?.name ?? 'Ingredient'} usage exceeds available stock.`);
+        setFormError(formatInsufficientStockMessage({
+          ingredientId: unavailableDeduction.ingredientId,
+          name: ingredient?.name ?? 'Ingredient',
+          unit: ingredient?.unit ?? '',
+          required: unavailableDeduction.quantity,
+          available: unavailableDeduction.previousQuantity,
+          shortage: unavailableDeduction.quantity - unavailableDeduction.previousQuantity,
+        }));
         return false;
       }
       return true;
@@ -3129,7 +3069,14 @@ export default function StaffWorkspace({
       return false;
     }
     if (route === 'waste' && parsedQuantity > selectedIngredient.quantity) {
-      setFormError(`Only ${selectedIngredient.quantity} ${selectedIngredient.unit} available. Enter a smaller quantity.`);
+      setFormError(formatInsufficientStockMessage({
+        ingredientId: selectedIngredient.id,
+        name: selectedIngredient.name,
+        unit: selectedIngredient.unit,
+        required: parsedQuantity,
+        available: selectedIngredient.quantity,
+        shortage: parsedQuantity - selectedIngredient.quantity,
+      }));
       return false;
     }
     return true;
@@ -3142,11 +3089,11 @@ export default function StaffWorkspace({
         setFormError('Your account does not have an assigned branch. Contact the owner.');
         return;
       }
-      const requiredFieldErrors = getWasteFieldErrors({ checkAvailableStock: false });
+      const requiredFields = getWasteValidation({ checkAvailableStock: false });
       setWasteValidationAttempted(true);
-      setWasteFieldErrors(requiredFieldErrors);
-      if (Object.keys(requiredFieldErrors).length > 0) {
-        setFormError('Check the required fields to continue.');
+      setWasteFieldErrors(requiredFields.errors);
+      if (Object.keys(requiredFields.errors).length > 0) {
+        setFormError(requiredFields.summary);
         return;
       }
       setFormError('');
@@ -3189,11 +3136,12 @@ export default function StaffWorkspace({
         const wasteQuantity = Number(quantity);
         const receiptDate = transactionDate;
         if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+        const storedWaste = toStoredTransactionUnit(selectedIngredient, wasteQuantity);
         const saved = await submitNewInventoryRequest(wasteReason === 'Spoilage' ? 'spoilage' : 'waste', [{
           ingredientId: selectedIngredient.id,
           type: wasteReason === 'Spoilage' ? 'spoilage' : 'waste',
-          quantity: wasteQuantity,
-          unit: selectedIngredient.unit,
+          quantity: storedWaste.quantity,
+          unit: storedWaste.unit,
           transactionDate: manilaMidnightTimestamp(receiptDate),
           reason: wasteReason,
           notes: notes.trim(),
@@ -3229,10 +3177,13 @@ export default function StaffWorkspace({
       } catch (error) {
         setConfirmationVisible(false);
         const message = error instanceof Error ? error.message : 'Unable to save the waste record.';
-        if (message.toLowerCase().includes('exceeds available stock')) {
-          setWasteFieldErrors((current) => ({ ...current, quantity: 'Exceeds available stock.' }));
+        if (/exceeds available stock|insufficient stock/i.test(message)) {
+          const exceedsMessage = /insufficient stock/i.test(message)
+            ? message
+            : 'This quantity is more than the stock now available (it changed while you were reviewing). Check the updated stock and enter a smaller quantity.';
+          setWasteFieldErrors((current) => ({ ...current, quantity: exceedsMessage }));
           setWasteValidationAttempted(true);
-          setFormError('Check the required fields to continue.');
+          setFormError(exceedsMessage);
           await refreshBackendData();
         } else {
           setFormError(message);
@@ -3269,11 +3220,12 @@ export default function StaffWorkspace({
         const saved = await submitNewInventoryRequest(inventoryType, draftDeductions.map((deduction) => {
           const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
           if (!ingredient) throw new Error('An inventory item in this transaction is no longer available.');
+          const stored = toStoredTransactionUnit(ingredient, deduction.quantity);
           return {
             ingredientId: deduction.ingredientId,
             type: inventoryType,
-            quantity: deduction.quantity,
-            unit: ingredient.unit,
+            quantity: stored.quantity,
+            unit: stored.unit,
             transactionDate: manilaMidnightTimestamp(receiptDate),
             reason,
             notes,
@@ -3305,8 +3257,7 @@ export default function StaffWorkspace({
         const alertDeduction = deductions.find((deduction) => {
           const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
           return ingredient !== undefined && (
-            deduction.newQuantity <= 0 ||
-            (ingredient.minimumStock > 0 && deduction.newQuantity < ingredient.minimumStock)
+            classifyStockLevel(deduction.newQuantity, ingredient.minimumStock) !== 'In Stock'
           );
         });
         const alertIngredient = alertDeduction
@@ -3345,11 +3296,12 @@ export default function StaffWorkspace({
     try {
       if (route !== 'stockIn') throw new Error('This transaction type is not supported on this screen.');
       if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+      const storedStockIn = toStoredTransactionUnit(selectedIngredient, parsedQuantity);
       const saved = await submitNewInventoryRequest('stock_in', [{
         ingredientId: selectedIngredient.id,
         type: 'stock_in',
-        quantity: parsedQuantity,
-        unit: selectedIngredient.unit,
+        quantity: storedStockIn.quantity,
+        unit: storedStockIn.unit,
         transactionDate: formatLocalIsoDate(transactionDate),
         reason: 'Stock-In',
         notes: notes.trim(),
@@ -3608,9 +3560,9 @@ export default function StaffWorkspace({
             <View style={styles.bellBase} />
             <View style={styles.bellClapper} />
           </View>
-          {enabledAlertCount > 0 ? (
+          {alertBadgeCount > 0 ? (
             <View style={styles.alertCountBadge}>
-              <Text style={styles.alertCountText}>{enabledAlertCount > 99 ? '99+' : enabledAlertCount}</Text>
+              <Text style={styles.alertCountText}>{alertBadgeCount > 99 ? '99+' : alertBadgeCount}</Text>
             </View>
           ) : null}
         </Pressable>
@@ -3753,7 +3705,7 @@ export default function StaffWorkspace({
               ? 'Loading stock alerts…'
               : backendError !== '' && ingredients.length === 0
                 ? 'Stock data unavailable'
-                : `${enabledAlertCount} stock alerts need attention`}
+                : `${alertBadgeCount} stock alerts need attention`}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -3793,9 +3745,8 @@ export default function StaffWorkspace({
             icon: '＋',
             onPress: () => {
               const date = manilaBusinessDate();
-              const sequence = String(Math.floor(Date.now() / 1000)).slice(-6);
               setBatterPreparationDate(date);
-              setBatterBatchReference(`Batch #${sequence}`);
+              setBatterBatchReference('');
               setBatterPreparationError('');
               setRoute('batterBatch');
             },
@@ -4047,19 +3998,14 @@ export default function StaffWorkspace({
 
       <View style={styles.inventoryDetailSection}>
         <Text style={styles.historyPlaceholderText}>Ingredient UOM</Text>
-        {STAFF_INVENTORY_CATALOG.map((item) => (
-          <DetailRow
-            key={item.id}
-            label={item.name}
-            value={item.unit === 'g' ? 'g' : item.unit === 'pcs' ? 'pcs' : 'ml'}
-          />
+        {filterBranchInventoryAlertItems(ingredients).map((item) => (
+          <DetailRow key={item.id} label={item.name} value={item.unit} />
         ))}
       </View>
 
       <View style={styles.inventoryDetailSection}>
         <Text style={styles.historyPlaceholderText}>Purchase packs</Text>
         {filterBranchInventoryAlertItems(ingredients)
-          .filter((item) => STAFF_INVENTORY_CATALOG.some((catalogItem) => catalogItem.name === item.name))
           .filter((item) => item.packageQuantity !== null && item.packageUnit)
           .map((item) => (
             <DetailRow
@@ -4070,7 +4016,6 @@ export default function StaffWorkspace({
           ))}
         <Text style={styles.inventoryEmptyMessage}>
           Batter: 1 bottle = 680 ml.{'\n'}
-          Octopus, Cheese and Bonito flakes: 1 kg = 1,000 g.{'\n'}
           Purchase-pack sizes are not current stock quantities.
         </Text>
       </View>
@@ -4126,10 +4071,10 @@ export default function StaffWorkspace({
                   <StatusBadge
                     label={inventoryExpirationStatus(
                       batch.expirationDateIso,
-                      nearExpirationDays ?? 3,
+                      resolveNearExpirationDays(nearExpirationDays),
                       manilaBusinessDate(),
                     ) ?? 'Normal'}
-                    tone={inventoryExpirationStatus(batch.expirationDateIso, nearExpirationDays ?? 3, manilaBusinessDate()) === 'Expired'
+                    tone={inventoryExpirationStatus(batch.expirationDateIso, resolveNearExpirationDays(nearExpirationDays), manilaBusinessDate()) === 'Expired'
                       ? 'low'
                       : 'warning'}
                   />
@@ -4265,7 +4210,7 @@ export default function StaffWorkspace({
             const expirationDate = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
             const daysRemaining = expirationDate ? daysBetweenDates(manilaBusinessDate(), expirationDate) : null;
             const alert = selectedIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
-              ? classifyExpirationAlert(daysRemaining, nearExpirationDays)
+              ? classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays))
               : null;
             const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
             return (
@@ -4593,7 +4538,7 @@ export default function StaffWorkspace({
     }
 
     const alertDate = manilaBusinessDate();
-    const relatedAlerts = enabledAlerts.filter((alert) => alert.ingredientId === item.id);
+    const relatedAlerts = inventoryAlerts.filter((alert) => alert.ingredientId === item.id);
     const detailKinds = [...new Set([selectedAlertKind, ...relatedAlerts.map((alert) => alert.kind)])];
     const batches = [...item.batches].sort((left, right) => {
       const leftDate = parseInventoryDate(left.expirationDateIso ?? left.expirationDate);
@@ -4729,7 +4674,7 @@ export default function StaffWorkspace({
   };
 
   const renderAlerts = () => {
-    const selectedAlerts = enabledAlerts.filter((alert) => alert.kind === selectedAlertTab);
+    const selectedAlerts = inventoryAlerts.filter((alert) => alert.kind === selectedAlertTab);
     const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
       { kind: 'lowStock', label: 'Low Stock' },
       { kind: 'outOfStock', label: 'Out of Stock' },
@@ -4746,7 +4691,7 @@ export default function StaffWorkspace({
       : selectedAlertTab === 'outOfStock'
         ? 'Expected quantity is zero'
         : selectedAlertTab === 'nearExpiration'
-          ? `Owner setting: expiration within the next ${nearExpirationDays ?? 0} days`
+          ? `Owner setting: expiration within the next ${resolveNearExpirationDays(nearExpirationDays)} days`
           : `Recorded expiration date is before ${formatDate(alertDate)}`;
     const activeAlertsCopy = activeAlertCount === null
       ? '— active alerts'
@@ -4889,7 +4834,7 @@ export default function StaffWorkspace({
     return (
       <>
         <View style={styles.formHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => navigate('more')} style={styles.backButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'} onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.backButton}>
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
@@ -4955,8 +4900,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to More"
-            onPress={() => navigate('more')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -5016,13 +4961,7 @@ export default function StaffWorkspace({
             {dailyCheckResults.filter((line) => line.name.toLowerCase().includes(dailyCheckSearch.trim().toLowerCase())).map((line) => {
               const discrepant = line.valid && line.difference !== 0;
               const showError = !line.valid && (dailyCheckAttempted || line.physicalQuantity.trim() !== '');
-              const errorText = line.physicalQuantity.trim() === ''
-                ? 'Enter a quantity.'
-                : line.physicalQuantity.includes('-')
-                  ? 'Quantity cannot be negative.'
-                  : line.unit === 'pcs'
-                    ? 'Enter a whole number.'
-                    : 'Enter a valid quantity (up to 2 decimals).';
+              const errorText = dailyQuantityErrorText(line.physicalQuantity, line.unit, line.precision);
               const physicalError = showError ? errorText : '';
 
               return (
@@ -5049,7 +4988,7 @@ export default function StaffWorkspace({
                           ),
                         )
                       }
-                      keyboardType={line.unit === 'pcs' ? 'number-pad' : 'decimal-pad'}
+                      keyboardType={line.precision === 0 ? 'number-pad' : 'decimal-pad'}
                       style={[
                         styles.dailyPhysicalInput,
                         discrepant && styles.dailyPhysicalInputDiscrepant,
@@ -5146,10 +5085,10 @@ export default function StaffWorkspace({
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => navigate('more')}
+              onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
               style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailySecondaryButtonText}>Back to More</Text>
+              <Text style={styles.dailySecondaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -5173,8 +5112,8 @@ export default function StaffWorkspace({
       return (
         <View style={styles.dailySuccessFallback}>
           <Text style={styles.dailyCheckIntro}>No submitted daily check is available.</Text>
-          <Pressable onPress={() => navigate('more')} style={styles.dailyPrimaryButton}>
-            <Text style={styles.dailyPrimaryButtonText}>Back to More</Text>
+          <Pressable onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.dailyPrimaryButton}>
+            <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
         </View>
       );
@@ -5191,8 +5130,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to Inventory"
-            onPress={() => navigate('inventory')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -5292,10 +5231,10 @@ export default function StaffWorkspace({
           ) : null}
           <Pressable
             accessibilityRole="button"
-            onPress={() => navigate('inventory')}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailyPrimaryButtonText}>Back to Inventory</Text>
+            <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
         </ScrollView>
       </>
@@ -5432,8 +5371,8 @@ export default function StaffWorkspace({
         <View style={styles.staffIdentityBody} />
       </View>
       <View style={styles.staffIdentityCopy}>
-        <Text style={styles.staffIdentityName}>{user.employeeId ?? 'Employee ID unavailable'}</Text>
-        <Text style={styles.staffIdentitySubtitle}>{staffName} · {assignedBranch}</Text>
+        <Text style={styles.staffIdentityName}>{staffName}</Text>
+        <Text style={styles.staffIdentitySubtitle}>{assignedBranch}</Text>
       </View>
     </View>
   );
@@ -6580,25 +6519,37 @@ export default function StaffWorkspace({
             icon: '₱',
             title: 'Daily Sales',
             description: 'Count, compare and submit for review',
-            onPress: openDailySales,
+            onPress: () => {
+              setNavigationOrigin('more');
+              openDailySales();
+            },
           },
           {
             icon: '☷',
             title: 'Physical Inventory Check',
             description: 'Count, compare and submit for review',
-            onPress: startDailyInventoryCheck,
+            onPress: () => {
+              setNavigationOrigin('more');
+              void startDailyInventoryCheck();
+            },
           },
           {
             icon: '⇩',
             title: 'Transaction history',
             description: "Your branch's complete stock ledger",
-            onPress: () => setRoute('stockHistory'),
+            onPress: () => {
+              setNavigationOrigin('more');
+              setRoute('stockHistory');
+            },
           },
           {
             icon: '♙',
             title: 'Profile & settings',
             description: 'Account, access and secure logout',
-            onPress: () => setRoute('profileSettings'),
+            onPress: () => {
+              setNavigationOrigin('more');
+              setRoute('profileSettings');
+            },
           },
         ]).map((option) => (
           <Pressable
@@ -6745,7 +6696,6 @@ export default function StaffWorkspace({
   };
 
   const renderProfileSettings = () => {
-    const appAlertsEnabled = alertPreferences.lowStock && alertPreferences.expiration;
     return (
       <>
         <View style={styles.formHeader}>
@@ -6768,12 +6718,8 @@ export default function StaffWorkspace({
           <View style={styles.profileInformationCard}>
             <View style={styles.profileInformationRow}>
               <View style={styles.profileInformationCell}>
-                <Text style={styles.profileInformationLabel}>Employee ID</Text>
-                <Text style={styles.profileInformationValue} selectable>{user.employeeId ?? 'Unavailable'}</Text>
-              </View>
-              <View style={styles.profileInformationCell}>
-                <Text style={styles.profileInformationLabel}>Email</Text>
-                <Text style={styles.profileInformationValue} numberOfLines={1}>{staffEmail}</Text>
+                <Text style={styles.profileInformationLabel}>Username</Text>
+                <Text style={styles.profileInformationValue} numberOfLines={1}>{staffName}</Text>
               </View>
               <View style={styles.profileInformationCell}>
                 <Text style={styles.profileInformationLabel}>Role</Text>
@@ -6804,7 +6750,7 @@ export default function StaffWorkspace({
           <View style={styles.profileSettingsCard}>
             <Text style={styles.profileSectionTitle}>Account security</Text>
             <Text style={styles.profileAccountSecurityCopy}>
-              Your Employee ID is the initial password. You may set a different password at any time.
+              You may set a different password at any time. Your password is never displayed in the app.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -6817,47 +6763,6 @@ export default function StaffWorkspace({
             >
               <Text style={styles.profilePasswordButtonText}>Change password</Text>
             </Pressable>
-          </View>
-
-          <View style={styles.profileSettingsCard}>
-            <View style={styles.profileSettingsHeading}>
-              <Text style={styles.profileSectionTitle}>Alert visibility</Text>
-              <Text style={styles.profileSettingsValue}>
-                {!alertPreferencesHydrated
-                  ? 'Loading alert preferences…'
-                  : alertPreferencesSaving
-                    ? 'Saving alert preferences…'
-                    : appAlertsEnabled
-                      ? 'Enabled for stock and expiry'
-                      : 'Some in-app alerts are off'}
-              </Text>
-            </View>
-            <View style={styles.profilePreferenceRow}>
-              <Text style={styles.profilePreferenceLabel}>Low-stock alerts</Text>
-              <Switch
-                accessibilityLabel="Low-stock alerts"
-                value={alertPreferences.lowStock}
-                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
-                onValueChange={(value) => { void updateAlertPreference('lowStock', value); }}
-                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
-                thumbColor={alertPreferences.lowStock ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
-              />
-            </View>
-            <View style={styles.profilePreferenceRow}>
-              <Text style={styles.profilePreferenceLabel}>Expiry alerts</Text>
-              <Switch
-                accessibilityLabel="Expiry alerts"
-                value={alertPreferences.expiration}
-                disabled={!alertPreferencesHydrated || alertPreferencesSaving}
-                onValueChange={(value) => { void updateAlertPreference('expiration', value); }}
-                trackColor={{ false: theme.isDark ? theme.colors.border : '#D8D8DE', true: theme.isDark ? theme.colors.accent : '#F6A2BC' }}
-                thumbColor={alertPreferences.expiration ? colors.pink : theme.isDark ? theme.colors.surface : '#FFFFFF'}
-              />
-            </View>
-            {alertPreferencesError ? (
-              <Text style={styles.profileAlertNote}>Alert preferences could not be saved or loaded: {alertPreferencesError}</Text>
-            ) : null}
-            <Text style={styles.profileAlertNote}>These preferences control in-app alert visibility only; push delivery is not configured.</Text>
           </View>
 
           <View style={styles.profileVersionRow}>
@@ -7926,8 +7831,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to Stocks"
-            onPress={() => setRoute('stocks')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Stocks'}
+            onPress={() => setRoute(staffReturnTab(navigationOrigin, 'stocks'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -8595,6 +8500,7 @@ export default function StaffWorkspace({
       </View>
       <BottomNavigation
         active={route}
+        origin={navigationOrigin}
         onSelect={navigate}
         staffOnly
         staffAlertCount={activeAlertCount}
@@ -8614,7 +8520,7 @@ export default function StaffWorkspace({
               Deduct the owner-configured raw ingredients once and add exactly {PREPARED_BATTER_BATCH_BOTTLES} prepared batter bottles.
             </Text>
             <View style={styles.confirmSummary}>
-              <Text style={styles.confirmSummaryText}>Auto-generated batch reference</Text>
+              <Text style={styles.confirmSummaryText}>{batterBatchReference ? `Batch reference ${batterBatchReference}` : 'Auto-generated batch reference'}</Text>
               <Text style={styles.confirmSummaryText}>{assignedBranch} · {formatDate(batterPreparationDate)}</Text>
               <Text style={styles.confirmSummaryText}>Recorded with your employee account.</Text>
               <Text style={styles.confirmSummaryText}>If any part fails, nothing is saved.</Text>
@@ -8708,7 +8614,7 @@ export default function StaffWorkspace({
             </View>
             <Text style={styles.logoutModalTitle}>Do you want to Log out?</Text>
             <Text style={styles.logoutModalDescription}>
-              End the daily session? Any unconfirmed order will be discarded.
+              End your session? Any unconfirmed order will be discarded.
             </Text>
             {logoutError !== '' ? (
               <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text>
@@ -8998,7 +8904,7 @@ export default function StaffWorkspace({
                 <Text style={styles.confirmSummaryText}>{staffName}</Text>
                 {usageDeductions.some((deduction) => {
                   const item = ingredients.find((ingredient) => ingredient.id === deduction.ingredientId);
-                  return item && deduction.newQuantity < item.minimumStock;
+                  return item && classifyStockLevel(deduction.newQuantity, item.minimumStock) === 'Low Stock';
                 }) ? (
                   <Text style={styles.confirmSummaryText}>
                     This will remain below the {formatQuantity(
@@ -9793,17 +9699,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   profilePasswordButtonPressed: { opacity: 0.82 },
   profilePasswordButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
-  profileSettingsHeading: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-    minHeight: 30,
-  },
   profileSettingsValue: { color: colors.muted, fontFamily: font.regular, fontSize: 7, textAlign: 'right' },
-  profilePreferenceRow: {
-    minHeight: 35, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderTopWidth: 1, borderTopColor: '#DDDDDF',
-  },
-  profilePreferenceLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
-  profileAlertNote: { color: colors.muted, fontFamily: font.regular, fontSize: 6, lineHeight: 9, marginTop: 2 },
   profileVersionRow: {
     minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 1, marginBottom: 7,

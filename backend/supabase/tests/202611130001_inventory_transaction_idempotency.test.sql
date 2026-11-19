@@ -553,15 +553,14 @@ select is(
   'unsupported waste reason leaves inventory, movement, and batch state unchanged'
 );
 
-select throws_ok(
+select throws_matching(
   $$select * from public.record_inventory_transactions_idempotent(
     (select branch_id from inventory_idempotency_fixture),
     'a4444444-4444-4444-8444-444444444444',
     '[{"ingredient_id":"flour","type":"waste","quantity":999999,"unit":"kg","transaction_date":"2026-11-13T00:00:00+08:00","reason":"Other","notes":"","batch_reference":null,"expiration_date":null}]'::jsonb
   )$$,
-  'P0001',
-  'Transaction exceeds available stock',
-  'insufficient stock remains rejected by the existing transaction validator'
+  '^Insufficient stock for .+: required 999999 kg, available [0-9.]+ kg, shortage [0-9.]+ kg$',
+  'insufficient stock is rejected naming the ingredient, required, available and shortage quantities'
 );
 select is(
   (
@@ -634,7 +633,7 @@ select set_config(
   true
 );
 
-select throws_ok(
+select throws_matching(
   $$select * from public.record_inventory_transactions_idempotent(
     (select branch_id from inventory_idempotency_fixture),
     'c1111111-1111-4111-8111-111111111111',
@@ -643,9 +642,8 @@ select throws_ok(
       {"ingredient_id":"octopus","type":"waste","quantity":1,"unit":"kg","transaction_date":"2026-11-13T00:00:00+08:00","reason":"Waste","notes":"Insufficient second line","batch_reference":null,"expiration_date":null}
     ]'::jsonb
   )$$,
-  'P0001',
-  'Transaction exceeds available stock',
-  'a later insufficient line rejects the complete multi-line transaction'
+  '^Insufficient stock for .+: required 1 kg, available [0-9.]+ kg, shortage [0-9.]+ kg$',
+  'a later insufficient line rejects the complete multi-line transaction with a descriptive message'
 );
 select is(
   jsonb_build_array(

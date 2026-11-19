@@ -72,7 +72,7 @@ begin
     from jsonb_array_elements(p_transactions) with ordinality as entry(value, ordinality)
   loop
     if jsonb_typeof(v_entry) <> 'object'
-      or jsonb_object_length(v_entry) <> 9
+      or (select count(*) from jsonb_object_keys(v_entry)) <> 9
       or not (v_entry ?& array[
         'ingredient_id', 'type', 'quantity', 'unit', 'transaction_date',
         'reason', 'notes', 'batch_reference', 'expiration_date'

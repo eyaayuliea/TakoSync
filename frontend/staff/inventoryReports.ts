@@ -1,5 +1,10 @@
 import type { InventoryItem } from '../services/takosync';
-import { approvedStaffInventorySort } from './staffInventoryCatalog.ts';
+import { staffInventorySort } from './staffInventoryCatalog.ts';
+import {
+  calendarDaysUntil,
+  classifyExpirationLevel,
+  classifyStockLevel,
+} from '../services/inventoryStatusRules.ts';
 
 export type InventoryReportItem = Pick<
   InventoryItem,
@@ -140,27 +145,33 @@ function asNumber(value: number | string) {
 }
 
 export function inventoryStockStatus(quantity: number, minimumStock: number): InventoryStockStatus {
-  if (quantity <= 0) return 'Out of Stock';
-  if (quantity < minimumStock) return 'Low Stock';
-  return 'Normal';
+  const level = classifyStockLevel(quantity, minimumStock);
+  return level === 'In Stock' ? 'Normal' : level;
 }
 
+/**
+ * `businessDate` is the Asia/Manila calendar day. It may be a YYYY-MM-DD key or a Date whose
+ * local year/month/day fields hold that Manila calendar day (see manilaBusinessDate in
+ * StaffWorkspace).
+ */
 export function inventoryExpirationStatus(
   expirationDate: string | null,
   nearExpirationDays: number,
-  businessDate: Date,
+  businessDate: Date | string,
 ): InventoryExpirationStatus {
   if (!expirationDate) return null;
-  const expirationTime = new Date(`${expirationDate}T00:00:00`).getTime();
-  if (!Number.isFinite(expirationTime)) return null;
-  const businessDayStart = new Date(
-    businessDate.getFullYear(),
-    businessDate.getMonth(),
-    businessDate.getDate(),
-  ).getTime();
-  const daysUntilExpiration = Math.ceil((expirationTime - businessDayStart) / 86_400_000);
-  if (daysUntilExpiration < 0) return 'Expired';
-  return daysUntilExpiration <= nearExpirationDays ? 'Near Expiry' : null;
+  const today = typeof businessDate === 'string'
+    ? businessDate.slice(0, 10)
+    : `${businessDate.getFullYear()}-${String(businessDate.getMonth() + 1).padStart(2, '0')}-${String(businessDate.getDate()).padStart(2, '0')}`;
+  let days: number;
+  try {
+    days = calendarDaysUntil(expirationDate, today);
+  } catch {
+    return null;
+  }
+  const level = classifyExpirationLevel(days, nearExpirationDays);
+  if (level === 'Expired') return 'Expired';
+  return level === 'Near Expiration' ? 'Near Expiry' : null;
 }
 
 export function displayInventoryCategory(category: string): string {
@@ -186,10 +197,7 @@ export function filterStaffInventoryItems<T extends {
     (category === 'All' || displayInventoryCategory(item.category) === category) &&
     item.name.toLowerCase().includes(normalizedSearch),
   ).sort((left, right) =>
-    approvedStaffInventorySort(
-      { id: ('id' in left ? String(left.id) : ''), name: left.name },
-      { id: ('id' in right ? String(right.id) : ''), name: right.name },
-    ),
+    staffInventorySort(left, right),
   );
 }
 

@@ -79,6 +79,7 @@ export default function OwnerLoginScreen({
       await onLogin(trimmedEmail, password);
     } catch (error) {
       if (error instanceof OwnerLoginError && error.code === 'email_not_found') {
+        setPassword('');
         setFieldErrors({ email: error.message });
       } else if (error instanceof OwnerLoginError && error.code === 'incorrect_password') {
         setPassword('');

@@ -6,11 +6,12 @@ import {
   activeStaffTab,
   STAFF_NAVIGATION_TOUCH_TARGET,
   staffDestinations,
+  type StaffNavigationOrigin,
   type StaffRoute,
   type StaffTab,
 } from './staffNavigation';
 
-export type { StaffRoute, StaffTab } from './staffNavigation';
+export type { StaffNavigationOrigin, StaffRoute, StaffTab } from './staffNavigation';
 export { activeStaffTab };
 
 const colors = {
@@ -139,12 +140,15 @@ function NavigationIcon({
 
 export default function BottomNavigation({
   active,
+  origin = null,
   onSelect,
   showMenu = true,
   staffOnly = false,
   staffAlertCount = null,
 }: {
   active: StaffRoute;
+  /** Staff only: the tab a shared screen was opened from (e.g. 'more'). */
+  origin?: StaffNavigationOrigin;
   onSelect: (route: StaffTab) => void;
   showMenu?: boolean;
   staffOnly?: boolean;
@@ -153,7 +157,7 @@ export default function BottomNavigation({
   const { colors: themeColors } = useTheme();
   const styles = useNavigationStyles();
   const selectedTab = staffOnly
-    ? activeStaffTab(active)
+    ? activeStaffTab(active, origin)
     : active === 'alerts' || active === 'alertDetails'
       ? 'more'
       : activeStaffTab(active);

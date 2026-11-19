@@ -9,9 +9,11 @@ import { manilaDateKey } from '../services/businessDaySettings.ts';
 
 const today = '2026-11-19';
 
-test('inventory status follows the required priority for null, expired, and zero quantities', () => {
+test('inventory status follows the required priority for null, zero quantity, and expired batches', () => {
   assert.equal(getInventoryStockStatus(null, 5, '2026-11-18', today), 'Not tracked');
-  assert.equal(getInventoryStockStatus(0, 5, '2026-11-18', today), 'Expired');
+  // Nothing is available, so Out of Stock (exactly 0) wins over a past expiration date.
+  assert.equal(getInventoryStockStatus(0, 5, '2026-11-18', today), 'Out of Stock');
+  assert.equal(getInventoryStockStatus(1, 5, '2026-11-18', today), 'Expired');
   assert.equal(getInventoryStockStatus(0, 5, null, today), 'Out of Stock');
 });
 

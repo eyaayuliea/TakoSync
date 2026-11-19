@@ -10,10 +10,16 @@ export type OwnerProductSummary = {
   total: number;
 };
 
+/**
+ * OM-08 criterion 3 counts quantities "only from confirmed and recorded sales" - the same sale set
+ * that OM-03..OM-07 total (status 'completed', see shouldIncludeOwnerSaleInSummary). A recorded sale
+ * whose inventory update is pending or failed is still a recorded sale (OM-14 criterion 5 lists it
+ * with a retry/review flag), so its products are counted and the Products Sold quantities reconcile
+ * with the sales totals.
+ */
 export function summarizeOwnerProducts(items: readonly OwnerSaleItem[]): OwnerProductSummary[] {
   const grouped = new Map<string, OwnerProductSummary>();
   for (const item of items) {
-    if (item.inventory_processing_status && item.inventory_processing_status !== 'completed') continue;
     const quantity = Number(item.quantity);
     const total = Number(item.subtotal);
     if (!Number.isFinite(quantity) || quantity <= 0) continue;

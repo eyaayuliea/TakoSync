@@ -88,6 +88,8 @@ export type Database = {
         request_id: string | null;
         request_line_index: number | null;
         request_payload_hash: string | null;
+        /** Set only for `sales_consumption` rows: the sale that consumed the stock. */
+        sale_id: string | null;
         created_at: string;
       }>;
       daily_stock_checks: Table<{

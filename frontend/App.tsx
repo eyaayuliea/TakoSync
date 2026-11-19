@@ -4,11 +4,19 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
+import {
+  calendarDaysUntil,
+  classifyExpirationLevel,
+  classifyStockLevel,
+  manilaCalendarDate,
+  resolveNearExpirationDays,
+} from './services/inventoryStatusRules.ts';
 import appConfig from '../app.json';
 import {
   ActivityIndicator,
   Image,
   ImageBackground,
+  Modal,
   Pressable,
   Platform,
   ScrollView,
@@ -30,7 +38,7 @@ import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvid
 import { ownerColors } from './owner/shared/ownerTokens';
 import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
 import { getAuthenticatedMobileDestination, shouldClearMobileSession } from './services/authSessionEvents';
-import { StaffLoginError } from './services/staffAuthentication';
+import { staffLoginFeedback } from './services/staffAuthentication';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
@@ -329,7 +337,7 @@ function AppContent() {
       quantity: `${quantity} ${ingredient.unit}`,
       unit: ingredient.unit,
       minimumStock,
-      lowStock: quantity <= 0 || (minimumStock > 0 && quantity <= minimumStock),
+      lowStock: classifyStockLevel(quantity, minimumStock) !== 'In Stock',
       branch: branchNames.get(record.branch_id) ?? 'Branch',
     }];
   });
@@ -344,9 +352,8 @@ function AppContent() {
     const ingredient = ownerIngredients.get(batch.ingredient_id);
     const branch = branchNames.get(batch.branch_id);
     if (!ingredient?.expiration_tracking || !branch || (branchFilter && branchFilter !== batch.branch_id)) return [];
-    const expiration = new Date(`${batch.expiration_date}T00:00:00`);
-    const daysRemaining = Math.ceil((expiration.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
-    return daysRemaining <= 7
+    const daysRemaining = calendarDaysUntil(batch.expiration_date, manilaCalendarDate(now));
+    return classifyExpirationLevel(daysRemaining, resolveNearExpirationDays(ownerData?.nearExpirationDays)) !== null
       ? [{
           id: batch.id,
           name: ingredient.name,
@@ -539,14 +546,18 @@ function AppContent() {
       const user = await signInStaff(staffUsername, password);
       setAuthenticatedUser(user);
       setLoginSuccess(true);
+      // The loading screen closes as soon as the system responds; the locks stay
+      // held so the form still cannot be submitted again during the brief success message.
+      setAuthenticating(false);
       await new Promise((resolve) => setTimeout(resolve, 600));
       setScreen(getAuthenticatedMobileDestination(user.role));
     } catch (error) {
       setLoginSuccess(false);
-      if (error instanceof StaffLoginError && error.code === 'incorrect_password') {
-        setPassword('');
-      }
-      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
+      const feedback = staffLoginFeedback(error);
+      if (feedback.clearPassword) setPassword('');
+      setUsernameError(feedback.usernameError);
+      setPasswordError(feedback.passwordError);
+      setLoginError(feedback.banner);
     } finally {
       authLock.current = false;
       authOperationLock.current = false;
@@ -863,6 +874,14 @@ function AppContent() {
                     </ScrollView>
                   </View>
                 </ImageBackground>
+                <Modal visible={authenticating} transparent animationType="fade" onRequestClose={() => undefined}>
+                  <View style={styles.loginLoadingBackdrop} accessibilityRole="alert">
+                    <View style={styles.loginLoadingCard}>
+                      <ActivityIndicator size="large" color="#EC1358" />
+                      <Text style={styles.loginLoadingText}>Logging in…</Text>
+                    </View>
+                  </View>
+                </Modal>
               </View>
             )}
 
@@ -1661,6 +1680,9 @@ function useAppStyles() {
   },
   loginButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   errorBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8DDE5', borderRadius: 10, padding: 11, marginBottom: 18 },
+  loginLoadingBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(15, 16, 37, 0.62)' },
+  loginLoadingCard: { minWidth: 190, minHeight: 128, alignItems: 'center', justifyContent: 'center', gap: 12, borderRadius: 16, backgroundColor: '#FDFDFC', padding: 20 },
+  loginLoadingText: { color: '#0F1025', fontSize: 14, fontWeight: '600' },
   successBanner: { backgroundColor: '#DDEFD8', borderRadius: 10, padding: 11, marginBottom: 18 },
   successText: { color: '#2F6326', fontSize: 12, lineHeight: 17, fontWeight: '600' },
   errorIcon: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: PINK, marginRight: 9 },

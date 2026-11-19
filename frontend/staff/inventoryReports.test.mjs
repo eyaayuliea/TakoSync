@@ -14,40 +14,28 @@ import {
   STAFF_INVENTORY_CATEGORIES,
 } from './inventoryReports.ts';
 import {
-  getApprovedStaffInventoryItem,
-  STAFF_INVENTORY_CATALOG,
+  STAFF_INVENTORY_CATEGORY_ORDER,
+  staffInventorySort,
 } from './staffInventoryCatalog.ts';
 
-test('ST-04 inventory catalog preserves the approved names, categories, units, and order', () => {
-  assert.deepEqual(STAFF_INVENTORY_CATALOG.map((item) => item.name), [
-    'Octopus',
-    'Cheese',
-    'Crab stick',
-    'Bacon bits',
-    'Takoyaki batter',
-    'Cabbage (chopped)',
-    'Takoyaki sauce',
-    'Japanese mayonnaise',
-    'Bonito flakes',
-    'Packaging',
+test('staff inventory is database-driven: categories sort in the approved order, then by name', () => {
+  assert.deepEqual([...STAFF_INVENTORY_CATEGORY_ORDER], [
+    'Seafood', 'Dairy', 'Meat', 'Vegetables', 'Condiments', 'Dry Goods', 'Supplies', 'Prepared',
   ]);
-  assert.deepEqual(getApprovedStaffInventoryItem('crab-sticks', 'Crab Sticks', 'Seafood'), {
-    id: 'crab-sticks',
-    name: 'Crab stick',
-    category: 'Seafood',
-    unit: 'pcs',
-  });
-  assert.equal(getApprovedStaffInventoryItem('cheese-cubes', 'Cheese Cubes', 'Dairy & eggs')?.name, 'Cheese');
-  assert.deepEqual(getApprovedStaffInventoryItem('bacon-bits', 'Bacon Bits', 'Dry Goods'), {
-    id: 'bacon-bits',
-    name: 'Bacon bits',
-    category: 'Meat',
-    unit: 'g',
-  });
-  assert.equal(getApprovedStaffInventoryItem('japanese-white-sauce', 'Japanese White Sauce', 'Condiments'), null);
-  assert.equal(getApprovedStaffInventoryItem('eggs', 'Eggs', 'Dairy'), null);
-  assert.equal(getApprovedStaffInventoryItem('flour', 'All-purpose flour', 'Dry Goods'), null);
-  assert.equal(getApprovedStaffInventoryItem('sauces', 'Takoyaki Sauce', 'Condiments')?.name, 'Takoyaki sauce');
+  const rows = [
+    { name: 'Packaging', category: 'Supplies' },
+    { name: 'Salt', category: 'Dry Goods' },
+    { name: 'Eggs', category: 'Dairy & eggs' },
+    { name: 'Bacon', category: 'Meat' },
+    { name: 'Chopped Cabbage', category: 'Produce' },
+    { name: 'Octopus', category: 'Seafood' },
+    { name: 'Crab Stick', category: 'Seafood' },
+    { name: 'Soy Sauce', category: 'Condiments' },
+    { name: 'All-Purpose Flour', category: 'Dry Goods' },
+  ].sort(staffInventorySort);
+  assert.deepEqual(rows.map((row) => row.name), [
+    'Crab Stick', 'Octopus', 'Eggs', 'Bacon', 'Chopped Cabbage', 'Soy Sauce', 'All-Purpose Flour', 'Salt', 'Packaging',
+  ]);
 });
 
 const ingredientItems = [
@@ -120,9 +108,9 @@ test('categories sort alphabetically, count ingredients, and total quantities on
   ]);
 });
 
-test('stock status boundaries match Normal, Low Stock, and Out of Stock rules', () => {
+test('stock status boundaries match Normal, Low Stock (> 0 and <= minimum), and Out of Stock (0) rules', () => {
   assert.equal(inventoryStockStatus(5.01, 5), 'Normal');
-  assert.equal(inventoryStockStatus(5, 5), 'Normal');
+  assert.equal(inventoryStockStatus(5, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(1, 5), 'Low Stock');
   assert.equal(inventoryStockStatus(0, 5), 'Out of Stock');
 });

@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      apply_reviewed_migrations:
+        description: Apply migrations only after reviewing a previous dry-run
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,7 +25,6 @@ jobs:
   deploy:
     if: >-
       inputs.confirm_development_target == true &&
-      vars.TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED == 'true' &&
       vars.TAKOSYNC_MIGRATIONS_RECONCILED == 'true' &&
       vars.SUPABASE_DEVELOPMENT_PROJECT_REF != '' &&
       vars.SUPABASE_PRODUCTION_PROJECT_REF != ''
@@ -81,7 +85,7 @@ jobs:
           if not value:
               fail(
                   "SUPABASE_DB_URL is empty; configure the SUPABASE_DB_URL secret "
-                  "in the supabase-production environment"
+                  "in the supabase-development environment"
               )
           if any(character in value for character in "\r\n"):
               fail("SUPABASE_DB_URL contains an invalid line break")
@@ -222,5 +226,17 @@ jobs:
       - name: Preview pending migration SQL (database connectivity and migration preview)
         run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --dry-run
 
+      - name: Finish without applying migrations
+        if: inputs.apply_reviewed_migrations != true
+        run: echo "Dry-run completed; no migrations were applied."
+
+      - name: Require explicit migration approval
+        if: inputs.apply_reviewed_migrations == true && vars.TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED != 'true'
+        shell: bash
+        run: |
+          echo "::error title=Migration approval::The apply input requires prior migration review and explicit Development approval."
+          exit 1
+
       - name: Apply migrations to the approved Development project
+        if: inputs.apply_reviewed_migrations == true && vars.TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED == 'true'
         run: supabase --workdir backend db push --remote="$SUPABASE_DB_URL_EFFECTIVE" --include-all --yes

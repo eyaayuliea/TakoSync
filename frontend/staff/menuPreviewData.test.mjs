@@ -4,6 +4,7 @@ import { filterBranchVisibleMenuVariants } from '../services/menuCatalog.ts';
 import {
   calculateMenuCart,
   calculateSelectedAddonTotal,
+  changeMenuCartQuantity,
   EMPTY_MENU_ORDER_MESSAGE,
   groupMenuProducts,
   menuOrderValidationMessage,
@@ -104,4 +105,12 @@ test('checkout retry is offered only when a failed non-empty order remains prese
   assert.equal(shouldOfferCheckoutRetry(true, 1), true);
   assert.equal(shouldOfferCheckoutRetry(true, 0), false);
   assert.equal(shouldOfferCheckoutRetry(false, 1), false);
+});
+
+test('order quantity controls never reduce a line below one and leave other lines untouched', () => {
+  const cart = [{ productId: 'a', quantity: 1 }, { productId: 'b', quantity: 3 }];
+  assert.deepEqual(changeMenuCartQuantity(cart, 'a', -1), cart, 'a quantity of 1 stays at 1');
+  assert.deepEqual(changeMenuCartQuantity(cart, 'a', 1), [{ productId: 'a', quantity: 2 }, { productId: 'b', quantity: 3 }]);
+  assert.deepEqual(changeMenuCartQuantity(cart, 'b', -1), [{ productId: 'a', quantity: 1 }, { productId: 'b', quantity: 2 }]);
+  assert.equal(cart[1].quantity, 3, 'the input cart is not mutated');
 });

@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
+  formatConsumptionQuantity,
   getForcedSalesConsumptionState,
-  getSalesConsumptionById,
-  getSalesConsumptionMockList,
-  pageSize,
+  loadSalesConsumptionById,
+  loadSalesConsumptionPage,
   type SalesConsumptionRecord,
 } from './salesConsumptionRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -48,10 +49,7 @@ function detailDateTime(value: string) {
 }
 
 function quantityText(record: SalesConsumptionRecord) {
-  const amount = record.unit === 'bottle'
-    ? record.quantity.toFixed(2)
-    : String(record.quantity);
-  return `−${amount} ${record.unit}`;
+  return `−${formatConsumptionQuantity(record.quantity, record.unit)} ${record.unit}`;
 }
 
 export default function SalesConsumptionRecords({
@@ -67,64 +65,110 @@ export default function SalesConsumptionRecords({
   const [view, setView] = useState<'list' | 'details'>('list');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [items, setItems] = useState<SalesConsumptionRecord[]>([]);
-  const [loadedPages, setLoadedPages] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState(false);
+  const [detailError, setDetailError] = useState<OwnerRecordErrorInfo | null>(null);
   const [selected, setSelected] = useState<SalesConsumptionRecord | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const loadingMoreRef = useRef(false);
+  const listRequestId = useRef(0);
+  const detailRequestId = useRef(0);
 
   const loadFirst = () => {
+    const currentRequestId = ++listRequestId.current;
     setLoading(true);
     setError(false);
+    setErrorInfo(null);
     setItems([]);
-    setLoadedPages(1);
+    setHasMore(false);
     setLoadMoreError(false);
+    loadingMoreRef.current = false;
     const forced = getForcedSalesConsumptionState();
-    setTimeout(() => {
-      if (forced === 'error') setError(true);
-      else if (forced === 'loading') return;
-      else setItems(forced === 'empty' ? [] : getSalesConsumptionMockList().slice(0, pageSize));
+    if (forced === 'loading') return;
+    if (forced === 'error') {
+      setErrorInfo(describeOwnerRecordError(new Error('Forced error state (design preview).')));
+      setError(true);
       setLoading(false);
-    }, 450);
+      return;
+    }
+    if (forced === 'empty') {
+      setLoading(false);
+      return;
+    }
+    void loadSalesConsumptionPage(0).then((page) => {
+      if (currentRequestId !== listRequestId.current) return;
+      setItems(page.records);
+      setHasMore(page.hasMore);
+      setLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== listRequestId.current) return;
+      console.error('Unable to load Sales Consumption records.', loadError);
+      setErrorInfo(describeOwnerRecordError(loadError));
+      setError(true);
+      setLoading(false);
+    });
   };
 
-  useEffect(loadFirst, []);
+  useEffect(() => {
+    loadFirst();
+    return () => {
+      listRequestId.current += 1;
+      detailRequestId.current += 1;
+    };
+  }, []);
 
   const openDetails = (id: string) => {
+    const currentRequestId = ++detailRequestId.current;
     setSelectedId(id);
     setView('details');
-    setDetailLoading(true);
-    setDetailError(false);
-    setSelected(null);
-    setTimeout(() => {
-      const record = getSalesConsumptionById(id);
-      if (record) setSelected(record);
-      else setDetailError(true);
+    setDetailError(null);
+    const cached = items.find((record) => record.id === id);
+    if (cached) {
+      setSelected(cached);
       setDetailLoading(false);
-    }, 250);
+      return;
+    }
+    setSelected(null);
+    setDetailLoading(true);
+    void loadSalesConsumptionById(id).then((record) => {
+      if (currentRequestId !== detailRequestId.current) return;
+      if (record) setSelected(record);
+      else setDetailError({ message: 'This record could not be found. You may not have access to it.', detail: null });
+      setDetailLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== detailRequestId.current) return;
+      console.error('Unable to load the sales consumption record.', loadError);
+      setDetailError(describeOwnerRecordError(loadError));
+      setDetailLoading(false);
+    });
   };
 
   const loadMore = () => {
-    if (loadingMoreRef.current || items.length === 0) return;
-    const mockCount = getSalesConsumptionMockList().length;
-    if (loadedPages * pageSize >= mockCount) return;
+    if (loadingMoreRef.current || !hasMore || items.length === 0) return;
+    const currentRequestId = listRequestId.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    setTimeout(() => {
-      if (getForcedSalesConsumptionState() === 'error') setLoadMoreError(true);
-      else {
-        setItems(getSalesConsumptionMockList().slice(0, (loadedPages + 1) * pageSize));
-        setLoadedPages((value) => value + 1);
-      }
-      setLoadingMore(false);
+    void loadSalesConsumptionPage(items.length).then((page) => {
+      if (currentRequestId !== listRequestId.current) return;
+      setItems((current) => {
+        const known = new Set(current.map((record) => record.id));
+        return [...current, ...page.records.filter((record) => !known.has(record.id))];
+      });
+      setHasMore(page.hasMore);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== listRequestId.current) return;
+      console.error('Unable to load more Sales Consumption records.', loadError);
+      setLoadMoreError(true);
+    }).finally(() => {
       loadingMoreRef.current = false;
-    }, 500);
+      setLoadingMore(false);
+    });
   };
 
   const back = () => {
@@ -152,7 +196,8 @@ export default function SalesConsumptionRecords({
         ) : detailError || !selected ? (
           <View style={styles.errorCenter}>
             <Text style={styles.wifiIcon}>≋</Text>
-            <Text style={styles.errorText}>Unable to load data. Please check your internet connection and try again.</Text>
+            <Text accessibilityRole="alert" style={styles.errorText}>{detailError?.message ?? 'Unable to load this record.'}</Text>
+            {detailError?.detail ? <Text selectable style={styles.errorDetail}>Details: {detailError.detail}</Text> : null}
             <Pressable accessibilityRole="button" onPress={() => openDetails(selectedId || '')} style={styles.retryButton}>
               <Text style={styles.retryIcon}>↻</Text>
               <Text style={styles.retryText}>Retry</Text>
@@ -206,7 +251,8 @@ export default function SalesConsumptionRecords({
       ) : error ? (
         <View style={styles.errorCenter}>
           <Text style={styles.wifiIcon}>≋</Text>
-          <Text style={styles.errorText}>Unable to load data. Please check your internet connection and try again.</Text>
+          <Text accessibilityRole="alert" style={styles.errorText}>{errorInfo?.message ?? 'Unable to load records. Please try again.'}</Text>
+          {errorInfo?.detail ? <Text selectable style={styles.errorDetail}>Details: {errorInfo.detail}</Text> : null}
           <Pressable accessibilityRole="button" onPress={loadFirst} style={styles.retryButton}>
             <Text style={styles.retryIcon}>↻</Text>
             <Text style={styles.retryText}>Retry</Text>
@@ -280,7 +326,8 @@ function useStyles() {
     loadingText: { color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 10, marginTop: 8 },
     errorCenter: { minHeight: 300, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     wifiIcon: { color: theme.colors.salesRecordCrimson, fontFamily: font.bold, fontSize: 32, lineHeight: 36, marginBottom: 10 },
-    errorText: { maxWidth: 220, color: theme.colors.salesRecordNavy, fontFamily: font.regular, fontSize: 11, lineHeight: 16, textAlign: 'center' },
+    errorDetail: { maxWidth: 260, marginTop: 6, color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 9, lineHeight: 13, textAlign: 'center' },
+    errorText: { maxWidth: 260, color: theme.colors.salesRecordNavy, fontFamily: font.regular, fontSize: 11, lineHeight: 16, textAlign: 'center' },
     retryButton: { minWidth: 120, minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.salesRecordCrimson, backgroundColor: theme.colors.background },
     retryIcon: { color: theme.colors.salesRecordCrimson, fontFamily: font.semibold, fontSize: 11, marginRight: 6 },
     retryText: { color: theme.colors.salesRecordCrimson, fontFamily: font.bold, fontSize: 10 },

@@ -1,4 +1,5 @@
 import { requireSupabase } from './supabase';
+import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../../backend/types/database';
 import { filterBranchVisibleMenuVariants } from './menuCatalog';
@@ -25,7 +26,6 @@ import {
   inventoryTransactionLabel,
   type InventoryTransactionLabel,
 } from './transactionLabels';
-import { getApprovedStaffInventoryItem } from '../staff/staffInventoryCatalog.ts';
 import {
   filterStaffSaleHistory,
   filterUnresolvedSales,
@@ -43,7 +43,7 @@ import {
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
-import { OwnerLoginError } from './ownerAuthentication';
+import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
   buildInventoryReportData,
   buildInventoryCountHistoryRecords,
@@ -59,6 +59,7 @@ import {
 import type { RetrySafeInventoryTransaction } from './inventoryTransactionRecovery';
 import { indexBranchInventorySnapshot } from './inventoryCountSnapshot';
 import { isDefinitiveCorrectionRequestRejection } from './inventoryCountCorrectionRecovery';
+import { unitDisplayName } from './inventoryTransactionUnits';
 import {
   PREPARED_BATTER_BATCH_BOTTLES,
   validatePreparedBatterBatch,
@@ -696,6 +697,19 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
   }
   if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
+  // The Edge action is the only path that can tell an unknown email from a wrong
+  // password. If it is not deployed (function answered with an error), fall back
+  // to direct Supabase Auth; if the device is offline or the service does not
+  // answer within 10 seconds, report the approved connection message instead of
+  // waiting for a second request.
+  const directAuthFallback = async () => {
+    try {
+      return await signIn(normalizedEmail, password, 'Owner', client);
+    } catch (error) {
+      if (isOwnerConnectionFailure(error)) throw new OwnerLoginError('connection_failure');
+      throw error;
+    }
+  };
   let result;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -704,18 +718,20 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
         body: { action: 'owner-email-login', email: normalizedEmail, password },
       }),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new Error('Owner email login action timed out.')),
-          10_000,
-        );
+        timeoutHandle = setTimeout(() => reject(new OwnerLoginError('connection_failure')), 10_000);
       }),
     ]);
   } catch {
-    return signIn(normalizedEmail, password, 'Owner', client);
+    throw new OwnerLoginError('connection_failure');
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
-  if (result.error) return signIn(normalizedEmail, password, 'Owner', client);
+  if (result.error) {
+    if ((result.error as { name?: string }).name === 'FunctionsFetchError') {
+      throw new OwnerLoginError('connection_failure');
+    }
+    return directAuthFallback();
+  }
   const data = result.data as {
     ok?: boolean;
     code?: 'email_not_found' | 'incorrect_password' | 'unauthorized_access';
@@ -725,7 +741,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
     if (data?.code === 'email_not_found') throw new OwnerLoginError('email_not_found');
     if (data?.code === 'incorrect_password') throw new OwnerLoginError('incorrect_password');
     if (data?.code === 'unauthorized_access') throw new OwnerLoginError('unauthorized_access');
-    return signIn(normalizedEmail, password, 'Owner', client);
+    return directAuthFallback();
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
     throw new OwnerLoginError('connection_failure');
@@ -954,6 +970,211 @@ export async function loadOwnerSalesData(input: {
       ...item,
       product_name: productNames.get(item.product_id) ?? 'Product unavailable',
     })),
+  };
+}
+
+export type OwnerSalesTransactionBundle = {
+  sales: Array<{
+    id: string;
+    transaction_reference: string;
+    branch_id: string;
+    staff_id: string;
+    total_amount: number | string;
+    payment_method: string;
+    status: string;
+    created_at: string;
+  }>;
+  branches: Array<{ id: string; city: string; code: string }>;
+  profiles: Array<{ id: string; full_name: string | null }>;
+  items: Array<{
+    id: string;
+    sale_id: string;
+    product_id: string;
+    product_variant_id: string | null;
+    quantity: number | string;
+    unit_price: number | string | null;
+    subtotal: number | string;
+  }>;
+  products: Array<{ id: string; product_name: string }>;
+  variants: Array<{ id: string; size_label: string }>;
+  addons: Array<{
+    id: string;
+    sale_id: string;
+    addon_id: string;
+    quantity: number | string;
+    unit_price: number | string;
+    subtotal: number | string;
+  }>;
+  addonNames: Array<{ id: string; addon_name: string }>;
+  /** True when more completed sales exist after this page. */
+  hasMore: boolean;
+};
+
+/**
+ * Reads completed sales with their items and add-ons for the Owner Sales Transaction Records.
+ * RLS (`sales_read_accessible_branches` -> can_access_branch) lets an active Owner read every
+ * active branch; no branch filter is applied here. Errors are thrown, never turned into an
+ * empty list, so the screen can tell "no sales" from "could not load".
+ */
+export async function loadOwnerSalesTransactionBundle(input: {
+  offset?: number;
+  limit?: number;
+  saleId?: string;
+}): Promise<OwnerSalesTransactionBundle> {
+  const client = requireSupabase();
+  const limit = Math.max(1, Math.min(100, input.limit ?? 20));
+  const offset = Math.max(0, input.offset ?? 0);
+
+  let query = client.from('sales')
+    .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at')
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
+  // The list shows completed sales only. Opening one sale by id (for example from a Sales
+  // Consumption record) must resolve whatever its status is.
+  query = input.saleId ? query.eq('id', input.saleId) : query.eq('status', 'completed');
+  const { data: saleRows, error: salesError } = await query.range(offset, offset + limit);
+  assertNoError(salesError);
+  const fetched = saleRows ?? [];
+  const hasMore = fetched.length > limit;
+  const sales = fetched.slice(0, limit);
+  if (sales.length === 0) {
+    return { sales, branches: [], profiles: [], items: [], products: [], variants: [], addons: [], addonNames: [], hasMore: false };
+  }
+
+  const saleIds = sales.map((sale) => sale.id);
+  const branchIds = [...new Set(sales.map((sale) => sale.branch_id))];
+  const staffIds = [...new Set(sales.map((sale) => sale.staff_id))];
+  const [branchResult, profileResult, itemResult, addonResult] = await Promise.all([
+    client.from('branches').select('id, city, code').in('id', branchIds),
+    client.from('profiles').select('id, full_name').in('id', staffIds),
+    client.from('sale_items')
+      .select('id, sale_id, product_id, product_variant_id, quantity, unit_price, subtotal')
+      .in('sale_id', saleIds)
+      .order('id'),
+    client.from('sale_addons')
+      .select('id, sale_id, addon_id, quantity, unit_price, subtotal')
+      .in('sale_id', saleIds)
+      .order('id'),
+  ]);
+  assertNoError(branchResult.error);
+  assertNoError(profileResult.error);
+  assertNoError(itemResult.error);
+  assertNoError(addonResult.error);
+
+  const items = itemResult.data ?? [];
+  const addons = addonResult.data ?? [];
+  const productIds = [...new Set(items.map((item) => item.product_id))];
+  const variantIds = [...new Set(items.flatMap((item) => item.product_variant_id ? [item.product_variant_id] : []))];
+  const addonIds = [...new Set(addons.map((addon) => addon.addon_id))];
+  const [productResult, variantResult, addonNameResult] = await Promise.all([
+    productIds.length
+      ? client.from('products').select('id, product_name').in('id', productIds)
+      : Promise.resolve({ data: [], error: null }),
+    variantIds.length
+      ? client.from('product_variants').select('id, size_label').in('id', variantIds)
+      : Promise.resolve({ data: [], error: null }),
+    addonIds.length
+      ? client.from('menu_addons').select('id, addon_name').in('id', addonIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  assertNoError(productResult.error);
+  assertNoError(variantResult.error);
+  assertNoError(addonNameResult.error);
+
+  return {
+    sales,
+    branches: branchResult.data ?? [],
+    profiles: profileResult.data ?? [],
+    items,
+    products: productResult.data ?? [],
+    variants: variantResult.data ?? [],
+    addons,
+    addonNames: addonNameResult.data ?? [],
+    hasMore,
+  };
+}
+
+export type OwnerSalesConsumptionBundle = {
+  movements: Array<{
+    id: string;
+    reference: string;
+    branch_id: string;
+    ingredient_id: string;
+    actor_id: string;
+    quantity: number | string;
+    unit: string;
+    transaction_date: string;
+    created_at: string;
+    sale_id: string | null;
+  }>;
+  ingredients: Array<{ id: string; name: string }>;
+  branches: Array<{ id: string; city: string; code: string }>;
+  profiles: Array<{ id: string; full_name: string | null }>;
+  sales: Array<{
+    id: string;
+    transaction_reference: string;
+    status: string;
+    inventory_processing_status: string;
+  }>;
+  /** True when more records exist after this page. */
+  hasMore: boolean;
+};
+
+/**
+ * Reads sales-consumption inventory movements (`inventory_movements.type = 'sales_consumption'`,
+ * which always carry the `sale_id` that consumed the stock) with the ingredient, branch, actor
+ * and linked sale. RLS (`transactions_read_branch` -> can_access_branch) lets an active Owner
+ * read every active branch. Errors are thrown, never turned into an empty list.
+ */
+export async function loadOwnerSalesConsumptionBundle(input: {
+  offset?: number;
+  limit?: number;
+  recordId?: string;
+}): Promise<OwnerSalesConsumptionBundle> {
+  const client = requireSupabase();
+  const limit = Math.max(1, Math.min(100, input.limit ?? 20));
+  const offset = Math.max(0, input.offset ?? 0);
+
+  let query = client.from('inventory_movements')
+    .select('id, reference, branch_id, ingredient_id, actor_id, quantity, unit, transaction_date, created_at, sale_id')
+    .eq('type', 'sales_consumption')
+    .not('sale_id', 'is', null)
+    .order('transaction_date', { ascending: false })
+    .order('id', { ascending: false });
+  if (input.recordId) query = query.eq('id', input.recordId);
+  const { data: rows, error } = await query.range(offset, offset + limit);
+  assertNoError(error);
+  const fetched = rows ?? [];
+  const hasMore = fetched.length > limit;
+  const movements = fetched.slice(0, limit);
+  if (movements.length === 0) {
+    return { movements, ingredients: [], branches: [], profiles: [], sales: [], hasMore: false };
+  }
+
+  const ingredientIds = [...new Set(movements.map((movement) => movement.ingredient_id))];
+  const branchIds = [...new Set(movements.map((movement) => movement.branch_id))];
+  const actorIds = [...new Set(movements.map((movement) => movement.actor_id))];
+  const saleIds = [...new Set(movements.flatMap((movement) => movement.sale_id ? [movement.sale_id] : []))];
+  const [ingredientResult, branchResult, profileResult, saleResult] = await Promise.all([
+    client.from('ingredients').select('id, name').in('id', ingredientIds),
+    client.from('branches').select('id, city, code').in('id', branchIds),
+    client.from('profiles').select('id, full_name').in('id', actorIds),
+    saleIds.length
+      ? client.from('sales').select('id, transaction_reference, status, inventory_processing_status').in('id', saleIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  assertNoError(ingredientResult.error);
+  assertNoError(branchResult.error);
+  assertNoError(profileResult.error);
+  assertNoError(saleResult.error);
+
+  return {
+    movements,
+    ingredients: ingredientResult.data ?? [],
+    branches: branchResult.data ?? [],
+    profiles: profileResult.data ?? [],
+    sales: saleResult.data ?? [],
+    hasMore,
   };
 }
 
@@ -1187,17 +1408,15 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
     const packageSize = packageSizes.get(ingredient.id);
-    const approvedItem = getApprovedStaffInventoryItem(
-      ingredient.id,
-      ingredient.name,
-      categories.get(ingredient.category_id) ?? 'Other',
-    );
-    if (!approvedItem) return [];
+    if (!ingredient.active) return [];
 
-    const approvedName = approvedItem.name;
-    const approvedCategory = approvedItem.category;
-    const approvedUnit = approvedItem.unit;
-    const isPreparedBatter = approvedItem.id === 'prepared-batter';
+    // The database is the source of truth for the name, category and unit. Only the
+    // prepared batter is presented in millilitres (1 bottle = 680 ml) on top of its
+    // stored bottle quantity.
+    const approvedName = ingredient.name;
+    const approvedCategory = categories.get(ingredient.category_id) ?? 'Other';
+    const isPreparedBatter = ingredient.id === 'prepared-batter' && ingredient.unit === 'bottle';
+    const approvedUnit = isPreparedBatter ? 'ml' : ingredient.unit;
     const displayQuantity = isPreparedBatter ? quantity * 680 : quantity;
     const displayMinimumStock = isPreparedBatter ? minimumStock * 680 : minimumStock;
     const displayQuantityPrecision = isPreparedBatter ? 0 : ingredient.quantity_precision;
@@ -1218,15 +1437,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       expirationStatus,
       minimumStock: displayMinimumStock,
       type: visual.type,
-      unitName: approvedUnit === 'g'
-          ? 'Grams (g)'
-        : approvedUnit === 'pcs'
-          ? 'Pieces (pcs)'
-          : approvedUnit === 'ml'
-            ? 'Milliliters (ml)'
-          : approvedUnit === 'L'
-            ? 'Liters (L)'
-            : `${ingredient.unit} (${ingredient.unit})`,
+      unitName: unitDisplayName(approvedUnit),
       receivedBatch: firstBatch
         ? `${firstBatch.batch_reference} · ${formatDate(firstBatch.received_date)}`
         : 'No active batch',
@@ -1324,16 +1535,14 @@ export async function loadStaffInventoryReports(
   const quantityPrecisionById = new Map(inventory.items.map((item) => [item.id, item.quantityPrecision]));
   const unavailableIngredientIds = [...new Set(lines
     .map((line) => line.ingredient_id)
-    .filter((id) => !itemNameById.has(id) && getApprovedStaffInventoryItem(id, '', '') !== null))];
+    .filter((id) => !itemNameById.has(id)))];
   for (let offset = 0; offset < unavailableIngredientIds.length; offset += pageSize) {
     const { data, error } = await client.from('ingredients')
       .select('id, name, quantity_precision')
       .in('id', unavailableIngredientIds.slice(offset, offset + pageSize));
     assertNoError(error);
     for (const ingredient of data ?? []) {
-      const approved = getApprovedStaffInventoryItem(ingredient.id, ingredient.name, '');
-      if (!approved) continue;
-      itemNameById.set(ingredient.id, approved.name);
+      itemNameById.set(ingredient.id, ingredient.name);
       quantityPrecisionById.set(ingredient.id, ingredient.quantity_precision);
     }
   }
@@ -1410,7 +1619,13 @@ export async function recordInventoryTransactionsIdempotently(
     p_request_id: requestId,
     p_transactions: payload,
   });
-  assertNoError(error);
+  if (error) {
+    // Keep the Postgres error code so callers can tell a definitive rejection (nothing
+    // saved) from an unknown outcome such as a network failure.
+    const failure = new Error(error.message) as Error & { code?: string };
+    failure.code = (error as { code?: string }).code;
+    throw failure;
+  }
   if (!data || data.length !== transactions.length) {
     throw new Error('The saved inventory transaction response was incomplete.');
   }
@@ -2005,6 +2220,20 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   };
 }
 
+/**
+ * Reserves the next unique, server-generated batter batch reference so it can be
+ * shown before confirmation. The same reference is then reused for every retry of
+ * the same preparation, which keeps the RPC idempotent (no double deduction).
+ */
+export async function reserveBatterBatchReference(client?: StaffServiceClient): Promise<string> {
+  const { data, error } = await staffServiceClient(client).rpc('next_batter_batch_reference');
+  assertNoError(error);
+  if (typeof data !== 'string' || !data.trim()) {
+    throw new Error('The server did not return a batch reference.');
+  }
+  return data.trim();
+}
+
 export async function prepareBatterBatch(
   branchId: string,
   batchReference?: string,
@@ -2026,6 +2255,12 @@ export async function prepareBatterBatch(
   });
   assertNoError(error);
   return validatePreparedBatterBatch(data);
+}
+
+export const SALE_SAVE_CONNECTION_MESSAGE = 'Unable to save. Please check your internet connection and try again.';
+
+export function isNetworkFailureMessage(message: string | undefined): boolean {
+  return /failed to fetch|network request failed|networkerror|fetch failed|load failed|no internet|offline/i.test(message ?? '');
 }
 
 export async function submitSale(input: SaleSubmission, client?: StaffServiceClient): Promise<OwnerSale> {
@@ -2055,11 +2290,14 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     if (message.includes('belongs to another branch')) {
       throw new SaleSubmissionRejectedError('This transaction reference belongs to a different branch.');
     }
-    if (message.includes('exceeds available stock')) {
+    if (message.includes('exceeds available stock') || message.includes('insufficient stock')) {
       throw new SaleSubmissionRejectedError('Insufficient inventory to complete this sale.');
     }
     if (message.includes('unavailable for this branch')) {
       throw new SaleSubmissionRejectedError('One of the selected products is no longer available.');
+    }
+    if (isNetworkFailureMessage(error.message)) {
+      throw new Error(SALE_SAVE_CONNECTION_MESSAGE);
     }
     throw new Error('Checkout status could not be confirmed. Your cart is preserved; retry the same checkout to safely confirm its status.');
   }
@@ -2488,7 +2726,7 @@ export async function loadOwnerInventory() {
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     batches,
-    nearExpirationDays: settingsResult.data?.near_expiration_days ?? 7,
+    nearExpirationDays: settingsResult.data?.near_expiration_days ?? NEAR_EXPIRATION_DEFAULT_DAYS,
   };
 }
 

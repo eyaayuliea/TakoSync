@@ -21,6 +21,7 @@ import {
   type PhysicalCountRecord,
   type PhysicalCountResult,
 } from './physicalCountRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -49,6 +50,7 @@ export default function PhysicalCountRecordsScreen({
   const [view, setView] = useState<'list' | 'details'>('list');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [records, setRecords] = useState<PhysicalCountRecord[]>([]);
   const [selected, setSelected] = useState<PhysicalCountRecord | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -58,14 +60,17 @@ export default function PhysicalCountRecordsScreen({
     const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
+    setErrorInfo(null);
     setRecords([]);
     if (inventoryLoading) return;
     if (inventoryError) {
+      setErrorInfo(describeOwnerRecordError(inventoryError));
       setError(true);
       setLoading(false);
       return;
     }
     if (branches.length === 0) {
+      setErrorInfo({ message: 'No active branches were returned, so Physical Count records cannot be loaded.', detail: null });
       setError(true);
       setLoading(false);
       onRefresh();
@@ -79,6 +84,7 @@ export default function PhysicalCountRecordsScreen({
     }).catch((loadError: unknown) => {
       if (currentRequestId !== requestId.current) return;
       console.error('Unable to load Physical Count records.', loadError);
+      setErrorInfo(describeOwnerRecordError(loadError));
       setError(true);
       setLoading(false);
     });
@@ -180,7 +186,7 @@ export default function PhysicalCountRecordsScreen({
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={() => inventoryError || branches.length === 0 ? onRefresh() : loadRecords()} />
+        <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={() => inventoryError || branches.length === 0 ? onRefresh() : loadRecords()} />
       ) : records.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (
