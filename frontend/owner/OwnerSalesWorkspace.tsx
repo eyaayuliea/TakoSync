@@ -29,10 +29,28 @@ import {
 } from './ownerSalesSummary';
 import {
   getOwnerSalesDateRange,
+  getOwnerSalesMonitoringRange,
   type OwnerSalesDateRange,
   type OwnerSalesPeriod,
 } from './ownerSalesPeriod';
 import { manilaDateKey } from '../services/businessDaySettings';
+import {
+  anchorForRange,
+  initialOwnerSalesView,
+  isDateKey,
+  isFutureDateKey,
+  isFutureMonth,
+  monthKeyBounds,
+  ownerSalesDayLabel,
+  ownerSalesMonthLabel,
+  ownerSalesMonthOf,
+  ownerSalesPeriodSelection,
+  ownerSalesRangeLabel,
+  ownerSalesWeekOption,
+  recentOwnerSalesWeeks,
+  type OwnerSalesTabPeriod,
+} from './ownerSalesCalendar';
+import { describeOwnerSalesError } from './ownerSalesError';
 import { refreshOwnerMonitoring } from './ownerSalesRefresh';
 import {
   evaluateOwnerSalesSnapshot,
@@ -44,8 +62,6 @@ import { isSupabaseConfigured } from '../services/supabase';
 import { DAILY_SALES_THEME } from './dailySalesTheme';
 import { ownerColors } from './shared/ownerTokens';
 import {
-  DAILY_SALES_SAMPLE_DATE,
-  WEEKLY_SALES_LABEL,
   getDailySalesSampleData,
   getForcedDailySalesState,
   getWeeklySalesSampleData,
@@ -274,11 +290,16 @@ export default function OwnerSalesWorkspace({
   const detailLeftWidth = wide ? contentWidth * 0.62 - 8 : twoColumnWidth;
   const detailRightWidth = wide ? contentWidth * 0.38 - 8 : twoColumnWidth;
   const today = manilaDateKey(new Date());
-  const [period, setPeriod] = useState<Period>(mode === 'monitoring' ? 'Daily' : initialPeriod);
+  // The Summary opens on the period the dashboard handed over, anchored on the real current
+  // (Manila) date. Nothing about the selection is hardcoded.
+  const [openingView] = useState(() => initialOwnerSalesView(initialPeriod, today, initialStartDate, initialEndDate));
+  const [period, setPeriod] = useState<Period>(mode === 'monitoring' ? openingView.period : initialPeriod);
   const [fromText, setFromText] = useState(() => mode === 'monitoring'
-    ? DAILY_SALES_SAMPLE_DATE
+    ? openingView.fromText
     : (initialStartDate ?? `${today.slice(0, 7)}-01`));
-  const [toText, setToText] = useState(() => initialEndDate ?? today);
+  const [toText, setToText] = useState(() => mode === 'monitoring' ? openingView.toText : (initialEndDate ?? today));
+  // The day the owner last picked. Daily/Weekly/Monthly are all derived from it.
+  const [anchorDate, setAnchorDate] = useState(openingView.anchor);
   const [branchId, setBranchId] = useState<string | null>(initialBranchId);
   const [reportTitle, setReportTitle] = useState('Sales performance report');
   const [liveData, setLiveData] = useState<OwnerSalesData | null>(null);
@@ -305,7 +326,7 @@ export default function OwnerSalesWorkspace({
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [weekPickerVisible, setWeekPickerVisible] = useState(false);
   const [monthPickerVisible, setMonthPickerVisible] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState({ year: 2026, month: 10 });
+  const [monthPickerYear, setMonthPickerYear] = useState(() => ownerSalesMonthOf(openingView.anchor).year);
   const [branchPickerVisible, setBranchPickerVisible] = useState(false);
   const [branchSubTab, setBranchSubTab] = useState<'Daily' | 'Weekly' | 'Monthly'>('Daily');
   const [productSubTab, setProductSubTab] = useState<'Daily' | 'Weekly' | 'Monthly'>('Daily');
@@ -314,22 +335,18 @@ export default function OwnerSalesWorkspace({
   const salesTabScrollRef = useRef<ScrollView>(null);
   // The selection the parent's `initialData` snapshot belongs to (see evaluateOwnerSalesSnapshot).
   const initialSnapshotRef = useRef<OwnerSalesSnapshotTracker>(null);
-  const [selectedWeek, setSelectedWeek] = useState({
-    dropdownLabel: '9–15 Nov 2026',
-    sheetLabel: '9 – 15 Nov 2026',
-    start: '2026-11-09',
-    end: '2026-11-15',
-  });
+  const selectedMonth = ownerSalesMonthOf(anchorDate);
+  const selectedWeek = ownerSalesWeekOption(anchorDate, today);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [calendarCursor, setCalendarCursor] = useState(() => {
-    if (mode === 'monitoring') return new Date(2026, 10, 1);
+    if (mode === 'monitoring') return new Date(`${openingView.anchor}T12:00:00`);
     const initialDate = initialStartDate && /^\d{4}-\d{2}-\d{2}$/.test(initialStartDate)
       ? new Date(`${initialStartDate}T12:00:00`)
       : new Date();
     return new Date(initialDate.getFullYear(), initialDate.getMonth(), 1);
   });
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(mode === 'monitoring'
-    ? DAILY_SALES_SAMPLE_DATE
+    ? openingView.anchor
     : (initialStartDate ?? today));
   const compact = availableWidth < 620;
   const shimmerOpacity = useRef(new Animated.Value(0.55)).current;
@@ -357,36 +374,17 @@ export default function OwnerSalesWorkspace({
 
   useEffect(() => {
     if (mode === 'monitoring') {
+      const view = initialOwnerSalesView(initialPeriod, manilaDateKey(new Date()), initialStartDate, initialEndDate);
       setBranchId(initialBranchId);
-      if (initialPeriod === 'Monthly') {
-        setActiveSalesTab('Monthly');
-        setPeriod('Monthly');
-        setSelectedMonth({ year: 2026, month: 10 });
-        setFromText('2026-11-01');
-        setToText('2026-11-30');
-        initialSnapshotRef.current = {
-          key: ownerSalesSelectionKey({ period: 'Monthly', branchId: initialBranchId, fromText: '2026-11-01', toText: '2026-11-30' }),
-          reached: false,
-        };
-      } else if (initialPeriod === 'Weekly') {
-        setActiveSalesTab('Weekly');
-        setPeriod('Weekly');
-        setFromText(selectedWeek.start);
-        setToText(selectedWeek.end);
-        initialSnapshotRef.current = {
-          key: ownerSalesSelectionKey({ period: 'Weekly', branchId: initialBranchId, fromText: selectedWeek.start, toText: selectedWeek.end }),
-          reached: false,
-        };
-      } else {
-        setActiveSalesTab('Daily');
-        setPeriod('Daily');
-        setFromText(DAILY_SALES_SAMPLE_DATE);
-        setToText(DAILY_SALES_SAMPLE_DATE);
-        initialSnapshotRef.current = {
-          key: ownerSalesSelectionKey({ period: 'Daily', branchId: initialBranchId, fromText: DAILY_SALES_SAMPLE_DATE, toText: DAILY_SALES_SAMPLE_DATE }),
-          reached: false,
-        };
-      }
+      setActiveSalesTab(view.period === 'Weekly' ? 'Weekly' : view.period === 'Monthly' ? 'Monthly' : 'Daily');
+      setPeriod(view.period);
+      setAnchorDate(view.anchor);
+      setFromText(view.fromText);
+      setToText(view.toText);
+      initialSnapshotRef.current = {
+        key: ownerSalesSelectionKey({ period: view.period, branchId: initialBranchId, fromText: view.fromText, toText: view.toText }),
+        reached: false,
+      };
       return;
     }
     const selection = resolveOwnerSalesSelection({
@@ -408,17 +406,39 @@ export default function OwnerSalesWorkspace({
     );
   };
 
+  // Apply a Daily/Weekly/Monthly view for the given anchor day. Changing any of these changes the
+  // fetch key (period + dates), so the data effect refetches with the branch filter unchanged.
+  const applyView = (nextPeriod: OwnerSalesTabPeriod, nextAnchor: string) => {
+    const selection = ownerSalesPeriodSelection(nextPeriod, nextAnchor);
+    setAnchorDate(nextAnchor);
+    setPeriod(nextPeriod);
+    setFromText(selection.fromText);
+    setToText(selection.toText);
+  };
+  // Switching tabs keeps the day the owner picked when it still falls inside the new period.
+  const switchView = (nextPeriod: OwnerSalesTabPeriod) => {
+    const target = ownerSalesPeriodSelection(nextPeriod, anchorDate);
+    applyView(nextPeriod, anchorForRange(anchorDate, { start: target.fromText, end: target.toText }, today));
+  };
+
   const activeBranchId = mode === 'reports' && reportData ? reportBranchId : branchId;
+  const rangeForSelection = mode === 'monitoring' ? getOwnerSalesMonitoringRange : getOwnerSalesDateRange;
   const range = mode === 'reports' && reportData
     ? reportRange
-    : getOwnerSalesDateRange(period, fromText, toText);
+    : rangeForSelection(period, fromText, toText);
   const matchesInitialCustomRange = period !== 'Custom' ||
     (fromText === initialStartDate && toText === initialEndDate);
 
   useEffect(() => {
     if (mode !== 'monitoring') return undefined;
     const forcedState = getForcedDailySalesState();
-    if (forcedState || !isSupabaseConfigured) {
+    if (!forcedState && !isSupabaseConfigured) {
+      setLiveData(null);
+      setLoading(false);
+      setError('Unable to load data. Supabase is not configured for this build.');
+      return undefined;
+    }
+    if (forcedState) {
       if (forcedState === 'error') {
         setLiveData(null);
         setLoading(false);
@@ -464,7 +484,7 @@ export default function OwnerSalesWorkspace({
     if (
       initialData &&
       snapshot.reuse &&
-      period === initialPeriod &&
+      (period === initialPeriod || (period === 'Daily' && initialPeriod === 'Today')) &&
       branchId === initialBranchId &&
       matchesInitialCustomRange &&
       retry === 0
@@ -474,9 +494,10 @@ export default function OwnerSalesWorkspace({
       setError('');
       return undefined;
     }
-    const requestedRange = getOwnerSalesDateRange(period, fromText, toText);
+    const requestedRange = getOwnerSalesMonitoringRange(period, fromText, toText);
     if (!requestedRange) {
       setLiveData(null);
+      setLoading(false);
       setError('Enter valid start and end dates. The end date must not be before the start date.');
       return undefined;
     }
@@ -737,42 +758,27 @@ export default function OwnerSalesWorkspace({
   );
 
   if (mode === 'monitoring') {
-    const selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(fromText)
-      ? new Date(`${fromText}T12:00:00`)
-      : new Date();
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const salesErrorInfo = describeOwnerSalesError(error);
+    const dailyLabel = period === 'Custom'
+      ? ownerSalesRangeLabel(fromText, toText)
+      : ownerSalesDayLabel(isDateKey(fromText) ? fromText : today);
     const dateLabel = activeSalesTab === 'Branch'
       ? branchSubTab === 'Weekly'
         ? selectedWeek.dropdownLabel
         : branchSubTab === 'Monthly'
-          ? `${monthNames[selectedMonth.month]} ${selectedMonth.year}`
-          : selectedDate.toLocaleDateString('en-PH', {
-              weekday: 'short',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-            })
+          ? ownerSalesMonthLabel(anchorDate)
+          : dailyLabel
       : activeSalesTab === 'Products'
         ? productSubTab === 'Weekly'
           ? selectedWeek.dropdownLabel
           : productSubTab === 'Monthly'
-            ? `${monthNames[selectedMonth.month]} ${selectedMonth.year}`
-            : selectedDate.toLocaleDateString('en-PH', {
-                weekday: 'short',
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-              })
+            ? ownerSalesMonthLabel(anchorDate)
+            : dailyLabel
       : activeSalesTab === 'Weekly'
         ? selectedWeek.dropdownLabel
         : activeSalesTab === 'Monthly'
-          ? `${monthNames[selectedMonth.month]} ${selectedMonth.year}`
-          : selectedDate.toLocaleDateString('en-PH', {
-              weekday: 'short',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-            });
+          ? ownerSalesMonthLabel(anchorDate)
+          : dailyLabel;
     const branchLabel = branches.find((branch) => branch.id === branchId)?.name ?? 'All branches';
     const orderedBranches = branches
       .filter((branch) => /^Branch [123]$/.test(branch.name))
@@ -1014,36 +1020,17 @@ export default function OwnerSalesWorkspace({
               disabled={loading}
               onPress={() => {
                 setActiveSalesTab(tab);
-                if (tab === 'Daily') {
-                  setPeriod('Daily');
-                  setFromText(DAILY_SALES_SAMPLE_DATE);
-                  setToText(DAILY_SALES_SAMPLE_DATE);
-                }
-                if (tab === 'Weekly') {
-                  setPeriod('Weekly');
-                  setFromText(selectedWeek.start);
-                  setToText(selectedWeek.end);
-                }
-                if (tab === 'Monthly') {
-                  setPeriod('Monthly');
-                  setSelectedMonth({ year: 2026, month: 10 });
-                  setFromText('2026-11-01');
-                  setToText('2026-11-30');
-                }
+                if (tab === 'Daily' || tab === 'Weekly' || tab === 'Monthly') switchView(tab);
                 if (tab === 'Branch') {
                   setBranchSubTab('Daily');
                   setBranchId(null);
-                  setPeriod('Daily');
-                  setFromText(DAILY_SALES_SAMPLE_DATE);
-                  setToText(DAILY_SALES_SAMPLE_DATE);
+                  switchView('Daily');
                 }
                 if (tab === 'Products') {
                   setProductSubTab('Daily');
                   setBranchId(null);
                   setProductSortDescending(true);
-                  setPeriod('Daily');
-                  setFromText(DAILY_SALES_SAMPLE_DATE);
-                  setToText(DAILY_SALES_SAMPLE_DATE);
+                  switchView('Daily');
                 }
               }}
               style={[
@@ -1068,19 +1055,7 @@ export default function OwnerSalesWorkspace({
                   disabled={loading}
                   onPress={() => {
                     setBranchSubTab(subTab);
-                    if (subTab === 'Daily') {
-                      setPeriod('Daily');
-                      setFromText(DAILY_SALES_SAMPLE_DATE);
-                      setToText(DAILY_SALES_SAMPLE_DATE);
-                    } else if (subTab === 'Weekly') {
-                      setPeriod('Weekly');
-                      setFromText(selectedWeek.start);
-                      setToText(selectedWeek.end);
-                    } else {
-                      setPeriod('Monthly');
-                      setFromText('2026-11-01');
-                      setToText('2026-11-30');
-                    }
+                    switchView(subTab);
                   }}
                   style={[styles.omBranchSubTab, branchSubTab === subTab && styles.omBranchSubTabSelected]}
                 >
@@ -1102,19 +1077,7 @@ export default function OwnerSalesWorkspace({
                   disabled={loading}
                   onPress={() => {
                     setProductSubTab(subTab);
-                    if (subTab === 'Daily') {
-                      setPeriod('Daily');
-                      setFromText(DAILY_SALES_SAMPLE_DATE);
-                      setToText(DAILY_SALES_SAMPLE_DATE);
-                    } else if (subTab === 'Weekly') {
-                      setPeriod('Weekly');
-                      setFromText(selectedWeek.start);
-                      setToText(selectedWeek.end);
-                    } else {
-                      setPeriod('Monthly');
-                      setFromText('2026-11-01');
-                      setToText('2026-11-30');
-                    }
+                    switchView(subTab);
                   }}
                   style={[styles.omBranchSubTab, productSubTab === subTab && styles.omBranchSubTabSelected]}
                 >
@@ -1141,13 +1104,12 @@ export default function OwnerSalesWorkspace({
                 return;
               }
               if (activeDateMode === 'Monthly') {
+                setMonthPickerYear(selectedMonth.year);
                 setMonthPickerVisible(true);
                 return;
               }
-              setCalendarSelectedDate(fromText);
-              if (/^\d{4}-\d{2}-\d{2}$/.test(fromText)) {
-                setCalendarCursor(new Date(`${fromText}T12:00:00`));
-              }
+              setCalendarSelectedDate(anchorDate);
+              setCalendarCursor(new Date(`${anchorDate}T12:00:00`));
               setDatePickerVisible(true);
             }}
             style={styles.omDateSelector}
@@ -1196,11 +1158,14 @@ export default function OwnerSalesWorkspace({
         ) : error ? (
           <View style={styles.omErrorCenter}>
             <Text style={styles.omWifiOffIcon}>≋</Text>
-            <Text style={styles.omErrorText}>Unable to load data. Please check your internet connection and try again.</Text>
-            <Pressable accessibilityRole="button" onPress={refreshMonitoring} style={styles.omRetryButton}>
-              <Text style={styles.omRetryIcon}>↻</Text>
-              <Text style={styles.omRetryText}>Retry</Text>
-            </Pressable>
+            <Text accessibilityRole="alert" style={styles.omErrorText}>{salesErrorInfo.message}</Text>
+            {salesErrorInfo.detail ? <Text selectable style={styles.omErrorDetail}>Details: {salesErrorInfo.detail}</Text> : null}
+            {salesErrorInfo.kind === 'load' ? (
+              <Pressable accessibilityRole="button" onPress={refreshMonitoring} style={styles.omRetryButton}>
+                <Text style={styles.omRetryIcon}>↻</Text>
+                <Text style={styles.omRetryText}>Retry</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : (
           <>
@@ -1357,15 +1322,7 @@ export default function OwnerSalesWorkspace({
                   if (!day) return <View key={`blank-${index}`} style={styles.omCalendarDay} />;
                   const value = dateInputValue(day);
                   const selected = calendarSelectedDate === value;
-                  const referenceCutoff = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-12`;
-                  const disabled = calendarYear === 2026 && calendarMonth === 10
-                    ? value > referenceCutoff
-                    : (() => {
-                        const current = new Date(`${value}T23:59:59`);
-                        const now = new Date();
-                        now.setHours(23, 59, 59, 999);
-                        return current > now;
-                      })();
+                  const disabled = isFutureDateKey(value, today);
                   return (
                     <Pressable
                       key={value}
@@ -1387,9 +1344,8 @@ export default function OwnerSalesWorkspace({
               <Pressable
                 accessibilityRole="button"
                 onPress={() => {
-                  setFromText(calendarSelectedDate);
-                  setToText(calendarSelectedDate);
-                  setPeriod('Daily');
+                  if (!isDateKey(calendarSelectedDate) || isFutureDateKey(calendarSelectedDate, today)) return;
+                  applyView('Daily', calendarSelectedDate);
                   if (activeSalesTab === 'Products') {
                     setProductSubTab('Daily');
                   } else {
@@ -1423,27 +1379,27 @@ export default function OwnerSalesWorkspace({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Previous year"
-                  onPress={() => setSelectedMonth((current) => ({ ...current, year: current.year - 1 }))}
+                  onPress={() => setMonthPickerYear((current) => current - 1)}
                   style={styles.omMonthArrow}
                 >
                   <Text style={styles.omMonthArrowText}>‹</Text>
                 </Pressable>
-                <Text style={styles.omMonthYear}>{selectedMonth.year}</Text>
+                <Text style={styles.omMonthYear}>{monthPickerYear}</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Next year"
-                  accessibilityState={{ disabled: selectedMonth.year >= 2026 }}
-                  disabled={selectedMonth.year >= 2026}
-                  onPress={() => setSelectedMonth((current) => ({ ...current, year: current.year + 1 }))}
-                  style={[styles.omMonthArrow, selectedMonth.year >= 2026 && styles.omMonthArrowDisabled]}
+                  accessibilityState={{ disabled: monthPickerYear >= Number(today.slice(0, 4)) }}
+                  disabled={monthPickerYear >= Number(today.slice(0, 4))}
+                  onPress={() => setMonthPickerYear((current) => current + 1)}
+                  style={[styles.omMonthArrow, monthPickerYear >= Number(today.slice(0, 4)) && styles.omMonthArrowDisabled]}
                 >
                   <Text style={styles.omMonthArrowText}>›</Text>
                 </Pressable>
               </View>
               <View style={styles.omMonthGrid}>
                 {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((monthName, monthIndex) => {
-                  const selected = selectedMonth.year === (selectedMonth.year) && selectedMonth.month === monthIndex;
-                  const disabled = selectedMonth.year === 2026 && monthIndex > 10;
+                  const selected = selectedMonth.year === monthPickerYear && selectedMonth.month === monthIndex;
+                  const disabled = isFutureMonth(monthPickerYear, monthIndex, today);
                   return (
                     <Pressable
                       key={monthName}
@@ -1451,13 +1407,8 @@ export default function OwnerSalesWorkspace({
                       accessibilityState={{ selected, disabled }}
                       disabled={disabled}
                       onPress={() => {
-                        const year = selectedMonth.year;
-                        const monthNumber = monthIndex + 1;
-                        const lastDay = new Date(year, monthNumber, 0).getDate();
-                        setSelectedMonth({ year, month: monthIndex });
-                        setFromText(`${year}-${String(monthNumber).padStart(2, '0')}-01`);
-                        setToText(`${year}-${String(monthNumber).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`);
-                        setPeriod('Monthly');
+                        const bounds = monthKeyBounds(monthPickerYear, monthIndex);
+                        applyView('Monthly', anchorForRange(anchorDate, bounds, today));
                         if (activeSalesTab === 'Products') {
                           setProductSubTab('Monthly');
                         } else {
@@ -1499,13 +1450,7 @@ export default function OwnerSalesWorkspace({
             <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omWeekSheet, { width: sheetWidth }]}>
               <View style={styles.omSheetHandle} />
               <Text style={styles.omBranchSheetTitle}>Select week</Text>
-              {([
-                { dropdownLabel: '9–15 Nov 2026', sheetLabel: '9 – 15 Nov 2026', start: '2026-11-09', end: '2026-11-15', current: true },
-                { dropdownLabel: '2–8 Nov 2026', sheetLabel: '2 – 8 Nov 2026', start: '2026-11-02', end: '2026-11-08', current: false },
-                { dropdownLabel: '26 Oct–1 Nov 2026', sheetLabel: '26 Oct – 1 Nov 2026', start: '2026-10-26', end: '2026-11-01', current: false },
-                { dropdownLabel: '19–25 Oct 2026', sheetLabel: '19 – 25 Oct 2026', start: '2026-10-19', end: '2026-10-25', current: false },
-                { dropdownLabel: '12–18 Oct 2026', sheetLabel: '12 – 18 Oct 2026', start: '2026-10-12', end: '2026-10-18', current: false },
-              ] as const).map((week) => {
+              {recentOwnerSalesWeeks(today).map((week) => {
                 const selected = selectedWeek.start === week.start;
                 return (
                   <Pressable
@@ -1513,15 +1458,7 @@ export default function OwnerSalesWorkspace({
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
                     onPress={() => {
-                      setSelectedWeek({
-                        dropdownLabel: week.dropdownLabel,
-                        sheetLabel: week.sheetLabel,
-                        start: week.start,
-                        end: week.end,
-                      });
-                      setFromText(week.start);
-                      setToText(week.end);
-                      setPeriod('Weekly');
+                      applyView('Weekly', anchorForRange(anchorDate, { start: week.start, end: week.end }, today));
                       if (activeSalesTab === 'Products') {
                         setProductSubTab('Weekly');
                       } else {
@@ -1564,7 +1501,13 @@ export default function OwnerSalesWorkspace({
                     accessibilityState={{ selected }}
                     onPress={() => {
                       changeBranch(branch.id);
-                      if (activeSalesTab !== 'Products') setActiveSalesTab('Branch');
+                      if (activeSalesTab !== 'Products') {
+                        // Keep the Branch sub-tab in step with the period that is actually loaded.
+                        if (activeSalesTab !== 'Branch') {
+                          setBranchSubTab(period === 'Weekly' ? 'Weekly' : period === 'Monthly' ? 'Monthly' : 'Daily');
+                        }
+                        setActiveSalesTab('Branch');
+                      }
                       setBranchPickerVisible(false);
                     }}
                     style={[styles.omBranchOption, selected && styles.omBranchOptionSelected]}
@@ -2079,7 +2022,8 @@ function useStyles() {
     omErrorCard: { minHeight: 112, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginBottom: 14, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#EEEEF1' },
     omErrorCenter: { minHeight: 300, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     omWifiOffIcon: { color: '#EC1358', fontFamily: 'Poppins_700Bold', fontSize: 32, lineHeight: 36, marginBottom: 10 },
-    omErrorText: { maxWidth: 220, color: '#343440', fontFamily: 'Poppins_400Regular', fontSize: 11, lineHeight: 16, textAlign: 'center' },
+    omErrorDetail: { maxWidth: 260, marginTop: 6, color: '#6B6B76', fontFamily: 'Poppins_400Regular', fontSize: 10, lineHeight: 14, textAlign: 'center' },
+    omErrorText: { maxWidth: 260, color: '#343440', fontFamily: 'Poppins_400Regular', fontSize: 11, lineHeight: 16, textAlign: 'center' },
     omRetryButton: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12, borderRadius: 8, borderWidth: 1, borderColor: '#EC1358', backgroundColor: '#FFFFFF' },
     omRetryIcon: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 11, marginRight: 6 },
     omRetryText: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
