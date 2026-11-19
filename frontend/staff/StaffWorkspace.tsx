@@ -44,6 +44,12 @@ import {
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
 import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
 import {
+  dailyQuantityErrorText,
+  getDailyCountBasis,
+  isValidDailyQuantity,
+  roundDailyQuantity,
+} from '../services/dailyCountQuantities';
+import {
   getStaffSaleFeedback,
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
@@ -296,6 +302,8 @@ type DailyCheckLine = {
   inventoryRevision: number;
   physicalQuantity: string;
   unit: string;
+  /** Allowed decimal places for the physical quantity. */
+  precision: number;
 };
 
 type DailyCheckLineRecord = {
@@ -482,18 +490,6 @@ function formatInventoryQuantity(quantity: number, precision: number) {
 function formatInventoryUnitQuantity(quantity: number, unit: string, precision: number) {
   const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
   return `${formatInventoryQuantity(quantity, precision)} ${displayUnit}`;
-}
-
-function roundDailyQuantity(quantity: number, unit: string) {
-  const precision = unit === 'pcs' ? 1 : 100;
-  return Math.round(quantity * precision) / precision;
-}
-
-function isValidDailyQuantity(value: string, unit: string) {
-  const pattern = unit === 'pcs' ? /^\d+$/ : /^\d+(?:\.\d{1,2})?$/;
-  if (!pattern.test(value.trim())) return false;
-  const quantity = Number(value);
-  return Number.isFinite(quantity) && quantity >= 0;
 }
 
 function isValidWasteQuantity(value: string, ingredient: Ingredient) {
@@ -2170,9 +2166,9 @@ export default function StaffWorkspace({
   };
   const dailyCheckResults = dailyCheckLines.map((line) => {
     const parsedQuantity = Number(line.physicalQuantity);
-    const valid = isValidDailyQuantity(line.physicalQuantity, line.unit);
+    const valid = isValidDailyQuantity(line.physicalQuantity, line.unit, line.precision);
     const difference = valid
-      ? roundDailyQuantity(parsedQuantity - line.recordedQuantity, line.unit)
+      ? roundDailyQuantity(parsedQuantity - line.recordedQuantity, line.unit, line.precision)
       : null;
     return { ...line, parsedQuantity, valid, difference };
   });
@@ -2693,14 +2689,19 @@ export default function StaffWorkspace({
       applyInventorySnapshot(currentInventory, user.branchId);
       const lines = currentInventory.items
         .filter((item) => item.hasBranchInventory)
-        .map((item) => ({
-          ingredientId: item.id,
-          name: item.name,
-          recordedQuantity: item.quantity,
-          inventoryRevision: item.inventoryRevision,
-          physicalQuantity: '',
-          unit: item.unit,
-        }));
+        .map((item) => {
+          // Batter is displayed in ml but stored and validated in whole bottles.
+          const basis = getDailyCountBasis(item);
+          return {
+            ingredientId: item.id,
+            name: item.name,
+            recordedQuantity: basis.recordedQuantity,
+            inventoryRevision: item.inventoryRevision,
+            physicalQuantity: '',
+            unit: basis.unit,
+            precision: basis.precision,
+          };
+        });
       const draft = await loadStaffDailyStockCheckDraft(user.branchId);
       const draftLines = draft?.lines ?? [];
       setDailyCheckLines(lines.map((line) => {
@@ -2797,7 +2798,7 @@ export default function StaffWorkspace({
           recordedQuantity: line.recordedQuantity,
           inventoryRevision: line.inventoryRevision,
           physicalQuantity,
-          difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit),
+          difference: roundDailyQuantity(physicalQuantity - line.recordedQuantity, line.unit, line.precision),
           unit: line.unit,
         };
       });
@@ -5016,13 +5017,7 @@ export default function StaffWorkspace({
             {dailyCheckResults.filter((line) => line.name.toLowerCase().includes(dailyCheckSearch.trim().toLowerCase())).map((line) => {
               const discrepant = line.valid && line.difference !== 0;
               const showError = !line.valid && (dailyCheckAttempted || line.physicalQuantity.trim() !== '');
-              const errorText = line.physicalQuantity.trim() === ''
-                ? 'Enter a quantity.'
-                : line.physicalQuantity.includes('-')
-                  ? 'Quantity cannot be negative.'
-                  : line.unit === 'pcs'
-                    ? 'Enter a whole number.'
-                    : 'Enter a valid quantity (up to 2 decimals).';
+              const errorText = dailyQuantityErrorText(line.physicalQuantity, line.unit, line.precision);
               const physicalError = showError ? errorText : '';
 
               return (
@@ -5049,7 +5044,7 @@ export default function StaffWorkspace({
                           ),
                         )
                       }
-                      keyboardType={line.unit === 'pcs' ? 'number-pad' : 'decimal-pad'}
+                      keyboardType={line.precision === 0 ? 'number-pad' : 'decimal-pad'}
                       style={[
                         styles.dailyPhysicalInput,
                         discrepant && styles.dailyPhysicalInputDiscrepant,
