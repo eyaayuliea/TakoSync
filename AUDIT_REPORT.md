@@ -98,7 +98,7 @@ The Staff module is the strongest part of the repository. Its core inventory and
 
 | ID | Feature | Frontend | Backend / database | Integration status | Classification | Evidence / remaining work |
 |---|---|---|---|---|---|---|
-| OM-01 | Owner login and account access | Owner Mobile Email/password login, inline credential feedback, loading state, role-specific route, logout | Dedicated `owner-email-login` Edge action verifies active Owner profile and Auth identity; existing Web Portal username action is preserved | Local service/Edge tests pass; deployed function and live Auth not verified | PARTIALLY COMPLETE | [OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx), [ownerAuthentication.ts](frontend/services/ownerAuthentication.ts), [takosync.ts](frontend/services/takosync.ts), and [staff-auth tests](backend/supabase/functions/staff-auth/handler.test.mjs). |
+| OM-01 | Owner login and account access | Owner Mobile Email/password login, inline credential feedback, loading state, role-specific route, logout | Dedicated `owner-email-login` action with direct Supabase Auth fallback verifies active Owner profile/role; existing Web Portal username action is preserved | Local service/Edge tests pass; deployed function and live Auth not verified | PARTIALLY COMPLETE | [OwnerLoginScreen.tsx](frontend/owner/OwnerLoginScreen.tsx), [ownerAuthentication.ts](frontend/services/ownerAuthentication.ts), [takosync.ts](frontend/services/takosync.ts), and [staff-auth tests](backend/supabase/functions/staff-auth/handler.test.mjs). |
 | OM-02 | Owner dashboard | Combined dashboard, branch filter, inventory, alerts, activities, period selection | Cross-branch Owner reads with RLS | Connected in source; live data unavailable | PARTIALLY COMPLETE | [OwnerMobileWorkspace.tsx](frontend/owner/OwnerMobileWorkspace.tsx), [loadOwnerInventory](frontend/services/takosync.ts). |
 | OM-03 | Sales summaries | Sales monitoring and report navigation | Sales/sale-items/products reads | Connected | COMPLETE | [OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx), [loadOwnerSalesData](frontend/services/takosync.ts). |
 | OM-04 | Daily sales summary | Today filter, totals and breakdowns | Saved sales query | Connected | COMPLETE | [OwnerSalesWorkspace.tsx](frontend/owner/OwnerSalesWorkspace.tsx). |
@@ -2635,7 +2635,7 @@ This mobile-only pass reviewed the Project Charter, Staff and Owner mobile user-
 ### Requirements and implementation
 
 - ST-01 uses the approved Staff username/Employee-ID credential flow without requiring a first-login password change. The local branch-access candidate requires an active Auth session, an active profile and branch, and the Staff member's assigned branch.
-- OM-01 requires Owner Mobile to accept an authorized Owner email and password. Owner Mobile now uses a separate `owner-email-login` Edge Function action, reports unknown email and incorrect password on their respective fields, blocks duplicate submission, and shows a blocking loading overlay.
+- OM-01 requires Owner Mobile to accept an authorized Owner email and password. Owner Mobile tries a separate `owner-email-login` Edge Function action, then falls back to direct Supabase Auth if that action is unavailable. A missing/malformed email is reported under Email; the Edge response `email_not_found` reads `Email is incorrect. Please check your email.` and `incorrect_password` reads `Password is incorrect. Please try again.` Direct Auth's combined invalid-credentials response remains a general credential error because Supabase does not distinguish an unknown email from a wrong password in that response.
 - The existing `owner-login` username action and `signInOwner` service remain intact for the separate Owner Web Portal. The mobile app uses `signInOwnerWithEmail`; Edge login still validates active Owner role and matches the resulting Auth UID to the profile.
 - An additive SQL candidate wraps the existing integrity-aware sale inventory helper with explicit active-session and sale-branch checks, preserves the existing inventory processor, and revokes direct client execution of internal helpers. It does not add a second inventory deduction.
 - pgTAP coverage now includes branch/session helper privileges and denial of cross-branch sale processing.
@@ -2654,10 +2654,10 @@ This mobile-only pass reviewed the Project Charter, Staff and Owner mobile user-
 
 ### Validation
 
-- `node --test frontend/services/staffAuthentication.integration.test.mjs` — **passed: 18/18**.
+- `node --test frontend/services/staffAuthentication.integration.test.mjs` — **passed: 21/21**.
 - `node --test backend/supabase/functions/staff-auth/handler.test.mjs` — **passed: 32/32**.
 - `npm.cmd run typecheck` — **passed**.
-- `npm.cmd test` — **passed: 217/217 frontend tests and 32/32 Edge Function tests**, with typecheck included.
+- `npm.cmd test` — **passed: 220/220 frontend tests and 32/32 Edge Function tests**, with typecheck included.
 - `npm.cmd run test:edge` — **passed: 32/32**.
 - `npx.cmd expo export --platform android` — **passed; Android JavaScript bundle exported (725 modules)**. This is not a native APK or device test.
 - `git diff --check` — **passed**; Git emitted line-ending normalization warnings only.

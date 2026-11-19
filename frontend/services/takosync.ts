@@ -691,6 +691,9 @@ export async function signInOwner(username: string, password: string, clientOver
 export async function signInOwnerWithEmail(email: string, password: string, clientOverride?: StaffServiceClient): Promise<AppUser> {
   const normalizedEmail = email.normalize('NFKC').trim().toLocaleLowerCase();
   if (!normalizedEmail) throw new Error('Please enter your email.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new OwnerLoginError('email_not_found');
+  }
   if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
   let result;
@@ -702,18 +705,17 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
       }),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(
-          () => reject(new OwnerLoginError('connection_failure')),
+          () => reject(new Error('Owner email login action timed out.')),
           10_000,
         );
       }),
     ]);
-  } catch (error) {
-    if (error instanceof OwnerLoginError) throw error;
-    throw new OwnerLoginError('connection_failure');
+  } catch {
+    return signIn(normalizedEmail, password, 'Owner', client);
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
-  if (result.error) throw new OwnerLoginError('connection_failure');
+  if (result.error) return signIn(normalizedEmail, password, 'Owner', client);
   const data = result.data as {
     ok?: boolean;
     code?: 'email_not_found' | 'incorrect_password' | 'unauthorized_access';
@@ -723,7 +725,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
     if (data?.code === 'email_not_found') throw new OwnerLoginError('email_not_found');
     if (data?.code === 'incorrect_password') throw new OwnerLoginError('incorrect_password');
     if (data?.code === 'unauthorized_access') throw new OwnerLoginError('unauthorized_access');
-    throw new OwnerLoginError('connection_failure');
+    return signIn(normalizedEmail, password, 'Owner', client);
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
     throw new OwnerLoginError('connection_failure');

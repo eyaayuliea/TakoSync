@@ -219,14 +219,14 @@ The approved 39-story denominator and the established **31 complete / 8 partial 
 | Story / area | Source implementation advanced | Current status and remaining evidence |
 |---|---|---|
 | ST-01 Staff login and branch access | Staff are not forced to change the Employee ID initial password. A local additive SQL candidate requires a live Auth session and active assigned-branch authorization. | PARTIAL. The candidate migration is unexecuted; hosted Auth/RLS and Android access remain unverified. |
-| OM-01 Owner login and account access | Owner Mobile uses an Email field and a dedicated email-login action that validates the active Owner profile and resulting Auth identity. The existing username action is retained for the separate Web Portal. | PARTIAL. Local source tests do not verify deployed Edge Function, live Owner account configuration, RLS, or Android behavior. |
+| OM-01 Owner login and account access | Owner Mobile uses an Email field and a dedicated email-login action, with direct Supabase Auth fallback if that Edge action is unavailable. Both paths validate the active Owner profile and role. The existing username action is retained for the separate Web Portal. | PARTIAL. Local source tests do not verify deployed Edge Function, live Owner account configuration, RLS, or Android behavior. |
 | Shared branch / sale processing authorization | The local additive migration validates session and sale-branch access at the public sale-processing entry point and revokes direct execution of internal sale helpers. | Not database-verified. Existing duplicate migration version `202611180001` and lack of an approved Development target block execution or deployment. |
 
 ### Verification boundaries for this snapshot
 
 - Frontend and Edge Function checks are local source-level verification only.
-- Local verification passed: `npm.cmd run typecheck`; `npm.cmd test` (**217/217 frontend, 32/32 Edge Function tests**); `npm.cmd run test:edge` (**32/32**); and `npx.cmd expo export --platform android` (**725 modules bundled**). `git diff --check` passed with line-ending normalization warnings. No lint script is defined.
-- Focused Owner/Staff authentication tests passed (**18/18**). Static SQL test-plan checks match **23/23** and **48/48** assertions.
+- Local verification passed: `npm.cmd run typecheck`; `npm.cmd test` (**220/220 frontend, 32/32 Edge Function tests**); `npm.cmd run test:edge` (**32/32**); and `npx.cmd expo export --platform android` (**725 modules bundled**). `git diff --check` passed with line-ending normalization warnings. No lint script is defined.
+- Focused Owner/Staff authentication tests passed (**21/21**). Static SQL test-plan checks match **23/23** and **48/48** assertions.
 - The new PostgreSQL/pgTAP assertions have not been executed; no database connection, SQL, migration, seed, reset, or Production operation was used.
 - No hosted `staff-auth` deployment, approved Development Supabase verification, Android emulator, or physical-device test was performed.
 - The Owner Web Portal login implementation was not changed; it continues using its existing username action.

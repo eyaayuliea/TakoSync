@@ -31,7 +31,7 @@ The additive migration `202611190001_enforce_authenticated_branch_access.sql` up
 
 The migration and its pgTAP regression coverage are source changes only. They have not been applied or executed against any database. Do not deploy them until an administrator resolves the duplicate `202611180001` migration version and approves an isolated Development environment. The migration runner intentionally fails closed while local versions are duplicated.
 
-Owner Mobile now uses the `owner-email-login` Edge Function action, while the existing `owner-login` username action is retained for the separate Web Portal. Local Edge/service tests cover the distinct login contract; no hosted Edge Function was deployed or tested.
+Owner Mobile tries the `owner-email-login` Edge Function action and falls back to Supabase Auth email/password sign-in if that action is unavailable. In either path, the client loads the authenticated profile, rejects inactive or non-Owner profiles, and signs the account out on role mismatch. The existing `owner-login` username action is retained for the separate Web Portal. Local Edge/service tests cover both paths; no hosted Edge Function was deployed or tested.
 
 ### Production migration-history blocker
 

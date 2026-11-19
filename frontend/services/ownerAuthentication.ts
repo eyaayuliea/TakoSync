@@ -5,8 +5,8 @@ export type OwnerLoginErrorCode =
   | 'connection_failure';
 
 const ownerLoginErrorMessages: Record<OwnerLoginErrorCode, string> = {
-  email_not_found: 'Email not found. Please check your email.',
-  incorrect_password: 'Incorrect password. Please try again.',
+  email_not_found: 'Email is incorrect. Please check your email.',
+  incorrect_password: 'Password is incorrect. Please try again.',
   unauthorized_access: 'This account does not have Owner access.',
   connection_failure: 'Unable to connect. Please check your internet connection and try again.',
 };

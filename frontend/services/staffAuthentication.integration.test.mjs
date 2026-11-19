@@ -15,13 +15,20 @@ const session = {
 };
 
 class AuthFixture {
-  constructor({ profile, loginError = null, authorizationError = null, businessSessionActive = true } = {}) {
+  constructor({
+    profile,
+    loginError = null,
+    authorizationError = null,
+    functionError = null,
+    businessSessionActive = true,
+  } = {}) {
     this.profile = profile ?? {
       id: 'user-1', email: 'staff-1@auth.takosync.internal', full_name: 'Ana Cruz',
       role: 'staff', branch_id: 'branch-2', active: true, must_change_password: true,
     };
     this.loginError = loginError;
     this.authorizationError = authorizationError;
+    this.functionError = functionError;
     this.businessSessionActive = businessSessionActive;
     this.loginArgs = [];
     this.signedOut = false;
@@ -60,7 +67,7 @@ class AuthFixture {
     return {
       invoke: async (_name, { body }) => {
         this.functionBody = body;
-        return { data: this.loginResult ?? { ok: true, session }, error: null, body };
+        return { data: this.loginResult ?? { ok: true, session }, error: this.functionError, body };
       },
     };
   }
@@ -206,15 +213,50 @@ test('Owner Mobile email login normalizes the email and installs the authenticat
   assert.equal(client.currentSession.access_token, 'access-token');
 });
 
+test('Owner Mobile email login falls back to Supabase Auth if the email Edge action is unavailable', async () => {
+  const client = new AuthFixture({
+    profile: {
+      id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
+    },
+    functionError: { message: 'Edge action not deployed' },
+  });
+  const user = await signInOwnerWithEmail(' OWNER@EXAMPLE.TEST ', 'owner-password', client);
+  assert.equal(user.role, 'Owner');
+  assert.deepEqual(client.loginArgs, [{ email: 'owner@example.test', password: 'owner-password' }]);
+});
+
+test('Owner Mobile direct Auth fallback reports invalid credentials without a connection error', async () => {
+  const client = new AuthFixture({
+    profile: {
+      id: 'user-1', email: 'owner@example.test', full_name: 'Owner', role: 'owner', branch_id: null, active: true,
+    },
+    functionError: { message: 'Edge action not deployed' },
+    loginError: { message: 'Invalid login credentials', status: 400 },
+  });
+  await assert.rejects(
+    () => signInOwnerWithEmail('owner@example.test', 'wrong-password', client),
+    { message: 'Email or password is incorrect.' },
+  );
+});
+
 test('Owner Mobile email login maps unknown email and incorrect password to distinct errors', async () => {
   for (const [code, message] of [
-    ['email_not_found', 'Email not found. Please check your email.'],
-    ['incorrect_password', 'Incorrect password. Please try again.'],
+    ['email_not_found', 'Email is incorrect. Please check your email.'],
+    ['incorrect_password', 'Password is incorrect. Please try again.'],
   ]) {
     const client = new AuthFixture();
     client.loginResult = { ok: false, code };
     await assert.rejects(() => signInOwnerWithEmail('owner@example.test', 'wrong-password', client), { message });
   }
+});
+
+test('Owner Mobile rejects malformed email locally with an email error', async () => {
+  const client = new AuthFixture();
+  await assert.rejects(
+    () => signInOwnerWithEmail('not-an-email', 'password', client),
+    { message: 'Email is incorrect. Please check your email.' },
+  );
+  assert.equal(client.functionBody, null);
 });
 
 test('Owner Mobile email login rejects a Staff profile after installing the session', async () => {
