@@ -81,7 +81,7 @@ jobs:
           if not value:
               fail(
                   "SUPABASE_DB_URL is empty; configure the SUPABASE_DB_URL secret "
-                  "in the supabase-production environment"
+                  "in the supabase-development environment"
               )
           if any(character in value for character in "\r\n"):
               fail("SUPABASE_DB_URL contains an invalid line break")
