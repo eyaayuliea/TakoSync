@@ -5,24 +5,25 @@ import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { OwnerMenuIcon } from './OwnerMenuScreens';
 import { OwnerRecordDetailRow, OwnerRecordEmptyState, OwnerRecordErrorState, OwnerRecordHeader, OwnerRecordLoadingState, OwnerRecordReadOnlyPill } from './shared/ownerComponents';
 import { formatAuthorizedAdjustmentDateTime, formatAuthorizedAdjustmentQuantity, loadAuthorizedAdjustmentRecords, type AuthorizedAdjustmentRecord } from './authorizedAdjustmentRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
 export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: () => void }) {
   const styles = useStyles(); const { colors } = useTheme(); const listRef = useRef<ScrollView>(null);
-  const [view, setView] = useState<'list' | 'details'>('list'); const [loading, setLoading] = useState(true); const [error, setError] = useState(false);
+  const [view, setView] = useState<'list' | 'details'>('list'); const [loading, setLoading] = useState(true); const [error, setError] = useState(false); const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [records, setRecords] = useState<AuthorizedAdjustmentRecord[]>([]); const [selected, setSelected] = useState<AuthorizedAdjustmentRecord | null>(null); const [scrollOffset, setScrollOffset] = useState(0);
   const requestId = useRef(0);
   const loadRecords = () => {
     const currentRequestId = ++requestId.current;
-    setLoading(true); setError(false); setRecords([]);
+    setLoading(true); setError(false); setErrorInfo(null); setRecords([]);
     void loadAuthorizedAdjustmentRecords().then((loaded) => {
       if (currentRequestId !== requestId.current) return;
       setRecords(loaded); setLoading(false);
     }).catch((reason: unknown) => {
       if (currentRequestId !== requestId.current) return;
       console.error('Unable to load Authorized Adjustment records.', reason);
-      setError(true); setLoading(false);
+      setErrorInfo(describeOwnerRecordError(reason)); setError(true); setLoading(false);
     });
   };
   useEffect(() => {
@@ -36,7 +37,7 @@ export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: 
       <View style={styles.detailCard}><View style={styles.detailHeader}><Text numberOfLines={1} style={styles.detailName}>{selected.ingredientName}</Text><StatusBadge /></View><View style={styles.detailDivider} />
         {[['Branch', selected.branchName], ['Previous expected quantity', formatAuthorizedAdjustmentQuantity(selected.previousExpectedQuantity, selected.unit)], ['Actual quantity', formatAuthorizedAdjustmentQuantity(selected.actualQuantity, selected.unit)], ['Adjusted quantity', formatAuthorizedAdjustmentQuantity(selected.adjustedQuantity, selected.unit)], ['Reason', selected.reason], ['Approving owner', selected.approvingOwner], ['Date & time', formatAuthorizedAdjustmentDateTime(selected.approvedAt)], ['Related discrepancy', selected.relatedDiscrepancy]].map(([label, value], index, rows) => <OwnerRecordDetailRow key={label} label={label} value={value} compact={index === 3 ? 'accent' : undefined} first={index === 0} last={index === rows.length - 1} />)}
       </View>
-    </ScrollView><OwnerRecordReadOnlyPill /></View> : loading ? <OwnerRecordLoadingState /> : error ? <OwnerRecordErrorState onRetry={loadRecords} /> : records.length === 0 ? <OwnerRecordEmptyState /> : <ScrollView ref={listRef} style={styles.listScroll} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)} scrollEventThrottle={16}>
+    </ScrollView><OwnerRecordReadOnlyPill /></View> : loading ? <OwnerRecordLoadingState /> : error ? <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={loadRecords} /> : records.length === 0 ? <OwnerRecordEmptyState /> : <ScrollView ref={listRef} style={styles.listScroll} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)} scrollEventThrottle={16}>
       {records.map((record) => <Pressable key={record.id} accessibilityRole="button" onPress={() => { setSelected(record); setView('details'); }} style={styles.adjustmentCard}><View style={styles.cardTop}><Text numberOfLines={1} style={styles.itemName}>{record.ingredientName}</Text><Text style={styles.adjustedQuantity}>{formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text></View><Text style={styles.comparison}>Previous expected {formatAuthorizedAdjustmentQuantity(record.previousExpectedQuantity, record.unit)} → Adjusted {formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text><View style={styles.branchLine}><OwnerMenuIcon name="mapPin" color={colors.salesRecordMuted} size={9} /><Text style={styles.branchText}>{record.branchName}</Text></View></Pressable>)}
     </ScrollView>}
   </View>;

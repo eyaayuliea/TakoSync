@@ -19,6 +19,7 @@ import {
   type StockInBranch,
   type StockInRecord,
 } from './stockInRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 type StockInInventoryData = {
   branches: StockInBranch[];
@@ -50,6 +51,7 @@ export default function StockInRecordsScreen({
   const [view, setView] = useState<'list' | 'details'>('list');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [records, setRecords] = useState<StockInRecord[]>([]);
   const [selected, setSelected] = useState<StockInRecord | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -61,20 +63,24 @@ export default function StockInRecordsScreen({
     const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
+    setErrorInfo(null);
     setRecords([]);
     if (inventoryLoading) return;
     if (inventoryError) {
+      setErrorInfo(describeOwnerRecordError(inventoryError));
       setError(true);
       setLoading(false);
       return;
     }
     if (!inventoryData) {
+      setErrorInfo({ message: 'Inventory data has not loaded yet. Retrying…', detail: null });
       setError(true);
       setLoading(false);
       onRefresh();
       return;
     }
     if (inventoryData.branches.length === 0) {
+      setErrorInfo({ message: 'No active branches were returned, so Stock-In records cannot be loaded.', detail: null });
       setError(true);
       setLoading(false);
       return;
@@ -87,6 +93,7 @@ export default function StockInRecordsScreen({
     }).catch((loadError: unknown) => {
       if (currentRequestId !== requestId.current) return;
       console.error('Unable to load Stock-In records.', loadError);
+      setErrorInfo(describeOwnerRecordError(loadError));
       setError(true);
       setLoading(false);
     });
@@ -166,7 +173,7 @@ export default function StockInRecordsScreen({
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={inventoryError || !inventoryData ? onRefresh : loadFirst} />
+        <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={inventoryError || !inventoryData ? onRefresh : loadFirst} />
       ) : records.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (

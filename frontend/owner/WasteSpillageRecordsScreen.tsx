@@ -29,6 +29,7 @@ import {
   WASTE_SPILLAGE_CATEGORY_LABELS,
   type WasteSpillageRecord,
 } from './wasteSpillageRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -55,6 +56,7 @@ export default function WasteSpillageRecordsScreen({
   const [view, setView] = useState<'list' | 'details'>('list');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [items, setItems] = useState<WasteSpillageRecord[]>([]);
   const [loadedPages, setLoadedPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -70,17 +72,20 @@ export default function WasteSpillageRecordsScreen({
     const currentRequestId = ++requestId.current;
     setLoading(true);
     setError(false);
+    setErrorInfo(null);
     setItems([]);
     setLoadedPages(1);
     setLoadingMore(false);
     loadingMoreRef.current = false;
     if (inventoryLoading) return;
     if (inventoryError) {
+      setErrorInfo(describeOwnerRecordError(inventoryError));
       setError(true);
       setLoading(false);
       return;
     }
     if (branches.length === 0) {
+      setErrorInfo({ message: 'No active branches were returned, so Waste and Spillage records cannot be loaded.', detail: null });
       setError(true);
       setLoading(false);
       onRefresh();
@@ -93,6 +98,7 @@ export default function WasteSpillageRecordsScreen({
     }).catch((loadError: unknown) => {
       if (currentRequestId !== requestId.current) return;
       console.error('Unable to load Waste and Spillage records.', loadError);
+      setErrorInfo(describeOwnerRecordError(loadError));
       setError(true);
       setLoading(false);
     });
@@ -185,7 +191,7 @@ export default function WasteSpillageRecordsScreen({
       ) : loading ? (
         <OwnerRecordLoadingState />
       ) : error ? (
-        <OwnerRecordErrorState onRetry={inventoryError || branches.length === 0 ? onRefresh : loadFirst} />
+        <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={inventoryError || branches.length === 0 ? onRefresh : loadFirst} />
       ) : items.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (
