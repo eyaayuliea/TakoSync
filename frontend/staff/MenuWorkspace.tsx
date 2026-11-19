@@ -219,8 +219,7 @@ function SizeOptionCard({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${variant.isAvailable ? 'Add' : 'Unavailable'} ${productName}, ${variant.sizeLabel}, ${money(variant.price)}`}
-        accessibilityState={{ disabled: !variant.isAvailable }}
-        disabled={!variant.isAvailable}
+        accessibilityHint={variant.isAvailable ? undefined : 'Shows that this item is currently unavailable'}
         onPress={onAdd}
         style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
       >
@@ -374,6 +373,7 @@ export default function MenuWorkspace({
   const [saleSubmitting, setSaleSubmitting] = useState(false);
   const [saleError, setSaleError] = useState('');
   const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
+  const [proceedBlocked, setProceedBlocked] = useState(false);
   const [infoProducts, setInfoProducts] = useState<MenuProductGroup[] | null>(null);
   const selectedFlavor = flavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? flavorOptions[0];
   const products: MenuProduct[] = useMemo(
@@ -421,13 +421,21 @@ export default function MenuWorkspace({
   const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
   const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
   const emptyOrderMessage = menuOrderValidationMessage(cartProducts.length);
-  const cancelOrder = () => {
-    if (saleSubmitting) return;
+  const discardOrder = () => {
     setCashReceived('');
     setSelectedAddonIds([]);
     setSaleError('');
+    setSaleRetryAvailable(false);
+    setProceedBlocked(false);
     onCancelOrder();
     onSetPage('menu');
+  };
+  const cancelOrder = () => {
+    if (saleSubmitting) return;
+    Alert.alert('Cancel order?', 'The current order will be cleared. No sale will be saved.', [
+      { text: 'Keep order', style: 'cancel' },
+      { text: 'Cancel Order', style: 'destructive', onPress: discardOrder },
+    ]);
   };
   const clearCurrentOrder = () => {
     if (totals.count === 0 && selectedAddonIds.length === 0) return;
@@ -636,7 +644,7 @@ export default function MenuWorkspace({
                   onPress={() => void submitCheckout()}
                   style={styles.retryCheckoutButton}
                 >
-                  <Text style={styles.retryCheckoutText}>{saleSubmitting ? 'Retrying…' : 'Retry checkout'}</Text>
+                  <Text style={styles.retryCheckoutText}>{saleSubmitting ? 'Saving…' : 'Retry'}</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -657,7 +665,7 @@ export default function MenuWorkspace({
             onPress={() => void submitCheckout()}
             style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
           >
-            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Recording…' : 'Confirm Transaction'}</Text>
+            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" disabled={saleSubmitting} onPress={cancelOrder} style={styles.checkoutBackButton}>
             <Text style={styles.checkoutBackText}>Cancel order</Text>
@@ -894,9 +902,14 @@ export default function MenuWorkspace({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Proceed to Payment"
-          disabled={cartProducts.length === 0 || catalogLoading || Boolean(catalogError)}
+          disabled={catalogLoading || Boolean(catalogError)}
           onPress={() => {
-            if (cartProducts.length > 0) onSetPage('checkout');
+            if (cartProducts.length > 0) {
+              setProceedBlocked(false);
+              onSetPage('checkout');
+            } else {
+              setProceedBlocked(true);
+            }
           }}
           style={({ pressed }) => [
             styles.proceedPaymentButton,
@@ -906,6 +919,9 @@ export default function MenuWorkspace({
         >
           <Text style={styles.proceedPaymentText}>Proceed to Payment</Text>
         </Pressable>
+        {proceedBlocked && cartProducts.length === 0 ? (
+          <Text style={styles.paymentError} accessibilityRole="alert">{emptyOrderMessage}</Text>
+        ) : null}
       </View>
       <Modal
         visible={infoProducts !== null}

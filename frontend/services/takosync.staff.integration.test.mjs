@@ -335,6 +335,19 @@ test('real Staff service errors preserve retryable checkout state for ambiguous 
   assert.equal(client.calls[0].args.p_branch_id, 'branch-a');
 });
 
+test('real Staff sale service reports the approved save-failure message when the network is unreachable', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale', 'TypeError: Failed to fetch');
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-OFFLINE', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    { message: 'Unable to save. Please check your internet connection and try again.' },
+  );
+  assert.equal(client.calls[0].args.p_transaction_reference, 'SALE-OFFLINE');
+});
+
 test('real Staff sale service rejects a mismatched saved sale response', async () => {
   const client = new RecordingSupabase();
   const originalRpc = client.rpc.bind(client);

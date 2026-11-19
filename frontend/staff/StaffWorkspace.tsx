@@ -25,7 +25,7 @@ import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
-import type { MenuCartLine } from './menuPreviewData';
+import { changeMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
@@ -2389,7 +2389,7 @@ export default function StaffWorkspace({
       return;
     }
     if (!product.isAvailable) {
-      setDashboardMessage(`${product.name} is unavailable and was not added.`);
+      setDashboardMessage(`${product.name} is currently unavailable and was not added.`);
       return;
     }
     setMenuCart((current) => {
@@ -2404,15 +2404,7 @@ export default function StaffWorkspace({
   };
 
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
-    setMenuCart((current) => {
-      const next = current.flatMap((line) => {
-      if (line.productId !== productId) return [line];
-      const quantity = line.quantity + change;
-      return quantity > 0 ? [{ ...line, quantity }] : [];
-      });
-      if (next.length === 0) setMenuTransactionReference(null);
-      return next;
-    });
+    setMenuCart((current) => changeMenuCartQuantity(current, productId, change));
   };
 
   const removeMenuProduct = (productId: string) => {

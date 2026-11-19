@@ -107,6 +107,24 @@ export function calculateSelectedAddonTotal(
   return totalCents / 100;
 }
 
+/**
+ * ST-02 criterion 3: an order line's quantity never drops below 1 through the
+ * decrease control; a line is only removed by its explicit remove control.
+ */
+export function changeMenuCartQuantity(
+  cart: MenuCartLine[],
+  productId: string,
+  change: 1 | -1,
+): MenuCartLine[] {
+  return cart.map((line) => {
+    if (line.productId !== productId) return line;
+    const quantity = Math.max(1, line.quantity + change);
+    return quantity === line.quantity ? line : { ...line, quantity };
+  });
+}
+
+export const UNAVAILABLE_MENU_ITEM_MESSAGE = 'This item is currently unavailable.';
+
 export function calculateMenuCart(cart: MenuCartLine[], products: MenuProduct[]) {
   const totals = cart.reduce((current, line) => {
     const product = products.find((item) => item.id === line.productId);

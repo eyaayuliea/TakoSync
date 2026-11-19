@@ -2256,6 +2256,12 @@ export async function prepareBatterBatch(
   return validatePreparedBatterBatch(data);
 }
 
+export const SALE_SAVE_CONNECTION_MESSAGE = 'Unable to save. Please check your internet connection and try again.';
+
+export function isNetworkFailureMessage(message: string | undefined): boolean {
+  return /failed to fetch|network request failed|networkerror|fetch failed|load failed|no internet|offline/i.test(message ?? '');
+}
+
 export async function submitSale(input: SaleSubmission, client?: StaffServiceClient): Promise<OwnerSale> {
   validateSaleSubmission(input);
   const normalized = normalizeSalePayload(input);
@@ -2288,6 +2294,9 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     }
     if (message.includes('unavailable for this branch')) {
       throw new SaleSubmissionRejectedError('One of the selected products is no longer available.');
+    }
+    if (isNetworkFailureMessage(error.message)) {
+      throw new Error(SALE_SAVE_CONNECTION_MESSAGE);
     }
     throw new Error('Checkout status could not be confirmed. Your cart is preserved; retry the same checkout to safely confirm its status.');
   }
