@@ -44,6 +44,7 @@ import {
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
 import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
+import { validateWasteForm as validateWasteFields } from './wasteValidation';
 import {
   dailyQuantityErrorText,
   getDailyCountBasis,
@@ -491,14 +492,6 @@ function formatInventoryQuantity(quantity: number, precision: number) {
 function formatInventoryUnitQuantity(quantity: number, unit: string, precision: number) {
   const displayUnit = quantity === 1 && unit === 'pcs' ? 'pc' : unit;
   return `${formatInventoryQuantity(quantity, precision)} ${displayUnit}`;
-}
-
-function isValidWasteQuantity(value: string, ingredient: Ingredient) {
-  const precision = ingredient.quantityPrecision;
-  const pattern = precision === 0
-    ? /^\d+$/
-    : new RegExp(`^(?:\\d+(?:\\.\\d{1,${precision}})?|\\.\\d{1,${precision}})$`);
-  return pattern.test(value.trim()) && Number.isFinite(Number(value));
 }
 
 function formatDailyDifference(difference: number, unit: string) {
@@ -3009,7 +3002,7 @@ export default function StaffWorkspace({
     }
   };
 
-  const getWasteFieldErrors = ({
+  const getWasteValidation = ({
     inventory = ingredients,
     ingredientId = selectedIngredientId,
     quantityValue = quantity,
@@ -3023,46 +3016,28 @@ export default function StaffWorkspace({
     dateValue?: Date | null;
     reasonValue?: string;
     checkAvailableStock?: boolean;
-  } = {}) => {
-    const errors: Record<string, string> = {};
-    const ingredient = inventory.find((item) => item.id === ingredientId);
-    const parsedQuantity = Number(quantityValue);
-
-    if (!ingredient) {
-      errors.item = 'Ingredient is required.';
-    }
-    if (!quantityValue.trim() || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      errors.quantity = quantityValue.trim() ? 'Enter a quantity greater than 0.' : 'Quantity Wasted is required.';
-    } else if (ingredient && !isValidWasteQuantity(quantityValue, ingredient)) {
-      errors.quantity = ingredient.quantityPrecision === 0
-        ? 'Enter a whole number of pieces.'
-        : `Enter a quantity with up to ${ingredient.quantityPrecision} decimal places.`;
-    } else if (ingredient && checkAvailableStock && parsedQuantity > ingredient.quantity) {
-      errors.quantity = 'Exceeds available stock.';
-    }
-    if (!dateValue || !Number.isFinite(dateValue.getTime())) {
-      errors.date = 'Transaction date is required.';
-    }
-    if (!wasteReasons.some((option) => option === reasonValue)) {
-      errors.reason = 'Reason is required.';
-    }
-
-    return errors;
-  };
+  } = {}) => validateWasteFields({
+    ingredient: inventory.find((item) => item.id === ingredientId) ?? null,
+    quantityValue,
+    date: dateValue,
+    reason: reasonValue,
+    allowedReasons: wasteReasons,
+    checkAvailableStock,
+  });
 
   const validateWasteForm = (inventory = ingredients) => {
-    const errors = getWasteFieldErrors({ inventory });
+    const { errors, summary } = getWasteValidation({ inventory });
     setWasteValidationAttempted(true);
     setWasteFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
     return Object.keys(errors).length === 0;
   };
 
-  const updateWasteValidation = (values: Parameters<typeof getWasteFieldErrors>[0]) => {
+  const updateWasteValidation = (values: Parameters<typeof getWasteValidation>[0]) => {
     if (!wasteValidationAttempted) return;
-    const errors = getWasteFieldErrors(values);
+    const { errors, summary } = getWasteValidation(values);
     setWasteFieldErrors(errors);
-    setFormError(Object.keys(errors).length > 0 ? 'Check the required fields to continue.' : '');
+    setFormError(summary);
   };
 
   const changeWasteQuantity = (value: string) => {
@@ -3151,11 +3126,11 @@ export default function StaffWorkspace({
         setFormError('Your account does not have an assigned branch. Contact the owner.');
         return;
       }
-      const requiredFieldErrors = getWasteFieldErrors({ checkAvailableStock: false });
+      const requiredFields = getWasteValidation({ checkAvailableStock: false });
       setWasteValidationAttempted(true);
-      setWasteFieldErrors(requiredFieldErrors);
-      if (Object.keys(requiredFieldErrors).length > 0) {
-        setFormError('Check the required fields to continue.');
+      setWasteFieldErrors(requiredFields.errors);
+      if (Object.keys(requiredFields.errors).length > 0) {
+        setFormError(requiredFields.summary);
         return;
       }
       setFormError('');
@@ -3239,9 +3214,10 @@ export default function StaffWorkspace({
         setConfirmationVisible(false);
         const message = error instanceof Error ? error.message : 'Unable to save the waste record.';
         if (message.toLowerCase().includes('exceeds available stock')) {
-          setWasteFieldErrors((current) => ({ ...current, quantity: 'Exceeds available stock.' }));
+          const exceedsMessage = 'This quantity is more than the stock now available (it changed while you were reviewing). Check the updated stock and enter a smaller quantity.';
+          setWasteFieldErrors((current) => ({ ...current, quantity: exceedsMessage }));
           setWasteValidationAttempted(true);
-          setFormError('Check the required fields to continue.');
+          setFormError(exceedsMessage);
           await refreshBackendData();
         } else {
           setFormError(message);
