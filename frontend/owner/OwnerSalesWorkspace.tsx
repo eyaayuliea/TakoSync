@@ -34,7 +34,12 @@ import {
 } from './ownerSalesPeriod';
 import { manilaDateKey } from '../services/businessDaySettings';
 import { refreshOwnerMonitoring } from './ownerSalesRefresh';
-import { resolveOwnerSalesSelection } from './ownerSalesSelection';
+import {
+  evaluateOwnerSalesSnapshot,
+  ownerSalesSelectionKey,
+  resolveOwnerSalesSelection,
+  type OwnerSalesSnapshotTracker,
+} from './ownerSalesSelection';
 import { isSupabaseConfigured } from '../services/supabase';
 import { DAILY_SALES_THEME } from './dailySalesTheme';
 import { ownerColors } from './shared/ownerTokens';
@@ -307,6 +312,8 @@ export default function OwnerSalesWorkspace({
   const [productSortDescending, setProductSortDescending] = useState(true);
   const [branchDrillDownId, setBranchDrillDownId] = useState<string | null>(null);
   const salesTabScrollRef = useRef<ScrollView>(null);
+  // The selection the parent's `initialData` snapshot belongs to (see evaluateOwnerSalesSnapshot).
+  const initialSnapshotRef = useRef<OwnerSalesSnapshotTracker>(null);
   const [selectedWeek, setSelectedWeek] = useState({
     dropdownLabel: '9–15 Nov 2026',
     sheetLabel: '9 – 15 Nov 2026',
@@ -357,16 +364,28 @@ export default function OwnerSalesWorkspace({
         setSelectedMonth({ year: 2026, month: 10 });
         setFromText('2026-11-01');
         setToText('2026-11-30');
+        initialSnapshotRef.current = {
+          key: ownerSalesSelectionKey({ period: 'Monthly', branchId: initialBranchId, fromText: '2026-11-01', toText: '2026-11-30' }),
+          reached: false,
+        };
       } else if (initialPeriod === 'Weekly') {
         setActiveSalesTab('Weekly');
         setPeriod('Weekly');
         setFromText(selectedWeek.start);
         setToText(selectedWeek.end);
+        initialSnapshotRef.current = {
+          key: ownerSalesSelectionKey({ period: 'Weekly', branchId: initialBranchId, fromText: selectedWeek.start, toText: selectedWeek.end }),
+          reached: false,
+        };
       } else {
         setActiveSalesTab('Daily');
         setPeriod('Daily');
         setFromText(DAILY_SALES_SAMPLE_DATE);
         setToText(DAILY_SALES_SAMPLE_DATE);
+        initialSnapshotRef.current = {
+          key: ownerSalesSelectionKey({ period: 'Daily', branchId: initialBranchId, fromText: DAILY_SALES_SAMPLE_DATE, toText: DAILY_SALES_SAMPLE_DATE }),
+          reached: false,
+        };
       }
       return;
     }
@@ -435,8 +454,16 @@ export default function OwnerSalesWorkspace({
       setError('');
       return undefined;
     }
+    // Reuse the parent's snapshot only while the screen still shows the selection it was loaded
+    // for; any filter change drops it so changing filters always refetches.
+    const snapshot = evaluateOwnerSalesSnapshot(
+      initialSnapshotRef.current,
+      ownerSalesSelectionKey({ period, branchId, fromText, toText }),
+    );
+    initialSnapshotRef.current = snapshot.tracker;
     if (
       initialData &&
+      snapshot.reuse &&
       period === initialPeriod &&
       branchId === initialBranchId &&
       matchesInitialCustomRange &&
