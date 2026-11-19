@@ -20,7 +20,8 @@ import {
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import BottomNavigation, { type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
+import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
+import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
@@ -1031,6 +1032,8 @@ export default function StaffWorkspace({
     yellow: theme.isDark ? theme.colors.warning : '#FFF2C4',
   };
   const [route, setRoute] = useState<StaffRoute>('menu');
+  // Set when a shared screen (Transaction History, Physical Inventory Check) is opened from the More list.
+  const [navigationOrigin, setNavigationOrigin] = useState<StaffNavigationOrigin>(null);
   const routeRef = useRef(route);
   routeRef.current = route;
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
@@ -2323,6 +2326,11 @@ export default function StaffWorkspace({
     `${item.name} ${item.category}`.toLowerCase().includes(dashboardTerm);
   const visibleLowStockItems = lowStockItems.filter(dashboardMatches);
   const visibleExpiringItems = expiringItems.filter(dashboardMatches);
+
+  useEffect(() => {
+    // Opening a root tab (other than More) ends a flow that was started from More.
+    if (route !== 'more' && !isMoreFlowRoute(route)) setNavigationOrigin(null);
+  }, [route]);
 
   const navigate = (nextRoute: StaffTab) => {
     if (
@@ -4890,7 +4898,7 @@ export default function StaffWorkspace({
     return (
       <>
         <View style={styles.formHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => navigate('more')} style={styles.backButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'} onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.backButton}>
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
@@ -4956,8 +4964,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to More"
-            onPress={() => navigate('more')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -5141,10 +5149,10 @@ export default function StaffWorkspace({
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => navigate('more')}
+              onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
               style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailySecondaryButtonText}>Back to More</Text>
+              <Text style={styles.dailySecondaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -5168,8 +5176,8 @@ export default function StaffWorkspace({
       return (
         <View style={styles.dailySuccessFallback}>
           <Text style={styles.dailyCheckIntro}>No submitted daily check is available.</Text>
-          <Pressable onPress={() => navigate('more')} style={styles.dailyPrimaryButton}>
-            <Text style={styles.dailyPrimaryButtonText}>Back to More</Text>
+          <Pressable onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.dailyPrimaryButton}>
+            <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
         </View>
       );
@@ -5186,8 +5194,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to Inventory"
-            onPress={() => navigate('inventory')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -5287,10 +5295,10 @@ export default function StaffWorkspace({
           ) : null}
           <Pressable
             accessibilityRole="button"
-            onPress={() => navigate('inventory')}
+            onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailyPrimaryButtonText}>Back to Inventory</Text>
+            <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
         </ScrollView>
       </>
@@ -6575,25 +6583,37 @@ export default function StaffWorkspace({
             icon: '₱',
             title: 'Daily Sales',
             description: 'Count, compare and submit for review',
-            onPress: openDailySales,
+            onPress: () => {
+              setNavigationOrigin('more');
+              openDailySales();
+            },
           },
           {
             icon: '☷',
             title: 'Physical Inventory Check',
             description: 'Count, compare and submit for review',
-            onPress: startDailyInventoryCheck,
+            onPress: () => {
+              setNavigationOrigin('more');
+              void startDailyInventoryCheck();
+            },
           },
           {
             icon: '⇩',
             title: 'Transaction history',
             description: "Your branch's complete stock ledger",
-            onPress: () => setRoute('stockHistory'),
+            onPress: () => {
+              setNavigationOrigin('more');
+              setRoute('stockHistory');
+            },
           },
           {
             icon: '♙',
             title: 'Profile & settings',
             description: 'Account, access and secure logout',
-            onPress: () => setRoute('profileSettings'),
+            onPress: () => {
+              setNavigationOrigin('more');
+              setRoute('profileSettings');
+            },
           },
         ]).map((option) => (
           <Pressable
@@ -7921,8 +7941,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to Stocks"
-            onPress={() => setRoute('stocks')}
+            accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Stocks'}
+            onPress={() => setRoute(staffReturnTab(navigationOrigin, 'stocks'))}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -8590,6 +8610,7 @@ export default function StaffWorkspace({
       </View>
       <BottomNavigation
         active={route}
+        origin={navigationOrigin}
         onSelect={navigate}
         staffOnly
         staffAlertCount={activeAlertCount}
