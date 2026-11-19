@@ -152,9 +152,7 @@ Without both variables, the app intentionally disables sign-in and reports that 
 
 ## Database setup and safety
 
-The linked Supabase project is confirmed to be **Production**. Do not link the CLI to it for migration work, run remote SQL, push/repair migrations, reset it, or use it for tests. The production ledger and schema are not reconciled, and the local migration set contains two different files with version `202611180001`.
-
-Before any database testing or migration application, the administrator must identify and approve a separate `TakoSync-Development` Supabase project, reconcile migration provenance without changing Production, and confirm the corrected migration sequence. The repository workflow is manual, Development-only, and fails closed unless the project refs and approvals are configured and all local migration versions are unique. See [backend/README.md](backend/README.md) and [AUDIT_REPORT.md](AUDIT_REPORT.md).
+The linked Supabase project (`lofltjhvivcjuyezxaif`) is **Production**. As decided by the project owner on 2026-11-19, Production is the approved target for the `fix/core-workflow-db` migrations; there is no separate Development project. Back up first, verify the schema, repair only verified migrations and review `supabase db push --dry-run` before pushing. The required steps, safety rules and current status are in [backend/README.md](backend/README.md#database-safety-and-setup). The repository's GitHub workflow stays manual and Development-only and never targets Production. See also [AUDIT_REPORT.md](AUDIT_REPORT.md).
 
 For source-only app work, copy `.env.example` to `.env`, set only the client-safe Supabase URL and publishable/anon key for an explicitly approved environment, then restart Expo. Never put service-role keys or database passwords in frontend configuration or Git. `enable_signup = false` in `backend/supabase/config.toml` applies only to a local Supabase stack; hosted sign-up settings require administrator verification.
 
