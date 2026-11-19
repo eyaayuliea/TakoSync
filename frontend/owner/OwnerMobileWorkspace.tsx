@@ -213,6 +213,25 @@ function SectionHeading({
   );
 }
 
+/** OM-02 criterion 9: placeholder shapes (not a spinner) while dashboard data loads. */
+function SkeletonCard({ label, lines = 2 }: { label: string; lines?: number }) {
+  const styles = useStyles();
+  return (
+    <View
+      style={styles.skeletonCard}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={label}
+      accessibilityState={{ busy: true }}
+    >
+      <View style={[styles.skeletonBar, styles.skeletonBarWide]} />
+      {Array.from({ length: Math.max(0, lines - 1) }, (_, index) => (
+        <View key={index} style={[styles.skeletonBar, styles.skeletonBarNarrow]} />
+      ))}
+    </View>
+  );
+}
+
 function EmptyState({ text }: { text: string }) {
   const styles = useStyles();
   return (
@@ -1055,7 +1074,7 @@ export default function OwnerMobileWorkspace({
     <>
       <View style={styles.totalSalesCard}>
         <View style={styles.totalSalesTop}>
-          <Text style={styles.totalSalesLabel}>Total Sales</Text>
+          <Text style={styles.totalSalesLabel}>Total Recorded Sales</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Choose sales period, currently ${period}`}
@@ -1069,7 +1088,7 @@ export default function OwnerMobileWorkspace({
         {salesError ? (
           showError(OWNER_ALERT_LOAD_ERROR)
         ) : salesLoading && !salesData ? (
-          <View style={styles.salesLoadingCompact}><ActivityIndicator size="small" color={colors.white} /><Text style={styles.salesLoadingText}>Loading sales…</Text></View>
+          <SkeletonCard label="Loading total recorded sales" lines={2} />
         ) : (
           <>
             <Text style={styles.totalSalesAmount} numberOfLines={1} adjustsFontSizeToFit>{selectedSales.length ? currency(totalSelectedSales) : '₱0'}</Text>
@@ -1079,12 +1098,12 @@ export default function OwnerMobileWorkspace({
       </View>
 
       {salesError ? showError(OWNER_ALERT_LOAD_ERROR) : salesLoading && !salesData ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading sales…</Text></View>
+        <SkeletonCard label="Loading sales" />
       ) : null}
 
       <SectionHeading title="Branch Sales" />
       {salesLoading && !salesData ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading branch sales…</Text></View>
+        <SkeletonCard label="Loading branch sales" />
       ) : salesError ? showError(OWNER_ALERT_LOAD_ERROR) : branchMetrics.length ? (
         <View style={styles.branchSalesList}>
           {branchMetrics.map((branch) => {
@@ -1114,7 +1133,7 @@ export default function OwnerMobileWorkspace({
 
       <SectionHeading title="Inventory Status" action="Inventory" onAction={() => setPage('Inventory')} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
+        <SkeletonCard label="Loading inventory" />
       ) : inventoryRows.length === 0 ? (
         <EmptyState text="No inventory records yet." />
       ) : (
@@ -1141,14 +1160,14 @@ export default function OwnerMobileWorkspace({
 
       <SectionHeading title="Low-Stock Items" action="See all" onAction={() => { setAlertCategory('Low Stock'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
+        <SkeletonCard label="Loading inventory" />
       ) : dashboardLowStock.length ? dashboardLowStock.slice(0, 4).map((item) => renderInventoryRow(item)) : (
         <EmptyState text="No low-stock items." />
       )}
 
       <SectionHeading title="Expiration Alerts" action="See all" onAction={() => { setAlertCategory('Expiration'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing expiration alerts…</Text></View>
+        <SkeletonCard label="Loading expiration alerts" />
       ) : sortedExpirationItems.length ? sortedExpirationItems.slice(0, 4).map((item) => (
         <View key={item.id} style={styles.listCard}>
           <View style={[styles.itemMark, item.days < 0 ? styles.itemMarkLow : styles.itemMarkWarning]}>
@@ -1164,7 +1183,7 @@ export default function OwnerMobileWorkspace({
 
       <SectionHeading title="Recent Activities" action="See all" onAction={() => setPage('Records')} />
       {activityError ? showError(OWNER_ALERT_LOAD_ERROR) : activityLoading && !activityData ? (
-        <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading activities…</Text></View>
+        <SkeletonCard label="Loading activities" />
       ) : sortedActivities.length ? sortedActivities.slice(0, 5).map((item) => renderActivity(item, 'Dashboard')) : (
         <EmptyState text="No recent activities." />
       )}
@@ -2840,6 +2859,10 @@ function useStyles() {
     successText: { color: colors.green, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
     retryAction: { paddingHorizontal: 9, paddingVertical: 6, marginLeft: 7, borderRadius: 9, backgroundColor: colors.white },
     retryText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+    skeletonCard: { minHeight: 62, justifyContent: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.white },
+    skeletonBar: { height: 10, borderRadius: 5, backgroundColor: colors.line },
+    skeletonBarWide: { width: '70%' },
+    skeletonBarNarrow: { width: '40%' },
     loadingCard: { minHeight: 62, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.white },
     loadingText: { color: colors.muted, fontFamily: font.regular, fontSize: 8 },
     emptyState: { minHeight: 55, justifyContent: 'center', paddingHorizontal: 11, paddingVertical: 12, marginBottom: 8, borderRadius: 12, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line },

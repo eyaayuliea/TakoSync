@@ -2068,7 +2068,6 @@ export default function StaffWorkspace({
   };
   const staffName = user.displayName;
   const staffRole = user.role;
-  const staffEmail = user.email;
   const assignedBranch = user.branch;
   const historyTransactions = backendHistory;
   const selectedHistoryTransaction = historyTransactions.find(
@@ -5433,8 +5432,8 @@ export default function StaffWorkspace({
         <View style={styles.staffIdentityBody} />
       </View>
       <View style={styles.staffIdentityCopy}>
-        <Text style={styles.staffIdentityName}>{user.employeeId ?? 'Employee ID unavailable'}</Text>
-        <Text style={styles.staffIdentitySubtitle}>{staffName} · {assignedBranch}</Text>
+        <Text style={styles.staffIdentityName}>{staffName}</Text>
+        <Text style={styles.staffIdentitySubtitle}>{assignedBranch}</Text>
       </View>
     </View>
   );
@@ -6781,12 +6780,8 @@ export default function StaffWorkspace({
           <View style={styles.profileInformationCard}>
             <View style={styles.profileInformationRow}>
               <View style={styles.profileInformationCell}>
-                <Text style={styles.profileInformationLabel}>Employee ID</Text>
-                <Text style={styles.profileInformationValue} selectable>{user.employeeId ?? 'Unavailable'}</Text>
-              </View>
-              <View style={styles.profileInformationCell}>
-                <Text style={styles.profileInformationLabel}>Email</Text>
-                <Text style={styles.profileInformationValue} numberOfLines={1}>{staffEmail}</Text>
+                <Text style={styles.profileInformationLabel}>Username</Text>
+                <Text style={styles.profileInformationValue} numberOfLines={1}>{staffName}</Text>
               </View>
               <View style={styles.profileInformationCell}>
                 <Text style={styles.profileInformationLabel}>Role</Text>
@@ -6817,7 +6812,7 @@ export default function StaffWorkspace({
           <View style={styles.profileSettingsCard}>
             <Text style={styles.profileSectionTitle}>Account security</Text>
             <Text style={styles.profileAccountSecurityCopy}>
-              Your Employee ID is the initial password. You may set a different password at any time.
+              You may set a different password at any time. Your password is never displayed in the app.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -8722,7 +8717,7 @@ export default function StaffWorkspace({
             </View>
             <Text style={styles.logoutModalTitle}>Do you want to Log out?</Text>
             <Text style={styles.logoutModalDescription}>
-              End the daily session? Any unconfirmed order will be discarded.
+              End your session? Any unconfirmed order will be discarded.
             </Text>
             {logoutError !== '' ? (
               <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text>
