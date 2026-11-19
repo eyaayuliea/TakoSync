@@ -43,3 +43,18 @@ export function pendingRequestIsProvablyInvalid(
 ): boolean {
   return transactions.some((transaction) => catalog.get(transaction.ingredientId) !== transaction.unit);
 }
+
+export function unitDisplayName(unit: string): string {
+  const names: Record<string, string> = {
+    g: 'Grams (g)',
+    kg: 'Kilograms (kg)',
+    ml: 'Milliliters (ml)',
+    L: 'Liters (L)',
+    pcs: 'Pieces (pcs)',
+    pack: 'Packs (pack)',
+    bottle: 'Bottles (bottle)',
+    tsp: 'Teaspoons (tsp)',
+    tbsp: 'Tablespoons (tbsp)',
+  };
+  return names[unit] ?? `${unit} (${unit})`;
+}

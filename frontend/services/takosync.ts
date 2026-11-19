@@ -58,6 +58,7 @@ import {
 import type { RetrySafeInventoryTransaction } from './inventoryTransactionRecovery';
 import { indexBranchInventorySnapshot } from './inventoryCountSnapshot';
 import { isDefinitiveCorrectionRequestRejection } from './inventoryCountCorrectionRecovery';
+import { unitDisplayName } from './inventoryTransactionUnits';
 import {
   PREPARED_BATTER_BATCH_BOTTLES,
   validatePreparedBatterBatch,
@@ -1333,21 +1334,6 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
     variants: variantsResult.data ?? [],
     addonNames: addonNamesResult.data ?? [],
   });
-}
-
-export function unitDisplayName(unit: string): string {
-  const names: Record<string, string> = {
-    g: 'Grams (g)',
-    kg: 'Kilograms (kg)',
-    ml: 'Milliliters (ml)',
-    L: 'Liters (L)',
-    pcs: 'Pieces (pcs)',
-    pack: 'Packs (pack)',
-    bottle: 'Bottles (bottle)',
-    tsp: 'Teaspoons (tsp)',
-    tbsp: 'Tablespoons (tbsp)',
-  };
-  return names[unit] ?? `${unit} (${unit})`;
 }
 
 export async function loadInventory(branchId: string, businessDate = new Date()): Promise<StaffInventoryData> {
