@@ -96,7 +96,7 @@ const clientForTests = (client) => client;
 test('real Staff transaction service submits stock-in, stock-out, and waste payloads with branch context', async () => {
   const client = new RecordingSupabase();
   const transactions = [
-    { ingredientId: 'flour', type: 'stock_in', quantity: 2, unit: 'kg', transactionDate: '2026-11-13', reason: 'Stock-In', notes: 'Supplier', batchReference: null, expirationDate: null },
+    { ingredientId: 'flour', type: 'stock_in', quantity: 2, unit: 'kg', transactionDate: '2026-11-13', reason: 'Stock-in', notes: 'Supplier', batchReference: null, expirationDate: null },
     { ingredientId: 'flour', type: 'stock_out', quantity: 1, unit: 'kg', transactionDate: '2026-11-13', reason: 'Cooking usage', notes: '', batchReference: null, expirationDate: null },
     { ingredientId: 'flour', type: 'waste', quantity: 0.5, unit: 'kg', transactionDate: '2026-11-13', reason: 'Spoilage', notes: 'Expired', batchReference: null, expirationDate: null },
   ];

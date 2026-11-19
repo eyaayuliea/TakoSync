@@ -19,9 +19,9 @@ export function getOwnerSalesDateRange(
   const sharedPeriod = period === 'Today' || period === 'Daily'
     ? 'Today'
     : period === 'Weekly'
-      ? 'This Week'
+      ? 'This week'
       : period === 'Monthly'
-        ? 'This Month'
+        ? 'This month'
         : 'Custom';
   const range = getManilaReportingRange(sharedPeriod, now, customStart, customEnd);
   if (!range) return null;

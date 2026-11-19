@@ -13,7 +13,7 @@ function countHistoryRecord(overrides = {}) {
   return {
     id: 'physical-count-line-1',
     reference: 'PC-1112-0012',
-    type: 'Physical Inventory Count',
+    type: 'Physical inventory count',
     ingredientId: 'flour',
     ingredientName: 'All-Purpose Flour',
     category: 'Dry Goods',
@@ -134,14 +134,14 @@ test('live mapping excludes drafts and hides internal synthetic review IDs', () 
       id: 'physical-count-draft',
       physicalCount: { ...countHistoryRecord().physicalCount, status: 'draft' },
     }),
-    countHistoryRecord({ id: 'transaction-1', type: 'Stock-In', physicalCount: undefined }),
+    countHistoryRecord({ id: 'transaction-1', type: 'Stock-in', physicalCount: undefined }),
   ], [
     review({ correctionRequestId: 'pending-count:line-1' }),
   ]);
   assert.equal(records.length, 1);
   assert.equal(records[0].discrepancyReference, null);
   assert.equal(records[0].discrepancyReviewId, 'pending-count:line-1');
-  assert.equal(records[0].discrepancyStatus, 'Pending Review');
+  assert.equal(records[0].discrepancyStatus, 'Pending review');
 });
 
 test('result and quantity formatters use signed differences and Manila timestamps', () => {

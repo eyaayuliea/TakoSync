@@ -102,7 +102,7 @@ export type InventoryItem = {
   lowStock: boolean;
   expiration: string | null;
   nearExpiry: boolean;
-  expirationStatus: 'Near Expiry' | 'Expired' | null;
+  expirationStatus: 'Near expiry' | 'Expired' | null;
   minimumStock: number;
   type: string;
   unitName: string;
@@ -1218,7 +1218,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       threshold: displayMinimumStock,
       lowStock: displayQuantity <= 0 || (displayMinimumStock > 0 && displayQuantity <= displayMinimumStock),
       expiration: formattedExpiration,
-      nearExpiry: expirationStatus === 'Near Expiry',
+      nearExpiry: expirationStatus === 'Near expiry',
       expirationStatus,
       minimumStock: displayMinimumStock,
       type: visual.type,
@@ -1298,7 +1298,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       batches: mergedBatches,
       expiration: earliestBatch ? formatDate(earliestBatch.expirationDateIso) ?? '' : '',
       expirationStatus: mergedExpirationStatus,
-      nearExpiry: mergedExpirationStatus === 'Near Expiry',
+      nearExpiry: mergedExpirationStatus === 'Near expiry',
       inventoryRevision: Math.max(existing.inventoryRevision, item.inventoryRevision),
     });
   }

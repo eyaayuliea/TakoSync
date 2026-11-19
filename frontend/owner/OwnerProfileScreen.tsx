@@ -61,7 +61,7 @@ function LogoutButton({ disabled, onPress }: { disabled: boolean; onPress: () =>
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Log Out"
+      accessibilityLabel="Log out"
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed, disabled && styles.disabled]}
@@ -70,7 +70,7 @@ function LogoutButton({ disabled, onPress }: { disabled: boolean; onPress: () =>
         <View style={styles.logoutDoor} />
         <View style={styles.logoutArrow} />
       </View>
-      <Text style={styles.logoutText}>Log Out</Text>
+      <Text style={styles.logoutText}>Log out</Text>
     </Pressable>
   );
 }
@@ -109,11 +109,11 @@ function ConfirmLogoutDialog({
       <Pressable accessibilityRole="button" accessibilityLabel="Cancel logout" onPress={onCancel} style={styles.scrim}>
         <Pressable
           accessibilityRole="alert"
-          accessibilityLabel="Confirm Logout dialog"
+          accessibilityLabel="Confirm logout dialog"
           onPress={() => undefined}
           style={styles.dialog}
         >
-          <Text style={styles.dialogTitle}>Confirm Logout</Text>
+          <Text style={styles.dialogTitle}>Confirm logout</Text>
           <Text style={styles.dialogMessage}>
             Log out of TakoSync on this device?{ '\n' }
             Your saved records will remain available.
@@ -131,12 +131,12 @@ function ConfirmLogoutDialog({
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Confirm Log Out"
+              accessibilityLabel="Confirm log out"
               disabled={loggingOut}
               onPress={onConfirm}
               style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}
             >
-              <Text style={styles.confirmText}>{loggingOut ? 'Logging Out…' : 'Log Out'}</Text>
+              <Text style={styles.confirmText}>{loggingOut ? 'Logging out…' : 'Log out'}</Text>
             </Pressable>
           </View>
         </Pressable>

@@ -56,15 +56,15 @@ import {
 } from './ownerPortalReports';
 import { reviewStyles } from './ownerPortalReviewStyles';
 
-type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Reports' | 'Inventory Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
+type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock movements' | 'Daily checks' | 'Reports' | 'Inventory reports' | 'Staff accounts' | 'Settings' | 'Audit history';
 type Branch = string;
 type InventoryRow = OwnerPortalInventoryRow;
-const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Reports', '▤'], ['Inventory Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
+const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock movements', '↕'], ['Daily checks', '✓'], ['Reports', '▤'], ['Inventory reports', '▤'], ['Staff accounts', '♙'], ['Settings', '⚙'], ['Audit history', '◷']];
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function OwnerPortalWeb() {
   const { width } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
-  const [page, setPage] = useState<Page>('Dashboard'); const [branch, setBranch] = useState<Branch>('All Branches');
+  const [page, setPage] = useState<Page>('Dashboard'); const [branch, setBranch] = useState<Branch>('All branches');
   const [dark, setDark] = useState(false); const [username, setUsername] = useState(''); const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false); const [user, setUser] = useState<AppUser | null>(null);
   const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [logoutBusy, setLogoutBusy] = useState(false); const [error, setError] = useState('');
@@ -98,7 +98,7 @@ export default function OwnerPortalWeb() {
     let active = true;
     setBusy(true);
     setDataError('');
-    const reportingRange = getManilaReportingRange('This Month');
+    const reportingRange = getManilaReportingRange('This month');
     if (!reportingRange) {
       setDataError('Unable to determine the current Manila reporting month.');
       setBusy(false);
@@ -162,7 +162,7 @@ export default function OwnerPortalWeb() {
           current,
           ...failures.map((failure) => failure.reason instanceof Error
             ? failure.reason.message
-            : 'An Owner configuration request failed.'),
+            : 'An owner configuration request failed.'),
         ].filter(Boolean).join(' '));
       }
       if (productResult.status === 'fulfilled') setProducts(productResult.value);
@@ -232,15 +232,15 @@ export default function OwnerPortalWeb() {
       <View style={[styles.sidebar, compact && styles.sidebarSmall, narrow && { width: '100%', height: 58, padding: 8, paddingTop: 8, flexDirection: 'row', alignItems: 'center' }]}>
         <View style={[styles.brand, narrow && { marginBottom: 0, marginRight: 6 }]}>
           <Text style={styles.logo}>T</Text>
-          {!compact && <View><Text style={styles.brandName}>TakoSync</Text><Text style={styles.brandSub}>OWNER PORTAL</Text></View>}
+          {!compact && <View><Text style={styles.brandName}>TakoSync</Text><Text style={styles.brandSub}>Owner portal</Text></View>}
         </View>
-        {!narrow && <Text style={styles.menu}>WORKSPACE</Text>}
+        {!narrow && <Text style={styles.menu}>Workspace</Text>}
         <ScrollView horizontal={narrow} contentContainerStyle={narrow ? { alignItems: 'center' } : undefined} style={narrow ? { flex: 1 } : undefined}>
           {nav.map(([label, icon]) => (
             <Pressable key={label} accessibilityRole="button" accessibilityLabel={label} onPress={() => setPage(label)} style={[styles.nav, page === label && styles.navActive, narrow && { marginBottom: 0, paddingHorizontal: 8 }]}>
               <Text style={styles.navIcon}>{icon}</Text>
               {!compact && <Text style={styles.navText}>{label}</Text>}
-              {label === 'Daily Checks' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}
+              {label === 'Daily checks' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}
             </Pressable>
           ))}
         </ScrollView>
@@ -254,9 +254,9 @@ export default function OwnerPortalWeb() {
       </View>
       <View style={styles.main}>
         <View style={[styles.header, narrow && { paddingHorizontal: 16, paddingTop: 16, minHeight: 76 }]}>
-          <View><Text style={styles.eyebrow}>OWNER MANAGEMENT / {page.toUpperCase()}</Text><Text style={styles.title}>{page}</Text></View>
+          <View><Text style={styles.eyebrow}>Owner management / {page}</Text><Text style={styles.title}>{page}</Text></View>
           <View style={styles.headerActions}>
-            <Text style={styles.livePill}>LIVE SUPABASE</Text>
+            <Text style={styles.livePill}>Live Supabase</Text>
             <Pressable onPress={() => setDark(!dark)} style={styles.iconButton}><Text>{dark ? '☀' : '☾'}</Text></Pressable>
           </View>
         </View>
@@ -274,10 +274,10 @@ export default function OwnerPortalWeb() {
           )}
           {page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}
           {page === 'Inventory' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
-          {page === 'Stock Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
-          {page === 'Daily Checks' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
+          {page === 'Stock movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+          {page === 'Daily checks' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
           {page === 'Reports' && <Reports sales={salesData} />}
-          {page === 'Inventory Reports' && (
+          {page === 'Inventory reports' && (
             <InventoryReports
               branch={branch}
               setBranch={setBranch}
@@ -286,9 +286,9 @@ export default function OwnerPortalWeb() {
               inventoryAvailable={inventoryData !== null}
             />
           )}
-          {page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
+          {page === 'Staff accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
           {page === 'Settings' && <><SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} /><ProfileEditor user={user} onSaved={notify} /></>}
-          {page === 'Audit History' && <Audit activity={activityData} reviews={reviews} sales={salesData} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+          {page === 'Audit history' && <Audit activity={activityData} reviews={reviews} sales={salesData} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
         </ScrollView>
         {toast && <View style={styles.toast}><Text style={styles.toastText}>✓ {toast}</Text></View>}
       </View>
@@ -303,9 +303,9 @@ function Login({ username, password, error, busy, showPassword, setUsername, set
         <View style={[styles.loginBrand, narrow && { position: 'relative', top: 0, left: 0, marginBottom: 48 }]}>
           <Text style={styles.logo}>T</Text><Text style={styles.brandName}>TakoSync</Text>
         </View>
-        <Text style={styles.kicker}>OWNER WEB MANAGEMENT PORTAL</Text>
+        <Text style={styles.kicker}>Owner web management portal</Text>
         <Text style={styles.loginTitle}>Welcome back, Gelo.</Text>
-        <Text style={styles.loginSub}>Sign in with your Supabase Owner account.</Text>
+        <Text style={styles.loginSub}>Sign in with your Supabase owner account.</Text>
         <View style={[styles.form, narrow && { width: '100%' }]}>
           <Text style={styles.label}>Username</Text>
           <TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} autoComplete="username" style={styles.input} placeholder="Enter your username" />
@@ -331,7 +331,7 @@ function Toolbar({ branch, setBranch, branches }: { branch: string; setBranch: (
       <Text style={styles.section}>Live overview</Text>
       <Select
         value={branch}
-        options={['All Branches', ...branches.map((item) => item.name)]}
+        options={['All branches', ...branches.map((item) => item.name)]}
         onChange={setBranch}
       />
     </View>
@@ -346,7 +346,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
   setBranch: (value: string) => void;
 }) {
   const narrow = useWindowDimensions().width < 720;
-  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [period, setPeriod] = useState<ReportingPeriod>('This month');
   const [startDate, setStartDate] = useState(() => manilaDateKey());
   const [endDate, setEndDate] = useState(() => manilaDateKey());
   const [sales, setSales] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(null);
@@ -426,8 +426,8 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
     <>
       <View style={styles.toolbar}>
         <Text style={styles.section}>Live overview</Text>
-        <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
-        <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
+        <Select value={branch} options={['All branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
+        <Select value={period} options={['Today', 'This week', 'This month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
       </View>
       {period === 'Custom' ? (
         <View style={[styles.row, { flexWrap: 'wrap' }]}>
@@ -439,10 +439,10 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading dashboard data…</Text></View> : null}
       <View style={styles.grid}>
         {[
-          ['Recorded Sales', confirmedSales ? peso(totalOwnerPortalSales(confirmedSales)) : '—', 'Confirmed sales in selected period'],
-          ['Inventory Items', inventoryAvailable ? String(selectedRows.length) : '—', 'Current branch inventory'],
-          ['Low-Stock Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Low Stock').length) : '—', 'Needs attention'],
-          ['Expiration Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Near Expiry' || row.status === 'Expired').length) : '—', 'Near expiry or expired'],
+          ['Recorded sales', confirmedSales ? peso(totalOwnerPortalSales(confirmedSales)) : '—', 'Confirmed sales in selected period'],
+          ['Inventory items', inventoryAvailable ? String(selectedRows.length) : '—', 'Current branch inventory'],
+          ['Low-stock alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Low stock').length) : '—', 'Needs attention'],
+          ['Expiration alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Near expiry' || row.status === 'Expired').length) : '—', 'Near expiry or expired'],
         ].map(([label, value, note]) => (
           <View style={styles.metric} key={label}>
             <Text style={styles.metricLabel}>{label}</Text>
@@ -453,7 +453,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
       </View>
       <View style={styles.two}>
         <Panel title="Sales by branch">
-          {branchSales.length ? <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchSales.map((item) => [item.name, String(item.salesCount), peso(item.totalSales)])} /> : (
+          {branchSales.length ? <Table headers={['Branch', 'Transactions', 'Total sales']} rows={branchSales.map((item) => [item.name, String(item.salesCount), peso(item.totalSales)])} /> : (
             <Text style={styles.empty}>{sales ? 'No confirmed sales exist for this period.' : 'Sales data is unavailable.'}</Text>
           )}
         </Panel>
@@ -694,7 +694,7 @@ function Checks({ reviews, notify, onRefresh }: ChecksProps) {
                       style={[reviewStyles.approve, disabled && { opacity: 0.6 }]}
                     >
                       <Text style={reviewStyles.approveText}>
-                        {isSaving ? 'Saving…' : 'Validate Count'}
+                        {isSaving ? 'Saving…' : 'Validate count'}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -711,16 +711,16 @@ function Checks({ reviews, notify, onRefresh }: ChecksProps) {
 function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof loadOwnerSalesData>> | null }) {
   const narrow = useWindowDimensions().width < 720;
   const reportOptions = [
-    'Total Sales Report',
-    'Branch Sales Report',
-    'Products Sold Report',
-    'Transaction Summary Report',
+    'Total sales report',
+    'Branch sales report',
+    'Products sold report',
+    'Transaction summary report',
   ];
   const [report, setReport] = useState(reportOptions[0]);
-  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [period, setPeriod] = useState<ReportingPeriod>('This month');
   const [startDate, setStartDate] = useState(() => manilaDateKey());
   const [endDate, setEndDate] = useState(() => manilaDateKey());
-  const [branch, setBranch] = useState('All Branches');
+  const [branch, setBranch] = useState('All branches');
   const [branches, setBranches] = useState<OwnerPortalBranch[]>([]);
   const [sales, setSales] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(initialSales ?? null);
   const [loading, setLoading] = useState(false);
@@ -815,12 +815,12 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
       <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
         <Select
           value={period}
-          options={['Today', 'This Week', 'This Month', 'Custom']}
+          options={['Today', 'This week', 'This month', 'Custom']}
           onChange={(value) => setPeriod(value as ReportingPeriod)}
         />
         <Select
           value={branch}
-          options={['All Branches', ...branches.map((item) => item.name)]}
+          options={['All branches', ...branches.map((item) => item.name)]}
           onChange={setBranch}
         />
         <Select value={report} options={reportOptions} onChange={setReport} />
@@ -850,21 +850,21 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
       ) : null}
       {!loading && sales ? (
         <Panel title={report}>
-          {report === 'Total Sales Report' ? (
+          {report === 'Total sales report' ? (
             <>
               <Text style={styles.metricValue}>{peso(total)}</Text>
               <Text style={styles.muted}>{records.length} completed sales.</Text>
             </>
           ) : null}
-          {report === 'Branch Sales Report' ? (
-            <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchRows} />
+          {report === 'Branch sales report' ? (
+            <Table headers={['Branch', 'Transactions', 'Total sales']} rows={branchRows} />
           ) : null}
-          {report === 'Products Sold Report' ? (
-            <Table headers={['Product', 'Quantity Sold', 'Sales Total']} rows={productRows} />
+          {report === 'Products sold report' ? (
+            <Table headers={['Product', 'Quantity sold', 'Sales total']} rows={productRows} />
           ) : null}
-          {report === 'Transaction Summary Report' ? (
+          {report === 'Transaction summary report' ? (
             <Table
-              headers={['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total']}
+              headers={['Reference', 'Branch', 'Recorded by', 'Payment', 'Timestamp (Manila)', 'Total']}
               rows={transactionRows}
             />
           ) : null}
@@ -875,8 +875,8 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
   );
 }
 
-type InventoryReportPage = 'Expected Stock Quantity Report' | OwnerPortalMovementReport |
-  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report';
+type InventoryReportPage = 'Expected stock quantity report' | OwnerPortalMovementReport |
+  'Physical inventory count and discrepancy report' | 'Authorized adjustment report';
 
 function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable }: {
   branch: string;
@@ -887,15 +887,15 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
 }) {
   const narrow = useWindowDimensions().width < 720;
   const reportOptions: InventoryReportPage[] = [
-    'Expected Stock Quantity Report',
-    'Stock-In Report',
-    'Sales Consumption Report',
-    'Waste and Spillage Report',
-    'Physical Inventory Count and Discrepancy Report',
-    'Authorized Adjustment Report',
+    'Expected stock quantity report',
+    'Stock-in report',
+    'Sales consumption report',
+    'Waste and spillage report',
+    'Physical inventory count and discrepancy report',
+    'Authorized adjustment report',
   ];
   const [report, setReport] = useState<InventoryReportPage>(reportOptions[0]);
-  const [period, setPeriod] = useState<ReportingPeriod>('This Month');
+  const [period, setPeriod] = useState<ReportingPeriod>('This month');
   const [startDate, setStartDate] = useState(() => manilaDateKey());
   const [endDate, setEndDate] = useState(() => manilaDateKey());
   const [activity, setActivity] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
@@ -910,7 +910,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
 
   useEffect(() => {
     let active = true;
-    if (report === 'Expected Stock Quantity Report') {
+    if (report === 'Expected stock quantity report') {
       setActivity(null);
       setReviews(null);
       setError('');
@@ -958,9 +958,9 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     timeStyle: 'short',
   });
   const filteredInventory = filterOwnerPortalInventory(inventoryRows, branch);
-  const isMovementReport = report === 'Stock-In Report'
-    || report === 'Sales Consumption Report'
-    || report === 'Waste and Spillage Report';
+  const isMovementReport = report === 'Stock-in report'
+    || report === 'Sales consumption report'
+    || report === 'Waste and spillage report';
   const movementRows = activity && range && isMovementReport
     ? filterOwnerPortalReportMovements(activity.transactions, report as OwnerPortalMovementReport, {
       branchId,
@@ -977,7 +977,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       dateFormatter.format(new Date(item.transaction_date)),
     ])
     : [];
-  const countRows = activity && range && report === 'Physical Inventory Count and Discrepancy Report'
+  const countRows = activity && range && report === 'Physical inventory count and discrepancy report'
     ? buildOwnerPortalCountReportRows({
       checks: activity.dailyChecks,
       lines: activity.countLines,
@@ -1009,7 +1009,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       row.revisionHistory,
     ])
     : [];
-  const adjustmentRows = report === 'Authorized Adjustment Report' && range
+  const adjustmentRows = report === 'Authorized adjustment report' && range
     ? (reviews ?? []).flatMap((review) => {
       if (!review.adjustment || (branchId && review.branchId !== branchId)) return [];
       const approvedAt = new Date(review.adjustment.approvedAt).getTime();
@@ -1026,11 +1026,11 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       ]];
     })
     : [];
-  const hasReportData = report === 'Expected Stock Quantity Report'
+  const hasReportData = report === 'Expected stock quantity report'
     ? inventoryAvailable && filteredInventory.length > 0
-    : report === 'Physical Inventory Count and Discrepancy Report'
+    : report === 'Physical inventory count and discrepancy report'
       ? countRows.length > 0
-      : report === 'Authorized Adjustment Report'
+      : report === 'Authorized adjustment report'
         ? adjustmentRows.length > 0
         : movementRows.length > 0;
 
@@ -1039,57 +1039,57 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       <View style={styles.row}>
         <View>
           <Text style={styles.section}>Inventory reports</Text>
-          <Text style={styles.muted}>Live Owner inventory data; movement categories remain separate.</Text>
+          <Text style={styles.muted}>Live owner inventory data; movement categories remain separate.</Text>
         </View>
         <Pressable disabled={loading || !hasReportData} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={styles.outline}>
           <Text style={styles.pinkText}>Print / Export</Text>
         </Pressable>
       </View>
       <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
-        <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
+        <Select value={branch} options={['All branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
         <Select value={report} options={reportOptions} onChange={(value) => setReport(value as InventoryReportPage)} />
-        <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
+        <Select value={period} options={['Today', 'This week', 'This month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
       </View>
-      {period === 'Custom' && report !== 'Expected Stock Quantity Report' ? (
+      {period === 'Custom' && report !== 'Expected stock quantity report' ? (
         <View style={[styles.row, { flexWrap: 'wrap' }]}>
           <TextInput value={startDate} onChangeText={setStartDate} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
         </View>
       ) : null}
-      {report === 'Expected Stock Quantity Report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
+      {report === 'Expected stock quantity report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
       {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
-      {!loading && report === 'Expected Stock Quantity Report' ? (
+      {!loading && report === 'Expected stock quantity report' ? (
         <Table
-          headers={['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches']}
+          headers={['Ingredient / Supply', 'Category', 'Branch', 'Expected quantity', 'Status', 'Expiration', 'Active batches']}
           rows={filteredInventory.map((item) => [item.name, item.category, item.branch, `${item.quantityLabel} ${item.unit}`, item.status, item.expiry, item.batches])}
         />
       ) : null}
       {!loading && isMovementReport ? (
         <Table
-          headers={['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)']}
+          headers={['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / audit detail', 'Timestamp (Manila)']}
           rows={movementRows}
         />
       ) : null}
-      {!loading && report === 'Physical Inventory Count and Discrepancy Report' ? (
+      {!loading && report === 'Physical inventory count and discrepancy report' ? (
         <Table
-          headers={['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History']}
+          headers={['Count reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count status', 'Inventory revision', 'Submitted by', 'Timestamp (Manila)', 'Revision history']}
           rows={countRows}
         />
       ) : null}
-      {!loading && report === 'Authorized Adjustment Report' ? (
+      {!loading && report === 'Authorized adjustment report' ? (
         <Table
-          headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)']}
+          headers={['Movement reference', 'Count reference', 'Branch', 'Ingredient', 'Adjusted quantity', 'Reason', 'Approving owner', 'Authorized at (Manila)']}
           rows={adjustmentRows}
         />
       ) : null}
       {!loading && !error && !hasReportData ? (
         <Text style={styles.empty}>
-          {report === 'Expected Stock Quantity Report' && !inventoryAvailable
+          {report === 'Expected stock quantity report' && !inventoryAvailable
             ? 'Expected stock data is unavailable.'
-            : report === 'Authorized Adjustment Report' && reviews === null
+            : report === 'Authorized adjustment report' && reviews === null
               ? 'Authorized adjustment data is unavailable.'
-              : report === 'Physical Inventory Count and Discrepancy Report' && activity === null
+              : report === 'Physical inventory count and discrepancy report' && activity === null
                 ? 'Physical count data is unavailable.'
                 : 'No records exist for the selected branch and reporting period.'}
         </Text>
@@ -1099,7 +1099,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
 }
 
 function StaffPage({ accounts }: any) { const [saving, setSaving] = useState<string | null>(null); const toggle = async (account: any) => { setSaving(account.id); try { await saveStaffAccount({ id: account.id, username: account.username, branchId: account.branch_id, active: !account.active }); } catch { /* the caller reloads accounts on the next session refresh */ } finally { setSaving(null); } }; return <><Text style={styles.section}>Staff accounts</Text><Text style={styles.muted}>Employee IDs are generated by Supabase and are also the initial passwords for new or explicitly reset Staff accounts.</Text><Table headers={['Employee ID', 'Name', 'Branch', 'Status', 'Created', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', new Date(account.created_at).toLocaleDateString(), saving === account.id ? 'Saving…' : 'Toggle status'])} /><View>{accounts.map((account: any) => <Pressable key={account.id} onPress={() => void toggle(account)} style={styles.outline}><Text style={styles.pinkText}>{account.active ? `Deactivate ${account.full_name}` : `Activate ${account.full_name}`}</Text></Pressable>)}</View></>; }
-function Settings({ products, configuration, stockSettings, onSaved }: any) { const [selected, setSelected] = useState<any>(null); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('0'); const [ingredientName, setIngredientName] = useState(''); const [unit, setUnit] = useState('kg'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false); const saveProduct = async () => { setSaving(true); try { const variants = selected?.variants?.map((variant: any) => ({ id: variant.id, price: Number(price) })) ?? [{ variant_code: '4pcs', size_label: '4 PCS', piece_count: 4, price: Number(price) }, { variant_code: '8pcs', size_label: '8 PCS', piece_count: 8, price: Number(price) }, { variant_code: '10plus1pcs', size_label: '10+1 PCS', piece_count: 11, price: Number(price) }]; if (selected) await updateProduct(selected.id, { product_name: name, description, is_available: true, variants }); else await createProduct({ product_name: name, description, is_available: true, variants }); onSaved('Product saved through the existing catalog service.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Product save failed.'); } finally { setSaving(false); } }; const saveIngredient = async () => { setSaving(true); try { if (selected?.ingredient) await updateIngredient(selected.ingredient.id, { name: ingredientName, category_id: selected.ingredient.category_id, unit }); else await createIngredient({ name: ingredientName, category_id: configuration?.categories?.[0]?.id ?? '', unit }); onSaved('Ingredient saved through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.'); } finally { setSaving(false); } }; const saveDays = async () => { setSaving(true); try { await updateNearExpirationDays(Number(days)); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Settings save failed.'); } finally { setSaving(false); } }; return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Live catalog, recipe, ingredient, and threshold configuration.</Text><View style={styles.grid}><Panel title="Products & Menu"><Text style={styles.muted}>Create or edit products without changing historical sales.</Text>{products.map((product: any) => <Pressable key={product.id} onPress={() => { setSelected(product); setName(product.product_name); setDescription(product.description); setPrice(String(product.price)); }}><Text style={styles.pinkText}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text></Pressable>)}<TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} /><TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} /><TextInput value={price} onChangeText={setPrice} placeholder="4 PCS selling price" keyboardType="decimal-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveProduct()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : selected ? 'Save product' : 'Add product'}</Text></Pressable></Panel><Panel title="Ingredients & Recipes"><Text style={styles.muted}>{configuration?.ingredients.length ?? 0} ingredients · {configuration?.recipeIngredients.length ?? 0} recipe lines</Text><TextInput value={ingredientName} onChangeText={setIngredientName} placeholder="Ingredient or supply name" style={styles.input} /><TextInput value={unit} onChangeText={setUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveIngredient()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Add ingredient'}</Text></Pressable><Text style={styles.muted}>Recipe edits use saveProductRecipe and affect future calculations only.</Text></Panel><Panel title="Prepared Batter"><Text style={styles.body}>5 bottles per batch · 25 pieces per bottle.</Text><Text style={styles.muted}>Raw ingredients are consumed during preparation; sales consume prepared batter only.</Text></Panel><Panel title="Stock thresholds & expiration"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day near-expiration alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>Save alert period</Text></Pressable><Text style={styles.muted}>{stockSettings?.inventory.length ?? 0} inventory thresholds loaded. Per-item minimum stock editing remains available through updateMinimumStock.</Text></Panel></View></>; }
+function Settings({ products, configuration, stockSettings, onSaved }: any) { const [selected, setSelected] = useState<any>(null); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('0'); const [ingredientName, setIngredientName] = useState(''); const [unit, setUnit] = useState('kg'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false); const saveProduct = async () => { setSaving(true); try { const variants = selected?.variants?.map((variant: any) => ({ id: variant.id, price: Number(price) })) ?? [{ variant_code: '4pcs', size_label: '4 PCS', piece_count: 4, price: Number(price) }, { variant_code: '8pcs', size_label: '8 PCS', piece_count: 8, price: Number(price) }, { variant_code: '10plus1pcs', size_label: '10+1 PCS', piece_count: 11, price: Number(price) }]; if (selected) await updateProduct(selected.id, { product_name: name, description, is_available: true, variants }); else await createProduct({ product_name: name, description, is_available: true, variants }); onSaved('Product saved through the existing catalog service.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Product save failed.'); } finally { setSaving(false); } }; const saveIngredient = async () => { setSaving(true); try { if (selected?.ingredient) await updateIngredient(selected.ingredient.id, { name: ingredientName, category_id: selected.ingredient.category_id, unit }); else await createIngredient({ name: ingredientName, category_id: configuration?.categories?.[0]?.id ?? '', unit }); onSaved('Ingredient saved through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.'); } finally { setSaving(false); } }; const saveDays = async () => { setSaving(true); try { await updateNearExpirationDays(Number(days)); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Settings save failed.'); } finally { setSaving(false); } }; return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Live catalog, recipe, ingredient, and threshold configuration.</Text><View style={styles.grid}><Panel title="Products & Menu"><Text style={styles.muted}>Create or edit products without changing historical sales.</Text>{products.map((product: any) => <Pressable key={product.id} onPress={() => { setSelected(product); setName(product.product_name); setDescription(product.description); setPrice(String(product.price)); }}><Text style={styles.pinkText}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text></Pressable>)}<TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} /><TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} /><TextInput value={price} onChangeText={setPrice} placeholder="4 PCS selling price" keyboardType="decimal-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveProduct()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : selected ? 'Save product' : 'Add product'}</Text></Pressable></Panel><Panel title="Ingredients & Recipes"><Text style={styles.muted}>{configuration?.ingredients.length ?? 0} ingredients · {configuration?.recipeIngredients.length ?? 0} recipe lines</Text><TextInput value={ingredientName} onChangeText={setIngredientName} placeholder="Ingredient or supply name" style={styles.input} /><TextInput value={unit} onChangeText={setUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveIngredient()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Add ingredient'}</Text></Pressable><Text style={styles.muted}>Recipe edits use saveProductRecipe and affect future calculations only.</Text></Panel><Panel title="Prepared batter"><Text style={styles.body}>5 bottles per batch · 25 pieces per bottle.</Text><Text style={styles.muted}>Raw ingredients are consumed during preparation; sales consume prepared batter only.</Text></Panel><Panel title="Stock thresholds & expiration"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day near-expiration alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>Save alert period</Text></Pressable><Text style={styles.muted}>{stockSettings?.inventory.length ?? 0} inventory thresholds loaded. Per-item minimum stock editing remains available through updateMinimumStock.</Text></Panel></View></>; }
 function Audit({ activity, reviews, sales, branches, inventoryRows }: {
   activity: Awaited<ReturnType<typeof loadOwnerActivityData>> | null;
   reviews: Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>>;
@@ -1183,7 +1183,7 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
         <>
           <Text style={styles.panelTitle}>Confirmed sales</Text>
           {sales === null ? <Text style={styles.muted}>Sales history is unavailable.</Text> : saleRows.length ? (
-            <Table headers={['Transaction Reference', 'Branch', 'Employee', 'Payment', 'Timestamp (Manila)', 'Total']} rows={saleRows} />
+            <Table headers={['Transaction reference', 'Branch', 'Employee', 'Payment', 'Timestamp (Manila)', 'Total']} rows={saleRows} />
           ) : <Text style={styles.empty}>No confirmed sales were returned for this period.</Text>}
         </>
       ) : null}
@@ -1206,15 +1206,15 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
         <>
           <Text style={styles.panelTitle}>Physical count history and revisions</Text>
           {activity === null ? <Text style={styles.muted}>Physical count history is unavailable.</Text> : countRows.length ? (
-            <Table headers={['Count Reference', 'Branch', 'Ingredient', 'Expected', 'Physical', 'Difference', 'Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)']} rows={countRows} />
+            <Table headers={['Count reference', 'Branch', 'Ingredient', 'Expected', 'Physical', 'Difference', 'Status', 'Inventory revision', 'Submitted by', 'Timestamp (Manila)']} rows={countRows} />
           ) : <Text style={styles.empty}>No physical counts were returned for this period.</Text>}
           <Text style={styles.panelTitle}>Discrepancy review history</Text>
           {reviews.length ? (
-            <Table headers={['Count Reference', 'Branch', 'Ingredient', 'Expected', 'Actual → Corrected', 'Status', 'Submitted By', 'Reviewed By', 'Review Detail', 'Timestamp (Manila)']} rows={discrepancyRows} />
+            <Table headers={['Count reference', 'Branch', 'Ingredient', 'Expected', 'Actual → Corrected', 'Status', 'Submitted by', 'Reviewed by', 'Review detail', 'Timestamp (Manila)']} rows={discrepancyRows} />
           ) : <Text style={styles.empty}>No discrepancy review history was returned.</Text>}
           <Text style={styles.panelTitle}>Authorized adjustments</Text>
           {adjustmentRows.length ? (
-            <Table headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Before → After', 'Reason', 'Approving Owner', 'Authorized At (Manila)']} rows={adjustmentRows} />
+            <Table headers={['Movement reference', 'Count reference', 'Branch', 'Ingredient', 'Before → After', 'Reason', 'Approving owner', 'Authorized at (Manila)']} rows={adjustmentRows} />
           ) : <Text style={styles.empty}>No authorized adjustments were returned.</Text>}
           {logs.length ? (
             <>
@@ -1331,7 +1331,7 @@ function StaffManager({ accounts, branches, onSaved }: {
     <TextInput value={username} onChangeText={setUsername} placeholder="Employee name / username" style={styles.input} />
     <Select value={branches.find((item: any) => item.id === branchId)?.name ?? 'Choose branch'} options={branches.map((item: any) => item.name)} onChange={(value) => setBranchId(branches.find((item: any) => item.name === value)?.id ?? '')} />
     <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : editing ? 'Save staff account' : 'Create staff account'}</Text></Pressable>
-    {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
+    {createdAccount?.employee_id ? <Panel title="New staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
     <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', 'Edit'])} />
     {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable></View>)}
   </>;
@@ -1973,4 +1973,4 @@ function ProfileEditor({ user, onSaved }: {
 }
 
 const C = { pink: '#EC1358', navy: '#0F1025', bg: '#F5F5F4', surface: '#FDFDFC', border: '#E3E3E6', muted: '#858591' };
-const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });
+const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });

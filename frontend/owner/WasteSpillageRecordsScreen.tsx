@@ -142,7 +142,7 @@ export default function WasteSpillageRecordsScreen({
   return (
     <View style={styles.screen}>
       <OwnerRecordHeader
-        title={view === 'details' ? 'Waste Record Details' : 'Waste and Spillage Records'}
+        title={view === 'details' ? 'Waste record details' : 'Waste and spillage records'}
         onBack={back}
       />
 

@@ -582,7 +582,7 @@ export default function OwnerSalesWorkspace({
   const pageCount = Math.max(1, Math.ceil(transactionRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const visibleRows = transactionRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-  const title = mode === 'reports' ? reportTitle.trim() || 'Sales performance report' : 'Sales Monitoring';
+  const title = mode === 'reports' ? reportTitle.trim() || 'Sales performance report' : 'Sales monitoring';
   const downloadCsv = async () => {
     if (!data || !range || !generatedAt) return;
     setExporting(true);
@@ -669,7 +669,7 @@ export default function OwnerSalesWorkspace({
       )}
       <Text style={[styles.filterLabel, styles.branchLabel]}>Branch</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-        <ChoiceChip label="All Branches" selected={branchId === null} onPress={() => changeBranch(null)} />
+        <ChoiceChip label="All branches" selected={branchId === null} onPress={() => changeBranch(null)} />
         {branches.map((branch) => (
           <ChoiceChip
             key={branch.id}
@@ -702,7 +702,7 @@ export default function OwnerSalesWorkspace({
           >
             {loading
               ? <ActivityIndicator size="small" color="#FFFFFF" />
-              : <Text style={styles.primaryButtonText}>Generate Report</Text>}
+              : <Text style={styles.primaryButtonText}>Generate report</Text>}
           </Pressable>
         </>
       )}
@@ -827,7 +827,7 @@ export default function OwnerSalesWorkspace({
             <>
               <View style={styles.omSalesCard}>
                 <View style={styles.omSalesCardHeader}>
-                  <Text style={styles.omSalesCardLabel}>Combined Total Recorded Sales</Text>
+                  <Text style={styles.omSalesCardLabel}>Combined total recorded sales</Text>
                   <Text style={styles.omLockIcon}>▣</Text>
                 </View>
                 <Text style={styles.omSalesAmount}>{currency(drillTotal)}</Text>
@@ -883,13 +883,13 @@ export default function OwnerSalesWorkspace({
           <View style={styles.omHeader}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Back to Sales Summaries"
+              accessibilityLabel="Back to sales summaries"
               onPress={() => setSelectedSaleId(null)}
               style={styles.omBackButton}
             >
               <Text style={styles.omBackText}>‹</Text>
             </Pressable>
-            <Text style={styles.omHeaderTitle}>Transaction Details</Text>
+            <Text style={styles.omHeaderTitle}>Transaction details</Text>
             <View style={styles.omHeaderSpacer} />
           </View>
 
@@ -957,7 +957,7 @@ export default function OwnerSalesWorkspace({
 
     return (
       <View style={styles.omWorkspace}>
-        <Text style={styles.omPageTitle}>Sales Summaries</Text>
+        <Text style={styles.omPageTitle}>Sales summaries</Text>
         <View style={styles.omSearchWrap}>
           <Text style={styles.omSearchIcon}>⌕</Text>
           <TextInput
@@ -1181,7 +1181,7 @@ export default function OwnerSalesWorkspace({
               <View style={styles.omSalesCard}>
                 <View style={styles.omSalesCardHeader}>
                   <Text style={styles.omSalesCardLabel}>
-                    {activeSalesTab === 'Branch' ? 'Combined Total Recorded Sales' : 'Total Recorded Sales'}
+                    {activeSalesTab === 'Branch' ? 'Combined total recorded sales' : 'Total recorded sales'}
                   </Text>
                   <Text style={styles.omLockIcon}>▣</Text>
                 </View>
@@ -1638,7 +1638,7 @@ export default function OwnerSalesWorkspace({
           )}
           <View style={styles.bentoGrid}>
             <View style={[styles.heroCard, { width: medium ? contentWidth * 0.58 - 6 : contentWidth }]}>
-              <Text style={styles.heroEyebrow}>RECORDED COMPLETED SALES</Text>
+              <Text style={styles.heroEyebrow}>Recorded completed sales</Text>
               <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit>{currency(totalSales)}</Text>
               <Text style={styles.heroDetail}>{range?.startText} – {range?.endText} · {branchName}</Text>
             </View>
@@ -1944,13 +1944,13 @@ export default function OwnerSalesWorkspace({
               <ScrollView horizontal showsHorizontalScrollIndicator>
                 <View style={styles.table}>
                   <View style={[styles.tableRow, styles.tableHeaderRow]}>
-                    <Text style={[styles.tableHeader, styles.referenceColumn]}>REFERENCE</Text>
-                    <Text style={[styles.tableHeader, styles.dateColumn]}>DATE / TIME</Text>
-                    <Text style={[styles.tableHeader, styles.branchColumn]}>BRANCH</Text>
-                    <Text style={[styles.tableHeader, styles.summaryColumn]}>PRODUCTS</Text>
-                    <Text style={[styles.tableHeader, styles.quantityColumn]}>QTY</Text>
-                    <Text style={[styles.tableHeader, styles.paymentColumn]}>PAYMENT</Text>
-                    <Text style={[styles.tableHeader, styles.amountColumn]}>TOTAL</Text>
+                    <Text style={[styles.tableHeader, styles.referenceColumn]}>Reference</Text>
+                    <Text style={[styles.tableHeader, styles.dateColumn]}>Date / time</Text>
+                    <Text style={[styles.tableHeader, styles.branchColumn]}>Branch</Text>
+                    <Text style={[styles.tableHeader, styles.summaryColumn]}>Products</Text>
+                    <Text style={[styles.tableHeader, styles.quantityColumn]}>Qty</Text>
+                    <Text style={[styles.tableHeader, styles.paymentColumn]}>Payment</Text>
+                    <Text style={[styles.tableHeader, styles.amountColumn]}>Total</Text>
                   </View>
                   {visibleRows.map(({ sale, branch, summary, quantity }) => {
                     const expanded = expandedSaleId === sale.id;

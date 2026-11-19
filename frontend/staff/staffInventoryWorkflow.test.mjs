@@ -52,7 +52,7 @@ function applyMovement(fixture, movement) {
 
 test('Staff stock-in, stock-out, and waste update quantity and movement history', () => {
   const fixture = createWorkflowFixture();
-  applyMovement(fixture, { branchId: 'branch-a', ingredientId: 'flour', movement: 2, type: 'stock_in', reason: 'Stock-In' });
+  applyMovement(fixture, { branchId: 'branch-a', ingredientId: 'flour', movement: 2, type: 'stock_in', reason: 'Stock-in' });
   applyMovement(fixture, { branchId: 'branch-a', ingredientId: 'flour', movement: -1, type: 'stock_out', reason: 'Cooking usage' });
   applyMovement(fixture, { branchId: 'branch-a', ingredientId: 'octopus', movement: -1, type: 'waste', reason: 'Spoilage' });
 
@@ -99,7 +99,7 @@ test('pending stock transaction and daily count survive timeout and app recreati
   const transaction = {
     requestId: 'tx-1', actorId: 'staff-a', actorLabel: 'Staff A', branchId: 'branch-a', branchLabel: 'Branch A',
     transactionType: 'stock_in',
-    transactions: [{ ingredientId: 'flour', type: 'stock_in', quantity: 2, unit: 'kg', transactionDate: '2026-11-13', reason: 'Stock-In', notes: '', batchReference: null, expirationDate: null }],
+    transactions: [{ ingredientId: 'flour', type: 'stock_in', quantity: 2, unit: 'kg', transactionDate: '2026-11-13', reason: 'Stock-in', notes: '', batchReference: null, expirationDate: null }],
     createdAt: '2026-11-13T00:00:00.000Z', status: 'pending', reference: null,
   };
   const transactionStorage = memoryStorage();
@@ -128,7 +128,7 @@ test('Staff dashboard projections refresh from branch inventory and exclude anot
   ];
   const visibleItems = filterBranchInventoryAlertItems(branchItems);
   assert.deepEqual(visibleItems.map((item) => item.id), ['flour']);
-  assert.equal(inventoryStockStatus(2, 3), 'Low Stock');
+  assert.equal(inventoryStockStatus(2, 3), 'Low stock');
   assert.equal(classifyStockAlert(2, 3), 'lowStock');
   assert.deepEqual(buildInventoryCategories(visibleItems).map((category) => category.category), ['Dry Goods']);
 });

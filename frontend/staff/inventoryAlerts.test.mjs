@@ -67,7 +67,7 @@ test('expiration alerts use the configured near-expiration window and retain exp
 test('alert labels match the four Staff alert categories', () => {
   assert.deepEqual(
     ['lowStock', 'outOfStock', 'nearExpiration', 'expired'].map(inventoryAlertLabel),
-    ['Low Stock', 'Out of Stock', 'Near Expiration', 'Expired'],
+    ['Low stock', 'Out of stock', 'Near expiration', 'Expired'],
   );
 });
 

@@ -49,7 +49,7 @@ test('waste records use live transaction fields and sort newest first', () => {
       transactionDate: new Date('2026-11-12T11:05:00+08:00'),
       notes: '',
     }),
-    historyRecord({ id: 'stock-in', type: 'Stock-In', reason: 'Stock-In' }),
+    historyRecord({ id: 'stock-in', type: 'Stock-in', reason: 'Stock-in' }),
   ]);
 
   assert.deepEqual(records.map(({ ingredientName, quantity, unit, category }) => [

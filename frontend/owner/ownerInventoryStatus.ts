@@ -1,6 +1,6 @@
 import { manilaDateKey } from '../services/businessDaySettings.ts';
 
-export type InventoryStockStatus = 'Low Stock' | 'Normal' | 'Out of Stock' | 'Near Expiration' | 'Expired' | 'Not tracked';
+export type InventoryStockStatus = 'Low stock' | 'Normal' | 'Out of stock' | 'Near expiration' | 'Expired' | 'Not tracked';
 
 export const DEFAULT_NEAR_EXPIRY_DAYS = 7;
 
@@ -89,9 +89,9 @@ export function getInventoryStockStatus(
     ? daysUntilManilaExpiration(expirationDate, new Date(`${referenceDate}T00:00:00+08:00`))
     : null;
   if (daysUntilExpiration !== null && daysUntilExpiration < 0) return 'Expired';
-  if (quantity === 0) return 'Out of Stock';
-  if (daysUntilExpiration !== null && daysUntilExpiration <= nearExpiryDays) return 'Near Expiration';
-  if (minimumStock > 0 && quantity <= minimumStock) return 'Low Stock';
+  if (quantity === 0) return 'Out of stock';
+  if (daysUntilExpiration !== null && daysUntilExpiration <= nearExpiryDays) return 'Near expiration';
+  if (minimumStock > 0 && quantity <= minimumStock) return 'Low stock';
   return 'Normal';
 }
 

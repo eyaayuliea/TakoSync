@@ -4,8 +4,10 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import appConfig from '../app.json';
 import {
+  AppState,
   ActivityIndicator,
   Image,
   ImageBackground,
@@ -25,6 +27,7 @@ import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
+import SessionLockScreen from './SessionLockScreen';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { ownerColors } from './owner/shared/ownerTokens';
@@ -46,6 +49,8 @@ import {
 
 const PINK = ownerColors.primary;
 const NAVY = ownerColors.navy;
+const INACTIVITY_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+const lastActivityStorageKey = (userId: string) => `@takosync/last-activity/${userId}`;
 const DASHBOARD_COLORS = {
   pink: '#EC1358',
   navy: '#0F1025',
@@ -76,7 +81,7 @@ type PreviewInventoryItem = {
 type Screen = 'loading' | 'welcome' | 'login' | 'ownerLogin' | 'dashboard' | 'staffWorkspace' | 'staffChangePassword';
 type AuthenticatedUser = AppUser;
 type DashboardTab = 'Dashboard' | 'Sales' | 'Reports' | 'History' | 'Alerts';
-type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
+type ReportingPeriod = 'Today' | 'This week' | 'This month' | 'Custom';
 
 function dateInputValue(date: Date): string {
   return manilaDateKey(date);
@@ -88,6 +93,26 @@ function formatCurrency(value: number): string {
     currency: 'PHP',
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function saveLastActivity(userId: string, timestamp: number) {
+  void AsyncStorage.setItem(lastActivityStorageKey(userId), String(timestamp)).catch((error: unknown) => {
+    console.error('Unable to save the session activity timestamp.', error);
+  });
+}
+
+async function loadLastActivity(userId: string): Promise<number | null> {
+  try {
+    const stored = await AsyncStorage.getItem(lastActivityStorageKey(userId));
+    if (stored === null) return null;
+    const timestamp = Number(stored);
+    return Number.isFinite(timestamp)
+      ? timestamp
+      : Date.now() - INACTIVITY_LOCK_TIMEOUT_MS;
+  } catch (error) {
+    console.error('Unable to restore the session activity timestamp.', error);
+    return Date.now() - INACTIVITY_LOCK_TIMEOUT_MS;
+  }
 }
 
 export default function App() {
@@ -114,6 +139,7 @@ function AppContent() {
   const [screen, setScreen] = useState<Screen>('loading');
   const [sessionInitialized, setSessionInitialized] = useState(!isSupabaseConfigured);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
+  const [sessionLocked, setSessionLocked] = useState(false);
   const [staffUsername, setStaffUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -124,6 +150,9 @@ function AppContent() {
   const [authenticating, setAuthenticating] = useState(false);
   const authLock = useRef(false);
   const authOperationLock = useRef(false);
+  const sessionLockedRef = useRef(false);
+  const lastActivityAtRef = useRef(Date.now());
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutLock = useRef(false);
   const ownerRefreshLock = useRef(false);
@@ -134,7 +163,7 @@ function AppContent() {
   const [salesLoadError, setSalesLoadError] = useState('');
   const [activityLoadError, setActivityLoadError] = useState('');
   const [branchFilter, setBranchFilter] = useState<string | null>(null);
-  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>('This Month');
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>('This month');
   const [requestedCustomStart, setRequestedCustomStart] = useState(() => {
     const date = new Date();
     date.setDate(1);
@@ -169,6 +198,29 @@ function AppContent() {
     (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'staffChangePassword') && authenticatedUser === null
       ? 'login'
       : screen;
+  const inactivityEligible =
+    authenticatedUser !== null &&
+    (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'staffChangePassword');
+  const lockSession = useCallback(() => {
+    if (sessionLockedRef.current) return;
+    sessionLockedRef.current = true;
+    setSessionLocked(true);
+  }, []);
+  const scheduleInactivityLock = useCallback(() => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    inactivityTimerRef.current = null;
+    if (!inactivityEligible || sessionLockedRef.current) return;
+    const remaining = Math.max(
+      0,
+      INACTIVITY_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAtRef.current),
+    );
+    inactivityTimerRef.current = setTimeout(lockSession, remaining);
+  }, [inactivityEligible, lockSession]);
+  const recordUserActivity = useCallback(() => {
+    if (!inactivityEligible || sessionLockedRef.current) return;
+    lastActivityAtRef.current = Date.now();
+    scheduleInactivityLock();
+  }, [inactivityEligible, scheduleInactivityLock]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -178,11 +230,22 @@ function AppContent() {
     }
     let active = true;
     getCurrentUser()
-      .then((user) => {
+      .then(async (user) => {
         if (!active) return;
         if (!user) {
           setScreen('welcome');
           return;
+        }
+        const now = Date.now();
+        const storedLastActivity = await loadLastActivity(user.id);
+        if (!active) return;
+        const lastActivity = storedLastActivity === null ? now : Math.min(storedLastActivity, now);
+        lastActivityAtRef.current = lastActivity;
+        if (now - lastActivity >= INACTIVITY_LOCK_TIMEOUT_MS) {
+          sessionLockedRef.current = true;
+          setSessionLocked(true);
+        } else {
+          saveLastActivity(user.id, lastActivity);
         }
         setAuthenticatedUser(user);
         setScreen(getAuthenticatedMobileDestination(user.role));
@@ -200,6 +263,38 @@ function AppContent() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!inactivityEligible || sessionLocked) {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+      return;
+    }
+
+    scheduleInactivityLock();
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        if (Date.now() - lastActivityAtRef.current >= INACTIVITY_LOCK_TIMEOUT_MS) {
+          lockSession();
+        } else {
+          scheduleInactivityLock();
+        }
+      } else if (authenticatedUser) {
+        saveLastActivity(authenticatedUser.id, lastActivityAtRef.current);
+      }
+    });
+    return () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+      subscription.remove();
+    };
+  }, [
+    authenticatedUser?.id,
+    inactivityEligible,
+    lockSession,
+    scheduleInactivityLock,
+    sessionLocked,
+  ]);
 
   useEffect(() => {
     if (authenticatedUser?.role !== 'Owner') {
@@ -370,15 +465,15 @@ function AppContent() {
       id: activity.id,
       type: activity.type,
       title: ({
-        stock_in: 'Stock-In',
-        stock_out: 'Stock-Out',
+        stock_in: 'Stock-in',
+        stock_out: 'Stock-out',
         usage: 'Usage',
         waste: 'Waste',
         spoilage: 'Spoilage',
-        sales_consumption: 'Sales Consumption',
-        transfer_in: 'Branch Transfer In',
-        transfer_out: 'Branch Transfer Out',
-        adjustment: 'Authorized Inventory Adjustment',
+        sales_consumption: 'Sales consumption',
+        transfer_in: 'Branch transfer in',
+        transfer_out: 'Branch transfer out',
+        adjustment: 'Authorized inventory adjustment',
       } as Record<string, string>)[activity.type] ?? activity.type,
       detail: `${ownerIngredients.get(activity.ingredient_id)?.name ?? activity.ingredient_id} · ${Number(activity.quantity)} ${activity.unit}`,
       reference: activity.reference,
@@ -389,7 +484,7 @@ function AppContent() {
     ...(ownerSalesData?.sales ?? []).map((sale) => ({
       id: sale.id,
       type: 'sale',
-      title: 'Completed Sale',
+      title: 'Completed sale',
       detail: formatCurrency(Number(sale.total_amount)),
       reference: sale.transaction_reference,
       branchId: sale.branch_id,
@@ -399,7 +494,7 @@ function AppContent() {
     ...(ownerActivityData?.dailyChecks ?? []).map((check) => ({
       id: check.id,
       type: 'physical_count',
-      title: 'Physical Inventory Count',
+      title: 'Physical inventory count',
       detail: `Submitted for review · ${check.check_date}`,
       reference: check.reference,
       branchId: check.branch_id,
@@ -413,7 +508,7 @@ function AppContent() {
       return [{
         id: `${check.id}:${line.ingredient_id}`,
         type: 'discrepancy',
-        title: 'Inventory Discrepancy',
+        title: 'Inventory discrepancy',
         detail: `${ownerIngredients.get(line.ingredient_id)?.name ?? line.ingredient_id} · Expected ${Number(line.recorded_quantity)} ${line.unit} · Counted ${Number(line.physical_quantity)} ${line.unit}`,
         reference: check.reference,
         branchId: check.branch_id,
@@ -464,9 +559,9 @@ function AppContent() {
     ? Math.max(0, Math.ceil((selectedDateRange.end.getTime() - selectedDateRange.start.getTime()) / 86_400_000))
     : 0;
   const chartIntervalDays = reportingPeriod === 'Custom' ? Math.max(1, Math.ceil(chartDayCount / 60)) : 1;
-  const chartBucketCount = reportingPeriod === 'This Week'
+  const chartBucketCount = reportingPeriod === 'This week'
     ? 7
-    : reportingPeriod === 'This Month'
+    : reportingPeriod === 'This month'
       ? chartDayCount
       : reportingPeriod === 'Custom'
         ? Math.ceil(chartDayCount / chartIntervalDays)
@@ -493,7 +588,7 @@ function AppContent() {
           endDate.setUTCDate(endDate.getUTCDate() + chartIntervalDays);
           const dayEnd = endDate.getTime();
           return {
-            label: reportingPeriod === 'This Week'
+            label: reportingPeriod === 'This week'
               ? new Intl.DateTimeFormat('en', { timeZone: 'Asia/Manila', weekday: 'short' }).format(date)
               : reportingPeriod === 'Custom'
                 ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' }).format(date)
@@ -537,6 +632,10 @@ function AppContent() {
     setLoginError('');
     try {
       const user = await signInStaff(staffUsername, password);
+      lastActivityAtRef.current = Date.now();
+      sessionLockedRef.current = false;
+      setSessionLocked(false);
+      saveLastActivity(user.id, lastActivityAtRef.current);
       setAuthenticatedUser(user);
       setLoginSuccess(true);
       await new Promise((resolve) => setTimeout(resolve, 600));
@@ -558,6 +657,10 @@ function AppContent() {
     authOperationLock.current = true;
     try {
       const user = await signInOwnerWithEmail(email, ownerPassword);
+      lastActivityAtRef.current = Date.now();
+      sessionLockedRef.current = false;
+      setSessionLocked(false);
+      saveLastActivity(user.id, lastActivityAtRef.current);
       setAuthenticatedUser(user);
       setScreen('dashboard');
     } finally {
@@ -566,6 +669,10 @@ function AppContent() {
   };
 
   const clearSignedInState = useCallback(() => {
+    sessionLockedRef.current = false;
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    inactivityTimerRef.current = null;
+    setSessionLocked(false);
     setAuthenticatedUser(null);
     setOwnerData(null);
     setOwnerSalesData(null);
@@ -580,12 +687,40 @@ function AppContent() {
     setPasswordError('');
     setDashboardTab('Dashboard');
     setBranchFilter(null);
-    setReportingPeriod('This Month');
+    setReportingPeriod('This month');
     setOwnerLoadError('');
     setSalesLoadError('');
     setActivityLoadError('');
     setDashboardMessage('');
   }, []);
+
+  const handleUnlock = async (username: string, lockPassword: string) => {
+    const lockedUser = authenticatedUser;
+    if (!lockedUser) throw new Error('Your session has ended. Please sign in again.');
+    if (authOperationLock.current || logoutLock.current) {
+      throw new Error('Another authentication request is already in progress.');
+    }
+
+    authOperationLock.current = true;
+    try {
+      const user = lockedUser.role === 'Staff'
+        ? await signInStaff(username, lockPassword)
+        : await signInOwnerWithEmail(lockedUser.email, lockPassword);
+      if (user.id !== lockedUser.id) {
+        await signOut();
+        throw new Error('Those credentials belong to a different account. Try again or log out.');
+      }
+
+      lastActivityAtRef.current = Date.now();
+      sessionLockedRef.current = false;
+      setSessionLocked(false);
+      saveLastActivity(user.id, lastActivityAtRef.current);
+      setAuthenticatedUser(user);
+      if (user.role === 'Staff') setStaffUsername(username);
+    } finally {
+      authOperationLock.current = false;
+    }
+  };
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -663,6 +798,8 @@ function AppContent() {
     if (!user || user.role !== 'Staff' || user.mustChangePassword) {
       throw new Error('The password change could not be verified. Please retry or log out.');
     }
+    lastActivityAtRef.current = Date.now();
+    saveLastActivity(user.id, lastActivityAtRef.current);
     setAuthenticatedUser(user);
     setScreen(getAuthenticatedMobileDestination(user.role));
   };
@@ -670,12 +807,18 @@ function AppContent() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
-        barStyle={screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.background}
+        barStyle={sessionLocked ? 'light-content' : screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={sessionLocked ? '#0F1025' : colors.background}
       />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
-          <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
+          <View
+            style={[styles.appFrame, isWideScreen && styles.desktopFrame]}
+            onStartShouldSetResponderCapture={() => {
+              recordUserActivity();
+              return false;
+            }}
+          >
             {visibleScreen === 'loading' && (!fontsLoaded || !sessionInitialized) && (
               <View style={styles.loadingScreen}>
                 <Image
@@ -711,22 +854,22 @@ function AppContent() {
                     </Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Staff Login"
+                      accessibilityLabel="Staff login"
                       onPress={() => {
                         setLoginError('');
                         setScreen('login');
                       }}
                       style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
                     >
-                      <Text style={styles.buttonText}>Staff Login</Text>
+                      <Text style={styles.buttonText}>Staff login</Text>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Owner Login"
+                      accessibilityLabel="Owner login"
                       onPress={() => setScreen('ownerLogin')}
                       style={({ pressed }) => [styles.ownerWelcomeButton, pressed && styles.buttonPressed]}
                     >
-                      <Text style={styles.buttonText}>Owner Login</Text>
+                      <Text style={styles.buttonText}>Owner login</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -773,7 +916,7 @@ function AppContent() {
                       keyboardShouldPersistTaps="handled"
                     >
                       <View style={styles.loginCard}>
-                        <Text style={styles.loginHeading}>Log In</Text>
+                        <Text style={styles.loginHeading}>Log in</Text>
                         {loginError !== '' && (
                           <View style={styles.errorBanner} accessibilityRole="alert">
                             <View style={styles.errorIcon}>
@@ -840,7 +983,7 @@ function AppContent() {
                         </View>
                         {passwordError !== '' && <Text style={styles.fieldError}>{passwordError}</Text>}
                         <Text style={styles.loginHelper}>
-                          Use your staff username and password. Owners should use the Owner Login screen.
+                          Use your staff username and password. owners Should use the owner login screen.
                         </Text>
                         {!isSupabaseConfigured && (
                           <Text style={styles.errorText}>
@@ -849,14 +992,14 @@ function AppContent() {
                         )}
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityLabel="Log In"
+                          accessibilityLabel="Log in"
                           onPress={handleLogin}
                           disabled={authenticating || !isSupabaseConfigured}
                           style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed, (authenticating || !isSupabaseConfigured) && { opacity: 0.6 }]}
                         >
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                             {authenticating && <ActivityIndicator size="small" color="#FFFFFF" />}
-                            <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log In'}</Text>
+                            <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log in'}</Text>
                           </View>
                         </Pressable>
                       </View>
@@ -982,7 +1125,7 @@ function AppContent() {
                           onPress={() => setBranchFilter(null)}
                           style={[styles.filterChip, branchFilter === null && styles.filterChipActive]}
                         >
-                          <Text style={[styles.filterChipText, branchFilter === null && styles.filterChipTextActive]}>All Branches</Text>
+                          <Text style={[styles.filterChipText, branchFilter === null && styles.filterChipTextActive]}>All branches</Text>
                         </Pressable>
                         {(ownerData?.branches ?? []).map((branch) => {
                           const active = branchFilter === branch.id;
@@ -1001,7 +1144,7 @@ function AppContent() {
                       </ScrollView>
                       <Text style={[styles.filterLabel, styles.periodFilterLabel]}>Reporting period</Text>
                       <View style={styles.filterOptions}>
-                        {(['Today', 'This Week', 'This Month', 'Custom'] as const).map((period) => {
+                        {(['Today', 'This week', 'This month', 'Custom'] as const).map((period) => {
                           const active = reportingPeriod === period;
                           return (
                             <Pressable
@@ -1115,7 +1258,7 @@ function AppContent() {
                       initialLoading={salesLoading}
                       initialPeriod={reportingPeriod === 'Today'
                         ? 'Daily'
-                        : reportingPeriod === 'This Week' ? 'Weekly' : 'Monthly'}
+                        : reportingPeriod === 'This week' ? 'Weekly' : 'Monthly'}
                       initialBranchId={branchFilter}
                       availableWidth={Math.min(frameWidth, 1180) - 44}
                     />
@@ -1127,7 +1270,7 @@ function AppContent() {
                         <View style={styles.loadingPanel}>
                           {ownerLoading
                             ? <ActivityIndicator size="small" color={DASHBOARD_COLORS.pink} />
-                            : <Text style={styles.emptySearchText}>Dashboard data is unavailable. Use Retry to load it again.</Text>}
+                            : <Text style={styles.emptySearchText}>Dashboard data is unavailable. use Retry to load it again.</Text>}
                           <Text style={styles.loadingPanelText}>{ownerLoading ? 'Loading owner dashboard…' : 'No unverified figures are shown.'}</Text>
                         </View>
                       ) : (
@@ -1142,15 +1285,15 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Sales Overview</Text>
+                            <Text style={styles.sectionHeading}>Sales overview</Text>
                             <Text style={styles.sectionCaption}>Completed sales only</Text>
                           </View>
                           <View style={styles.metricGrid}>
                             {[
-                              { label: `Total Sales · ${reportingPeriod}`, value: salesLoading || salesLoadError ? '—' : formatCurrency(totalSales), hint: 'Recorded completed sales' },
-                              { label: 'Sales Today', value: salesLoading || salesLoadError ? '—' : formatCurrency(salesToday.reduce((sum, sale) => sum + Number(sale.total_amount), 0)), hint: 'Current business day' },
+                              { label: `Total sales · ${reportingPeriod}`, value: salesLoading || salesLoadError ? '—' : formatCurrency(totalSales), hint: 'Recorded completed sales' },
+                              { label: 'Sales today', value: salesLoading || salesLoadError ? '—' : formatCurrency(salesToday.reduce((sum, sale) => sum + Number(sale.total_amount), 0)), hint: 'Current business day' },
                               { label: 'Transactions', value: salesLoading || salesLoadError ? '—' : String(selectedSales.length), hint: 'Completed transactions' },
-                              { label: 'Average Transaction', value: salesLoading || salesLoadError || !selectedSales.length ? '—' : formatCurrency(averageSale), hint: 'Selected reporting period' },
+                              { label: 'Average transaction', value: salesLoading || salesLoadError || !selectedSales.length ? '—' : formatCurrency(averageSale), hint: 'Selected reporting period' },
                             ].map((metric) => (
                               <View key={metric.label} style={[styles.metricCard, isWideScreen && styles.metricCardWide]}>
                                 <Text style={styles.metricLabel}>{metric.label}</Text>
@@ -1162,12 +1305,12 @@ function AppContent() {
 
                           <View style={[styles.analyticsGrid, isWideScreen && styles.analyticsGridWide]}>
                             <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
-                              <Text style={styles.panelTitle}>Sales Performance</Text>
+                              <Text style={styles.panelTitle}>Sales performance</Text>
                               <Text style={styles.panelCaption}>Daily recorded sales · {reportingPeriod.toLowerCase()}</Text>
                               {salesLoading ? (
                                 <Text style={styles.panelEmpty}>Loading recorded sales…</Text>
                               ) : salesLoadError ? (
-                                <Text style={styles.panelEmpty}>Sales data is unavailable. Use Retry to load it again.</Text>
+                                <Text style={styles.panelEmpty}>Sales data is unavailable. use Retry to load it again.</Text>
                               ) : selectedSales.length === 0 ? (
                                 <Text style={styles.panelEmpty}>No completed sales in this period.</Text>
                               ) : (
@@ -1202,7 +1345,7 @@ function AppContent() {
                               )}
                             </View>
                             <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
-                              <Text style={styles.panelTitle}>Branch Sales Comparison</Text>
+                              <Text style={styles.panelTitle}>Branch sales comparison</Text>
                               <Text style={styles.panelCaption}>Same reporting period · actual branch records</Text>
                               {salesLoading ? (
                                 <Text style={styles.panelEmpty}>Loading branch sales…</Text>
@@ -1227,7 +1370,7 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Expected Inventory Overview</Text>
+                            <Text style={styles.sectionHeading}>Expected inventory overview</Text>
                             <Text style={styles.sectionCaption}>Recorded quantities, not physical counts</Text>
                           </View>
                           <View style={styles.inventorySummaryPanel}>
@@ -1245,7 +1388,7 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Low-Stock Ingredients</Text>
+                            <Text style={styles.sectionHeading}>Low-stock ingredients</Text>
                             <Pressable
                               accessibilityRole="button"
                               onPress={() => setDashboardTab('Alerts')}
@@ -1270,7 +1413,7 @@ function AppContent() {
                           )}
 
                           <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-                            <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
+                            <Text style={styles.sectionHeading}>Expiration monitoring</Text>
                             <Pressable
                               accessibilityRole="button"
                               onPress={() => setDashboardTab('Alerts')}
@@ -1303,7 +1446,7 @@ function AppContent() {
                           {dashboardTab === 'Dashboard' && (
                             <>
                               <View style={styles.sectionHeadingRow}>
-                                <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                                <Text style={styles.sectionHeading}>Recent business activities</Text>
                                 <Pressable accessibilityRole="button" onPress={() => setDashboardTab('History')} style={styles.sectionLink}>
                                   <Text style={styles.viewAllText}>View all ›</Text>
                                 </Pressable>
@@ -1329,7 +1472,7 @@ function AppContent() {
                               )}
 
                               <View style={styles.sectionHeadingRow}>
-                                <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                                <Text style={styles.sectionHeading}>Inventory discrepancies</Text>
                                 <Pressable accessibilityRole="button" onPress={() => setDashboardTab('Alerts')} style={styles.sectionLink}>
                                   <Text style={styles.viewAllText}>View all ›</Text>
                                 </Pressable>
@@ -1365,7 +1508,7 @@ function AppContent() {
 
                   {dashboardTab === 'History' && (
                     <View style={styles.historyView}>
-                      <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                      <Text style={styles.sectionHeading}>Recent business activities</Text>
                       <Text style={styles.historyCaption}>Recorded sales, inventory movements, and physical counts</Text>
                       {selectedActivities.map((activity) => (
                         <View key={`${activity.type}:${activity.id}`} style={styles.activityCard}>
@@ -1389,7 +1532,7 @@ function AppContent() {
                   {dashboardTab === 'Alerts' && (
                     <>
                       <View style={styles.sectionHeadingRow}>
-                        <Text style={styles.sectionHeading}>Low-Stock Items</Text>
+                        <Text style={styles.sectionHeading}>Low-stock items</Text>
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel="View all low-stock alerts"
@@ -1416,7 +1559,7 @@ function AppContent() {
                       )}
 
                       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-                        <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
+                        <Text style={styles.sectionHeading}>Expiration monitoring</Text>
                         <Text style={styles.expirationCount}>{expiringItems.length} items</Text>
                       </View>
                       {visibleExpiringItems.length > 0 ? (
@@ -1445,7 +1588,7 @@ function AppContent() {
                   {dashboardTab === 'Alerts' && (
                     <>
                       <View style={styles.sectionHeadingRow}>
-                        <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                        <Text style={styles.sectionHeading}>Inventory discrepancies</Text>
                       </View>
                       {discrepancies.map((item) => (
                         <View key={item.id} style={styles.discrepancyRow}>
@@ -1517,6 +1660,16 @@ function AppContent() {
                 onChangePassword={() => setScreen('staffChangePassword')}
                 user={authenticatedUser}
                 appVersion={appConfig.expo.version}
+              />
+            )}
+            {sessionLocked && authenticatedUser && (
+              <SessionLockScreen
+                key={authenticatedUser.id}
+                branch={authenticatedUser.role === 'Staff' ? authenticatedUser.branch : 'Owner account'}
+                username={staffUsername}
+                requiresUsername={authenticatedUser.role === 'Staff' && staffUsername.trim() === ''}
+                onUnlock={handleUnlock}
+                onLogout={handleLogout}
               />
             )}
           </View>

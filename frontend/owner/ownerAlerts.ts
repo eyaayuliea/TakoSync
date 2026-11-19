@@ -4,8 +4,8 @@ export const OWNER_ALERT_EMPTY_MESSAGE = 'No alerts at the moment.';
 export const OWNER_ALERT_LOAD_ERROR = 'Unable to load data. Please check your internet connection and try again.';
 export const OWNER_ALERT_TOAST_DURATION_MS = 3500;
 
-export type OwnerStockAlertKind = 'Low Stock' | 'Out of Stock';
-export type OwnerExpirationAlertKind = 'Near Expiration' | 'Expired';
+export type OwnerStockAlertKind = 'Low stock' | 'Out of stock';
+export type OwnerExpirationAlertKind = 'Near expiration' | 'Expired';
 
 export type OwnerAlertInventoryRecord = {
   branch_id: string;
@@ -60,13 +60,13 @@ export type OwnerExpirationAlert = {
 
 export function classifyOwnerStockAlert(quantity: number | null, minimumStock: number): OwnerStockAlertKind | null {
   if (quantity === null) return null;
-  if (quantity <= 0) return 'Out of Stock';
-  return minimumStock > 0 && quantity <= minimumStock ? 'Low Stock' : null;
+  if (quantity <= 0) return 'Out of stock';
+  return minimumStock > 0 && quantity <= minimumStock ? 'Low stock' : null;
 }
 
 export function classifyOwnerExpirationAlert(daysUntilExpiration: number, alertWindowDays: number): OwnerExpirationAlertKind | null {
   if (daysUntilExpiration < 0) return 'Expired';
-  return daysUntilExpiration <= alertWindowDays ? 'Near Expiration' : null;
+  return daysUntilExpiration <= alertWindowDays ? 'Near expiration' : null;
 }
 
 export function daysUntilOwnerExpiration(expirationDate: string, now = new Date()): number {

@@ -32,8 +32,8 @@ test('formats Owner references and status tones', () => {
   assert.equal(ownerStatusColors.difference.zero, '#589144');
   assert.equal(ownerStatusColors.difference.positive, '#FCA639');
   assert.equal(stockStatusColor('Normal'), '#589144');
-  assert.equal(stockStatusColor('Low Stock'), '#FDE672');
-  assert.equal(stockStatusColor('Out of Stock'), '#F52F2E');
-  assert.equal(expiryStatusColor('Near Expiration'), '#FCA639');
+  assert.equal(stockStatusColor('Low stock'), '#FDE672');
+  assert.equal(stockStatusColor('Out of stock'), '#F52F2E');
+  assert.equal(expiryStatusColor('Near expiration'), '#FCA639');
   assert.equal(expiryStatusColor('Expired'), '#F52F2E');
 });

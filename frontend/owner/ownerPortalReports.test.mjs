@@ -73,7 +73,7 @@ test('Owner Web movement reports keep types separate and apply branch and half-o
   ];
 
   assert.deepEqual(
-    filterOwnerPortalReportMovements(movements, 'Stock-In Report', {
+    filterOwnerPortalReportMovements(movements, 'Stock-in report', {
       branchId: 'branch-1',
       start: new Date('2026-11-01T00:00:00.000Z'),
       end: new Date('2026-11-02T00:00:00.000Z'),
@@ -81,7 +81,7 @@ test('Owner Web movement reports keep types separate and apply branch and half-o
     ['start', 'inside'],
   );
   assert.deepEqual(
-    filterOwnerPortalReportMovements(movements, 'Waste and Spillage Report', {
+    filterOwnerPortalReportMovements(movements, 'Waste and spillage report', {
       branchId: null,
       start: new Date('2026-11-01T00:00:00.000Z'),
       end: new Date('2026-11-02T00:00:00.000Z'),

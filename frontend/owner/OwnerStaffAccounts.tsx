@@ -105,8 +105,8 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
 
   const provisionExisting = () => {
     Alert.alert(
-      'Set Staff initial passwords?',
-      'This will set each existing Staff account password to its stored Employee ID. Auth users and UUIDs will not be recreated.',
+      'Set staff initial passwords?',
+      'This will set each existing staff account password to its stored employee ID. Auth users and UUIDs will not be recreated.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -120,7 +120,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
               try {
                 const nextAccounts = await provisionExistingStaffAccounts();
                 setAccounts(nextAccounts);
-                setFeedback('Existing Staff initial passwords were set to their Employee IDs.');
+                setFeedback('Existing staff initial passwords were set to their employee IDs.');
               } catch (provisionError) {
                 setError(provisionError instanceof Error ? provisionError.message : 'Unable to provision existing Staff credentials.');
               } finally {
@@ -149,7 +149,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
       {feedback ? <Text style={styles.feedback}>{feedback}</Text> : null}
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>{selected ? 'Edit Staff account' : 'New Staff account'}</Text>
+        <Text style={styles.panelTitle}>{selected ? 'Edit staff account' : 'New staff account'}</Text>
         <Text style={styles.label}>Employee name / username</Text>
         <TextInput value={username} onChangeText={setUsername} editable={!saving} autoCapitalize="words" autoCorrect={false} style={styles.input} placeholder="Employee name" />
         <Text style={styles.label}>Employee ID {selected ? '(read-only)' : '(generated automatically)'}</Text>
@@ -183,7 +183,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
 
       {createdAccount ? (
         <View style={styles.generatedCard}>
-          <Text style={styles.generatedTitle}>New Staff credentials</Text>
+          <Text style={styles.generatedTitle}>New staff credentials</Text>
           <Text style={styles.generatedLabel}>Employee ID / initial password</Text>
           <Text style={styles.generatedValue} selectable>{createdAccount.employee_id}</Text>
           <Text style={styles.generatedHint}>Long-press the value to copy it. Do not share it in logs or chat.</Text>
@@ -194,8 +194,8 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
         {provisioning ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.provisionText}>Set existing Staff initial passwords</Text>}
       </Pressable>
 
-      <Text style={styles.sectionTitle}>Existing Staff accounts</Text>
-      {loading ? <ActivityIndicator color={colors.pink} /> : accounts.length === 0 ? <Text style={styles.empty}>No Staff accounts have been provisioned.</Text> : accounts.map((account) => (
+      <Text style={styles.sectionTitle}>Existing staff accounts</Text>
+      {loading ? <ActivityIndicator color={colors.pink} /> : accounts.length === 0 ? <Text style={styles.empty}>No staff accounts have been provisioned.</Text> : accounts.map((account) => (
         <Pressable key={account.id} onPress={() => edit(account)} style={styles.accountCard}>
           <View style={styles.accountCopy}>
             <Text style={styles.accountName}>{account.full_name || account.username}</Text>

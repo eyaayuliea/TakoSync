@@ -140,7 +140,7 @@ export default function SalesConsumptionRecords({
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
           <Text style={styles.backChevron}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>{view === 'details' ? 'Sales Consumption Details' : 'Sales Consumption Records'}</Text>
+        <Text style={styles.headerTitle}>{view === 'details' ? 'Sales consumption details' : 'Sales consumption records'}</Text>
       </View>
 
       {view === 'details' ? (

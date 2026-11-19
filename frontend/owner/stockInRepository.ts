@@ -24,14 +24,14 @@ export type StockInRecord = {
   recordedBy: string;
 };
 
-type StockInHistoryItem = TransactionHistoryItem & { type: 'Stock-In' };
+type StockInHistoryItem = TransactionHistoryItem & { type: 'Stock-in' };
 
 export function buildStockInRecords(
   history: TransactionHistoryItem[],
   batches: StockInBatch[],
 ): StockInRecord[] {
   return history
-    .filter((record): record is StockInHistoryItem => record.type === 'Stock-In')
+    .filter((record): record is StockInHistoryItem => record.type === 'Stock-in')
     .map((record) => ({
       id: record.id,
       reference: record.reference,
@@ -54,7 +54,7 @@ export async function loadStockInRecords(
   branches: StockInBranch[],
   batches: StockInBatch[],
 ): Promise<StockInRecord[]> {
-  if (branches.length === 0) throw new Error('Owner branches are unavailable for Stock-In records.');
+  if (branches.length === 0) throw new Error('Owner branches are unavailable for Stock-in records.');
   const { loadTransactionHistory } = await import('../services/takosync.ts');
   const historyByBranch = await Promise.all(
     branches.map((branch) => loadTransactionHistory(branch.id)),

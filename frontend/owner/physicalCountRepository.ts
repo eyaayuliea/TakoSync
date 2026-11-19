@@ -3,7 +3,7 @@ import type { InventoryCountHistoryRecord } from '../staff/inventoryReports.ts';
 
 export type PhysicalCountResult = 'Matches' | 'Lower than Expected' | 'Higher than Expected';
 export type PhysicalCountStatus = 'Submitted' | 'Validated';
-export type PhysicalCountDiscrepancyStatus = 'Pending Review' | 'Adjusted';
+export type PhysicalCountDiscrepancyStatus = 'Pending review' | 'Adjusted';
 
 export type PhysicalCountBranch = {
   id: string;
@@ -84,7 +84,7 @@ export function formatPhysicalCountDifference(value: number, unit: string): stri
 }
 
 type CountHistoryItem = TransactionHistoryItem & {
-  type: 'Physical Inventory Count';
+  type: 'Physical inventory count';
   physicalCount: InventoryCountHistoryRecord['physicalCount'];
 };
 
@@ -100,7 +100,7 @@ export function buildPhysicalCountRecords(
   const reviewsByLine = new Map(reviews.map((review) => [review.countLineId, review]));
   return history
     .filter((record): record is CountHistoryItem =>
-      record.type === 'Physical Inventory Count' &&
+      record.type === 'Physical inventory count' &&
       record.physicalCount !== undefined &&
       ['submitted', 'pending_owner_review'].includes(record.physicalCount.status),
     )
@@ -119,7 +119,7 @@ export function buildPhysicalCountRecords(
         ? null
         : review?.status === 'Validated' || count.validation
           ? 'Adjusted'
-          : 'Pending Review';
+          : 'Pending review';
       const countStatus: PhysicalCountStatus = difference === 0 || count.validation || review?.status === 'Validated'
         ? 'Validated'
         : 'Submitted';

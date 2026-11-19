@@ -28,7 +28,7 @@ export function filterOwnerPortalInventory<T extends OwnerPortalInventoryRow>(
   rows: T[],
   selectedBranch: string,
 ): T[] {
-  return selectedBranch === 'All Branches'
+  return selectedBranch === 'All branches'
     ? rows
     : rows.filter((row) => row.branch === selectedBranch);
 }
@@ -46,8 +46,8 @@ export function summarizeOwnerPortalBranches(
       name: branch.name,
       inventoryCount: branchRows.length,
       normalCount: branchRows.filter((row) => row.status === 'Normal').length,
-      lowStockCount: branchRows.filter((row) => row.status === 'Low Stock').length,
-      outOfStockCount: branchRows.filter((row) => row.status === 'Out of Stock').length,
+      lowStockCount: branchRows.filter((row) => row.status === 'Low stock').length,
+      outOfStockCount: branchRows.filter((row) => row.status === 'Out of stock').length,
       salesTotal: branchSales.reduce((total, sale) => total + Number(sale.total_amount), 0),
     };
   });

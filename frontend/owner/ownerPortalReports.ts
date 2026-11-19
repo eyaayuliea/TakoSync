@@ -40,9 +40,9 @@ export type OwnerPortalInventoryReportMovement = {
 };
 
 export type OwnerPortalMovementReport =
-  | 'Stock-In Report'
-  | 'Sales Consumption Report'
-  | 'Waste and Spillage Report';
+  | 'Stock-in report'
+  | 'Sales consumption report'
+  | 'Waste and spillage report';
 
 export type OwnerPortalCountReportRow = {
   reference: string;
@@ -59,9 +59,9 @@ export type OwnerPortalCountReportRow = {
 };
 
 const movementTypesByReport: Record<OwnerPortalMovementReport, readonly string[]> = {
-  'Stock-In Report': ['stock_in'],
-  'Sales Consumption Report': ['sales_consumption'],
-  'Waste and Spillage Report': ['waste', 'spoilage'],
+  'Stock-in report': ['stock_in'],
+  'Sales consumption report': ['sales_consumption'],
+  'Waste and spillage report': ['waste', 'spoilage'],
 };
 
 export function buildOwnerPortalCountReportRows(input: {

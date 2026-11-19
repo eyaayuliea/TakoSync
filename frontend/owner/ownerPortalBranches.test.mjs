@@ -11,10 +11,10 @@ test('Owner Portal branch summaries use database branch IDs and retain empty bra
     { id: 'branch-2', name: 'Live Branch Beta' },
   ];
   const rows = [
-    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Low Stock' },
-    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Out of Stock' },
+    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Low stock' },
+    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Out of stock' },
     { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Normal' },
-    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Near Expiry' },
+    { branch: 'Live Branch Alpha', branchId: 'branch-1', status: 'Near expiry' },
   ];
   const sales = [
     { branch_id: 'branch-1', total_amount: '125.50' },
@@ -54,5 +54,5 @@ test('Owner Portal inventory filters use live branch names and the all-branches 
   ];
 
   assert.deepEqual(filterOwnerPortalInventory(rows, 'Live Branch Beta'), [rows[1]]);
-  assert.deepEqual(filterOwnerPortalInventory(rows, 'All Branches'), rows);
+  assert.deepEqual(filterOwnerPortalInventory(rows, 'All branches'), rows);
 });

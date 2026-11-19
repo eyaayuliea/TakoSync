@@ -12,18 +12,18 @@ const today = '2026-11-19';
 test('inventory status follows the required priority for null, expired, and zero quantities', () => {
   assert.equal(getInventoryStockStatus(null, 5, '2026-11-18', today), 'Not tracked');
   assert.equal(getInventoryStockStatus(0, 5, '2026-11-18', today), 'Expired');
-  assert.equal(getInventoryStockStatus(0, 5, null, today), 'Out of Stock');
+  assert.equal(getInventoryStockStatus(0, 5, null, today), 'Out of stock');
 });
 
 test('Manila date-only expiry boundaries classify today, yesterday, the alert limit, and beyond', () => {
   assert.equal(getInventoryStockStatus(8, 2, '2026-11-18', today, 7), 'Expired');
-  assert.equal(getInventoryStockStatus(8, 2, '2026-11-19', today, 7), 'Near Expiration');
-  assert.equal(getInventoryStockStatus(8, 2, '2026-11-26', today, 7), 'Near Expiration');
+  assert.equal(getInventoryStockStatus(8, 2, '2026-11-19', today, 7), 'Near expiration');
+  assert.equal(getInventoryStockStatus(8, 2, '2026-11-26', today, 7), 'Near expiration');
   assert.equal(getInventoryStockStatus(8, 2, '2026-11-27', today, 7), 'Normal');
 });
 
 test('default expiration status uses the current Manila date', () => {
-  assert.equal(getInventoryStockStatus(1, 0, manilaDateKey(new Date())), 'Near Expiration');
+  assert.equal(getInventoryStockStatus(1, 0, manilaDateKey(new Date())), 'Near expiration');
 });
 
 test('batch status remains independent while ingredient stock status uses its own balance', () => {
@@ -33,9 +33,9 @@ test('batch status remains independent while ingredient stock status uses its ow
     getInventoryStockStatus(3, 0, '2026-12-19', today, 7),
   ];
 
-  assert.deepEqual(batchStatuses, ['Expired', 'Near Expiration', 'Normal']);
+  assert.deepEqual(batchStatuses, ['Expired', 'Near expiration', 'Normal']);
   assert.equal(getInventoryStockStatus(6, 5, null, today), 'Normal');
-  assert.equal(getInventoryStockStatus(5, 5, null, today), 'Low Stock');
+  assert.equal(getInventoryStockStatus(5, 5, null, today), 'Low stock');
   assert.equal(formatInventoryQuantity(1.25), '1.25');
   assert.equal(formatInventoryQuantity(null), '—');
 });
@@ -63,7 +63,7 @@ test('branch comparison preserves missing versus zero balances and never adds ba
   assert.deepEqual(rows.map(({ branchId, quantity, status, batchCount }) => ({
     branchId, quantity, status, batchCount,
   })), [
-    { branchId: 'branch-1', quantity: 0, status: 'Out of Stock', batchCount: 0 },
+    { branchId: 'branch-1', quantity: 0, status: 'Out of stock', batchCount: 0 },
     { branchId: 'branch-2', quantity: 4.5, status: 'Normal', batchCount: 2 },
     { branchId: 'branch-3', quantity: null, status: 'Not tracked', batchCount: 0 },
   ]);

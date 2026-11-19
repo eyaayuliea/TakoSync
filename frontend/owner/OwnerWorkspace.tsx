@@ -281,12 +281,12 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
 
           <View style={styles.previewLabel}>
             <View style={styles.previewDot} />
-            <Text style={styles.previewLabelText}>DEVELOPMENT PREVIEW · SAMPLE DATA</Text>
+            <Text style={styles.previewLabelText}>Development preview · sample data</Text>
           </View>
 
           <View style={styles.summaryCard}>
             <View style={styles.summaryCopy}>
-              <Text style={styles.summaryEyebrow}>ALL BRANCHES AT A GLANCE</Text>
+              <Text style={styles.summaryEyebrow}>All branches at a glance</Text>
               <View style={styles.summaryCountRow}>
                 <Text style={styles.summaryCount}>3</Text>
                 <Text style={styles.summaryCountLabel}>branches monitored</Text>
@@ -318,7 +318,7 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
             <BranchCard key={branch.id} branch={branch} onPress={() => showInventory(branch.id)} />
           ))}
 
-          <SectionTitle title="Low-Stock Items" action="View all" onAction={() => showInventory(null)} />
+          <SectionTitle title="Low-stock items" action="View all" onAction={() => showInventory(null)} />
           {lowStock.map(({ branch, ingredient }) => (
             <IngredientCard
               key={`${branch.id}-${ingredient.id}-low`}
@@ -328,7 +328,7 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
             />
           ))}
 
-          <SectionTitle title="Nearing Expiration" action="View all" onAction={() => showInventory(null)} />
+          <SectionTitle title="Nearing expiration" action="View all" onAction={() => showInventory(null)} />
           {nearExpiry.length > 0 ? nearExpiry.map(({ branch, ingredient }) => (
             <IngredientCard
               key={`${branch.id}-${ingredient.id}-expiry`}
@@ -340,7 +340,7 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
             />
           )) : <Text style={styles.emptyText}>No sample items are nearing expiration.</Text>}
 
-          <SectionTitle title="Recent Activities" action="All activity" onAction={() => setPage('stocks')} />
+          <SectionTitle title="Recent activities" action="All activity" onAction={() => setPage('stocks')} />
           <Text style={styles.activityDate}>29 October 2026 · Sample activity</Text>
           {ownerActivities.map((activity) => <ActivityRow key={activity.id} activity={activity} />)}
           <Text style={styles.lastUpdated}>Sample data last updated 29 Oct 2026 · 10:30 AM</Text>
@@ -444,7 +444,7 @@ export default function OwnerWorkspace({ onExitPreview }: { onExitPreview: () =>
             <StatusBadge status={getIngredientStatus(selectedIngredient)} />
           </View>
           <View style={styles.quantitySummary}>
-            <Text style={styles.summaryEyebrow}>CURRENT QUANTITY</Text>
+            <Text style={styles.summaryEyebrow}>Current quantity</Text>
             <Text style={styles.detailQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit}</Text>
             <Text style={styles.summaryDetail}>Recorded available stock</Text>
           </View>

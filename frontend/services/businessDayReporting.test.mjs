@@ -16,8 +16,8 @@ test('builds Today at Manila midnight boundaries', () => {
 
 test('builds Monday-based week and Manila calendar-month ranges', () => {
   const instant = new Date('2026-12-02T03:00:00.000Z');
-  const week = getManilaReportingRange('This Week', instant);
-  const month = getManilaReportingRange('This Month', instant);
+  const week = getManilaReportingRange('This week', instant);
+  const month = getManilaReportingRange('This month', instant);
   assert.ok(week);
   assert.ok(month);
   assert.equal(week.start.toISOString(), '2026-11-29T16:00:00.000Z');

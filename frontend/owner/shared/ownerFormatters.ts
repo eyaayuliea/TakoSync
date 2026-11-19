@@ -49,8 +49,8 @@ export const formatEmployeeId = (sequence: number) => `EMP-${String(sequence).pa
 export const formatOwnerId = (sequence: number) => `OWN-${String(sequence).padStart(3, '0')}`;
 
 export type DifferenceTone = 'negative' | 'zero' | 'positive';
-export type StockStatus = 'Normal' | 'Low Stock' | 'Out of Stock';
-export type ExpiryStatus = 'Near Expiration' | 'Expired';
+export type StockStatus = 'Normal' | 'Low stock' | 'Out of stock';
+export type ExpiryStatus = 'Near expiration' | 'Expired';
 
 export function differenceTone(value: number): DifferenceTone {
   return value < 0 ? 'negative' : value > 0 ? 'positive' : 'zero';
@@ -58,8 +58,8 @@ export function differenceTone(value: number): DifferenceTone {
 
 export const ownerStatusColors = {
   difference: { negative: '#F52F2E', zero: '#589144', positive: '#FCA639' },
-  stock: { Normal: '#589144', 'Low Stock': '#FDE672', 'Out of Stock': '#F52F2E' },
-  expiry: { 'Near Expiration': '#FCA639', Expired: '#F52F2E' },
+  stock: { Normal: '#589144', 'Low stock': '#FDE672', 'Out of stock': '#F52F2E' },
+  expiry: { 'Near expiration': '#FCA639', Expired: '#F52F2E' },
 } as const;
 
 export function stockStatusColor(status: StockStatus) {

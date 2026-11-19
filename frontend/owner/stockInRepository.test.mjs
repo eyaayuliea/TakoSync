@@ -11,7 +11,7 @@ function historyRecord(overrides = {}) {
   return {
     id: 'transaction-1',
     reference: 'SI-1112-0012',
-    type: 'Stock-In',
+    type: 'Stock-in',
     ingredientId: 'octopus',
     ingredientName: 'Octopus',
     category: 'Seafood',
@@ -23,7 +23,7 @@ function historyRecord(overrides = {}) {
     staffId: 'staff-ana',
     staff: 'Ana Reyes',
     transactionDate: new Date('2026-11-12T08:00:00+08:00'),
-    reason: 'Stock-In',
+    reason: 'Stock-in',
     notes: 'Seaport Traders · DR-20481',
     beforeQuantity: 4,
     afterQuantity: 9,
@@ -33,7 +33,7 @@ function historyRecord(overrides = {}) {
   };
 }
 
-test('live history mapping filters Stock-In and fills batch expiration and notes', () => {
+test('live history mapping filters Stock-in and fills batch expiration and notes', () => {
   const records = buildStockInRecords([
     historyRecord(),
     historyRecord({ id: 'transaction-2', type: 'Waste', transactionDate: new Date('2026-11-12T09:00:00+08:00') }),
@@ -47,7 +47,7 @@ test('live history mapping filters Stock-In and fills batch expiration and notes
   assert.equal(records[1].recordedBy, 'Ana Reyes');
 });
 
-test('Stock-In date and quantity formatting follows Asia/Manila and positive movement', () => {
+test('Stock-in date and quantity formatting follows Asia/Manila and positive movement', () => {
   const record = buildStockInRecords([historyRecord()], [])[0];
   assert.equal(formatStockInDateTime(record.createdAt), '12 Nov 2026 · 8:00 AM');
   assert.equal(formatStockInExpirationDate('2026-11-19'), '19 Nov 2026');

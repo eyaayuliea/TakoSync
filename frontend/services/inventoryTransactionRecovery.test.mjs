@@ -34,7 +34,7 @@ const request = {
     quantity: 3,
     unit: 'kg',
     transactionDate: '2026-11-13',
-    reason: 'Stock-In',
+    reason: 'Stock-in',
     notes: 'Supplier 123',
     batchReference: null,
     expirationDate: '2026-12-01',

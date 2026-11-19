@@ -6,8 +6,8 @@ export type InventoryReportItem = Pick<
   'id' | 'name' | 'category' | 'quantity' | 'unit' | 'minimumStock'
 >;
 
-export type InventoryStockStatus = 'Normal' | 'Low Stock' | 'Out of Stock';
-export type InventoryExpirationStatus = 'Near Expiry' | 'Expired' | null;
+export type InventoryStockStatus = 'Normal' | 'Low stock' | 'Out of stock';
+export type InventoryExpirationStatus = 'Near expiry' | 'Expired' | null;
 
 export const STAFF_INVENTORY_CATEGORIES = [
   'All',
@@ -140,8 +140,8 @@ function asNumber(value: number | string) {
 }
 
 export function inventoryStockStatus(quantity: number, minimumStock: number): InventoryStockStatus {
-  if (quantity <= 0) return 'Out of Stock';
-  if (quantity < minimumStock) return 'Low Stock';
+  if (quantity <= 0) return 'Out of stock';
+  if (quantity < minimumStock) return 'Low stock';
   return 'Normal';
 }
 
@@ -160,7 +160,7 @@ export function inventoryExpirationStatus(
   ).getTime();
   const daysUntilExpiration = Math.ceil((expirationTime - businessDayStart) / 86_400_000);
   if (daysUntilExpiration < 0) return 'Expired';
-  return daysUntilExpiration <= nearExpirationDays ? 'Near Expiry' : null;
+  return daysUntilExpiration <= nearExpirationDays ? 'Near expiry' : null;
 }
 
 export function displayInventoryCategory(category: string): string {
@@ -417,7 +417,7 @@ export type InventoryCountHistoryRecordInput = {
 export type InventoryCountHistoryRecord = {
   id: string;
   reference: string;
-  type: 'Physical Inventory Count';
+  type: 'Physical inventory count';
   ingredientId: string;
   ingredientName: string;
   category: string;
@@ -473,7 +473,7 @@ export function buildInventoryCountHistoryRecords(
       return {
         id: `physical-count-${line.id}`,
         reference: check.reference,
-        type: 'Physical Inventory Count' as const,
+        type: 'Physical inventory count' as const,
         ingredientId: line.ingredientId,
         ingredientName: ingredient.name,
         category: ingredient.category,

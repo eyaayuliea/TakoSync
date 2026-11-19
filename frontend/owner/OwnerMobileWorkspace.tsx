@@ -70,7 +70,7 @@ import {
   type InventoryStockStatus,
 } from './ownerInventoryStatus';
 
-type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
+type OwnerPeriod = 'Today' | 'This week' | 'This month' | 'Custom';
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
@@ -173,18 +173,18 @@ function InventoryStatusBadge({ status }: { status: InventoryStockStatus }) {
   const styles = useStyles();
   const style =
     status === 'Normal' ? styles.omInventoryBadgeNormal
-      : status === 'Out of Stock' || status === 'Expired' ? styles.omInventoryBadgeOut
-        : status === 'Near Expiration' ? styles.omInventoryBadgeNear
+      : status === 'Out of stock' || status === 'Expired' ? styles.omInventoryBadgeOut
+        : status === 'Near expiration' ? styles.omInventoryBadgeNear
           : status === 'Not tracked' ? styles.omInventoryBadgeNotTracked
             : styles.omInventoryBadgeLow;
   return (
     <View style={[styles.omInventoryBadge, style]}>
       <Text style={[
         styles.omInventoryBadgeText,
-        (status === 'Normal' || status === 'Out of Stock' || status === 'Expired') && styles.omInventoryBadgeTextWhite,
+        (status === 'Normal' || status === 'Out of stock' || status === 'Expired') && styles.omInventoryBadgeTextWhite,
         status === 'Not tracked' && styles.omInventoryBadgeTextMuted,
       ]}>
-        {status === 'Normal' ? '✓ ' : status === 'Out of Stock' || status === 'Expired' ? '! ' : status === 'Near Expiration' ? '▣ ' : ''}
+        {status === 'Normal' ? '✓ ' : status === 'Out of stock' || status === 'Expired' ? '! ' : status === 'Near expiration' ? '▣ ' : ''}
         {status}
       </Text>
     </View>
@@ -315,7 +315,7 @@ export default function OwnerMobileWorkspace({
   const [selectedActivity, setSelectedActivity] = useState<OwnerActivity | null>(null);
   const [activityReturnPage, setActivityReturnPage] = useState<'Dashboard' | 'Records'>('Dashboard');
   const [inventorySearch, setInventorySearch] = useState('');
-  const [alertCategory, setAlertCategory] = useState<'Low Stock' | 'Expiration'>('Low Stock');
+  const [alertCategory, setAlertCategory] = useState<'Low stock' | 'Expiration'>('Low stock');
   const [recordType, setRecordType] = useState<'All' | 'Sales' | 'Inventory' | 'Counts' | 'Audit'>('All');
   const [productRecords, setProductRecords] = useState<ProductRecord[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -438,7 +438,7 @@ export default function OwnerMobileWorkspace({
       batches: batchRows,
     }];
   });
-  const dashboardLowStock = inventoryRows.filter((item) => item.status === 'Low Stock' || item.status === 'Out of Stock');
+  const dashboardLowStock = inventoryRows.filter((item) => item.status === 'Low stock' || item.status === 'Out of stock');
   const inventoryStatusCounts = summarizeOwnerInventoryStatus(inventoryRows.map((item) => ({
     quantity: item.quantity,
     minimum_stock: item.minimumStock,
@@ -495,7 +495,7 @@ export default function OwnerMobileWorkspace({
     ...selectedSales.map((item) => ({
       id: item.id,
       category: 'Sales' as const,
-      type: 'Completed Sale',
+      type: 'Completed sale',
       detail: `${currency(Number(item.total_amount))} · Inventory: ${getOwnerSaleInventoryStatusLabel(item)}`,
       branchId: item.branch_id,
       reference: item.transaction_reference,
@@ -505,7 +505,7 @@ export default function OwnerMobileWorkspace({
     ...(activityData?.dailyChecks ?? []).map((item) => ({
       id: item.id,
       category: 'Counts' as const,
-      type: 'Physical Inventory Count',
+      type: 'Physical inventory count',
       detail: item.remarks || `Submitted for review · ${item.check_date}`,
       branchId: item.branch_id,
       reference: item.reference,
@@ -525,7 +525,7 @@ export default function OwnerMobileWorkspace({
     ...activityDiscrepancies.map((item) => ({
       id: item.id,
       category: 'Counts' as const,
-      type: 'Inventory Discrepancy',
+      type: 'Inventory discrepancy',
       detail: `${item.ingredient} · Expected ${item.expected} ${item.unit}, counted ${item.actual} ${item.unit}`,
       branchId: pendingChecks.find((check) => check.reference === item.reference)?.branch_id ?? '',
       reference: item.reference,
@@ -611,7 +611,7 @@ export default function OwnerMobileWorkspace({
           reason,
         });
         setDiscrepancyFeedback(discrepancyAction === 'approve'
-          ? 'Correction request approved. Use Validate Count separately to authorize inventory changes.'
+          ? 'Correction request approved. use validate count separately to authorize inventory changes.'
           : 'Correction request rejected. The original count and decision were retained.');
       } else if (discrepancyAction === 'validate') {
         const validation = selectedDiscrepancy.validationTarget === 'count'
@@ -627,7 +627,7 @@ export default function OwnerMobileWorkspace({
           ? 'Count validated and discrepancy resolved without changing inventory.'
           : 'Count validated and inventory adjustment recorded.');
       } else {
-        throw new Error('Choose an Owner decision or Validate Count action.');
+        throw new Error('Choose an owner decision or validate count action.');
       }
       setSelectedDiscrepancyId(null);
       setDiscrepancyAction(null);
@@ -769,9 +769,9 @@ export default function OwnerMobileWorkspace({
   );
 
   const renderInventoryRow = (item: (typeof inventoryRows)[number]) => {
-    const statusTone = item.status === 'Low Stock' || item.status === 'Out of Stock' || item.status === 'Expired'
+    const statusTone = item.status === 'Low stock' || item.status === 'Out of stock' || item.status === 'Expired'
       ? 'low'
-      : item.status === 'Near Expiration' || item.status === 'Not tracked'
+      : item.status === 'Near expiration' || item.status === 'Not tracked'
         ? 'warning'
         : 'good';
     return (
@@ -835,7 +835,7 @@ export default function OwnerMobileWorkspace({
           <Text style={styles.detailBackText}>‹ Back</Text>
         </Pressable>
         <View style={styles.activityDetailCard}>
-          <Text style={styles.eyebrow}>{selectedActivity.category.toUpperCase()}</Text>
+          <Text style={styles.eyebrow}>          {selectedActivity.category}</Text>
           <Text style={styles.detailTitle}>{selectedActivity.type}</Text>
           <Text style={styles.detailBody}>{selectedActivity.detail}</Text>
           <View style={styles.detailDivider} />
@@ -884,7 +884,7 @@ export default function OwnerMobileWorkspace({
       </View>
 
       <Pressable accessibilityRole="button" onPress={() => resetProductForm('add')} style={styles.primaryActionButton}>
-        <Text style={styles.primaryActionText}>+ Add Product</Text>
+        <Text style={styles.primaryActionText}>+ Add product</Text>
       </Pressable>
 
       {productsError ? showError(productsError) : productsLoading && productRecords.length === 0 ? (
@@ -945,7 +945,7 @@ export default function OwnerMobileWorkspace({
             </View>
           </View>
           <Pressable accessibilityRole="button" onPress={() => resetProductForm('edit', selectedProduct)} style={styles.secondaryActionButton}>
-            <Text style={styles.secondaryActionText}>Edit Product</Text>
+            <Text style={styles.secondaryActionText}>Edit product</Text>
           </Pressable>
         </View>
       )}
@@ -954,7 +954,7 @@ export default function OwnerMobileWorkspace({
         <View style={styles.productModalBackdrop}>
           <View style={styles.productModalCard}>
             <View style={styles.productModalHeader}>
-              <Text style={styles.productModalTitle}>{productEditorMode === 'edit' ? 'Edit Product' : 'Add Product'}</Text>
+              <Text style={styles.productModalTitle}>{productEditorMode === 'edit' ? 'Edit product' : 'Add product'}</Text>
               <Pressable accessibilityRole="button" onPress={() => { setProductEditorMode(null); setProductFeedback(null); }} style={styles.closeActionButton}>
                 <Text style={styles.closeActionText}>×</Text>
               </Pressable>
@@ -964,7 +964,7 @@ export default function OwnerMobileWorkspace({
             <TextInput
               value={productForm.product_name}
               onChangeText={(value) => setProductForm((current) => ({ ...current, product_name: value }))}
-              placeholder="e.g. Takoyaki Special"
+              placeholder="e.g. Takoyaki special"
               placeholderTextColor={colors.muted}
               style={[styles.textInput, productFormErrors.product_name && styles.textInputError]}
               accessibilityLabel="Product name"
@@ -1043,7 +1043,7 @@ export default function OwnerMobileWorkspace({
             ) : null}
 
             <Pressable accessibilityRole="button" disabled={productSaving} onPress={submitProductForm} style={styles.primaryActionButton}>
-              <Text style={styles.primaryActionText}>{productSaving ? 'Saving…' : productEditorMode === 'edit' ? 'Save Changes' : 'Add Product'}</Text>
+              <Text style={styles.primaryActionText}>{productSaving ? 'Saving…' : productEditorMode === 'edit' ? 'Save changes' : 'Add product'}</Text>
             </Pressable>
           </View>
         </View>
@@ -1055,14 +1055,14 @@ export default function OwnerMobileWorkspace({
     <>
       <View style={styles.totalSalesCard}>
         <View style={styles.totalSalesTop}>
-          <Text style={styles.totalSalesLabel}>Total Sales</Text>
+          <Text style={styles.totalSalesLabel}>Total sales</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Choose sales period, currently ${period}`}
             onPress={() => setPeriodSheetVisible(true)}
             style={styles.totalSalesPeriod}
           >
-            <Text style={styles.totalSalesPeriodText}>{period === 'This Week' ? 'This week' : period === 'This Month' ? 'This month' : period}</Text>
+            <Text style={styles.totalSalesPeriodText}>{period === 'This week' ? 'This week' : period === 'This month' ? 'This month' : period}</Text>
             <Text style={styles.totalSalesPeriodChevron}>⌄</Text>
           </Pressable>
         </View>
@@ -1082,7 +1082,7 @@ export default function OwnerMobileWorkspace({
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading sales…</Text></View>
       ) : null}
 
-      <SectionHeading title="Branch Sales" />
+      <SectionHeading title="Branch sales" />
       {salesLoading && !salesData ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading branch sales…</Text></View>
       ) : salesError ? showError(OWNER_ALERT_LOAD_ERROR) : branchMetrics.length ? (
@@ -1112,7 +1112,7 @@ export default function OwnerMobileWorkspace({
         </View>
       ) : <EmptyState text="No sales recorded yet." />}
 
-      <SectionHeading title="Inventory Status" action="Inventory" onAction={() => setPage('Inventory')} />
+      <SectionHeading title="Inventory status" action="Inventory" onAction={() => setPage('Inventory')} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
       ) : inventoryRows.length === 0 ? (
@@ -1121,15 +1121,15 @@ export default function OwnerMobileWorkspace({
         <View style={styles.inventoryStatusGrid}>
           {[
             { label: 'Normal', value: inventoryStatusCounts.normal },
-            { label: 'Low Stock', value: inventoryStatusCounts.lowStock, tone: 'low' },
-            { label: 'Out of Stock', value: inventoryStatusCounts.outOfStock, tone: 'low' },
+            { label: 'Low stock', value: inventoryStatusCounts.lowStock, tone: 'low' },
+            { label: 'Out of stock', value: inventoryStatusCounts.outOfStock, tone: 'low' },
           ].map((item) => (
             <View
               key={item.label}
               style={[
                 styles.inventoryStatusCard,
                 item.label === 'Normal' ? styles.inventoryStatusNormal :
-                item.label === 'Low Stock' ? styles.inventoryStatusLow : styles.inventoryStatusOut,
+                item.label === 'Low stock' ? styles.inventoryStatusLow : styles.inventoryStatusOut,
               ]}
             >
               <Text style={styles.inventoryStatusValue}>{item.value}</Text>
@@ -1139,14 +1139,14 @@ export default function OwnerMobileWorkspace({
         </View>
       )}
 
-      <SectionHeading title="Low-Stock Items" action="See all" onAction={() => { setAlertCategory('Low Stock'); setPage('Alerts'); }} />
+      <SectionHeading title="Low-stock items" action="See all" onAction={() => { setAlertCategory('Low stock'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing inventory…</Text></View>
       ) : dashboardLowStock.length ? dashboardLowStock.slice(0, 4).map((item) => renderInventoryRow(item)) : (
         <EmptyState text="No low-stock items." />
       )}
 
-      <SectionHeading title="Expiration Alerts" action="See all" onAction={() => { setAlertCategory('Expiration'); setPage('Alerts'); }} />
+      <SectionHeading title="Expiration alerts" action="See all" onAction={() => { setAlertCategory('Expiration'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Refreshing expiration alerts…</Text></View>
       ) : sortedExpirationItems.length ? sortedExpirationItems.slice(0, 4).map((item) => (
@@ -1158,11 +1158,11 @@ export default function OwnerMobileWorkspace({
             <Text style={styles.listTitle}>{item.name}</Text>
             <Text style={styles.listMeta}>{item.branch} · Expires {manilaDateLabel(item.expirationDate)}</Text>
           </View>
-          <StatusBadge label={item.days < 0 ? 'Expired' : 'Near Expiration'} tone={item.days < 0 ? 'low' : 'warning'} />
+          <StatusBadge label={item.days < 0 ? 'Expired' : 'Near expiration'} tone={item.days < 0 ? 'low' : 'warning'} />
         </View>
       )) : <EmptyState text="No expiration alerts." />}
 
-      <SectionHeading title="Recent Activities" action="See all" onAction={() => setPage('Records')} />
+      <SectionHeading title="Recent activities" action="See all" onAction={() => setPage('Records')} />
       {activityError ? showError(OWNER_ALERT_LOAD_ERROR) : activityLoading && !activityData ? (
         <View style={styles.loadingCard}><ActivityIndicator color={colors.pink} /><Text style={styles.loadingText}>Loading activities…</Text></View>
       ) : sortedActivities.length ? sortedActivities.slice(0, 5).map((item) => renderActivity(item, 'Dashboard')) : (
@@ -1193,7 +1193,7 @@ export default function OwnerMobileWorkspace({
       branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
       initialData={salesData}
       initialLoading={salesLoading}
-      initialPeriod={period === 'Today' ? 'Today' : period === 'This Week' ? 'Weekly' : period === 'Custom' ? 'Custom' : 'Monthly'}
+      initialPeriod={period === 'Today' ? 'Today' : period === 'This week' ? 'Weekly' : period === 'Custom' ? 'Custom' : 'Monthly'}
       initialBranchId={branchId}
       initialStartDate={customStart}
       initialEndDate={customEnd}
@@ -1207,7 +1207,7 @@ export default function OwnerMobileWorkspace({
     <OwnerSalesWorkspace
       mode="reports"
       branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
-      initialPeriod={period === 'Today' ? 'Today' : period === 'This Week' ? 'Weekly' : period === 'Custom' ? 'Custom' : 'Monthly'}
+      initialPeriod={period === 'Today' ? 'Today' : period === 'This week' ? 'Weekly' : period === 'Custom' ? 'Custom' : 'Monthly'}
       initialBranchId={branchId}
       initialStartDate={customStart}
       initialEndDate={customEnd}
@@ -1258,7 +1258,7 @@ export default function OwnerMobileWorkspace({
         style={styles.omCompareButton}
       >
         <Text style={styles.omCompareButtonIcon}>▥</Text>
-        <Text style={styles.omCompareButtonText}>Compare Branches</Text>
+        <Text style={styles.omCompareButtonText}>Compare branches</Text>
       </Pressable>
 
       {inventoryLoading ? (
@@ -1359,7 +1359,7 @@ export default function OwnerMobileWorkspace({
           >
             <Text style={styles.omCompareBackText}>‹</Text>
           </Pressable>
-          <Text style={styles.omCompareHeaderTitle}>Compare Branches</Text>
+          <Text style={styles.omCompareHeaderTitle}>Compare branches</Text>
           <View style={styles.omCompareHeaderSpacer} />
         </View>
 
@@ -1520,7 +1520,7 @@ export default function OwnerMobileWorkspace({
     const loading = inventoryLoading;
     const offlineError = Boolean(inventoryError);
     const isEmpty = !loading && !offlineError && (
-      alertCategory === 'Low Stock' ? alertSnapshot.lowStock.length === 0 : alertSnapshot.expiration.length === 0
+      alertCategory === 'Low stock' ? alertSnapshot.lowStock.length === 0 : alertSnapshot.expiration.length === 0
     );
 
     const formatExpirationDate = (value: string) => {
@@ -1529,16 +1529,16 @@ export default function OwnerMobileWorkspace({
       return `${date.getDate()} ${monthNames[date.getMonth()]} ${date.getFullYear()}`;
     };
 
-    const countLabel = (category: 'Low Stock' | 'Expiration') => {
+    const countLabel = (category: 'Low stock' | 'Expiration') => {
       if (loading || offlineError) return '';
-      const count = category === 'Low Stock' ? alertCounts.lowStock : alertCounts.expiration;
+      const count = category === 'Low stock' ? alertCounts.lowStock : alertCounts.expiration;
       return ` (${count})`;
     };
 
     return (
       <View style={styles.alertsScreen}>
         <View style={styles.alertTabs}>
-          {(['Low Stock', 'Expiration'] as const).map((value) => {
+          {(['Low stock', 'Expiration'] as const).map((value) => {
             const selected = alertCategory === value;
             return (
               <Pressable
@@ -1602,12 +1602,12 @@ export default function OwnerMobileWorkspace({
             </View>
             <Text style={styles.alertEmptyTitle}>{OWNER_ALERT_EMPTY_MESSAGE}</Text>
             <Text style={styles.alertEmptySubtext}>
-              {alertCategory === 'Low Stock'
+              {alertCategory === 'Low stock'
                 ? 'Low-stock alerts appear here.'
                 : 'Expiry alerts appear here.'}
             </Text>
           </View>
-        ) : alertCategory === 'Low Stock' ? (
+        ) : alertCategory === 'Low stock' ? (
           <View style={styles.alertCardList}>
             {alertSnapshot.lowStock.map((item) => (
               <View key={item.id} style={styles.alertCard}>
@@ -1622,16 +1622,16 @@ export default function OwnerMobileWorkspace({
                   <View
                     style={[
                       styles.alertStatusBadge,
-                      item.status === 'Out of Stock' ? styles.alertStatusOut : styles.alertStatusLow,
+                      item.status === 'Out of stock' ? styles.alertStatusOut : styles.alertStatusLow,
                     ]}
                   >
                     <Text
                       style={[
                         styles.alertStatusText,
-                        item.status === 'Out of Stock' && styles.alertStatusTextLight,
+                        item.status === 'Out of stock' && styles.alertStatusTextLight,
                       ]}
                     >
-                      {item.status === 'Out of Stock' ? '! ' : '● '}{item.status}
+                      {item.status === 'Out of stock' ? '! ' : '● '}{item.status}
                     </Text>
                   </View>
                 </View>
@@ -1756,7 +1756,7 @@ export default function OwnerMobileWorkspace({
             }} style={styles.omBackButton}>
               <Text style={styles.omBackText}>‹</Text>
             </Pressable>
-            <Text style={styles.omHeaderTitle}>Discrepancy Details</Text>
+            <Text style={styles.omHeaderTitle}>Discrepancy details</Text>
             <View style={styles.omHeaderSpacer} />
           </View>
           <View style={styles.omDiscrepancyCard}>
@@ -1789,7 +1789,7 @@ export default function OwnerMobileWorkspace({
             ))}
             {selected.decisionReason ? (
               <View style={styles.omDiscrepancyDetailRow}>
-                <Text style={styles.omDiscrepancyDetailLabel}>Owner decision</Text>
+                <Text style={styles.omDiscrepancyDetailLabel}>owner decision</Text>
                 <Text style={styles.omDiscrepancyDetailValue}>{selected.decisionReason}</Text>
               </View>
             ) : null}
@@ -1826,7 +1826,7 @@ export default function OwnerMobileWorkspace({
               onPress={() => openAction('validate')}
               style={styles.omPrimaryButton}
             >
-              <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
+              <Text style={styles.omPrimaryButtonText}>Validate count</Text>
             </Pressable>
           ) : null}
         </View>
@@ -1899,7 +1899,7 @@ export default function OwnerMobileWorkspace({
                 </View>
                 {item.validationTarget === 'correction_request' && (
                   <View style={styles.omStatusCorrection}>
-                    <Text style={styles.omStatusCorrectionText}>! Correction Request</Text>
+                    <Text style={styles.omStatusCorrectionText}>! Correction request</Text>
                   </View>
                 )}
               </View>
@@ -1984,25 +1984,25 @@ export default function OwnerMobileWorkspace({
 
   const pageTitle: Record<OwnerPage, string> = {
     Dashboard: 'Dashboard',
-    Sales: 'Sales Summaries',
-    Reports: 'Sales Summaries',
+    Sales: 'Sales summaries',
+    Reports: 'Sales summaries',
     Inventory: 'Inventory',
-    CompareInventory: 'Compare Branches',
+    CompareInventory: 'Compare branches',
     Alerts: 'Alerts',
     More: 'More',
     Products: 'Products & Menu',
     Ingredients: 'Ingredients & Recipes',
-    StockSettings: 'Stock Threshold & Expiration Settings',
-    BusinessHours: 'Business Closing Time',
+    StockSettings: 'Stock threshold & expiration settings',
+    BusinessHours: 'Business closing time',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
-    SalesTransactions: 'Sales Transaction Records',
+    SalesTransactions: 'Sales transaction records',
     RecordCategories: 'Records',
-    SalesConsumptionRecords: 'Sales Consumption Records',
-    StockInRecords: 'Stock-In Records',
-    WasteSpillageRecords: 'Waste and Spillage Records',
-    PhysicalCountRecords: 'Physical Inventory Count Records',
-    AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
+    SalesConsumptionRecords: 'Sales consumption records',
+    StockInRecords: 'Stock-in records',
+    WasteSpillageRecords: 'Waste and spillage records',
+    PhysicalCountRecords: 'Physical inventory count records',
+    AuthorizedAdjustmentRecords: 'Authorized adjustment records',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2023,11 +2023,11 @@ export default function OwnerMobileWorkspace({
             {page === 'Dashboard' ? (
               <>
                 <Text style={styles.ownerGreeting}>Hello,</Text>
-                <Text style={styles.ownerGreetingName}>{user.displayName || 'Isabel San Esteban'}!</Text>
+                <Text style={styles.ownerGreetingName}>{user.displayName || 'Isabel san esteban'}!</Text>
               </>
             ) : (
               <>
-                <Text style={styles.appLabel}>TAKOSYNC · OWNER</Text>
+                <Text style={styles.appLabel}>TakoSync · owner</Text>
                 <Text style={styles.pageTitle}>{pageTitle[page]}</Text>
               </>
             )}
@@ -2051,7 +2051,7 @@ export default function OwnerMobileWorkspace({
 
       {!isMenuFlowPage && page !== 'Dashboard' && page !== 'Sales' && page !== 'Reports' && page !== 'Inventory' && page !== 'CompareInventory' && page !== 'Alerts' && page !== 'Profile' && page !== 'Ingredients' && page !== 'BusinessHours' && page !== 'StaffAccounts' && page !== 'ActivityDetail' && (
         <View style={styles.branchFilterBlock}>
-          <Text style={styles.filterLabel}>BRANCH</Text>
+          <Text style={styles.filterLabel}>Branch</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
             <Pressable accessibilityRole="button" accessibilityState={{ selected: branchId === null }} onPress={() => onBranchChange(null)} style={[styles.branchChip, branchId === null && styles.branchChipSelected]}>
               <Text style={[styles.branchChipText, branchId === null && styles.branchChipTextSelected]}>All</Text>
@@ -2194,8 +2194,8 @@ export default function OwnerMobileWorkspace({
               <View style={styles.activityDetailModalHeader}>
                 <Text style={styles.activityDetailModalTitle}>
                   {selectedActivity.category === 'Sales'
-                    ? 'Sale Details'
-                    : selectedActivity.type || 'Record Details'}
+                    ? 'Sale details'
+                    : selectedActivity.type || 'Record details'}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -2236,7 +2236,7 @@ export default function OwnerMobileWorkspace({
                 style={styles.activityDetailAction}
               >
                 <Text style={styles.activityDetailActionText}>
-                  {selectedActivity.category === 'Sales' ? 'View Full Transaction Details' : 'View Record Details'}
+                  {selectedActivity.category === 'Sales' ? 'View full transaction details' : 'View record details'}
                 </Text>
               </Pressable>
             </Pressable>
@@ -2259,7 +2259,7 @@ export default function OwnerMobileWorkspace({
           <Pressable onPress={() => undefined} style={styles.periodSheet}>
             <View style={styles.periodSheetHandle} />
             <Text style={styles.periodSheetTitle}>Choose a period.</Text>
-            {(['Today', 'This Week', 'This Month', 'Custom'] as const).map((value) => {
+            {(['Today', 'This week', 'This month', 'Custom'] as const).map((value) => {
               const selected = period === value;
               return (
                 <Pressable
@@ -2279,7 +2279,7 @@ export default function OwnerMobileWorkspace({
                   style={[styles.periodSheetOption, selected && styles.periodSheetOptionSelected]}
                 >
                   <Text style={[styles.periodSheetOptionText, selected && styles.periodSheetOptionTextSelected]}>
-                    {value === 'This Week' ? 'This week' : value === 'This Month' ? 'This month' : value === 'Custom' ? 'Custom date' : value}
+                    {value === 'This week' ? 'This week' : value === 'This month' ? 'This month' : value === 'Custom' ? 'Custom date' : value}
                   </Text>
                 </Pressable>
               );
@@ -2379,7 +2379,7 @@ export default function OwnerMobileWorkspace({
                   ? 'Approve correction request'
                   : discrepancyAction === 'reject'
                     ? 'Reject correction request'
-                    : 'Validate Count'}
+                    : 'Validate count'}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -2405,10 +2405,10 @@ export default function OwnerMobileWorkspace({
                 </Text>
                 <Text style={styles.modalWarning}>
                   {discrepancyAction === 'approve'
-                    ? 'Approval only accepts the Staff correction request. It does not change inventory. The Owner must separately use Validate Count.'
+                    ? 'Approval only accepts the staff correction request. it Does not change inventory. the Owner must separately use validate count.'
                     : discrepancyAction === 'reject'
                       ? 'Rejection is retained in the audit history. Staff may submit another correction request.'
-                      : 'Validate Count is a separate authorization. It is rejected if this ingredient’s stock changed since the count began. If corrected actual equals expected, it records a no-change resolution.'}
+                      : 'Validate count is a separate authorization. it Is rejected if this ingredient’s stock changed since the count began. if Corrected actual equals expected, it records a no-change resolution.'}
                 </Text>
                 <Text style={styles.fieldLabel}>
                   {discrepancyAction === 'validate' ? 'Validation reason *' : 'Decision reason *'}
@@ -2445,7 +2445,7 @@ export default function OwnerMobileWorkspace({
                         ? 'Confirm approval'
                         : discrepancyAction === 'reject'
                           ? 'Confirm rejection'
-                          : 'Confirm Validate Count'}
+                          : 'Confirm validate count'}
                     </Text>}
                 </Pressable>
                 <Pressable

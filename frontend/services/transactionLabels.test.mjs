@@ -4,14 +4,14 @@ import { inventoryTransactionLabel } from './transactionLabels.ts';
 
 test('inventory history preserves a distinct label for each transaction type', () => {
   const expected = {
-    stock_in: 'Stock-In',
-    stock_out: 'Stock-Out',
+    stock_in: 'Stock-in',
+    stock_out: 'Stock-out',
     usage: 'Usage',
     waste: 'Waste',
     spoilage: 'Spoilage',
-    sales_consumption: 'Sales Consumption',
-    transfer_in: 'Branch Transfer In',
-    transfer_out: 'Branch Transfer Out',
+    sales_consumption: 'Sales consumption',
+    transfer_in: 'Branch transfer in',
+    transfer_out: 'Branch transfer out',
     adjustment: 'Authorized Adjustment',
   };
   for (const [type, label] of Object.entries(expected)) {

@@ -14,14 +14,14 @@ import {
 } from './ownerAlerts.ts';
 
 test('classifies stock at the threshold and distinguishes zero stock', () => {
-  assert.equal(classifyOwnerStockAlert(5, 5), 'Low Stock');
-  assert.equal(classifyOwnerStockAlert(0, 5), 'Out of Stock');
+  assert.equal(classifyOwnerStockAlert(5, 5), 'Low stock');
+  assert.equal(classifyOwnerStockAlert(0, 5), 'Out of stock');
   assert.equal(classifyOwnerStockAlert(null, 5), null);
   assert.equal(classifyOwnerStockAlert(6, 5), null);
 });
 
 test('classifies expiration using the configured window', () => {
-  assert.equal(classifyOwnerExpirationAlert(7, 7), 'Near Expiration');
+  assert.equal(classifyOwnerExpirationAlert(7, 7), 'Near expiration');
   assert.equal(classifyOwnerExpirationAlert(8, 7), null);
   assert.equal(classifyOwnerExpirationAlert(-1, 7), 'Expired');
 });
@@ -97,14 +97,14 @@ test('builds deduplicated stock alerts and evaluates each active batch independe
   });
 
   assert.deepEqual(snapshot.lowStock.map((item) => [item.id, item.status]), [
-    ['branch-1:flour', 'Out of Stock'],
-    ['branch-2:sauce', 'Low Stock'],
-    ['branch-1:sauce', 'Low Stock'],
+    ['branch-1:flour', 'Out of stock'],
+    ['branch-2:sauce', 'Low stock'],
+    ['branch-1:sauce', 'Low stock'],
   ]);
   assert.deepEqual(snapshot.expiration.map((item) => [item.id, item.status]), [
     ['expired', 'Expired'],
-    ['near', 'Near Expiration'],
-    ['late', 'Near Expiration'],
+    ['near', 'Near expiration'],
+    ['late', 'Near expiration'],
   ]);
   assert.deepEqual(snapshot.counts, { lowStock: 3, expiration: 3 });
 });

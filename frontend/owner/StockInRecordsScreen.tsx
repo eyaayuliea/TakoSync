@@ -86,7 +86,7 @@ export default function StockInRecordsScreen({
       setLoading(false);
     }).catch((loadError: unknown) => {
       if (currentRequestId !== requestId.current) return;
-      console.error('Unable to load Stock-In records.', loadError);
+      console.error('Unable to load Stock-in records.', loadError);
       setError(true);
       setLoading(false);
     });
@@ -121,7 +121,7 @@ export default function StockInRecordsScreen({
 
   return (
     <View style={styles.screen}>
-      <OwnerRecordHeader title={view === 'details' ? 'Stock-In Details' : 'Stock-In Records'} onBack={back} />
+      <OwnerRecordHeader title={view === 'details' ? 'Stock-in details' : 'Stock-in records'} onBack={back} />
 
       {view === 'details' ? (
         detailLoading ? (
@@ -189,7 +189,7 @@ export default function StockInRecordsScreen({
                 <Text numberOfLines={1} style={styles.ingredientName}>{record.ingredientName}</Text>
                 <Text style={styles.quantity}>{formatStockInQuantity(record)}</Text>
               </View>
-              <Text style={styles.recordDate}>Stock-In · {formatStockInDateTime(record.createdAt)}</Text>
+              <Text style={styles.recordDate}>Stock-in · {formatStockInDateTime(record.createdAt)}</Text>
               <View style={styles.cardBottom}>
                 <View style={styles.branchLine}>
                   <Text style={styles.pinIcon}>⌖</Text>
@@ -210,7 +210,7 @@ function StockInStatusBadge() {
   return (
     <View style={styles.statusBadge}>
       <Text style={styles.statusCheck}>✓</Text>
-      <Text style={styles.statusText}>Stock-In</Text>
+      <Text style={styles.statusText}>Stock-in</Text>
     </View>
   );
 }

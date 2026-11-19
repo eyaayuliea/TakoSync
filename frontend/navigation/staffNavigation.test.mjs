@@ -11,10 +11,10 @@ test('Staff bottom navigation has the required routes and exact labels in order'
     staffDestinations.map(({ route, label }) => [route, label]),
     [
       ['menu', 'POS'],
-      ['inventory', 'INVENTORY'],
-      ['stocks', 'STOCKS'],
-      ['alerts', 'ALERTS'],
-      ['more', 'MORE'],
+      ['inventory', 'Inventory'],
+      ['stocks', 'Stocks'],
+      ['alerts', 'Alerts'],
+      ['more', 'More'],
     ],
   );
 });

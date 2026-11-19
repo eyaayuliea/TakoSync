@@ -48,7 +48,7 @@ const baseSnapshot = {
 test('Owner Portal inventory uses the earliest positive tracked batch in Manila time', () => {
   const [row] = buildOwnerPortalInventoryRows(baseSnapshot, new Date('2026-11-19T16:30:00Z'));
 
-  assert.equal(row.status, 'Near Expiration');
+  assert.equal(row.status, 'Near expiration');
   assert.equal(row.expiry, '2026-11-20');
   assert.match(row.batches, /B-1: 5 kg/);
   assert.match(row.batches, /B-2: 7 kg/);
@@ -71,7 +71,7 @@ test('Owner Portal inventory does not infer a balance from missing batches or nu
   assert.equal(rows[0].status, 'Not tracked');
   assert.equal(rows[1].qty, 0);
   assert.equal(rows[1].quantityLabel, '0');
-  assert.equal(rows[1].status, 'Out of Stock');
+  assert.equal(rows[1].status, 'Out of stock');
   assert.equal(rows[1].batches, 'No active batches');
 });
 

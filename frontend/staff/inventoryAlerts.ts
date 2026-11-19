@@ -151,11 +151,11 @@ export function isStockAlert(kind: InventoryAlertKind): boolean {
 export function inventoryAlertLabel(kind: InventoryAlertKind): string {
   switch (kind) {
     case 'lowStock':
-      return 'Low Stock';
+      return 'Low stock';
     case 'outOfStock':
-      return 'Out of Stock';
+      return 'Out of stock';
     case 'nearExpiration':
-      return 'Near Expiration';
+      return 'Near expiration';
     case 'expired':
       return 'Expired';
   }

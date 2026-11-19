@@ -121,7 +121,7 @@ export default function OwnerLoginScreen({
               </View>
 
               <View style={[styles.card, isShortScreen && styles.compactCard]}>
-                <Text style={styles.heading}>Log In</Text>
+                <Text style={styles.heading}>Log in</Text>
                 {displayedError !== '' && (
                   <View style={styles.errorBanner} accessibilityRole="alert">
                     <View style={styles.errorIcon}>
@@ -198,7 +198,7 @@ export default function OwnerLoginScreen({
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Log In"
+                  accessibilityLabel="Log in"
                   accessibilityState={{ disabled: submitting, busy: submitting }}
                   onPress={submitLogin}
                   disabled={submitting}
@@ -208,7 +208,7 @@ export default function OwnerLoginScreen({
                     submitting && styles.loginButtonDisabled,
                   ]}
                 >
-                  <Text style={styles.loginButtonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
+                  <Text style={styles.loginButtonText}>{submitting ? 'Logging in...' : 'Log in'}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"

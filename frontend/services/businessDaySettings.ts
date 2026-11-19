@@ -65,7 +65,7 @@ export function formatBusinessTime(value: string): string {
   return `${hours % 12 || 12}:${String(minutes).padStart(2, '0')} ${period}`;
 }
 
-export type ReportingPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
+export type ReportingPeriod = 'Today' | 'This week' | 'This month' | 'Custom';
 
 export type ReportingDateRange = { start: Date; end: Date };
 
@@ -130,14 +130,14 @@ export function getManilaReportingRange(
     endKey = addCalendarDays(customEnd, 1);
   } else {
     const start = calendarDateFromKey(today);
-    if (period === 'This Month') {
+    if (period === 'This month') {
       start.setUTCDate(1);
-    } else if (period === 'This Week') {
+    } else if (period === 'This week') {
       start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
     }
     startKey = start.toISOString().slice(0, 10);
-    endKey = addCalendarDays(startKey, period === 'Today' ? 1 : period === 'This Week' ? 7 : 31);
-    if (period === 'This Month') {
+    endKey = addCalendarDays(startKey, period === 'Today' ? 1 : period === 'This week' ? 7 : 31);
+    if (period === 'This month') {
       const nextMonth = calendarDateFromKey(startKey);
       nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1, 1);
       endKey = nextMonth.toISOString().slice(0, 10);
