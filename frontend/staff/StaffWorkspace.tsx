@@ -410,8 +410,12 @@ const stockOutBatchPresets = [
   {
     name: 'Standard takoyaki batch',
     deductions: [
-      { ingredientId: 'octopus', quantity: 1 },
-      { ingredientId: 'flour', quantity: 0.5 },
+      { ingredientId: 'flour', quantity: 0.625 },
+      { ingredientId: 'dashi', quantity: 24 },
+      { ingredientId: 'eggs', quantity: 5 },
+      { ingredientId: 'soy-sauce', quantity: 75 },
+      { ingredientId: 'salt', quantity: 15 },
+      { ingredientId: 'baking-powder', quantity: 10 },
     ],
   },
 ] as const;
@@ -545,22 +549,58 @@ function SearchBar({
   );
 }
 
+const ingredientImages: Record<string, number> = {
+  octopus: require('../../assets/Octopus · Ingredient icon.png'),
+  flour: require('../../assets/All-purpose flour · Ingredient icon.png'),
+  'all-purpose flour': require('../../assets/All-purpose flour · Ingredient icon.png'),
+  eggs: require('../../assets/Eggs · Ingredient icon.png'),
+  cheese: require('../../assets/Cheese · Ingredient icon.png'),
+  'cheese-cubes': require('../../assets/Cheese · Ingredient icon.png'),
+  'crab-sticks': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'crab stick': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'crab sticks': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'bacon-bits': require('../../assets/Bacon bits · Ingredient icon.png'),
+  'bacon bits': require('../../assets/Bacon bits · Ingredient icon.png'),
+  bacon: require('../../assets/Bacon bits · Ingredient icon.png'),
+  'prepared-batter': require('../../assets/Takoyaki batter · Ingredient icon.png'),
+  'takoyaki batter': require('../../assets/Takoyaki batter · Ingredient icon.png'),
+  cabbage: require('../../assets/Cabbage (chopped) · Ingredient icon.png'),
+  'cabbage (chopped)': require('../../assets/Cabbage (chopped) · Ingredient icon.png'),
+  sauces: require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'takoyaki-sauce': require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'takoyaki sauce': require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'japanese-mayonnaise': require('../../assets/Japanese mayonnaise · Ingredient icon.png'),
+  'japanese mayonnaise': require('../../assets/Japanese mayonnaise · Ingredient icon.png'),
+  'bonito-flakes': require('../../assets/Bonito flakes · Ingredient icon.png'),
+  'bonito flakes': require('../../assets/Bonito flakes · Ingredient icon.png'),
+  packaging: require('../../assets/Packaging · Ingredient icon.png'),
+  'dashi powder': require('../../assets/Dashi stock · Ingredient icon.png'),
+  dashi: require('../../assets/Dashi stock · Ingredient icon.png'),
+  salt: require('../../assets/Salt · Ingredient icon.png'),
+  'soy sauce': require('../../assets/Soy sauce · Ingredient icon.png'),
+  'soy-sauce': require('../../assets/Soy sauce · Ingredient icon.png'),
+  'baking-powder': require('../../assets/Baking powder · Ingredient icon.png'),
+  'baking powder': require('../../assets/Baking powder · Ingredient icon.png'),
+};
+
 function IngredientThumbnail({ item, large = false, small = false }: { item: Ingredient; large?: boolean; small?: boolean }) {
   const styles = useStaffStyles();
-  const { colors: themeColors, isDark } = useTheme();
+  const image = ingredientImages[item.id] ?? ingredientImages[item.name.trim().toLowerCase()];
   return (
     <View
       style={[
         styles.ingredientThumbnail,
         large && styles.largeThumbnail,
         small && styles.smallThumbnail,
-        { backgroundColor: isDark ? themeColors.surfaceSecondary : item.tint },
+        { backgroundColor: '#f2f2f4' },
       ]}
-      accessibilityLabel={`${item.name} image placeholder`}
+      accessibilityLabel={`${item.name} image`}
     >
-      <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
-        {item.emoji}
-      </Text>
+      {image
+        ? <Image source={image} resizeMode="contain" style={styles.thumbnailImage} />
+        : <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
+            {item.emoji}
+          </Text>}
     </View>
   );
 }
@@ -4051,7 +4091,7 @@ export default function StaffWorkspace({
           <DetailRow
             key={item.id}
             label={item.name}
-            value={item.unit === 'g' ? 'g' : item.unit === 'pcs' ? 'pcs' : 'ml'}
+            value={item.unit}
           />
         ))}
       </View>
@@ -4071,6 +4111,9 @@ export default function StaffWorkspace({
         <Text style={styles.inventoryEmptyMessage}>
           Batter: 1 bottle = 680 ml.{'\n'}
           Octopus, Cheese and Bonito flakes: 1 kg = 1,000 g.{'\n'}
+          Japanese mayonnaise and Takoyaki sauce: 360 ml per bottle.{'\n'}
+          Packaging: 100 pieces per pack.{'\n'}
+          Estimated flavor portions are scaled from the 4-piece recipe.
           Purchase-pack sizes are not current stock quantities.
         </Text>
       </View>
@@ -9256,7 +9299,7 @@ function createStaffStyles(theme: AppTheme) {
   dashboardContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 20 },
   dashboardLowStockScroll: { flexGrow: 0, marginHorizontal: -18 },
   dashboardLowStockList: { gap: 10, paddingHorizontal: 18, paddingTop: 2, paddingBottom: 8 },
-  dashboardPageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 21, lineHeight: 28, marginBottom: 9 },
+  dashboardPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 24, lineHeight: 32, marginBottom: 9 },
   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },
   inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },
   inventoryPageHeader: { marginBottom: 14 },
@@ -9328,11 +9371,11 @@ function createStaffStyles(theme: AppTheme) {
   detailBackButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#EEEEEF', marginRight: 11 },
   detailBackArrow: { color: colors.navy, fontFamily: font.regular, fontSize: 30, lineHeight: 32, marginTop: -4 },
   detailHeaderCopy: { flex: 1 },
-  detailPageTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 17, lineHeight: 23 },
+  detailPageTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 32, lineHeight: 40 },
   ingredientSummary: { flexDirection: 'row', alignItems: 'center', marginBottom: 19 },
   ingredientSummaryCopy: { flex: 1, marginLeft: 14 },
-  detailIngredientName: { color: colors.navy, fontFamily: font.bold, fontSize: 19 },
-  detailIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2, marginBottom: 4 },
+  detailIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 18, lineHeight: 24, marginTop: 2, marginBottom: 4 },
+  detailIngredientCategory: { color: colors.muted, fontFamily: font.medium, fontSize: 12, lineHeight: 16, marginTop: 2, marginBottom: 4 },
   stockSummaryCard: {
     paddingHorizontal: 17, paddingVertical: 16, borderRadius: 18, backgroundColor: '#EEEEEF',
     elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 5,
@@ -9542,7 +9585,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   summaryImage: { width: '100%', height: '100%' },
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 15 },
+  sectionTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 20, lineHeight: 28 },
   sectionHint: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
   quickActions: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   quickAction: {
@@ -9557,6 +9600,7 @@ function createStaffStyles(theme: AppTheme) {
   dashboardIngredientList: { gap: 8 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
+  thumbnailImage: { width: '88%', height: '88%' },
   thumbnailEmoji: { fontSize: 29 },
   smallThumbnailEmoji: { fontSize: 20 },
   largeThumbnail: { width: 70, height: 80 },
@@ -9575,8 +9619,8 @@ function createStaffStyles(theme: AppTheme) {
   expirationHeading: { marginTop: 20 },
   demoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 22 },
   pageHeader: { marginBottom: 17 },
-  pageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 22, lineHeight: 29 },
-  pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 10, marginTop: 2 },
+  pageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 32, lineHeight: 40 },
+  pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 14, lineHeight: 20, marginTop: 2 },
   categoryScroll: { flexGrow: 0, marginBottom: 19 },
   categoryList: { gap: 8, paddingRight: 6 },
   categoryChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.pale },
@@ -9612,7 +9656,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   alertsScreen: { flex: 1, backgroundColor: colors.white },
   alertLandingHeader: { marginBottom: 13 },
-  alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 22, lineHeight: 29 },
+  alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 24, lineHeight: 32 },
   alertBranchName: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 1 },
   alertBusinessDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   alertTabsGrid: { gap: 7, marginBottom: 12 },
@@ -9890,9 +9934,9 @@ function createStaffStyles(theme: AppTheme) {
   formHeaderCopy: { flex: 1, marginLeft: 10 },
   backButton: { width: 37, height: 37, alignItems: 'center', justifyContent: 'center', borderRadius: 19, backgroundColor: colors.pale },
   backGlyph: { color: colors.navy, fontSize: 30, lineHeight: 32, marginTop: -3 },
-  formTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, lineHeight: 19 },
+  formTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 32, lineHeight: 40 },
   categoryReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 24, lineHeight: 30,
   },
   formSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
   dailyCheckContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 18 },
@@ -9943,7 +9987,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   inventoryReportMetadataText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
   physicalCountReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 24, lineHeight: 30,
   },
   physicalCountMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -9984,7 +10028,7 @@ function createStaffStyles(theme: AppTheme) {
   physicalCountSectionTitle: { color: '#000000', fontFamily: font.bold, fontSize: 9, lineHeight: 13 },
   physicalCountReadOnly: { color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 8 },
   branchSummaryReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 24, lineHeight: 30,
   },
   branchSummaryMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -10025,7 +10069,7 @@ function createStaffStyles(theme: AppTheme) {
     flexGrow: 1, minHeight: 360, alignItems: 'center', justifyContent: 'center',
   },
   discrepancyReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 24, lineHeight: 30,
   },
   discrepancyMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -10082,7 +10126,7 @@ function createStaffStyles(theme: AppTheme) {
     marginBottom: 10,
   },
   stockStatusReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 24, lineHeight: 30,
   },
   stockStatusReportContent: { flexGrow: 1 },
   stockStatusCardList: { gap: 8 },

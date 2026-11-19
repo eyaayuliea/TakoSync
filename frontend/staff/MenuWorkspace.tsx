@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   ActivityIndicator,
   Image,
   Modal,
@@ -402,12 +401,17 @@ export default function MenuWorkspace({
   const requestedAddonNames = ['japanese mayo', 'takoyaki sauce', 'flakes'];
   const activeAddons = addons.filter((addon) => addon.isAvailable);
   const displayAddons = activeAddons.filter((addon) =>
-    [...requestedAddonNames, 'japanese white sauce'].includes(addon.name.trim().toLowerCase()));
+    ['japanese mayo', 'japanese mayonnaise', 'japanese white sauce']
+      .includes(addon.name.trim().toLowerCase()) ||
+    ['takoyaki sauce', 'flakes'].includes(addon.name.trim().toLowerCase()));
   const selectedAddons = displayAddons.filter((addon) => selectedAddonIds.includes(addon.id));
   const missingAddonNames = requestedAddonNames.filter((name) =>
-    !activeAddons.some((addon) => addon.name.trim().toLowerCase() === name));
-  const hasJapaneseWhiteSauce = activeAddons.some((addon) =>
-    addon.name.trim().toLowerCase() === 'japanese white sauce');
+    !activeAddons.some((addon) => {
+      const addonName = addon.name.trim().toLowerCase();
+      return addonName === name ||
+        (name === 'japanese mayo' &&
+          ['japanese mayonnaise', 'japanese white sauce'].includes(addonName));
+    }));
   const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
   const checkoutTotal = Math.round((totals.total + addonsTotal) * 100) / 100;
   const cartProducts = useMemo(() => cart.flatMap((line) => {
@@ -428,20 +432,11 @@ export default function MenuWorkspace({
   };
   const clearCurrentOrder = () => {
     if (totals.count === 0 && selectedAddonIds.length === 0) return;
-    Alert.alert('Clear current order?', 'This will remove all items and selected add-ons.', [
-      { text: 'Keep order', style: 'cancel' },
-      {
-        text: 'Clear',
-        style: 'destructive',
-        onPress: () => {
-          onCancelOrder();
-          setSelectedAddonIds([]);
-          setCashReceived('');
-          setSaleError('');
-          setSaleRetryAvailable(false);
-        },
-      },
-    ]);
+    onCancelOrder();
+    setSelectedAddonIds([]);
+    setCashReceived('');
+    setSaleError('');
+    setSaleRetryAvailable(false);
   };
   const branchSegments = assignedBranch.split(' · ');
   const branchName = branchSegments[0] || assignedBranch;
@@ -811,7 +806,9 @@ export default function MenuWorkspace({
                         style={[styles.addonPill, isDark && darkSecondarySurface, selected && styles.addonPillSelected]}
                       >
                         <Text style={[styles.addonPillText, isDark && darkSecondaryText, selected && styles.addonPillTextSelected]}>
-                          {addon.name} · +{money(addon.price)}
+                          {['japanese mayo', 'japanese mayonnaise', 'japanese white sauce'].includes(addon.name.trim().toLowerCase())
+                            ? 'Japanese Mayo'
+                            : addon.name} · +{money(addon.price)}
                         </Text>
                       </Pressable>
                     );
@@ -824,9 +821,6 @@ export default function MenuWorkspace({
                 <Text style={styles.addonUnavailableText}>
                   Not configured in the live catalog: {missingAddonNames.map((name) =>
                     name.replace(/\b\w/g, (letter) => letter.toUpperCase())).join(', ')}.
-                  {hasJapaneseWhiteSauce && missingAddonNames.includes('japanese mayo')
-                    ? ' Japanese white sauce is listed separately; it is not labeled as Japanese Mayo.'
-                    : ''}
                 </Text>
               ) : null}
             </View>
@@ -974,10 +968,10 @@ const styles = StyleSheet.create({
   headerTitleRow: { minHeight: 36, flexDirection: 'row', alignItems: 'center', marginBottom: 9 },
   backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   backGlyph: { color: colors.navy, fontFamily: font.regular, fontSize: 33, lineHeight: 37, marginTop: -4 },
-  headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: 21 },
+  headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: 24 },
   posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.white },
   posHeader: { paddingHorizontal: 16, paddingTop: 9, paddingBottom: 7 },
-  posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 16 },
+  posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 24 },
   posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 2, opacity: 0.9 },
   productSelectionSection: {
     flex: 1, minHeight: 0, backgroundColor: colors.pink,
@@ -1027,7 +1021,7 @@ const styles = StyleSheet.create({
   },
   sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: 9 },
   sizeOptionAction: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  sizeOptionPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 12, marginTop: 2 },
+  sizeOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 20, marginTop: 2 },
   availabilityLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   availabilityDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#38A169' },
   availabilityDotOff: { backgroundColor: colors.secondary },

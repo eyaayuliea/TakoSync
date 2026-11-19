@@ -21,13 +21,20 @@ export const ownerColors = {
 } as const;
 
 export const ownerTypography = {
-  pageTitle: { fontFamily: 'Poppins_700Bold', fontSize: 20, color: ownerColors.navy },
-  cardTitle: { fontFamily: 'Poppins_600SemiBold', fontSize: 16, color: ownerColors.navy },
-  label: { fontFamily: 'Poppins_400Regular', fontSize: 14, color: ownerColors.black },
-  value: { fontFamily: 'Poppins_400Regular', fontSize: 16, color: ownerColors.black },
+  display: { fontFamily: 'Poppins_700Bold', fontSize: 48, lineHeight: 56, color: ownerColors.navy },
+  h1: { fontFamily: 'Poppins_700Bold', fontSize: 32, lineHeight: 40, color: ownerColors.navy },
+  h2: { fontFamily: 'Poppins_700Bold', fontSize: 24, lineHeight: 32, color: ownerColors.navy },
+  h3: { fontFamily: 'Poppins_600SemiBold', fontSize: 20, lineHeight: 28, color: ownerColors.navy },
+  titleLarge: { fontFamily: 'Poppins_600SemiBold', fontSize: 18, lineHeight: 24, color: ownerColors.navy },
+  titleMedium: { fontFamily: 'Poppins_600SemiBold', fontSize: 16, lineHeight: 22, color: ownerColors.navy },
+  pageTitle: { fontFamily: 'Poppins_700Bold', fontSize: 32, lineHeight: 40, color: ownerColors.navy },
+  cardTitle: { fontFamily: 'Poppins_600SemiBold', fontSize: 16, lineHeight: 22, color: ownerColors.navy },
+  label: { fontFamily: 'Poppins_600SemiBold', fontSize: 14, lineHeight: 20, color: ownerColors.navy },
+  value: { fontFamily: 'Poppins_400Regular', fontSize: 16, lineHeight: 24, color: ownerColors.black },
   caption: { fontFamily: 'Poppins_500Medium', fontSize: 12, color: ownerColors.secondaryText },
-  button: { fontFamily: 'Poppins_600SemiBold', fontSize: 14, color: ownerColors.navy },
-  badge: { fontFamily: 'Poppins_500Medium', fontSize: 11, color: ownerColors.navy },
+  button: { fontFamily: 'Poppins_600SemiBold', fontSize: 14, lineHeight: 20, color: ownerColors.navy },
+  badge: { fontFamily: 'Poppins_500Medium', fontSize: 12, lineHeight: 16, color: ownerColors.navy },
+  small: { fontFamily: 'Poppins_400Regular', fontSize: 11, lineHeight: 15, color: ownerColors.secondaryText },
 } as const;
 
 export const ownerSpacing = {

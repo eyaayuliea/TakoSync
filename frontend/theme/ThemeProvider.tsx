@@ -114,9 +114,9 @@ const ownerMenuTheme: OwnerMenuTheme = {
     bold: 'Poppins_700Bold',
   },
   typography: {
-    pageTitle: 20,
-    tileTitle: 14,
-    subtitle: 11,
+    pageTitle: 32,
+    tileTitle: 16,
+    subtitle: 12,
     chevron: 18,
   },
   layout: {

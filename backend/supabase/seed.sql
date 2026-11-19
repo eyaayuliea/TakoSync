@@ -7,11 +7,11 @@ insert into public.ingredient_categories (id, name) values
 on conflict (id) do nothing;
 
 insert into public.ingredients (id, category_id, name, unit, quantity_precision) values
-  ('octopus', 'seafood', 'Octopus', 'kg', 2),
+  ('octopus', 'seafood', 'Octopus', 'g', 2),
   ('flour', 'dry-goods', 'Flour', 'kg', 2),
   ('eggs', 'dairy-eggs', 'Eggs', 'pcs', 0),
-  ('sauces', 'condiments', 'Takoyaki Sauce', 'L', 2),
-  ('japanese-mayonnaise', 'condiments', 'Japanese Mayonnaise', 'L', 2),
+  ('sauces', 'condiments', 'Takoyaki Sauce', 'ml', 2),
+  ('japanese-mayonnaise', 'condiments', 'Japanese Mayonnaise', 'ml', 2),
   ('bonito-flakes', 'dry-goods', 'Bonito Flakes', 'g', 0),
   ('spring-onions', 'produce', 'Spring Onions', 'g', 0),
   ('cooking-oil', 'condiments', 'Cooking Oil', 'L', 2)

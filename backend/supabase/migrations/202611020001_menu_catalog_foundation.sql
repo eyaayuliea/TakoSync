@@ -339,11 +339,11 @@ begin
     p_branch_id,
     jsonb_build_array(
       jsonb_build_object('ingredient_id', 'flour', 'type', 'usage', 'quantity', 0.625, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
-      jsonb_build_object('ingredient_id', 'dashi', 'type', 'usage', 'quantity', 2.4, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
+      jsonb_build_object('ingredient_id', 'dashi', 'type', 'usage', 'quantity', 24, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
       jsonb_build_object('ingredient_id', 'eggs', 'type', 'usage', 'quantity', 5, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
-      jsonb_build_object('ingredient_id', 'soy-sauce', 'type', 'usage', 'quantity', 5, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
-      jsonb_build_object('ingredient_id', 'salt', 'type', 'usage', 'quantity', 2.5, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
-      jsonb_build_object('ingredient_id', 'baking-powder', 'type', 'usage', 'quantity', 2.5, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
+      jsonb_build_object('ingredient_id', 'soy-sauce', 'type', 'usage', 'quantity', 75, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
+      jsonb_build_object('ingredient_id', 'salt', 'type', 'usage', 'quantity', 15, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
+      jsonb_build_object('ingredient_id', 'baking-powder', 'type', 'usage', 'quantity', 10, 'reason', 'Batter preparation', 'notes', v_batch.batch_reference),
       jsonb_build_object('ingredient_id', 'prepared-batter', 'type', 'stock_in', 'quantity', 5, 'batch_reference', v_batch.batch_reference, 'reason', 'Batter preparation', 'notes', 'Five 680 ml bottles; 25 pieces maximum expected yield per bottle')
     )
   );
@@ -356,18 +356,18 @@ grant execute on function public.prepare_batter_batch(uuid, text) to authenticat
 
 insert into public.ingredients (id, category_id, name, unit, quantity_precision, automatic_consumption_enabled, active)
 values
-  ('dashi', 'dry-goods', 'Dashi', 'L', 3, false, true),
-  ('soy-sauce', 'condiments', 'Soy Sauce', 'tbsp', 2, false, true),
-  ('salt', 'dry-goods', 'Salt', 'tsp', 2, false, true),
-  ('baking-powder', 'dry-goods', 'Baking Powder', 'tsp', 2, false, true),
-  ('octobits', 'seafood', 'Octobits', 'pcs', 0, false, true),
-  ('cheese-cubes', 'dairy-eggs', 'Cheese Cubes', 'pcs', 0, false, true),
-  ('crab-sticks', 'seafood', 'Crab Sticks', 'pcs', 0, false, true),
-  ('bacon-bits', 'dry-goods', 'Bacon Bits', 'unknown', 3, false, true),
+  ('dashi', 'dry-goods', 'Dashi Powder', 'g', 3, false, true),
+  ('soy-sauce', 'condiments', 'Soy Sauce', 'ml', 2, false, true),
+  ('salt', 'dry-goods', 'Salt', 'g', 2, false, true),
+  ('baking-powder', 'dry-goods', 'Baking Powder', 'g', 2, false, true),
+  ('octopus', 'seafood', 'Octopus', 'g', 2, false, true),
+  ('cheese-cubes', 'dairy-eggs', 'Cheese Cubes', 'g', 0, false, true),
+  ('crab-sticks', 'seafood', 'Crab sticks', 'g', 2, false, true),
+  ('bacon-bits', 'dry-goods', 'Bacon', 'g', 2, false, true),
   ('cabbage', 'produce', 'Cabbage (Chopped)', 'g', 0, false, true),
-  ('japanese-white-sauce', 'condiments', 'Japanese White Sauce', 'L', 2, false, true),
+  ('japanese-mayonnaise', 'condiments', 'Japanese Mayonnaise', 'ml', 2, false, true),
   ('prepared-batter', 'prepared', 'Prepared Takoyaki Batter', 'bottle', 0, false, true),
-  ('packaging', 'dry-goods', 'Packaging', 'pack', 0, false, true)
+  ('packaging', 'dry-goods', 'Packaging', 'pcs', 0, false, true)
 on conflict (id) do nothing;
 
 insert into public.ingredient_package_sizes (ingredient_id, package_quantity, package_unit, package_label)
@@ -554,7 +554,7 @@ $$;
 
 insert into public.menu_addons (id, addon_code, addon_name, price, active)
 values
-  ('30000000-0000-4000-8000-000000000001', 'japanese-white-sauce', 'Japanese white sauce', 10, true),
+  ('30000000-0000-4000-8000-000000000001', 'japanese-mayonnaise', 'Japanese Mayo', 10, true),
   ('30000000-0000-4000-8000-000000000002', 'takoyaki-sauce', 'Takoyaki sauce', 15, true),
   ('30000000-0000-4000-8000-000000000003', 'flakes', 'Flakes', 10, true)
 on conflict do nothing;
@@ -570,17 +570,29 @@ insert into public.recipes (product_id, ingredient_id, quantity_required, unit_o
 select product.id, recipe.ingredient_id, recipe.quantity_required, recipe.unit_of_measure, false
 from public.products product
 join (values
-  ('flavor_octobits', 'octobits', 4::numeric, 'pcs'),
-  ('flavor_cheese', 'cheese-cubes', 4::numeric, 'pcs'),
-  ('flavor_crab', 'crab-sticks', 4::numeric, 'pcs')
+  ('flavor_octobits', 'octopus', 40::numeric, 'g'),
+  ('flavor_cheese', 'cheese-cubes', 20::numeric, 'g'),
+  ('flavor_crab', 'crab-sticks', 20::numeric, 'g'),
+  ('flavor_bacon_bits', 'bacon-bits', 20::numeric, 'g'),
+  ('combo_octobits_cheese_01', 'octopus', 20::numeric, 'g'),
+  ('combo_octobits_cheese_01', 'cheese-cubes', 10::numeric, 'g'),
+  ('combo_bacon_cheese', 'bacon-bits', 10::numeric, 'g'),
+  ('combo_bacon_cheese', 'cheese-cubes', 10::numeric, 'g'),
+  ('combo_crab_cheese', 'crab-sticks', 10::numeric, 'g'),
+  ('combo_crab_cheese', 'cheese-cubes', 10::numeric, 'g')
 ) recipe(internal_code, ingredient_id, quantity_required, unit_of_measure)
 on recipe.internal_code = product.internal_code
-on conflict (product_id, ingredient_id) do nothing;
+on conflict (product_id, ingredient_id) do update
+set quantity_required = excluded.quantity_required,
+    unit_of_measure = excluded.unit_of_measure;
 
 insert into public.recipes (product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled)
 select product.id, 'prepared-batter', 1, 'bottle', false
 from public.products product
-where product.internal_code in ('flavor_octobits', 'flavor_cheese', 'flavor_crab')
+where product.internal_code in (
+  'flavor_octobits', 'flavor_cheese', 'flavor_crab', 'flavor_bacon_bits',
+  'combo_octobits_cheese_01', 'combo_bacon_cheese', 'combo_crab_cheese'
+)
 on conflict (product_id, ingredient_id) do nothing;
 
 alter table public.sale_items
@@ -700,11 +712,11 @@ insert into public.shared_recipe_ingredients (
   automatic_consumption_enabled
 ) values
   ('30000000-0000-4000-8000-000000000001', 'flour', 0.625, 'kg', true),
-  ('30000000-0000-4000-8000-000000000001', 'dashi', 2.4, 'L', true),
+  ('30000000-0000-4000-8000-000000000001', 'dashi', 24, 'g', true),
   ('30000000-0000-4000-8000-000000000001', 'eggs', 5, 'pcs', true),
-  ('30000000-0000-4000-8000-000000000001', 'soy-sauce', 5, 'tbsp', true),
-  ('30000000-0000-4000-8000-000000000001', 'salt', 2.5, 'tsp', true),
-  ('30000000-0000-4000-8000-000000000001', 'baking-powder', 2.5, 'tsp', true)
+  ('30000000-0000-4000-8000-000000000001', 'soy-sauce', 75, 'ml', true),
+  ('30000000-0000-4000-8000-000000000001', 'salt', 15, 'g', true),
+  ('30000000-0000-4000-8000-000000000001', 'baking-powder', 10, 'g', true)
 on conflict (shared_recipe_id, ingredient_id) do nothing;
 
 insert into public.shared_recipe_versions (
@@ -960,7 +972,7 @@ begin
         and ingredient.active
         and ingredient.id not in (
           'flour', 'dashi', 'eggs', 'soy-sauce', 'salt', 'baking-powder',
-          'sauces', 'japanese-mayonnaise', 'japanese-white-sauce',
+          'sauces', 'japanese-mayonnaise',
           'bonito-flakes', 'packaging'
         )
     loop

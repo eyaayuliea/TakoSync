@@ -418,7 +418,7 @@ begin
              ingredient.unit as unit_of_measure,
              recipe.id as recipe_id,
              recipe.quantity_required as recipe_quantity_required,
-             sum(recipe.quantity_required * si.quantity) as quantity_consumed,
+             sum(recipe.quantity_required * si.quantity * variant.piece_count / 4) as quantity_consumed,
              sum(si.quantity * variant.piece_count) as applicable_pieces
       from public.sale_items si
       join public.product_variants variant on variant.id = si.product_variant_id

@@ -22,31 +22,82 @@ test('ST-04 inventory catalog preserves the approved names, categories, units, a
   assert.deepEqual(STAFF_INVENTORY_CATALOG.map((item) => item.name), [
     'Octopus',
     'Cheese',
-    'Crab stick',
-    'Bacon bits',
+    'Crab sticks',
+    'Bacon',
     'Takoyaki batter',
     'Cabbage (chopped)',
     'Takoyaki sauce',
     'Japanese mayonnaise',
     'Bonito flakes',
     'Packaging',
+    'All-purpose flour',
+    'Dashi powder',
+    'Eggs',
+    'Salt',
+    'Soy sauce',
+    'Baking powder',
   ]);
   assert.deepEqual(getApprovedStaffInventoryItem('crab-sticks', 'Crab Sticks', 'Seafood'), {
     id: 'crab-sticks',
-    name: 'Crab stick',
+    name: 'Crab sticks',
     category: 'Seafood',
-    unit: 'pcs',
+    unit: 'g',
   });
   assert.equal(getApprovedStaffInventoryItem('cheese-cubes', 'Cheese Cubes', 'Dairy & eggs')?.name, 'Cheese');
   assert.deepEqual(getApprovedStaffInventoryItem('bacon-bits', 'Bacon Bits', 'Dry Goods'), {
     id: 'bacon-bits',
-    name: 'Bacon bits',
+    name: 'Bacon',
     category: 'Meat',
     unit: 'g',
   });
-  assert.equal(getApprovedStaffInventoryItem('japanese-white-sauce', 'Japanese White Sauce', 'Condiments'), null);
-  assert.equal(getApprovedStaffInventoryItem('eggs', 'Eggs', 'Dairy'), null);
-  assert.equal(getApprovedStaffInventoryItem('flour', 'All-purpose flour', 'Dry Goods'), null);
+  assert.deepEqual(getApprovedStaffInventoryItem('prepared-batter', 'Takoyaki batter', 'Prepared'), {
+    id: 'prepared-batter',
+    name: 'Takoyaki batter',
+    category: 'Prepared',
+    unit: 'bottle',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('japanese-mayonnaise', 'Japanese mayonnaise', 'Condiments'), {
+    id: 'japanese-mayonnaise',
+    name: 'Japanese mayonnaise',
+    category: 'Condiments',
+    unit: 'ml',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('eggs', 'Eggs', 'Dairy'), {
+    id: 'eggs',
+    name: 'Eggs',
+    category: 'Dairy',
+    unit: 'pcs',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('flour', 'Flour', 'Dry Goods'), {
+    id: 'flour',
+    name: 'All-purpose flour',
+    category: 'Dry Goods',
+    unit: 'kg',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('dashi', 'Dashi', 'Dry Goods'), {
+    id: 'dashi',
+    name: 'Dashi powder',
+    category: 'Dry Goods',
+    unit: 'g',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('salt', 'Salt', 'Dry Goods'), {
+    id: 'salt',
+    name: 'Salt',
+    category: 'Dry Goods',
+    unit: 'g',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('soy-sauce', 'Soy Sauce', 'Condiments'), {
+    id: 'soy-sauce',
+    name: 'Soy sauce',
+    category: 'Condiments',
+    unit: 'ml',
+  });
+  assert.deepEqual(getApprovedStaffInventoryItem('baking-powder', 'Baking Powder', 'Dry Goods'), {
+    id: 'baking-powder',
+    name: 'Baking powder',
+    category: 'Dry Goods',
+    unit: 'g',
+  });
   assert.equal(getApprovedStaffInventoryItem('sauces', 'Takoyaki Sauce', 'Condiments')?.name, 'Takoyaki sauce');
 });
 

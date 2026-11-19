@@ -430,6 +430,10 @@ const ingredientVisuals: Record<string, { emoji: string; tint: string; type: str
   sauces: { emoji: '🧴', tint: '#FBE7E9', type: 'Takoyaki sauce' },
   'japanese-mayonnaise': { emoji: '🥫', tint: '#FFF4D8', type: 'Japanese mayonnaise' },
   'bonito-flakes': { emoji: '🐟', tint: '#FFF1D8', type: 'Dried fish flakes' },
+  dashi: { emoji: '🍲', tint: '#FFF1D8', type: 'Dashi powder' },
+  salt: { emoji: '🧂', tint: '#F2F2F4', type: 'Salt' },
+  'soy-sauce': { emoji: '🍶', tint: '#FBE7E9', type: 'Soy sauce' },
+  'baking-powder': { emoji: '🥄', tint: '#FFF1D8', type: 'Baking powder' },
   'spring-onions': { emoji: '🌱', tint: '#E8F6EC', type: 'Fresh produce' },
   'cooking-oil': { emoji: '🫗', tint: '#FFF4D8', type: 'Cooking oil' },
 };
@@ -1202,7 +1206,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const displayMinimumStock = isPreparedBatter ? minimumStock * 680 : minimumStock;
     const displayQuantityPrecision = isPreparedBatter ? 0 : ingredient.quantity_precision;
     return [{
-      id: ingredient.id,
+      id: approvedItem.id,
       hasBranchInventory: stock !== undefined,
       name: approvedName,
       category: approvedCategory,
@@ -1226,7 +1230,13 @@ export async function loadInventory(branchId: string, businessDate = new Date())
             ? 'Milliliters (ml)'
           : approvedUnit === 'L'
             ? 'Liters (L)'
-            : `${ingredient.unit} (${ingredient.unit})`,
+            : approvedUnit === 'kg'
+              ? 'Kilograms (kg)'
+              : approvedUnit === 'tsp'
+                ? 'Teaspoons (tsp)'
+                : approvedUnit === 'tbsp'
+                  ? 'Tablespoons (tbsp)'
+                  : `${ingredient.unit} (${ingredient.unit})`,
       receivedBatch: firstBatch
         ? `${firstBatch.batch_reference} · ${formatDate(firstBatch.received_date)}`
         : 'No active batch',
@@ -1247,8 +1257,53 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       tint: visual.tint,
     }];
   });
+  const mergedItems = new Map<string, InventoryItem>();
+  for (const item of items) {
+    const existing = mergedItems.get(item.id);
+    if (!existing) {
+      mergedItems.set(item.id, item);
+      continue;
+    }
+    const batchMap = new Map<string, InventoryItem['batches'][number]>();
+    for (const batch of [...existing.batches, ...item.batches]) {
+      const key = batch.reference || `${batch.expirationDateIso ?? ''}-${batch.quantityRemaining}`;
+      const mergedBatch = batchMap.get(key);
+      if (mergedBatch) {
+        batchMap.set(key, {
+          ...mergedBatch,
+          quantityReceived: mergedBatch.quantityReceived + batch.quantityReceived,
+          quantityRemaining: mergedBatch.quantityRemaining + batch.quantityRemaining,
+        });
+      } else {
+        batchMap.set(key, batch);
+      }
+    }
+    const mergedBatches = Array.from(batchMap.values());
+    const earliestBatch = mergedBatches
+      .filter((batch) => batch.quantityRemaining > 0 && batch.expirationDateIso)
+      .sort((left, right) => (left.expirationDateIso ?? '').localeCompare(right.expirationDateIso ?? ''))[0];
+    const mergedExpirationStatus = earliestBatch?.expirationDateIso
+      ? inventoryExpirationStatus(earliestBatch.expirationDateIso, nearExpirationDays, businessDate)
+      : null;
+    mergedItems.set(item.id, {
+      ...existing,
+      hasBranchInventory: existing.hasBranchInventory || item.hasBranchInventory,
+      quantity: existing.quantity + item.quantity,
+      threshold: Math.max(existing.threshold, item.threshold),
+      minimumStock: Math.max(existing.minimumStock, item.minimumStock),
+      lowStock:
+        (existing.quantity + item.quantity) <= 0 ||
+        (Math.max(existing.minimumStock, item.minimumStock) > 0 &&
+          (existing.quantity + item.quantity) <= Math.max(existing.minimumStock, item.minimumStock)),
+      batches: mergedBatches,
+      expiration: earliestBatch ? formatDate(earliestBatch.expirationDateIso) ?? '' : '',
+      expirationStatus: mergedExpirationStatus,
+      nearExpiry: mergedExpirationStatus === 'Near Expiry',
+      inventoryRevision: Math.max(existing.inventoryRevision, item.inventoryRevision),
+    });
+  }
   return {
-    items,
+    items: Array.from(mergedItems.values()),
     nearExpirationDays,
   };
 }
