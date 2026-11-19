@@ -67,6 +67,7 @@ import {
   loadSharedRecipes,
   loadTransactionHistory,
   prepareBatterBatch,
+  reserveBatterBatchReference,
   processSaleInventory,
   submitSale,
   submitDailyStockCheck,
@@ -1451,6 +1452,21 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [user.id, user.branchId]);
+
+  useEffect(() => {
+    if (route !== 'batterBatch' || batterBatchReference !== '' || !user?.branchId) return;
+    let active = true;
+    reserveBatterBatchReference()
+      .then((reference) => {
+        if (active) setBatterBatchReference((current) => current || reference);
+      })
+      .catch(() => {
+        // The server still generates a reference on confirmation if this fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, batterBatchReference, user?.branchId]);
 
   useEffect(() => {
     if (route !== 'stocks' && route !== 'batterBatch') return;
@@ -3714,9 +3730,8 @@ export default function StaffWorkspace({
             icon: '＋',
             onPress: () => {
               const date = manilaBusinessDate();
-              const sequence = String(Math.floor(Date.now() / 1000)).slice(-6);
               setBatterPreparationDate(date);
-              setBatterBatchReference(`Batch #${sequence}`);
+              setBatterBatchReference('');
               setBatterPreparationError('');
               setRoute('batterBatch');
             },
@@ -8542,7 +8557,7 @@ export default function StaffWorkspace({
               Deduct the owner-configured raw ingredients once and add exactly {PREPARED_BATTER_BATCH_BOTTLES} prepared batter bottles.
             </Text>
             <View style={styles.confirmSummary}>
-              <Text style={styles.confirmSummaryText}>Auto-generated batch reference</Text>
+              <Text style={styles.confirmSummaryText}>{batterBatchReference ? `Batch reference ${batterBatchReference}` : 'Auto-generated batch reference'}</Text>
               <Text style={styles.confirmSummaryText}>{assignedBranch} · {formatDate(batterPreparationDate)}</Text>
               <Text style={styles.confirmSummaryText}>Recorded with your employee account.</Text>
               <Text style={styles.confirmSummaryText}>If any part fails, nothing is saved.</Text>

@@ -2210,6 +2210,20 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   };
 }
 
+/**
+ * Reserves the next unique, server-generated batter batch reference so it can be
+ * shown before confirmation. The same reference is then reused for every retry of
+ * the same preparation, which keeps the RPC idempotent (no double deduction).
+ */
+export async function reserveBatterBatchReference(client?: StaffServiceClient): Promise<string> {
+  const { data, error } = await staffServiceClient(client).rpc('next_batter_batch_reference');
+  assertNoError(error);
+  if (typeof data !== 'string' || !data.trim()) {
+    throw new Error('The server did not return a batch reference.');
+  }
+  return data.trim();
+}
+
 export async function prepareBatterBatch(
   branchId: string,
   batchReference?: string,
