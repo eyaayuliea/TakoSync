@@ -1,5 +1,5 @@
 import type { InventoryItem } from '../services/takosync';
-import { approvedStaffInventorySort } from './staffInventoryCatalog.ts';
+import { staffInventorySort } from './staffInventoryCatalog.ts';
 
 export type InventoryReportItem = Pick<
   InventoryItem,
@@ -186,10 +186,7 @@ export function filterStaffInventoryItems<T extends {
     (category === 'All' || displayInventoryCategory(item.category) === category) &&
     item.name.toLowerCase().includes(normalizedSearch),
   ).sort((left, right) =>
-    approvedStaffInventorySort(
-      { id: ('id' in left ? String(left.id) : ''), name: left.name },
-      { id: ('id' in right ? String(right.id) : ''), name: right.name },
-    ),
+    staffInventorySort(left, right),
   );
 }
 

@@ -32,15 +32,15 @@ test('a single missing field is described in the singular', () => {
 
 test('quantity above stock is reported as exceeding stock, not as a missing field', () => {
   const result = validateWasteForm({ ...base, quantityValue: '600' });
-  assert.equal(result.errors.quantity, 'Only 500 g of Octopus in stock. Enter 500 or less.');
+  assert.equal(result.errors.quantity, 'Insufficient stock for Octopus: required 600 g, available 500 g, shortage 100 g');
   assert.equal(result.summary, result.errors.quantity);
-  assert.doesNotMatch(result.summary, /required/);
+  assert.doesNotMatch(result.summary, /Complete the required/);
 });
 
 test('stock is only compared when requested and an empty shelf has its own message', () => {
   assert.deepEqual(validateWasteForm({ ...base, quantityValue: '600', checkAvailableStock: false }).errors, {});
   const empty = validateWasteForm({ ...base, ingredient: { ...octopus, quantity: 0 }, quantityValue: '1' });
-  assert.equal(empty.errors.quantity, 'Octopus has no stock available.');
+  assert.equal(empty.errors.quantity, 'Insufficient stock for Octopus: required 1 g, available 0 g, shortage 1 g');
 });
 
 test('precision problems say how many decimals the ingredient allows', () => {
@@ -140,7 +140,7 @@ test('stock-out: missing fields are named', () => {
 
 test('stock-out: exceeding stock and precision are specific, not "required"', () => {
   const over = validateStockOutForm({ ...stockOut, quantityValue: '501' });
-  assert.equal(over.errors.quantity, 'Only 500 g of Octopus in stock. Enter 500 or less.');
+  assert.equal(over.errors.quantity, 'Insufficient stock for Octopus: required 501 g, available 500 g, shortage 1 g');
   assert.equal(over.summary, over.errors.quantity);
   assert.equal(
     validateStockOutForm({ ...stockOut, quantityValue: '1.5' }).errors.quantity,
@@ -148,7 +148,7 @@ test('stock-out: exceeding stock and precision are specific, not "required"', ()
   );
   assert.equal(
     validateStockOutForm({ ...stockOut, ingredient: { ...octopus, quantity: 0 }, quantityValue: '1' }).errors.quantity,
-    'Octopus has no stock available.',
+    'Insufficient stock for Octopus: required 1 g, available 0 g, shortage 1 g',
   );
 });
 

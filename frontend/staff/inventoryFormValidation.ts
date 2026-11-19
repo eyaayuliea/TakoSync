@@ -55,9 +55,9 @@ function quantityProblem(input: {
   }
   if (ingredient && input.checkAvailableStock && parsed > ingredient.quantity) {
     return {
-      message: ingredient.quantity > 0
-        ? `Only ${formatAmount(ingredient.quantity)} ${ingredient.unit} of ${ingredient.name} in stock. Enter ${formatAmount(ingredient.quantity)} or less.`
-        : `${ingredient.name} has no stock available.`,
+      message: `Insufficient stock for ${ingredient.name}: required ${formatAmount(parsed)} ${ingredient.unit}, `
+        + `available ${formatAmount(ingredient.quantity)} ${ingredient.unit}, `
+        + `shortage ${formatAmount(parsed - ingredient.quantity)} ${ingredient.unit}`,
       missing: false,
     };
   }

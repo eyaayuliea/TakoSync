@@ -25,7 +25,6 @@ import {
   inventoryTransactionLabel,
   type InventoryTransactionLabel,
 } from './transactionLabels';
-import { getApprovedStaffInventoryItem } from '../staff/staffInventoryCatalog.ts';
 import {
   filterStaffSaleHistory,
   filterUnresolvedSales,
@@ -1336,6 +1335,21 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
   });
 }
 
+export function unitDisplayName(unit: string): string {
+  const names: Record<string, string> = {
+    g: 'Grams (g)',
+    kg: 'Kilograms (kg)',
+    ml: 'Milliliters (ml)',
+    L: 'Liters (L)',
+    pcs: 'Pieces (pcs)',
+    pack: 'Packs (pack)',
+    bottle: 'Bottles (bottle)',
+    tsp: 'Teaspoons (tsp)',
+    tbsp: 'Tablespoons (tbsp)',
+  };
+  return names[unit] ?? `${unit} (${unit})`;
+}
+
 export async function loadInventory(branchId: string, businessDate = new Date()): Promise<StaffInventoryData> {
   if (!branchId.trim()) throw new Error('An assigned branch is required to load inventory.');
   const client = requireSupabase();
@@ -1392,17 +1406,15 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
     const packageSize = packageSizes.get(ingredient.id);
-    const approvedItem = getApprovedStaffInventoryItem(
-      ingredient.id,
-      ingredient.name,
-      categories.get(ingredient.category_id) ?? 'Other',
-    );
-    if (!approvedItem) return [];
+    if (!ingredient.active) return [];
 
-    const approvedName = approvedItem.name;
-    const approvedCategory = approvedItem.category;
-    const approvedUnit = approvedItem.unit;
-    const isPreparedBatter = approvedItem.id === 'prepared-batter';
+    // The database is the source of truth for the name, category and unit. Only the
+    // prepared batter is presented in millilitres (1 bottle = 680 ml) on top of its
+    // stored bottle quantity.
+    const approvedName = ingredient.name;
+    const approvedCategory = categories.get(ingredient.category_id) ?? 'Other';
+    const isPreparedBatter = ingredient.id === 'prepared-batter' && ingredient.unit === 'bottle';
+    const approvedUnit = isPreparedBatter ? 'ml' : ingredient.unit;
     const displayQuantity = isPreparedBatter ? quantity * 680 : quantity;
     const displayMinimumStock = isPreparedBatter ? minimumStock * 680 : minimumStock;
     const displayQuantityPrecision = isPreparedBatter ? 0 : ingredient.quantity_precision;
@@ -1423,15 +1435,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       expirationStatus,
       minimumStock: displayMinimumStock,
       type: visual.type,
-      unitName: approvedUnit === 'g'
-          ? 'Grams (g)'
-        : approvedUnit === 'pcs'
-          ? 'Pieces (pcs)'
-          : approvedUnit === 'ml'
-            ? 'Milliliters (ml)'
-          : approvedUnit === 'L'
-            ? 'Liters (L)'
-            : `${ingredient.unit} (${ingredient.unit})`,
+      unitName: unitDisplayName(approvedUnit),
       receivedBatch: firstBatch
         ? `${firstBatch.batch_reference} · ${formatDate(firstBatch.received_date)}`
         : 'No active batch',
@@ -1529,16 +1533,14 @@ export async function loadStaffInventoryReports(
   const quantityPrecisionById = new Map(inventory.items.map((item) => [item.id, item.quantityPrecision]));
   const unavailableIngredientIds = [...new Set(lines
     .map((line) => line.ingredient_id)
-    .filter((id) => !itemNameById.has(id) && getApprovedStaffInventoryItem(id, '', '') !== null))];
+    .filter((id) => !itemNameById.has(id)))];
   for (let offset = 0; offset < unavailableIngredientIds.length; offset += pageSize) {
     const { data, error } = await client.from('ingredients')
       .select('id, name, quantity_precision')
       .in('id', unavailableIngredientIds.slice(offset, offset + pageSize));
     assertNoError(error);
     for (const ingredient of data ?? []) {
-      const approved = getApprovedStaffInventoryItem(ingredient.id, ingredient.name, '');
-      if (!approved) continue;
-      itemNameById.set(ingredient.id, approved.name);
+      itemNameById.set(ingredient.id, ingredient.name);
       quantityPrecisionById.set(ingredient.id, ingredient.quantity_precision);
     }
   }
@@ -1615,7 +1617,13 @@ export async function recordInventoryTransactionsIdempotently(
     p_request_id: requestId,
     p_transactions: payload,
   });
-  assertNoError(error);
+  if (error) {
+    // Keep the Postgres error code so callers can tell a definitive rejection (nothing
+    // saved) from an unknown outcome such as a network failure.
+    const failure = new Error(error.message) as Error & { code?: string };
+    failure.code = (error as { code?: string }).code;
+    throw failure;
+  }
   if (!data || data.length !== transactions.length) {
     throw new Error('The saved inventory transaction response was incomplete.');
   }
@@ -2274,7 +2282,7 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     if (message.includes('belongs to another branch')) {
       throw new SaleSubmissionRejectedError('This transaction reference belongs to a different branch.');
     }
-    if (message.includes('exceeds available stock')) {
+    if (message.includes('exceeds available stock') || message.includes('insufficient stock')) {
       throw new SaleSubmissionRejectedError('Insufficient inventory to complete this sale.');
     }
     if (message.includes('unavailable for this branch')) {

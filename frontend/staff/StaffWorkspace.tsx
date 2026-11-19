@@ -43,7 +43,17 @@ import {
   type InventoryAlertKind,
 } from './inventoryAlerts';
 import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
-import { PREPARED_BATTER_BATCH_BOTTLES } from '../services/batterPreparation';
+import {
+  PREPARED_BATTER_BATCH_BOTTLES,
+  findBatterShortages,
+  formatBatterShortages,
+  formatInsufficientStockMessage,
+} from '../services/batterPreparation';
+import {
+  isDefinitiveInventoryRejection,
+  pendingRequestIsProvablyInvalid,
+  toStoredTransactionUnit,
+} from '../services/inventoryTransactionUnits';
 import {
   validateStockInForm,
   validateStockOutForm,
@@ -131,7 +141,6 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
-import { STAFF_INVENTORY_CATALOG } from './staffInventoryCatalog';
 import {
   DEFAULT_STAFF_ALERT_PREFERENCES,
   getActiveStaffAlertPreferences,
@@ -1828,6 +1837,29 @@ export default function StaffWorkspace({
         });
         return saved;
       } catch (error) {
+        if (isDefinitiveInventoryRejection(error)) {
+          // The server validated and rejected this request before writing anything, so it
+          // is not an unresolved transaction: clear it instead of blocking new entries.
+          try {
+            const resolved = await pendingInventoryTransactionStore.resolve(request.requestId);
+            setPendingInventoryTransactions(resolved);
+            setLastPendingInventoryRequestId(null);
+            setForceNewInventoryRequestFor(null);
+            setPendingInventoryRequestErrors((current) => {
+              const next = { ...current };
+              delete next[request.requestId];
+              return next;
+            });
+          } catch (storageError) {
+            setPendingInventoryStorageError(
+              storageError instanceof Error
+                ? `The request was rejected but its local recovery copy could not be cleared: ${storageError.message}`
+                : 'The request was rejected but its local recovery copy could not be cleared.',
+            );
+          }
+          setDashboardMessage(`The inventory transaction was rejected and nothing was saved: ${error instanceof Error ? error.message : 'validation failed'}`);
+          throw error;
+        }
         try {
           const pending = await pendingInventoryTransactionStore.save({ ...request, status: 'pending' });
           setPendingInventoryTransactions(pending);
@@ -1851,6 +1883,27 @@ export default function StaffWorkspace({
     });
   };
 
+  const storedUnitCatalog = () => new Map(ingredients.map((item) => [
+    item.id,
+    item.id === 'prepared-batter' && item.unit === 'ml' ? 'bottle' : item.unit,
+  ]));
+
+  // A saved request naming an ingredient/unit that does not match the database can never
+  // be accepted (the server requires an exact match), so it is not a real unresolved
+  // transaction. Clear only those; everything else stays retryable.
+  const pruneProvablyInvalidPendingRequests = async () => {
+    if (ingredients.length === 0) return pendingInventoryTransactions;
+    const catalog = storedUnitCatalog();
+    let current = pendingInventoryTransactions;
+    for (const request of pendingInventoryTransactions) {
+      if (request.actorId !== user.id || request.branchId !== user.branchId) continue;
+      if (!pendingRequestIsProvablyInvalid(request.transactions, catalog)) continue;
+      current = await pendingInventoryTransactionStore.resolve(request.requestId);
+    }
+    if (current !== pendingInventoryTransactions) setPendingInventoryTransactions(current);
+    return current;
+  };
+
   const submitNewInventoryRequest = async (
     type: RetrySafeInventoryTransaction['type'],
     transactions: RetrySafeInventoryTransaction[],
@@ -1864,7 +1917,7 @@ export default function StaffWorkspace({
     if (pendingInventoryStorageError !== '') {
       throw new Error('Saved inventory recovery data is unavailable. Do not create another transaction until it can be recovered.');
     }
-    const unresolved = pendingInventoryTransactions.filter((request) =>
+    const unresolved = (await pruneProvablyInvalidPendingRequests()).filter((request) =>
       request.actorId === user.id &&
       request.branchId === user.branchId &&
       sameInventoryTransactionWorkflow(request.transactionType, type),
@@ -2620,6 +2673,19 @@ export default function StaffWorkspace({
       return;
     }
     setBatterPreparationError('');
+    const recipe = sharedRecipes.find((entry) =>
+      entry.recipe_code === 'shared-batter' || entry.name.toLowerCase().includes('batter'),
+    );
+    if (recipe) {
+      const shortages = findBatterShortages(
+        recipe,
+        new Map(ingredients.map((item) => [item.id, { name: item.name, unit: item.unit, quantity: item.quantity }])),
+      );
+      if (shortages.length > 0) {
+        setBatterPreparationError(formatBatterShortages(shortages));
+        return;
+      }
+    }
     setBatterConfirmationVisible(true);
   };
 
@@ -3045,7 +3111,14 @@ export default function StaffWorkspace({
       const unavailableDeduction = usageDeductions.find((deduction) => deduction.quantity > deduction.previousQuantity);
       if (unavailableDeduction) {
         const ingredient = ingredients.find((item) => item.id === unavailableDeduction.ingredientId);
-        setFormError(`${ingredient?.name ?? 'Ingredient'} usage exceeds available stock.`);
+        setFormError(formatInsufficientStockMessage({
+          ingredientId: unavailableDeduction.ingredientId,
+          name: ingredient?.name ?? 'Ingredient',
+          unit: ingredient?.unit ?? '',
+          required: unavailableDeduction.quantity,
+          available: unavailableDeduction.previousQuantity,
+          shortage: unavailableDeduction.quantity - unavailableDeduction.previousQuantity,
+        }));
         return false;
       }
       return true;
@@ -3065,7 +3138,14 @@ export default function StaffWorkspace({
       return false;
     }
     if (route === 'waste' && parsedQuantity > selectedIngredient.quantity) {
-      setFormError(`Only ${selectedIngredient.quantity} ${selectedIngredient.unit} available. Enter a smaller quantity.`);
+      setFormError(formatInsufficientStockMessage({
+        ingredientId: selectedIngredient.id,
+        name: selectedIngredient.name,
+        unit: selectedIngredient.unit,
+        required: parsedQuantity,
+        available: selectedIngredient.quantity,
+        shortage: parsedQuantity - selectedIngredient.quantity,
+      }));
       return false;
     }
     return true;
@@ -3125,11 +3205,12 @@ export default function StaffWorkspace({
         const wasteQuantity = Number(quantity);
         const receiptDate = transactionDate;
         if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+        const storedWaste = toStoredTransactionUnit(selectedIngredient, wasteQuantity);
         const saved = await submitNewInventoryRequest(wasteReason === 'Spoilage' ? 'spoilage' : 'waste', [{
           ingredientId: selectedIngredient.id,
           type: wasteReason === 'Spoilage' ? 'spoilage' : 'waste',
-          quantity: wasteQuantity,
-          unit: selectedIngredient.unit,
+          quantity: storedWaste.quantity,
+          unit: storedWaste.unit,
           transactionDate: manilaMidnightTimestamp(receiptDate),
           reason: wasteReason,
           notes: notes.trim(),
@@ -3165,8 +3246,10 @@ export default function StaffWorkspace({
       } catch (error) {
         setConfirmationVisible(false);
         const message = error instanceof Error ? error.message : 'Unable to save the waste record.';
-        if (message.toLowerCase().includes('exceeds available stock')) {
-          const exceedsMessage = 'This quantity is more than the stock now available (it changed while you were reviewing). Check the updated stock and enter a smaller quantity.';
+        if (/exceeds available stock|insufficient stock/i.test(message)) {
+          const exceedsMessage = /insufficient stock/i.test(message)
+            ? message
+            : 'This quantity is more than the stock now available (it changed while you were reviewing). Check the updated stock and enter a smaller quantity.';
           setWasteFieldErrors((current) => ({ ...current, quantity: exceedsMessage }));
           setWasteValidationAttempted(true);
           setFormError(exceedsMessage);
@@ -3206,11 +3289,12 @@ export default function StaffWorkspace({
         const saved = await submitNewInventoryRequest(inventoryType, draftDeductions.map((deduction) => {
           const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
           if (!ingredient) throw new Error('An inventory item in this transaction is no longer available.');
+          const stored = toStoredTransactionUnit(ingredient, deduction.quantity);
           return {
             ingredientId: deduction.ingredientId,
             type: inventoryType,
-            quantity: deduction.quantity,
-            unit: ingredient.unit,
+            quantity: stored.quantity,
+            unit: stored.unit,
             transactionDate: manilaMidnightTimestamp(receiptDate),
             reason,
             notes,
@@ -3282,11 +3366,12 @@ export default function StaffWorkspace({
     try {
       if (route !== 'stockIn') throw new Error('This transaction type is not supported on this screen.');
       if (!user?.branchId) throw new Error('Your account does not have an assigned branch.');
+      const storedStockIn = toStoredTransactionUnit(selectedIngredient, parsedQuantity);
       const saved = await submitNewInventoryRequest('stock_in', [{
         ingredientId: selectedIngredient.id,
         type: 'stock_in',
-        quantity: parsedQuantity,
-        unit: selectedIngredient.unit,
+        quantity: storedStockIn.quantity,
+        unit: storedStockIn.unit,
         transactionDate: formatLocalIsoDate(transactionDate),
         reason: 'Stock-In',
         notes: notes.trim(),
@@ -3983,19 +4068,14 @@ export default function StaffWorkspace({
 
       <View style={styles.inventoryDetailSection}>
         <Text style={styles.historyPlaceholderText}>Ingredient UOM</Text>
-        {STAFF_INVENTORY_CATALOG.map((item) => (
-          <DetailRow
-            key={item.id}
-            label={item.name}
-            value={item.unit === 'g' ? 'g' : item.unit === 'pcs' ? 'pcs' : 'ml'}
-          />
+        {filterBranchInventoryAlertItems(ingredients).map((item) => (
+          <DetailRow key={item.id} label={item.name} value={item.unit} />
         ))}
       </View>
 
       <View style={styles.inventoryDetailSection}>
         <Text style={styles.historyPlaceholderText}>Purchase packs</Text>
         {filterBranchInventoryAlertItems(ingredients)
-          .filter((item) => STAFF_INVENTORY_CATALOG.some((catalogItem) => catalogItem.name === item.name))
           .filter((item) => item.packageQuantity !== null && item.packageUnit)
           .map((item) => (
             <DetailRow
@@ -4006,7 +4086,6 @@ export default function StaffWorkspace({
           ))}
         <Text style={styles.inventoryEmptyMessage}>
           Batter: 1 bottle = 680 ml.{'\n'}
-          Octopus, Cheese and Bonito flakes: 1 kg = 1,000 g.{'\n'}
           Purchase-pack sizes are not current stock quantities.
         </Text>
       </View>
