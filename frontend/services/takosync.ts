@@ -957,6 +957,126 @@ export async function loadOwnerSalesData(input: {
   };
 }
 
+export type OwnerSalesTransactionBundle = {
+  sales: Array<{
+    id: string;
+    transaction_reference: string;
+    branch_id: string;
+    staff_id: string;
+    total_amount: number | string;
+    payment_method: string;
+    status: string;
+    created_at: string;
+  }>;
+  branches: Array<{ id: string; city: string; code: string }>;
+  profiles: Array<{ id: string; full_name: string | null }>;
+  items: Array<{
+    id: string;
+    sale_id: string;
+    product_id: string;
+    product_variant_id: string | null;
+    quantity: number | string;
+    unit_price: number | string | null;
+    subtotal: number | string;
+  }>;
+  products: Array<{ id: string; product_name: string }>;
+  variants: Array<{ id: string; size_label: string }>;
+  addons: Array<{
+    id: string;
+    sale_id: string;
+    addon_id: string;
+    quantity: number | string;
+    unit_price: number | string;
+    subtotal: number | string;
+  }>;
+  addonNames: Array<{ id: string; addon_name: string }>;
+  /** True when more completed sales exist after this page. */
+  hasMore: boolean;
+};
+
+/**
+ * Reads completed sales with their items and add-ons for the Owner Sales Transaction Records.
+ * RLS (`sales_read_accessible_branches` -> can_access_branch) lets an active Owner read every
+ * active branch; no branch filter is applied here. Errors are thrown, never turned into an
+ * empty list, so the screen can tell "no sales" from "could not load".
+ */
+export async function loadOwnerSalesTransactionBundle(input: {
+  offset?: number;
+  limit?: number;
+  saleId?: string;
+}): Promise<OwnerSalesTransactionBundle> {
+  const client = requireSupabase();
+  const limit = Math.max(1, Math.min(100, input.limit ?? 20));
+  const offset = Math.max(0, input.offset ?? 0);
+
+  let query = client.from('sales')
+    .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at')
+    .eq('status', 'completed')
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
+  if (input.saleId) query = query.eq('id', input.saleId);
+  const { data: saleRows, error: salesError } = await query.range(offset, offset + limit);
+  assertNoError(salesError);
+  const fetched = saleRows ?? [];
+  const hasMore = fetched.length > limit;
+  const sales = fetched.slice(0, limit);
+  if (sales.length === 0) {
+    return { sales, branches: [], profiles: [], items: [], products: [], variants: [], addons: [], addonNames: [], hasMore: false };
+  }
+
+  const saleIds = sales.map((sale) => sale.id);
+  const branchIds = [...new Set(sales.map((sale) => sale.branch_id))];
+  const staffIds = [...new Set(sales.map((sale) => sale.staff_id))];
+  const [branchResult, profileResult, itemResult, addonResult] = await Promise.all([
+    client.from('branches').select('id, city, code').in('id', branchIds),
+    client.from('profiles').select('id, full_name').in('id', staffIds),
+    client.from('sale_items')
+      .select('id, sale_id, product_id, product_variant_id, quantity, unit_price, subtotal')
+      .in('sale_id', saleIds)
+      .order('id'),
+    client.from('sale_addons')
+      .select('id, sale_id, addon_id, quantity, unit_price, subtotal')
+      .in('sale_id', saleIds)
+      .order('id'),
+  ]);
+  assertNoError(branchResult.error);
+  assertNoError(profileResult.error);
+  assertNoError(itemResult.error);
+  assertNoError(addonResult.error);
+
+  const items = itemResult.data ?? [];
+  const addons = addonResult.data ?? [];
+  const productIds = [...new Set(items.map((item) => item.product_id))];
+  const variantIds = [...new Set(items.flatMap((item) => item.product_variant_id ? [item.product_variant_id] : []))];
+  const addonIds = [...new Set(addons.map((addon) => addon.addon_id))];
+  const [productResult, variantResult, addonNameResult] = await Promise.all([
+    productIds.length
+      ? client.from('products').select('id, product_name').in('id', productIds)
+      : Promise.resolve({ data: [], error: null }),
+    variantIds.length
+      ? client.from('product_variants').select('id, size_label').in('id', variantIds)
+      : Promise.resolve({ data: [], error: null }),
+    addonIds.length
+      ? client.from('menu_addons').select('id, addon_name').in('id', addonIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  assertNoError(productResult.error);
+  assertNoError(variantResult.error);
+  assertNoError(addonNameResult.error);
+
+  return {
+    sales,
+    branches: branchResult.data ?? [],
+    profiles: profileResult.data ?? [],
+    items,
+    products: productResult.data ?? [],
+    variants: variantResult.data ?? [],
+    addons,
+    addonNames: addonNameResult.data ?? [],
+    hasMore,
+  };
+}
+
 export async function loadUnresolvedSales(branchId: string): Promise<UnresolvedSale[]> {
   if (!branchId.trim()) throw new Error('An assigned branch is required to load unresolved sales.');
   const client = requireSupabase();

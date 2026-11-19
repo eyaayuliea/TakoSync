@@ -3,11 +3,11 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
   getForcedSalesTransactionState,
-  getSalesTransactionById,
-  getSalesTransactionMockList,
-  pageSize,
+  loadSalesTransactionById,
+  loadSalesTransactionPage,
   type SalesTransaction,
 } from './salesTransactionRepository';
+import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -51,51 +51,87 @@ export default function SalesTransactionRecords({
   const [view, setView] = useState<'list' | 'details'>('list');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<OwnerRecordErrorInfo | null>(null);
   const [items, setItems] = useState<SalesTransaction[]>([]);
-  const [loadedPages, setLoadedPages] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState(false);
+  const [detailError, setDetailError] = useState<OwnerRecordErrorInfo | null>(null);
   const [selected, setSelected] = useState<SalesTransaction | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const loadingMoreRef = useRef(false);
+  const listRequestId = useRef(0);
+  const detailRequestId = useRef(0);
 
   const loadFirst = () => {
+    const currentRequestId = ++listRequestId.current;
     setLoading(true);
     setError(false);
+    setErrorInfo(null);
     setItems([]);
-    setLoadedPages(1);
+    setHasMore(false);
     setLoadMoreError(false);
+    loadingMoreRef.current = false;
     const forced = getForcedSalesTransactionState();
-    setTimeout(() => {
-      if (forced === 'error') {
-        setError(true);
-      } else if (forced === 'loading') {
-        setLoading(true);
-        return;
-      } else {
-        setItems(forced === 'empty' ? [] : getSalesTransactionMockList().slice(0, pageSize));
-      }
+    if (forced === 'loading') return;
+    if (forced === 'error') {
+      setErrorInfo(describeOwnerRecordError(new Error('Forced error state (design preview).')));
+      setError(true);
       setLoading(false);
-    }, 450);
+      return;
+    }
+    if (forced === 'empty') {
+      setLoading(false);
+      return;
+    }
+    void loadSalesTransactionPage(0).then((page) => {
+      if (currentRequestId !== listRequestId.current) return;
+      setItems(page.transactions);
+      setHasMore(page.hasMore);
+      setLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== listRequestId.current) return;
+      console.error('Unable to load Sales Transaction records.', loadError);
+      setErrorInfo(describeOwnerRecordError(loadError));
+      setError(true);
+      setLoading(false);
+    });
   };
 
-  useEffect(loadFirst, []);
+  useEffect(() => {
+    loadFirst();
+    return () => {
+      listRequestId.current += 1;
+      detailRequestId.current += 1;
+    };
+  }, []);
 
   const openDetails = (id: string) => {
+    const currentRequestId = ++detailRequestId.current;
     setSelectedId(id);
     setView('details');
-    setDetailLoading(true);
-    setDetailError(false);
-    setSelected(null);
-    setTimeout(() => {
-      const transaction = getSalesTransactionById(id);
-      if (transaction) setSelected(transaction);
-      else setDetailError(true);
+    setDetailError(null);
+    const cached = items.find((transaction) => transaction.id === id);
+    if (cached) {
+      setSelected(cached);
       setDetailLoading(false);
-    }, 250);
+      return;
+    }
+    setSelected(null);
+    setDetailLoading(true);
+    void loadSalesTransactionById(id).then((transaction) => {
+      if (currentRequestId !== detailRequestId.current) return;
+      if (transaction) setSelected(transaction);
+      else setDetailError({ message: 'This transaction could not be found. It may not be completed yet or you may not have access to it.', detail: null });
+      setDetailLoading(false);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== detailRequestId.current) return;
+      console.error('Unable to load the sales transaction.', loadError);
+      setDetailError(describeOwnerRecordError(loadError));
+      setDetailLoading(false);
+    });
   };
 
   useEffect(() => {
@@ -103,23 +139,26 @@ export default function SalesTransactionRecords({
   }, [initialTransactionId]);
 
   const loadMore = () => {
-    if (loadingMoreRef.current || items.length === 0) return;
-    const mockCount = getSalesTransactionMockList().length;
-    if (loadedPages * pageSize >= mockCount) return;
+    if (loadingMoreRef.current || !hasMore || items.length === 0) return;
+    const currentRequestId = listRequestId.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    setTimeout(() => {
-      if (getForcedSalesTransactionState() === 'error') {
-        setLoadMoreError(true);
-      } else {
-        const nextItems = getSalesTransactionMockList().slice(0, (loadedPages + 1) * pageSize);
-        setItems(nextItems);
-        setLoadedPages((value) => value + 1);
-      }
-      setLoadingMore(false);
+    void loadSalesTransactionPage(items.length).then((page) => {
+      if (currentRequestId !== listRequestId.current) return;
+      setItems((current) => {
+        const known = new Set(current.map((transaction) => transaction.id));
+        return [...current, ...page.transactions.filter((transaction) => !known.has(transaction.id))];
+      });
+      setHasMore(page.hasMore);
+    }).catch((loadError: unknown) => {
+      if (currentRequestId !== listRequestId.current) return;
+      console.error('Unable to load more Sales Transaction records.', loadError);
+      setLoadMoreError(true);
+    }).finally(() => {
       loadingMoreRef.current = false;
-    }, 500);
+      setLoadingMore(false);
+    });
   };
 
   const back = () => {
@@ -151,7 +190,8 @@ export default function SalesTransactionRecords({
         ) : detailError || !selected ? (
           <View style={styles.errorCenter}>
             <Text style={styles.wifiIcon}>≋</Text>
-            <Text style={styles.errorText}>Unable to load data. Please check your internet connection and try again.</Text>
+            <Text accessibilityRole="alert" style={styles.errorText}>{detailError?.message ?? 'Unable to load this transaction.'}</Text>
+            {detailError?.detail ? <Text selectable style={styles.errorDetail}>Details: {detailError.detail}</Text> : null}
             <Pressable accessibilityRole="button" onPress={() => openDetails(selectedId || '')} style={styles.retryButton}>
               <Text style={styles.retryIcon}>↻</Text>
               <Text style={styles.retryText}>Retry</Text>
@@ -229,7 +269,8 @@ export default function SalesTransactionRecords({
       ) : error ? (
         <View style={styles.errorCenter}>
           <Text style={styles.wifiIcon}>≋</Text>
-          <Text style={styles.errorText}>Unable to load data. Please check your internet connection and try again.</Text>
+          <Text accessibilityRole="alert" style={styles.errorText}>{errorInfo?.message ?? 'Unable to load records. Please try again.'}</Text>
+          {errorInfo?.detail ? <Text selectable style={styles.errorDetail}>Details: {errorInfo.detail}</Text> : null}
           <Pressable accessibilityRole="button" onPress={loadFirst} style={styles.retryButton}>
             <Text style={styles.retryIcon}>↻</Text>
             <Text style={styles.retryText}>Retry</Text>
@@ -305,6 +346,7 @@ function useStyles() {
     loadingText: { color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 10, marginTop: 8 },
     errorCenter: { minHeight: 300, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     wifiIcon: { color: theme.colors.salesRecordCrimson, fontFamily: font.bold, fontSize: 32, lineHeight: 36, marginBottom: 10 },
+    errorDetail: { maxWidth: 260, marginTop: 6, color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 9, lineHeight: 13, textAlign: 'center' },
     errorText: { maxWidth: 220, color: theme.colors.salesRecordNavy, fontFamily: font.regular, fontSize: 11, lineHeight: 16, textAlign: 'center' },
     retryButton: { minWidth: 120, minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.salesRecordCrimson, backgroundColor: theme.colors.background },
     retryIcon: { color: theme.colors.salesRecordCrimson, fontFamily: font.semibold, fontSize: 11, marginRight: 6 },
