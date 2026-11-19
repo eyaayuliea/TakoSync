@@ -239,10 +239,30 @@ test('Owner Mobile direct Auth fallback reports invalid credentials without a co
   );
 });
 
+test('Owner Mobile reports the approved connection message when the Edge call cannot reach the network', async () => {
+  const client = new AuthFixture({ functionError: { name: 'FunctionsFetchError', message: 'Failed to send a request to the Edge Function' } });
+  await assert.rejects(
+    () => signInOwnerWithEmail('owner@example.test', 'password', client),
+    { message: 'Unable to connect. Please check your internet connection and try again.' },
+  );
+  assert.deepEqual(client.loginArgs, [], 'no second direct Auth request is made while offline');
+});
+
+test('Owner Mobile direct Auth fallback reports the approved connection message when offline', async () => {
+  const client = new AuthFixture({
+    functionError: { message: 'Edge action not deployed' },
+    loginError: { message: 'Failed to fetch', status: 0 },
+  });
+  await assert.rejects(
+    () => signInOwnerWithEmail('owner@example.test', 'password', client),
+    { message: 'Unable to connect. Please check your internet connection and try again.' },
+  );
+});
+
 test('Owner Mobile email login maps unknown email and incorrect password to distinct errors', async () => {
   for (const [code, message] of [
-    ['email_not_found', 'Email is incorrect. Please check your email.'],
-    ['incorrect_password', 'Password is incorrect. Please try again.'],
+    ['email_not_found', 'Email not found. Please check your email.'],
+    ['incorrect_password', 'Incorrect password. Please try again.'],
   ]) {
     const client = new AuthFixture();
     client.loginResult = { ok: false, code };
@@ -254,7 +274,7 @@ test('Owner Mobile rejects malformed email locally with an email error', async (
   const client = new AuthFixture();
   await assert.rejects(
     () => signInOwnerWithEmail('not-an-email', 'password', client),
-    { message: 'Email is incorrect. Please check your email.' },
+    { message: 'Email not found. Please check your email.' },
   );
   assert.equal(client.functionBody, null);
 });

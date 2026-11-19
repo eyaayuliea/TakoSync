@@ -42,7 +42,7 @@ import {
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
-import { OwnerLoginError } from './ownerAuthentication';
+import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
   buildInventoryReportData,
   buildInventoryCountHistoryRecords,
@@ -696,6 +696,19 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
   }
   if (!password) throw new Error('Please enter your password.');
   const client = staffServiceClient(clientOverride);
+  // The Edge action is the only path that can tell an unknown email from a wrong
+  // password. If it is not deployed (function answered with an error), fall back
+  // to direct Supabase Auth; if the device is offline or the service does not
+  // answer within 10 seconds, report the approved connection message instead of
+  // waiting for a second request.
+  const directAuthFallback = async () => {
+    try {
+      return await signIn(normalizedEmail, password, 'Owner', client);
+    } catch (error) {
+      if (isOwnerConnectionFailure(error)) throw new OwnerLoginError('connection_failure');
+      throw error;
+    }
+  };
   let result;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -704,18 +717,20 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
         body: { action: 'owner-email-login', email: normalizedEmail, password },
       }),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new Error('Owner email login action timed out.')),
-          10_000,
-        );
+        timeoutHandle = setTimeout(() => reject(new OwnerLoginError('connection_failure')), 10_000);
       }),
     ]);
   } catch {
-    return signIn(normalizedEmail, password, 'Owner', client);
+    throw new OwnerLoginError('connection_failure');
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
-  if (result.error) return signIn(normalizedEmail, password, 'Owner', client);
+  if (result.error) {
+    if ((result.error as { name?: string }).name === 'FunctionsFetchError') {
+      throw new OwnerLoginError('connection_failure');
+    }
+    return directAuthFallback();
+  }
   const data = result.data as {
     ok?: boolean;
     code?: 'email_not_found' | 'incorrect_password' | 'unauthorized_access';
@@ -725,7 +740,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
     if (data?.code === 'email_not_found') throw new OwnerLoginError('email_not_found');
     if (data?.code === 'incorrect_password') throw new OwnerLoginError('incorrect_password');
     if (data?.code === 'unauthorized_access') throw new OwnerLoginError('unauthorized_access');
-    return signIn(normalizedEmail, password, 'Owner', client);
+    return directAuthFallback();
   }
   if (!data.session?.access_token || !data.session.refresh_token) {
     throw new OwnerLoginError('connection_failure');

@@ -24,3 +24,28 @@ test('Staff login messages remain explicit and distinct', () => {
   assert.equal(staffLoginErrorMessage('incorrect_password'), 'Incorrect password. Please try again.');
   assert.equal(staffLoginErrorMessage('inactive_account'), 'This account is inactive. Please contact the owner.');
 });
+
+test('Staff login failures are placed under the field the ST-01 criteria name', async () => {
+  const { staffLoginFeedback, StaffLoginError } = await import('./staffAuthentication.ts');
+  assert.deepEqual(staffLoginFeedback(new StaffLoginError('unknown_username')), {
+    usernameError: 'Username not found. Please check your username.',
+    passwordError: '',
+    banner: '',
+    clearPassword: true,
+  });
+  assert.deepEqual(staffLoginFeedback(new StaffLoginError('incorrect_password')), {
+    usernameError: '',
+    passwordError: 'Incorrect password. Please try again.',
+    banner: '',
+    clearPassword: true,
+  });
+  assert.deepEqual(staffLoginFeedback(new StaffLoginError('inactive_account')), {
+    usernameError: '',
+    passwordError: '',
+    banner: 'This account is inactive. Please contact the owner.',
+    clearPassword: false,
+  });
+  const connection = staffLoginFeedback(new StaffLoginError('connection_failure'));
+  assert.equal(connection.banner, 'Unable to connect. Please check your internet connection and try again.');
+  assert.equal(connection.clearPassword, false);
+});
