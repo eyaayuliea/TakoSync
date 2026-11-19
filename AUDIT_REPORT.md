@@ -1,5 +1,7 @@
 # TakoSync Complete Mobile Application Audit Report
 
+> **Current evidence-based story status: see section 75 (2026-11-20).** Earlier sections are historical records and keep the status they had when written.
+
 Audit date: 2026-11-13  
 Scope: Staff mobile module, Owner mobile module, shared Supabase backend/database paths, and end-to-end integration. The separate Owner Web Portal is excluded from completion scoring, per the supplied brief.
 
@@ -2670,3 +2672,92 @@ This mobile-only pass reviewed the Project Charter, Staff and Owner mobile user-
 ST-01 and OM-01 are advanced locally but remain **PARTIALLY COMPLETE**. The baseline remains **31 complete / 8 partial out of 39 stories (89.7%)**; no story classification changed. Remaining evidence includes the duplicate local migration version `202611180001`, an administrator-approved Development database, migration-sequence reconciliation, deployed Edge Function verification, live RLS/session and sale-processing tests, and Android device behavior. Production must not be used.
 
 **Next highest-priority task:** obtain an explicitly approved isolated Development Supabase project and reconcile the duplicate migration version and applied history. Then run the branch/session/sale pgTAP tests there before making any deployment decision.
+
+## 75. Mobile fix and verification pass — 2026-11-20
+
+### Scope and safety rules in force
+
+- Scope is Staff Mobile and Owner Mobile. No Owner Web Portal change, push notification, refund, sale-cancellation reversal, branch transfer, or business-day/closing-time session expiry was added.
+- **No write of any kind was made to Production (`lofltjhvivcjuyezxaif`) in this pass:** no migration, SQL, seed, reset, `db push`, repair, Edge deploy, or test data. Work was code inspection plus local tests only. No Development database exists, so no hosted verification was possible.
+- Production context (recorded for traceability, performed *before* this pass with the Owner's approval): the duplicate migration version `202611180001` was renumbered to `202611180000` (`remove_business_day_session_expiration`), and every local migration through `202611200002_inventory_catalog_alignment` was applied to Production. The Production ledger and the local migration directory now agree (38 unique 12-digit versions). This is **not** a substitute for Development verification.
+
+### 1. Shared blocker — Development environment (exact requirements)
+
+No isolated Development Supabase project exists. Everything below needs a Supabase organization admin or the project owner; none of it can be done from this repository.
+
+1. **Create a separate Supabase project** (suggested name `TakoSync-Development`) in the same organization, with a project ref different from `lofltjhvivcjuyezxaif`. Record the ref, URL, anon/publishable key, and database password in a secret manager (never in the repo or `.env.example`).
+2. **GitHub configuration** consumed by `.github/workflows/supabase-migrations.yml` (manual `workflow_dispatch`, protected environment `supabase-development`):
+   - repository/environment variables: `SUPABASE_DEVELOPMENT_PROJECT_REF`, `SUPABASE_PRODUCTION_PROJECT_REF` (= `lofltjhvivcjuyezxaif`, used only as a "must differ" guard), `TAKOSYNC_DEVELOPMENT_MIGRATIONS_APPROVED=true`, `TAKOSYNC_MIGRATIONS_RECONCILED=true` (the local duplicate-version condition is now cleared);
+   - environment secret `SUPABASE_DB_URL` — the Development pooler URI whose user is exactly `postgres.<development ref>` (the workflow refuses any other user).
+3. **Apply and test in Development only:** run the workflow (dry-run, then apply) so Development receives all 38 migrations; then run the pgTAP/shell suites in `backend/supabase/tests` against Development. Known stale SQL suite: `202611180001_persistent_business_sessions.test.sql` asserts business-day session expiry that migration `202611180000` removed — it must be rewritten or retired by decision before it is run; several other suites still insert `business_day_sessions` rows (harmless but dated).
+4. **Deploy `staff-auth` to Development** (`verify_jwt = false` per `config.toml`; it reads the hosted `SUPABASE_URL`, anon key, and service-role key from the Edge runtime — no secrets are added to the app): `supabase functions deploy staff-auth --project-ref <development ref>`. The workflow does **not** deploy Edge Functions.
+5. **Test data in Development:** one active Owner (email + password), at least one active Staff account per branch (username = employee name, initial password = Employee ID), the three branches, the approved ingredient catalog (the seed now matches migration `202611200002`), product variants/prices/branch visibility/recipes, and a few stock-in batches with expiration dates. Point a *separate* `.env` (not committed) for the Expo app at the Development URL/anon key.
+6. **Android verification** (see below) then runs against that Development project.
+
+### Android tooling on Michael's PC (checked read-only; nothing launched)
+
+| Item | Result |
+|---|---|
+| Android SDK | Present at `%LOCALAPPDATA%\Android\Sdk` (platform-tools, emulator, build-tools, platforms `android-35` and `android-37.0`) |
+| `adb` | `platform-tools\adb.exe` v37.0.1 works but is **not on PATH** (`ANDROID_HOME` / `ANDROID_SDK_ROOT` unset). `adb devices` lists **no device or emulator** |
+| Emulator | `emulator.exe` present; one AVD, `Medium_Phone`; system images `android-37.1` and `android-37.2` (`google_apis_playstore_ps16k`, x86_64) |
+| Virtualization | A hypervisor is present on the 12th-gen Intel i7-12700K |
+| Node / Java | Node present; Java 21 (Temurin) present |
+| Project | Expo SDK 54 / React Native 0.81.5, managed workflow (no `android/` folder, no `eas.json`); `npm run android` = `expo start --android` |
+| Not verified | That the emulator boots, that Expo Go (or a dev build) installs on the Android 37 preview images, and any app behavior on a device. A stable-API image (for example Android 35) may be needed if Expo Go does not run on the 37 previews |
+
+Nothing was deployed.
+
+### 2. Partial stories — what was reproduced and fixed
+
+Each item below was found by reading the approved acceptance criteria (`docs/User_Story_v5.11.11.2026 - STAFF/OWNER (MOBILE APP).pdf`) against the code; "reproduced" means a clear code/test mismatch.
+
+| Story | Reproduced gap | Fix (commit) | Evidence |
+|---|---|---|---|
+| ST-01 | Unknown username and wrong password were shown only as a top banner (criteria 6/7 require them under the field); the Password was not cleared for an unknown username; no covering "Logging in…" loading screen (criterion 4) | `staffLoginFeedback` helper places each error under its field and clears Password; loading Modal added; locks still prevent a second submit (`2277ba6`) | `staffAuthentication.test.mjs` (new test); typecheck |
+| OM-01 | Owner messages were "Email is incorrect…" / "Password is incorrect…" (criterion 5 requires "Email not found. Please check your email." / "Incorrect password. Please try again."); the Edge call fell back to a second direct-Auth request after a timeout/offline instead of showing the connection message within 10 s (criterion 6); the Password was not cleared on unknown email | Approved wording; offline/timeout → "Unable to connect…" with no second request; password cleared (`2277ba6`) | `staffAuthentication.integration.test.mjs` (updated + 2 new tests) |
+| ST-02 | Unavailable item could not be tapped, so no unavailable message (criterion 4); Proceed to Payment was silently disabled for an empty order (criterion 5); the decrease control removed a line at quantity 1 instead of keeping the minimum 1 (criterion 3); Cancel Order cleared the order without confirmation (criterion 10); saving indicator said "Recording…", retry said "Retry checkout", and an offline failure produced the generic status message instead of "Unable to save. Please check your internet connection and try again." (criterion 8) | Fixed in `MenuWorkspace.tsx`, `StaffWorkspace.tsx`, `menuPreviewData.ts`, `takosync.ts` (`4dba3e2`) | `menuPreviewData.test.mjs` (quantity-min test), `takosync.staff.integration.test.mjs` (offline-message test) |
+| ST-20 | The profile and More-screen identity card showed the Employee ID (which is the initial password) and an internal auth-alias email; the logout dialog spoke of a "daily session" although business-day sessions are deferred | Profile now shows the employee name (username), assigned branch, role, and account status; Employee ID/email removed; dialog text neutral (`6d49b81`) | Code review; no component test harness exists |
+| OM-02 | The card was titled "Total Sales" (criterion 1: "Total Recorded Sales"); loading used spinners instead of skeleton placeholders (criterion 9) | Label corrected; `SkeletonCard` placeholders (`6d49b81`) | Code review; typecheck; Android JS bundle exports |
+| ST-10, OM-10, OM-08 | No criterion mismatch reproduced. ST-10: four tabs, counts/badge, sort order, empty copy, error/Retry, refresh after stock/waste/batter/sale all present in `inventoryAlerts.ts` / `StaffWorkspace.tsx`. OM-10: two tabs with counts, All/Branch chips, Out-of-Stock tag, "No alerts at the moment.", error/Retry present in `ownerAlerts.ts` / `OwnerMobileWorkspace.tsx`. OM-08: period+branch selection, descending quantity sort, empty message present in `ownerSalesSummary.ts` | None needed | `inventoryAlerts.test.mjs`, `ownerAlerts.test.mjs`, `ownerSalesSummary.test.mjs` |
+
+### 3. Findings that need an owner decision (not changed)
+
+- **ST-01 criteria 13, 15, and 17** (daily re-login, business-day cut-off expiry, inactivity lock) conflict with or depend on deferred decisions: business-day expiry is explicitly deferred, and the inactivity lock is "enabled once the group finalizes the timeout setting". Not implemented; sessions rely on normal Supabase Auth token lifetime.
+- **OM-08 vs OM-03..07:** Products Sold excludes a completed sale whose `inventory_processing_status` is not `completed` (section 32), while the sales totals count every `status = completed` sale. A recorded sale with failed/pending inventory processing therefore appears in totals but not in the product list. The approved text only requires "confirmed and recorded sales"; the owner should say which rule applies to both views.
+- **Alert visibility toggles (ST-20 area):** staff can switch low-stock/expiration alerts off locally. This is not in ST-10/ST-20 and could hide alerts the stories say must be shown. Left as built; flag for removal if not approved.
+- **Owner fallback sign-in:** if the `owner-email-login` Edge action is not deployed, the app falls back to direct Supabase Auth, which cannot distinguish an unknown email from a wrong password (shows "Email or password is incorrect."). Distinct messages require the deployed Edge action.
+- **Legacy dead code:** `frontend/owner/OwnerWorkspace.tsx` and `mockData.ts` are not imported by any route (mock preview). Not deleted.
+
+### 4. Source-complete stories reviewed (no reproduced failure; no code change)
+
+ST-03 to ST-09 and ST-11 to ST-19, and OM-03 to OM-07, OM-09, OM-11 to OM-19, were reviewed against this audit, the requirements file, the migrations, and the existing tests (302 frontend tests, 32 Edge tests, all passing). The review was targeted, not an exhaustive re-audit; it found no failure that could be reproduced locally. Inventory/stock-in/waste/batter behavior (ST-04, ST-07 to ST-09, ST-11 to ST-19 data paths) was additionally fixed and verified in rolled-back transactions on Production earlier on 2026-11-20 (before the no-write rule); that evidence covered the RPCs only, not the screens.
+
+### 5. Status after this pass (source vs verified)
+
+Legend — **Source**: implemented in code and reviewed. **Local**: unit/integration tests with mocked clients pass. **Dev DB**: verified against an approved Development Supabase project. **Device**: verified on Android. **No story is Dev-DB- or Device-verified.**
+
+| Story group | Source | Local tests | Dev DB | Device |
+|---|---|---|---|---|
+| ST-01 | Complete for approved scope; criteria 13/15 deferred, 17 pending decision | Yes (login mapping, role checks, no business-hours gate) | Not verified | Not verified |
+| ST-02 | Complete (criteria 1–10 mapped; ambiguous-failure retry reuses the reference) | Yes (checkout recovery, offline message, quantity rule) | Not verified | Not verified |
+| ST-03–ST-09, ST-11–ST-19 | Complete | Yes (existing suites) | Not verified | Not verified |
+| ST-10 | Complete (in-app only) | Yes | Not verified | Not verified |
+| ST-20 | Complete for approved scope (alert toggles are an unapproved extra) | No component tests | Not verified | Not verified |
+| OM-01 | Complete for approved scope; distinct email/password messages depend on the deployed Edge action | Yes | Not verified | Not verified |
+| OM-02 | Complete | Partly (summary helpers) | Not verified | Not verified |
+| OM-03–OM-07, OM-09, OM-11–OM-19 | Complete | Yes (existing suites) | Not verified | Not verified |
+| OM-08 | Complete as built; eligibility rule needs an owner decision (see 3) | Yes | Not verified | Not verified |
+| OM-10 | Complete (in-app only) | Yes | Not verified | Not verified |
+
+Previously published counts (31 complete / 8 partial, 89.7%) were source estimates; this pass moves the eight former partials to *source-complete with open verification*, but because nothing is Dev-DB- or device-verified, **no percentage is claimed** and Production readiness is unchanged.
+
+### 6. Validation (box, 2026-11-20)
+
+- `npm run typecheck` — passed.
+- `npm run test:frontend` — **302/302 passed**.
+- `npm run test:edge` — **32/32 passed**.
+- `npx expo export --platform android` — Android JavaScript bundle exported (static check only; not a device run).
+- SQL/pgTAP/shell tests — **not run** (no approved Development database); the two updated suites (`202611130001_inventory_transaction_idempotency.test.sql`, `202611130002_staff_prepared_batter_five_bottle_batches.test.sql`) now use `throws_matching` on the new "Insufficient stock for X: required R unit, available A unit, shortage S unit" and "Cannot record this batter batch. …" messages, with the plan counts unchanged. The sale-processing suites (`*_sale_inventory_retry.sh`, `*_prepared_batter_integration.sh`) still expect the generic stored error from the unchanged sale-path function and were left as is.
+- Files changed: `frontend/App.tsx`, `frontend/owner/OwnerLoginScreen.tsx`, `frontend/owner/OwnerMobileWorkspace.tsx`, `frontend/services/ownerAuthentication.ts`, `frontend/services/staffAuthentication.ts`, `frontend/services/takosync.ts`, `frontend/staff/MenuWorkspace.tsx`, `frontend/staff/StaffWorkspace.tsx`, `frontend/staff/menuPreviewData.ts`, tests (`staffAuthentication*.test.mjs`, `takosync.staff.integration.test.mjs`, `menuPreviewData.test.mjs`), `backend/supabase/seed.sql`, two pgTAP suites, `.github/workflows/supabase-migrations.yml` (error-message text only), and this report. No migration was created or applied.
+
