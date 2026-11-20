@@ -4,6 +4,7 @@ import {
   activityStorageKey,
   inactivityRemaining,
   INACTIVITY_TIMEOUT_MS,
+  isEndedAuthSession,
   LockedSessionEndedError,
   readActivityTimestamp,
   verifyInactivityUnlock,
@@ -85,4 +86,11 @@ test('a fresh login with changed role or branch requires a full sign-in', async 
       LockedSessionEndedError,
     );
   }
+});
+
+test('invalid legacy and current refresh responses end the session while offline errors keep it locked', () => {
+  assert.equal(isEndedAuthSession({ name: 'AuthApiError', status: 400, message: 'Refresh token not found' }), true);
+  assert.equal(isEndedAuthSession({ name: 'AuthApiError', status: 400, code: 'session_expired', message: 'Expired' }), true);
+  assert.equal(isEndedAuthSession({ name: 'AuthRetryableFetchError', status: 503, message: 'Service unavailable' }), false);
+  assert.equal(isEndedAuthSession({ name: 'AuthApiError', status: 400, code: 'invalid_request', message: 'Invalid request' }), false);
 });

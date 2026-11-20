@@ -18,6 +18,13 @@ export function readActivityTimestamp(value: string | null): number {
   return value === null ? 0 : Number(value);
 }
 
+export function isEndedAuthSession(error: { name: string; status?: number; code?: string; message: string }): boolean {
+  return error.name === 'AuthSessionMissingError' || error.status === 401 || error.status === 403 ||
+    error.code === 'refresh_token_not_found' || error.code === 'refresh_token_already_used' ||
+    error.code === 'session_not_found' || error.code === 'session_expired' ||
+    (error.status === 400 && /^(?:refresh token not found|invalid refresh token|session not found)[.:]?(?:$| )/i.test(error.message));
+}
+
 export class LockedSessionEndedError extends Error {
   constructor() {
     super('Your session or branch access changed. Please sign in again.');

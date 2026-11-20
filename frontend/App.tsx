@@ -31,7 +31,7 @@ import {
 import SessionLockScreen from './SessionLockScreen';
 import { SessionDisplayContext } from './SessionProtectedModal';
 import { restoreActivity, useInactivityLock } from './useInactivityLock';
-import { LockedSessionEndedError, verifyInactivityUnlock } from './services/inactivityLock';
+import { isEndedAuthSession, LockedSessionEndedError, verifyInactivityUnlock } from './services/inactivityLock';
 import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
@@ -666,9 +666,7 @@ function AppContent() {
         } else {
           const { data, error } = await sharedClient.auth.refreshSession();
           if (error) {
-            if (error.name === 'AuthSessionMissingError' || error.status === 401 || error.status === 403 ||
-              error.code === 'refresh_token_not_found' || error.code === 'refresh_token_already_used' ||
-              error.code === 'session_not_found' || error.code === 'session_expired') return null;
+            if (isEndedAuthSession(error)) return null;
             throw error;
           }
           if (data.session?.user.id !== lockedUser.id) return null;
