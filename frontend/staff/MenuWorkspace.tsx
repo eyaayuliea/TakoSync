@@ -534,6 +534,20 @@ export default function MenuWorkspace({
               onRemove={() => onRemoveProduct(product.id)}
             />
           ))}
+          {selectedAddons.map((addon) => (
+            <View key={addon.id} style={styles.currentAddonLine}>
+              <Text style={[styles.currentAddonName, darkSecondaryText]}>{addon.name}</Text>
+              <Text style={[styles.currentAddonPrice, darkSecondaryText]}>{money(addon.price)}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={'Remove ' + addon.name}
+                onPress={() => setSelectedAddonIds((current) => current.filter((id) => id !== addon.id))}
+                style={styles.currentOrderRemove}
+              >
+                <Text style={styles.currentOrderRemoveText}>×</Text>
+              </Pressable>
+            </View>
+          ))}
           {cartProducts.length === 0 ? (
             <View style={[styles.emptyCard, darkSecondarySurface]}>
               <Text style={styles.emptyTitle}>Your cart is empty</Text>
@@ -550,12 +564,12 @@ export default function MenuWorkspace({
           <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.cancelCartButton}>
             <Text style={styles.cancelCartText}>Cancel order</Text>
           </Pressable>
-          <Text style={styles.previewNotice}>Cart is saved while you review checkout. No inventory changes occur yet.</Text>
+          <Text style={styles.previewNotice}>Inventory updates after you confirm the transaction.</Text>
         </ScrollView>
         <View style={[styles.cartTotalFooter, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}>
           <View style={styles.cartTotalRow}>
             <Text style={[styles.cartTotalLabel, isDark && { color: '#FFFFFF' }]}>Total</Text>
-            <Text style={styles.cartTotalValue}>{money(totals.total)}</Text>
+            <Text style={styles.cartTotalValue}>{money(checkoutTotal)}</Text>
           </View>
           <Pressable
             accessibilityRole="button"

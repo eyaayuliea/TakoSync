@@ -189,7 +189,6 @@ export default function SessionLockScreen({
 
             <Text style={styles.note}>
               Your session was locked after 15 minutes of inactivity. Sign in to continue.
-              Your daily session and current order are preserved.
             </Text>
           </View>
         </ScrollView>
