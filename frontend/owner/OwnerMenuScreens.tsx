@@ -112,19 +112,19 @@ export function RecordsMenuScreen({
       items={[
         {
           icon: 'receipt',
-          title: 'Sales Transaction',
+          title: 'Sales transaction',
           subtitle: 'Confirmed sales per branch',
           onTap: () => onSelectRecord('SalesTransactions'),
         },
         {
           icon: 'clipboardCheck',
-          title: 'Sales Consumption',
+          title: 'Sales consumption',
           subtitle: 'Ingredients deducted by sales',
           onTap: () => onSelectRecord('SalesConsumptionRecords'),
         },
         {
           icon: 'stockIn',
-          title: 'Stock-In',
+          title: 'Stock-in',
           subtitle: 'Received inventory',
           onTap: () => onSelectRecord('StockInRecords'),
         },
@@ -136,13 +136,13 @@ export function RecordsMenuScreen({
         },
         {
           icon: 'cube',
-          title: 'Physical Inventory Count',
+          title: 'Physical inventory count',
           subtitle: 'Counts and revision history',
           onTap: () => onSelectRecord('PhysicalCountRecords'),
         },
         {
           icon: 'check',
-          title: 'Authorized Adjustment',
+          title: 'Authorized adjustment',
           subtitle: 'Adjustments you authorized',
           onTap: () => onSelectRecord('AuthorizedAdjustmentRecords'),
         },

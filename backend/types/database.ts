@@ -99,6 +99,8 @@ export type Database = {
         submitted_by: string;
         check_date: string;
         remarks: string;
+        request_id: string | null;
+        request_payload_hash: string | null;
         status: 'submitted' | 'pending_owner_review';
         created_at: string;
       }>;
@@ -160,7 +162,7 @@ export type Database = {
         product_id: string;
         variant_code: string;
         size_label: string;
-        piece_count: number;
+        piece_count: number | null;
         price: number;
         active: boolean;
         is_available: boolean;
@@ -215,6 +217,7 @@ export type Database = {
         inventory_processing_status: 'pending' | 'processing' | 'completed' | 'failed';
         inventory_processing_error: string | null;
         inventory_processed_at: string | null;
+        payload_hash: string | null;
         created_at: string;
       }>;
       sale_items: Table<{

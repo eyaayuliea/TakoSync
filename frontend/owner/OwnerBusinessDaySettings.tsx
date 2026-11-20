@@ -89,13 +89,13 @@ export default function OwnerBusinessDaySettings({ user, onDeadlineChange }: Pro
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.eyebrow}>BUSINESS DATE · ASIA/MANILA</Text>
+      <Text style={styles.eyebrow}>Business date · Asia/Manila</Text>
       <Text style={styles.dateText}>{settings.businessDate}</Text>
       <Text style={styles.title}>Today’s closing time</Text>
       <Text style={styles.closingTime}>{formatBusinessTime(closingTime)}</Text>
       <Text style={styles.bodyText}>
         {settings.extendedClosingEnabled
-          ? 'An Owner has authorized the 11 PM extension for today.'
+          ? 'An owner has authorized the 11 pm extension for today.'
           : `Normal closing is ${formatBusinessTime(settings.normalClosingTime)}.`}
       </Text>
 

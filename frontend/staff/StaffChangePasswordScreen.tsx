@@ -87,10 +87,10 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onCan
           keyboardDismissMode="on-drag"
         >
           <View style={styles.card}>
-            <Text style={styles.eyebrow}>ACCOUNT SECURITY</Text>
+            <Text style={styles.eyebrow}>Account security</Text>
             <Text style={styles.title}>Change your password</Text>
             <Text style={styles.copy}>
-              Your Employee ID is your initial password. You can set a different password at any time.
+              Your employee ID is your initial password. you Can set a different password at any time.
             </Text>
             <Text style={styles.label}>New password</Text>
             <TextInput

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Modal from '../SessionProtectedModal';
 import {
   createIngredient,
   createIngredientCategory,
@@ -543,7 +543,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
       </View>
       {sharedRecipeError ? <Text style={styles.fieldError} accessibilityRole="alert">{sharedRecipeError}</Text> : null}
       <Pressable disabled={savingSharedRecipe} onPress={() => void saveSharedRecipeDraft()} style={[styles.primaryButton, savingSharedRecipe && styles.buttonDisabled]}>
-        <Text style={styles.primaryButtonText}>{savingSharedRecipe ? 'Saving…' : 'Save Shared Recipe'}</Text>
+        <Text style={styles.primaryButtonText}>{savingSharedRecipe ? 'Saving…' : 'Save shared recipe'}</Text>
       </Pressable>
     </View>
   );
@@ -589,7 +589,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
     <>
       {renderSearch('Search ingredients by name')}
       <Pressable accessibilityRole="button" onPress={() => openIngredientEditor()} style={styles.primaryButton}>
-        <Text style={styles.primaryButtonText}>+ Add Ingredient</Text>
+        <Text style={styles.primaryButtonText}>+ Add ingredient</Text>
       </Pressable>
       {ingredients.length === 0 && !loading ? (
         <EmptyState text="No ingredients are registered yet. Add an ingredient to start building recipes." />
@@ -635,13 +635,13 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
       {renderSharedRecipeEditor()}
       {renderSearch('Search recipes by product')}
       <Pressable accessibilityRole="button" onPress={() => openRecipeBuilder()} style={styles.primaryButton}>
-        <Text style={styles.primaryButtonText}>+ Create Recipe</Text>
+        <Text style={styles.primaryButtonText}>+ Create recipe</Text>
       </Pressable>
       {products.length === 0 && !loading ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>Add a menu product before creating its recipe.</Text>
           <Pressable accessibilityRole="button" onPress={onManageProducts} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Open Products & Menu</Text>
+            <Text style={styles.secondaryButtonText}>Open products & menu</Text>
           </Pressable>
         </View>
       ) : visibleRecipeProducts.length ? visibleRecipeProducts.map((product) => {
@@ -666,7 +666,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
               </Text>
               <View style={styles.inlineActions}>
                 <Pressable accessibilityRole="button" onPress={() => setSelectedRecipeProductId(product.id)} style={styles.smallAction}>
-                  <Text style={styles.smallActionText}>View Recipe</Text>
+                  <Text style={styles.smallActionText}>View recipe</Text>
                 </Pressable>
                 <Pressable accessibilityRole="button" onPress={() => openRecipeBuilder(product.id)} style={styles.smallAction}>
                   <Text style={styles.smallActionText}>Edit</Text>
@@ -768,10 +768,10 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
           ))}
           <View style={styles.inlineActions}>
             <Pressable accessibilityRole="button" onPress={() => openRecipeBuilder(selectedRecipeProductId)} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Edit Recipe</Text>
+              <Text style={styles.secondaryButtonText}>Edit recipe</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => openRecipeBuilder(selectedRecipeProductId)} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Add Ingredient</Text>
+              <Text style={styles.secondaryButtonText}>Add ingredient</Text>
             </Pressable>
           </View>
         </View>
@@ -796,7 +796,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
               {ingredientEditor ? (
                 <>
                   <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>{ingredientEditor.id ? 'Edit Ingredient' : 'Add Ingredient'}</Text>
+                    <Text style={styles.modalTitle}>{ingredientEditor.id ? 'Edit ingredient' : 'Add ingredient'}</Text>
                     <Pressable accessibilityRole="button" accessibilityLabel="Close ingredient form" onPress={() => setIngredientEditor(null)} style={styles.closeButton}>
                       <Text style={styles.closeButtonText}>×</Text>
                     </Pressable>
@@ -876,13 +876,13 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                   {ingredientErrors.unit ? <Text style={styles.fieldError}>{ingredientErrors.unit}</Text> : null}
                   {ingredientErrors.submit ? <Text style={styles.fieldError}>{ingredientErrors.submit}</Text> : null}
                   <Pressable accessibilityRole="button" disabled={savingIngredient} onPress={() => void saveIngredient()} style={styles.primaryButton}>
-                    <Text style={styles.primaryButtonText}>{savingIngredient ? 'Saving…' : ingredientEditor.id ? 'Save Changes' : 'Add Ingredient'}</Text>
+                    <Text style={styles.primaryButtonText}>{savingIngredient ? 'Saving…' : ingredientEditor.id ? 'Save changes' : 'Add ingredient'}</Text>
                   </Pressable>
                 </>
               ) : ingredientDetails ? (
                 <>
                   <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>Ingredient Details</Text>
+                    <Text style={styles.modalTitle}>Ingredient details</Text>
                     <Pressable accessibilityRole="button" accessibilityLabel="Close ingredient details" onPress={() => setIngredientDetails(null)} style={styles.closeButton}>
                       <Text style={styles.closeButtonText}>×</Text>
                     </Pressable>
@@ -911,7 +911,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                     </View>
                   )) : <Text style={styles.helperText}>This ingredient is not currently used in a configured recipe.</Text>}
                   <Pressable accessibilityRole="button" onPress={() => openIngredientEditor(ingredientDetails)} style={styles.primaryButton}>
-                    <Text style={styles.primaryButtonText}>Edit Ingredient</Text>
+                    <Text style={styles.primaryButtonText}>Edit ingredient</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -938,7 +938,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
           >
             <View style={styles.modalCard}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>{recipeProductId && (recipeCounts.get(recipeProductId) ?? 0) ? 'Edit Recipe' : 'Create Recipe'}</Text>
+                <Text style={styles.modalTitle}>{recipeProductId && (recipeCounts.get(recipeProductId) ?? 0) ? 'Edit recipe' : 'Create recipe'}</Text>
                 <Pressable accessibilityRole="button" accessibilityLabel="Close recipe form" onPress={() => { setRecipeProductId(null); setRecipeEditorOpen(false); setRecipeError(''); }} style={styles.closeButton}>
                   <Text style={styles.closeButtonText}>×</Text>
                 </Pressable>
@@ -983,7 +983,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                 <View style={styles.emptyCard}>
                   <Text style={styles.emptyText}>Add an active ingredient before creating a recipe.</Text>
                   <Pressable accessibilityRole="button" onPress={() => { setRecipeProductId(null); setRecipeEditorOpen(false); setActiveSection('Ingredients'); openIngredientEditor(); }} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>Add Ingredient</Text>
+                    <Text style={styles.secondaryButtonText}>Add ingredient</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -1043,13 +1043,13 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
               })}
               {activeIngredients.length ? (
                 <Pressable accessibilityRole="button" onPress={() => setRecipeDraft((current) => [...current, makeDraftLine()])} style={styles.addEntryButton}>
-                  <Text style={styles.addEntryText}>+ Add Ingredient</Text>
+                  <Text style={styles.addEntryText}>+ Add ingredient</Text>
                 </Pressable>
               ) : null}
               <Text style={styles.workflowNote}>Recipe setup does not change stock. Ingredient consumption remains part of the backend's completed-sale workflow.</Text>
               {recipeError ? <Text style={styles.fieldError} accessibilityRole="alert">{recipeError}</Text> : null}
               <Pressable accessibilityRole="button" disabled={savingRecipe || !recipeProductId} onPress={() => void saveRecipe()} style={[styles.primaryButton, (!recipeProductId || savingRecipe) && styles.buttonDisabled]}>
-                <Text style={styles.primaryButtonText}>{savingRecipe ? 'Saving…' : 'Save Recipe'}</Text>
+                <Text style={styles.primaryButtonText}>{savingRecipe ? 'Saving…' : 'Save recipe'}</Text>
               </Pressable>
             </View>
           </ScrollView>

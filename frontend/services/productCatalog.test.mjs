@@ -326,3 +326,14 @@ test('failed product update rolls back variant prices', async () => {
   assert.deepEqual(client.tables.product_variants.map((variant) => variant.price), prices);
   assert.equal(client.tables.products[0].product_name, productInput.product_name);
 });
+
+test('an otherwise available variant without a piece count cannot be sold', () => {
+  const product = { id: 'product', product_name: 'Live product', description: '', is_available: true };
+  const variant = {
+    id: 'variant', product_id: product.id, size_label: 'Legacy', price: 49,
+    piece_count: null, active: true, is_available: true,
+  };
+  const [result] = buildStaffMenuProducts([product], [variant], new Set([variant.id]));
+  assert.equal(result.pieceCount, null);
+  assert.equal(result.isAvailable, false);
+});

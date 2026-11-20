@@ -221,7 +221,7 @@ export function buildStaffMenuProducts(
     product_id: string;
     size_label: string;
     price: number;
-    piece_count: number;
+    piece_count: number | null;
     active: boolean;
     is_available: boolean;
   }>,
@@ -244,8 +244,8 @@ export function buildStaffMenuProducts(
       category: product.category ?? 'Menu',
       sizeLabel: variant.size_label,
       price: parseCatalogPrice(variant.price, `Menu variant ${variant.id}`),
-      pieceCount: Number(variant.piece_count),
-      isAvailable: product.is_available && variant.is_available,
+      pieceCount: variant.piece_count,
+      isAvailable: product.is_available && variant.is_available && variant.piece_count !== null,
     }];
   });
 }

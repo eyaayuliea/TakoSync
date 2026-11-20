@@ -61,3 +61,21 @@ test('malformed recovery data is rejected without clearing it', async () => {
   await assert.rejects(() => store.load(), /Saved checkout recovery data is unreadable/);
   assert.equal(await storage.getItem('ignored'), '{not-json');
 });
+
+test('a retry after restart cannot overwrite the original payment or items', async () => {
+  const storage = memoryStorage();
+  const firstStore = createPendingSaleCheckoutStore(storage);
+  await firstStore.save(pendingSale);
+
+  const restartedStore = createPendingSaleCheckoutStore(storage);
+  await assert.rejects(
+    restartedStore.save({ ...pendingSale, paymentMethod: 'QR' }),
+    /already has a saved payment and item list/,
+  );
+  await assert.rejects(
+    restartedStore.save({ ...pendingSale, actorId: 'different-staff' }),
+    /already has a saved payment and item list/,
+  );
+  await restartedStore.save({ ...pendingSale, createdAt: '2026-11-13T01:15:00.000Z' });
+  assert.deepEqual(await restartedStore.load(), [pendingSale]);
+});

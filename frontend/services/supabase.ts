@@ -42,3 +42,17 @@ export function requireSupabase() {
   }
   return supabase;
 }
+
+let verificationClientNumber = 0;
+
+export function createReauthenticationClient() {
+  requireSupabase();
+  return createClient<Database>(supabaseUrl!, supabasePublishableKey!, {
+    auth: {
+      storageKey: 'takosync-reauth-' + (++verificationClientNumber),
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}

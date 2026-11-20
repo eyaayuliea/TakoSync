@@ -28,6 +28,10 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import SessionLockScreen from './SessionLockScreen';
+import { SessionDisplayContext } from './SessionProtectedModal';
+import { restoreActivity, useInactivityLock } from './useInactivityLock';
+import { isEndedAuthSession, LockedSessionEndedError, verifyInactivityUnlock } from './services/inactivityLock';
 import StaffWorkspace from './staff/StaffWorkspace';
 import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
@@ -36,7 +40,7 @@ import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { ownerColors } from './owner/shared/ownerTokens';
-import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
+import { createReauthenticationClient, isSupabaseConfigured, requireSupabase, supabase, supabaseConfigurationError } from './services/supabase';
 import { getAuthenticatedMobileDestination, shouldClearMobileSession } from './services/authSessionEvents';
 import { staffLoginFeedback } from './services/staffAuthentication';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
@@ -122,6 +126,10 @@ function AppContent() {
   const [screen, setScreen] = useState<Screen>('loading');
   const [sessionInitialized, setSessionInitialized] = useState(!isSupabaseConfigured);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
+  const { locked: sessionLocked, start: startInactivityClock, reset: resetInactivityClock, recordActivity } = useInactivityLock();
+  const sessionDisplay = useMemo(() => ({ locked: sessionLocked, recordActivity }), [sessionLocked, recordActivity]);
+  const currentUserRef = useRef<AppUser | null>(null);
+  const sessionRevision = useRef(0);
   const [staffUsername, setStaffUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -185,18 +193,23 @@ function AppContent() {
       return;
     }
     let active = true;
+    const revision = sessionRevision.current;
     getCurrentUser()
-      .then((user) => {
-        if (!active) return;
+      .then(async (user) => {
+        if (!active || revision !== sessionRevision.current) return;
         if (!user) {
           setScreen('welcome');
           return;
         }
+        const timestamp = await restoreActivity(user);
+        if (!active || revision !== sessionRevision.current) return;
+        currentUserRef.current = user;
+        startInactivityClock(user, timestamp);
         setAuthenticatedUser(user);
         setScreen(getAuthenticatedMobileDestination(user.role));
       })
       .catch((error: unknown) => {
-        if (active) {
+        if (active && revision === sessionRevision.current) {
           setLoginError(error instanceof Error ? error.message : 'Unable to restore the saved session.');
           setScreen('login');
         }
@@ -207,7 +220,7 @@ function AppContent() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [startInactivityClock]);
 
   useEffect(() => {
     if (authenticatedUser?.role !== 'Owner') {
@@ -377,15 +390,15 @@ function AppContent() {
       id: activity.id,
       type: activity.type,
       title: ({
-        stock_in: 'Stock-In',
-        stock_out: 'Stock-Out',
+        stock_in: 'Stock-in',
+        stock_out: 'Stock-out',
         usage: 'Usage',
         waste: 'Waste',
         spoilage: 'Spoilage',
-        sales_consumption: 'Sales Consumption',
-        transfer_in: 'Branch Transfer In',
-        transfer_out: 'Branch Transfer Out',
-        adjustment: 'Authorized Inventory Adjustment',
+        sales_consumption: 'Sales consumption',
+        transfer_in: 'Branch transfer in',
+        transfer_out: 'Branch transfer out',
+        adjustment: 'Authorized inventory adjustment',
       } as Record<string, string>)[activity.type] ?? activity.type,
       detail: `${ownerIngredients.get(activity.ingredient_id)?.name ?? activity.ingredient_id} · ${Number(activity.quantity)} ${activity.unit}`,
       reference: activity.reference,
@@ -396,7 +409,7 @@ function AppContent() {
     ...(ownerSalesData?.sales ?? []).map((sale) => ({
       id: sale.id,
       type: 'sale',
-      title: 'Completed Sale',
+      title: 'Completed sale',
       detail: formatCurrency(Number(sale.total_amount)),
       reference: sale.transaction_reference,
       branchId: sale.branch_id,
@@ -406,7 +419,7 @@ function AppContent() {
     ...(ownerActivityData?.dailyChecks ?? []).map((check) => ({
       id: check.id,
       type: 'physical_count',
-      title: 'Physical Inventory Count',
+      title: 'Physical inventory count',
       detail: `Submitted for review · ${check.check_date}`,
       reference: check.reference,
       branchId: check.branch_id,
@@ -420,7 +433,7 @@ function AppContent() {
       return [{
         id: `${check.id}:${line.ingredient_id}`,
         type: 'discrepancy',
-        title: 'Inventory Discrepancy',
+        title: 'Inventory discrepancy',
         detail: `${ownerIngredients.get(line.ingredient_id)?.name ?? line.ingredient_id} · Expected ${Number(line.recorded_quantity)} ${line.unit} · Counted ${Number(line.physical_quantity)} ${line.unit}`,
         reference: check.reference,
         branchId: check.branch_id,
@@ -544,6 +557,9 @@ function AppContent() {
     setLoginError('');
     try {
       const user = await signInStaff(staffUsername, password);
+      currentUserRef.current = user;
+      startInactivityClock(user);
+      setPassword('');
       setAuthenticatedUser(user);
       setLoginSuccess(true);
       // The loading screen closes as soon as the system responds; the locks stay
@@ -569,6 +585,9 @@ function AppContent() {
     authOperationLock.current = true;
     try {
       const user = await signInOwnerWithEmail(email, ownerPassword);
+      currentUserRef.current = user;
+      startInactivityClock(user);
+      setPassword('');
       setAuthenticatedUser(user);
       setScreen('dashboard');
     } finally {
@@ -577,6 +596,9 @@ function AppContent() {
   };
 
   const clearSignedInState = useCallback(() => {
+    sessionRevision.current += 1;
+    currentUserRef.current = null;
+    resetInactivityClock();
     setAuthenticatedUser(null);
     setOwnerData(null);
     setOwnerSalesData(null);
@@ -596,12 +618,14 @@ function AppContent() {
     setSalesLoadError('');
     setActivityLoadError('');
     setDashboardMessage('');
-  }, []);
+  }, [resetInactivityClock]);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
-    const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (!shouldClearMobileSession(event, logoutLock.current || authOperationLock.current)) return;
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const current = currentUserRef.current;
+      const identityChanged = current && session && session.user.id !== current.id;
+      if (!identityChanged && !shouldClearMobileSession(event, logoutLock.current || authOperationLock.current)) return;
       clearSignedInState();
       setLoginError('Your session has ended. Please sign in again.');
       setScreen('welcome');
@@ -625,6 +649,62 @@ function AppContent() {
     } finally {
       logoutLock.current = false;
       setLoggingOut(false);
+    }
+  };
+
+  const handleUnlock = async (username: string, lockPassword: string) => {
+    const lockedUser = currentUserRef.current;
+    if (!lockedUser || logoutLock.current) throw new LockedSessionEndedError();
+    const revision = sessionRevision.current;
+    const sharedClient = requireSupabase();
+    let initialCheck = true;
+    try {
+      const user = await verifyInactivityUnlock(lockedUser, async () => {
+        if (revision !== sessionRevision.current) return null;
+        if (initialCheck) {
+          initialCheck = false;
+        } else {
+          const { data, error } = await sharedClient.auth.refreshSession();
+          if (error) {
+            if (isEndedAuthSession(error)) return null;
+            throw error;
+          }
+          if (data.session?.user.id !== lockedUser.id) return null;
+        }
+        return getCurrentUser();
+      }, async () => {
+        const client = createReauthenticationClient();
+        try {
+          return lockedUser.role === 'Staff'
+            ? await signInStaff(username, lockPassword, client)
+            : await signInOwnerWithEmail(lockedUser.email, lockPassword, client);
+        } catch (error) {
+          if (lockedUser.role !== 'Staff') throw error;
+          const feedback = staffLoginFeedback(error);
+          throw new Error(feedback.passwordError || feedback.usernameError || feedback.banner);
+        } finally {
+          try {
+            await client.auth.signOut({ scope: 'local' });
+          } catch {
+            // This client keeps its credentials in memory and is never used by the workspace.
+          }
+        }
+      });
+      if (revision !== sessionRevision.current || logoutLock.current) return;
+      currentUserRef.current = user;
+      startInactivityClock(user);
+      setAuthenticatedUser(user);
+      if (user.role === 'Staff') {
+        setStaffUsername(username);
+        if (user.mustChangePassword) setScreen('staffChangePassword');
+      }
+    } catch (error) {
+      if (error instanceof LockedSessionEndedError && revision === sessionRevision.current) {
+        clearSignedInState();
+        setLoginError(error.message);
+        setScreen(lockedUser.role === 'Owner' ? 'ownerLogin' : 'login');
+      }
+      throw error;
     }
   };
 
@@ -674,6 +754,7 @@ function AppContent() {
     if (!user || user.role !== 'Staff' || user.mustChangePassword) {
       throw new Error('The password change could not be verified. Please retry or log out.');
     }
+    currentUserRef.current = user;
     setAuthenticatedUser(user);
     setScreen(getAuthenticatedMobileDestination(user.role));
   };
@@ -681,12 +762,19 @@ function AppContent() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
-        barStyle={screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.background}
+        barStyle={sessionLocked ? 'light-content' : screen === 'ownerLogin' ? 'dark-content' : isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={sessionLocked ? '#0F1025' : colors.background}
       />
       <View style={styles.canvas}>
         <View style={[styles.frameShadow, { width: frameWidth, height: frameHeight }, isWideScreen && styles.desktopShadow]}>
           <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
+            <SessionDisplayContext.Provider value={sessionDisplay}>
+              <View
+                style={sessionLocked ? styles.lockedWorkspace : styles.workspace}
+                aria-hidden={sessionLocked}
+                importantForAccessibility={sessionLocked ? 'no-hide-descendants' : 'auto'}
+                onTouchStart={recordActivity}
+              >
             {visibleScreen === 'loading' && (!fontsLoaded || !sessionInitialized) && (
               <View style={styles.loadingScreen}>
                 <Image
@@ -722,22 +810,22 @@ function AppContent() {
                     </Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Staff Login"
+                      accessibilityLabel="Staff login"
                       onPress={() => {
                         setLoginError('');
                         setScreen('login');
                       }}
                       style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
                     >
-                      <Text style={styles.buttonText}>Staff Login</Text>
+                      <Text style={styles.buttonText}>Staff login</Text>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Owner Login"
+                      accessibilityLabel="Owner login"
                       onPress={() => setScreen('ownerLogin')}
                       style={({ pressed }) => [styles.ownerWelcomeButton, pressed && styles.buttonPressed]}
                     >
-                      <Text style={styles.buttonText}>Owner Login</Text>
+                      <Text style={styles.buttonText}>Owner login</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -784,7 +872,7 @@ function AppContent() {
                       keyboardShouldPersistTaps="handled"
                     >
                       <View style={styles.loginCard}>
-                        <Text style={styles.loginHeading}>Log In</Text>
+                        <Text style={styles.loginHeading}>Log in</Text>
                         {loginError !== '' && (
                           <View style={styles.errorBanner} accessibilityRole="alert">
                             <View style={styles.errorIcon}>
@@ -860,14 +948,14 @@ function AppContent() {
                         )}
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityLabel="Log In"
+                          accessibilityLabel="Log in"
                           onPress={handleLogin}
                           disabled={authenticating || !isSupabaseConfigured}
                           style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed, (authenticating || !isSupabaseConfigured) && { opacity: 0.6 }]}
                         >
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                             {authenticating && <ActivityIndicator size="small" color="#FFFFFF" />}
-                            <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log In'}</Text>
+                            <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log in'}</Text>
                           </View>
                         </Pressable>
                       </View>
@@ -1001,7 +1089,7 @@ function AppContent() {
                           onPress={() => setBranchFilter(null)}
                           style={[styles.filterChip, branchFilter === null && styles.filterChipActive]}
                         >
-                          <Text style={[styles.filterChipText, branchFilter === null && styles.filterChipTextActive]}>All Branches</Text>
+                          <Text style={[styles.filterChipText, branchFilter === null && styles.filterChipTextActive]}>All branches</Text>
                         </Pressable>
                         {(ownerData?.branches ?? []).map((branch) => {
                           const active = branchFilter === branch.id;
@@ -1161,7 +1249,7 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Sales Overview</Text>
+                            <Text style={styles.sectionHeading}>Sales overview</Text>
                             <Text style={styles.sectionCaption}>Completed sales only</Text>
                           </View>
                           <View style={styles.metricGrid}>
@@ -1181,7 +1269,7 @@ function AppContent() {
 
                           <View style={[styles.analyticsGrid, isWideScreen && styles.analyticsGridWide]}>
                             <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
-                              <Text style={styles.panelTitle}>Sales Performance</Text>
+                              <Text style={styles.panelTitle}>Sales performance</Text>
                               <Text style={styles.panelCaption}>Daily recorded sales · {reportingPeriod.toLowerCase()}</Text>
                               {salesLoading ? (
                                 <Text style={styles.panelEmpty}>Loading recorded sales…</Text>
@@ -1221,7 +1309,7 @@ function AppContent() {
                               )}
                             </View>
                             <View style={[styles.dataPanel, isWideScreen && styles.analyticsPanelWide]}>
-                              <Text style={styles.panelTitle}>Branch Sales Comparison</Text>
+                              <Text style={styles.panelTitle}>Branch sales comparison</Text>
                               <Text style={styles.panelCaption}>Same reporting period · actual branch records</Text>
                               {salesLoading ? (
                                 <Text style={styles.panelEmpty}>Loading branch sales…</Text>
@@ -1246,7 +1334,7 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Expected Inventory Overview</Text>
+                            <Text style={styles.sectionHeading}>Expected inventory overview</Text>
                             <Text style={styles.sectionCaption}>Recorded quantities, not physical counts</Text>
                           </View>
                           <View style={styles.inventorySummaryPanel}>
@@ -1264,7 +1352,7 @@ function AppContent() {
                           </View>
 
                           <View style={styles.sectionHeadingRow}>
-                            <Text style={styles.sectionHeading}>Low-Stock Ingredients</Text>
+                            <Text style={styles.sectionHeading}>Low-stock ingredients</Text>
                             <Pressable
                               accessibilityRole="button"
                               onPress={() => setDashboardTab('Alerts')}
@@ -1289,7 +1377,7 @@ function AppContent() {
                           )}
 
                           <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-                            <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
+                            <Text style={styles.sectionHeading}>Expiration monitoring</Text>
                             <Pressable
                               accessibilityRole="button"
                               onPress={() => setDashboardTab('Alerts')}
@@ -1322,7 +1410,7 @@ function AppContent() {
                           {dashboardTab === 'Dashboard' && (
                             <>
                               <View style={styles.sectionHeadingRow}>
-                                <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                                <Text style={styles.sectionHeading}>Recent business activities</Text>
                                 <Pressable accessibilityRole="button" onPress={() => setDashboardTab('History')} style={styles.sectionLink}>
                                   <Text style={styles.viewAllText}>View all ›</Text>
                                 </Pressable>
@@ -1348,7 +1436,7 @@ function AppContent() {
                               )}
 
                               <View style={styles.sectionHeadingRow}>
-                                <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                                <Text style={styles.sectionHeading}>Inventory discrepancies</Text>
                                 <Pressable accessibilityRole="button" onPress={() => setDashboardTab('Alerts')} style={styles.sectionLink}>
                                   <Text style={styles.viewAllText}>View all ›</Text>
                                 </Pressable>
@@ -1384,7 +1472,7 @@ function AppContent() {
 
                   {dashboardTab === 'History' && (
                     <View style={styles.historyView}>
-                      <Text style={styles.sectionHeading}>Recent Business Activities</Text>
+                      <Text style={styles.sectionHeading}>Recent business activities</Text>
                       <Text style={styles.historyCaption}>Recorded sales, inventory movements, and physical counts</Text>
                       {selectedActivities.map((activity) => (
                         <View key={`${activity.type}:${activity.id}`} style={styles.activityCard}>
@@ -1408,7 +1496,7 @@ function AppContent() {
                   {dashboardTab === 'Alerts' && (
                     <>
                       <View style={styles.sectionHeadingRow}>
-                        <Text style={styles.sectionHeading}>Low-Stock Items</Text>
+                        <Text style={styles.sectionHeading}>Low-stock items</Text>
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel="View all low-stock alerts"
@@ -1435,7 +1523,7 @@ function AppContent() {
                       )}
 
                       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-                        <Text style={styles.sectionHeading}>Expiration Monitoring</Text>
+                        <Text style={styles.sectionHeading}>Expiration monitoring</Text>
                         <Text style={styles.expirationCount}>{expiringItems.length} items</Text>
                       </View>
                       {visibleExpiringItems.length > 0 ? (
@@ -1464,7 +1552,7 @@ function AppContent() {
                   {dashboardTab === 'Alerts' && (
                     <>
                       <View style={styles.sectionHeadingRow}>
-                        <Text style={styles.sectionHeading}>Inventory Discrepancies</Text>
+                        <Text style={styles.sectionHeading}>Inventory discrepancies</Text>
                       </View>
                       {discrepancies.map((item) => (
                         <View key={item.id} style={styles.discrepancyRow}>
@@ -1538,6 +1626,18 @@ function AppContent() {
                 appVersion={appConfig.expo.version}
               />
             )}
+              </View>
+            </SessionDisplayContext.Provider>
+            {sessionLocked && authenticatedUser && (
+              <SessionLockScreen
+                key={authenticatedUser.id}
+                branch={authenticatedUser.role === 'Staff' ? authenticatedUser.branch : 'Owner account'}
+                username={staffUsername}
+                requiresUsername={authenticatedUser.role === 'Staff' && staffUsername.trim() === ''}
+                onUnlock={handleUnlock}
+                onLogout={handleLogout}
+              />
+            )}
           </View>
         </View>
       </View>
@@ -1559,6 +1659,8 @@ function useAppStyles() {
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 10 },
   },
+  workspace: { flex: 1 },
+  lockedWorkspace: { display: 'none' },
   appFrame: { flex: 1, overflow: 'hidden', backgroundColor: '#FFFFFF' },
   desktopFrame: { borderRadius: 28 },
   loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },

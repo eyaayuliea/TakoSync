@@ -343,8 +343,8 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
   return (
     <View>
       <View style={styles.introCard}>
-        <Text style={styles.introEyebrow}>INVENTORY CONFIGURATION</Text>
-        <Text style={styles.introTitle}>Stock Threshold & Expiration Settings</Text>
+        <Text style={styles.introEyebrow}>Inventory configuration</Text>
+        <Text style={styles.introTitle}>Stock threshold & expiration settings</Text>
         <Text style={styles.introCopy}>Set branch-level minimum stock and manage expiration dates recorded against stock-in batches.</Text>
       </View>
 

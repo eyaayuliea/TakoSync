@@ -40,10 +40,10 @@ export const STAFF_NAVIGATION_TOUCH_TARGET = 48;
 
 export const staffDestinations = [
   { route: 'menu', label: 'POS', icon: 'pos' },
-  { route: 'inventory', label: 'INVENTORY', icon: 'box' },
-  { route: 'stocks', label: 'STOCKS', icon: 'stock' },
-  { route: 'alerts', label: 'ALERTS', icon: 'bell' },
-  { route: 'more', label: 'MORE', icon: 'more' },
+  { route: 'inventory', label: 'Inventory', icon: 'box' },
+  { route: 'stocks', label: 'Stocks', icon: 'stock' },
+  { route: 'alerts', label: 'Alerts', icon: 'bell' },
+  { route: 'more', label: 'More', icon: 'more' },
 ] as const;
 
 /**

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Modal from '../../SessionProtectedModal';
 import { OwnerMenuIcon, type OwnerMenuIconName } from '../OwnerMenuScreens';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ownerColors, ownerIcon, ownerRadii, ownerSpacing, ownerTypography } from './ownerTokens';

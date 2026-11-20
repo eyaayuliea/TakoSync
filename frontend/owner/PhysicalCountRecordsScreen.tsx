@@ -115,7 +115,7 @@ export default function PhysicalCountRecordsScreen({
   return (
     <View style={styles.screen}>
       <OwnerRecordHeader
-        title={view === 'details' ? 'Count Record Details' : 'Physical Count Records'}
+        title={view === 'details' ? 'Count record details' : 'Physical count records'}
         onBack={back}
       />
 
@@ -362,9 +362,9 @@ function DiscrepancyLinkCard({
     <Pressable accessibilityRole="button" onPress={onPress} style={styles.discrepancyCard}>
       <View style={styles.warningIconCircle}><Text style={styles.warningIcon}>!</Text></View>
       <View style={styles.discrepancyCopy}>
-        <Text numberOfLines={1} style={styles.discrepancyTitle}>View Discrepancy Details</Text>
+        <Text numberOfLines={1} style={styles.discrepancyTitle}>View discrepancy details</Text>
         <Text numberOfLines={1} style={styles.discrepancyMeta}>
-          {record.discrepancyReference ?? '—'} · {record.discrepancyStatus ?? 'Pending Review'}
+          {record.discrepancyReference ?? '—'} · {record.discrepancyStatus ?? 'Pending review'}
         </Text>
       </View>
       <Text style={styles.discrepancyChevron}>›</Text>
@@ -381,21 +381,21 @@ function RevisionHistoryCard({ record }: { record: PhysicalCountRecord }) {
       <View style={styles.revisionHeader}>
         <View style={styles.revisionTitleLine}>
           <Text style={styles.revisionClock}>◷</Text>
-          <Text style={styles.revisionTitle}>Revision History</Text>
+          <Text style={styles.revisionTitle}>Revision history</Text>
         </View>
         <StatusChip label="Corrected" />
       </View>
       {[
-        ['Original Value', formatPhysicalCountQuantity(revision.originalValue, record.unit)],
-        ['Revised Value', formatPhysicalCountQuantity(revision.revisedValue, record.unit)],
+        ['Original value', formatPhysicalCountQuantity(revision.originalValue, record.unit)],
+        ['Revised value', formatPhysicalCountQuantity(revision.revisedValue, record.unit)],
         ['Editor', `${revision.editor} (employee account)`],
-        ['Revision Date', formatPhysicalCountDate(revision.date)],
+        ['Revision date', formatPhysicalCountDate(revision.date)],
       ].map(([label, value], index) => (
         <OwnerRecordDetailRow
           key={label}
           label={label}
           value={value}
-          tone={label === 'Revised Value' ? 'accent' : undefined}
+          tone={label === 'Revised value' ? 'accent' : undefined}
           first={index === 0}
         />
       ))}

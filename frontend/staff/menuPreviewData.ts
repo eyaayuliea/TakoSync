@@ -5,7 +5,7 @@ export type MenuProduct = {
   productId: string;
   productName: string;
   sizeLabel: string;
-  pieceCount: number;
+  pieceCount: number | null;
   category: string;
   name: string;
   description: string;
@@ -72,7 +72,8 @@ export function groupMenuProducts(products: MenuProduct[]): MenuProductGroup[] {
     .map((group) => ({
       ...group,
       variants: [...group.variants].sort((left, right) =>
-        left.pieceCount - right.pieceCount || left.sizeLabel.localeCompare(right.sizeLabel)),
+        (left.pieceCount ?? Number.MAX_SAFE_INTEGER) - (right.pieceCount ?? Number.MAX_SAFE_INTEGER)
+        || left.sizeLabel.localeCompare(right.sizeLabel)),
     }))
     .sort((left, right) =>
       categoryRank(left.category) - categoryRank(right.category)

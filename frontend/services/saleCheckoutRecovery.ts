@@ -1,4 +1,5 @@
 import type { SaleSubmission } from './takosync';
+import { normalizeSalePayload, SaleSubmissionRejectedError } from './ownerSalesStatus.ts';
 
 export type PendingSaleCheckout = SaleSubmission & {
   requestId: string;
@@ -83,10 +84,16 @@ export function createPendingSaleCheckoutStore(storage: AsyncKeyValueStorage) {
     load: () => exclusive(read),
     save: (request: PendingSaleCheckout) => exclusive(async () => {
       const requests = await read();
-      const index = requests.findIndex((entry) => entry.requestId === request.requestId);
-      const next = [...requests];
-      if (index < 0) next.push(request);
-      else next[index] = request;
+      const existing = requests.find((entry) => entry.requestId === request.requestId);
+      if (existing) {
+        if (!canRetryPendingSaleCheckout(existing, request.actorId, request.branchId) ||
+          existing.transactionReference !== request.transactionReference ||
+          JSON.stringify(normalizeSalePayload(existing)) !== JSON.stringify(normalizeSalePayload(request))) {
+          throw new SaleSubmissionRejectedError('This checkout already has a saved payment and item list. Retry the original checkout from POS.');
+        }
+        return requests;
+      }
+      const next = [...requests, request];
       await write(next);
       return next;
     }),
