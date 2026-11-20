@@ -7,7 +7,6 @@ import {
   Image,
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -17,7 +16,9 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type ImageSourcePropType,
 } from 'react-native';
+import Modal from '../SessionProtectedModal';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
@@ -121,7 +122,7 @@ import {
   createPendingSaleCheckoutStore,
   type PendingSaleCheckout,
 } from '../services/saleCheckoutRecovery';
-import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
+import { isRetryableSaleSubmissionError, validateSaleSubmission } from '../services/ownerSalesStatus';
 import {
   getManilaBusinessDayRange,
   getStaffDailySalesLoadResult,
@@ -152,21 +153,46 @@ type InventoryReportKey =
 type StaffAlertTab = InventoryAlertKind;
 
 const inventoryReportTitles: Record<InventoryReportKey, string> = {
-  totalIngredientQuantity: 'Total Ingredient Quantity Report',
-  ingredientCategorySummary: 'Ingredient Category Summary Report',
-  ingredientStockStatus: 'Ingredient Stock Status Report',
-  branchInventorySummary: 'Branch Inventory Summary Report',
-  inventoryDiscrepancy: 'Inventory Discrepancy Report',
-  physicalInventoryCount: 'Physical Inventory Count Report',
+  totalIngredientQuantity: 'Total ingredient quantity report',
+  ingredientCategorySummary: 'Ingredient category summary report',
+  ingredientStockStatus: 'Ingredient stock status report',
+  branchInventorySummary: 'Branch inventory summary report',
+  inventoryDiscrepancy: 'Inventory discrepancy report',
+  physicalInventoryCount: 'Physical inventory count report',
 };
 
 const inventoryReportSelectionTitles: Record<InventoryReportKey, string> = {
-  totalIngredientQuantity: 'Total Ingredient Quantity',
-  ingredientCategorySummary: 'Ingredient Category Summary',
-  ingredientStockStatus: 'Ingredient Stock Status',
-  branchInventorySummary: 'Branch Inventory Summary',
-  inventoryDiscrepancy: 'Inventory Discrepancy',
-  physicalInventoryCount: 'Physical Inventory Count',
+  totalIngredientQuantity: 'Total ingredient quantity',
+  ingredientCategorySummary: 'Ingredient category summary',
+  ingredientStockStatus: 'Ingredient stock status',
+  branchInventorySummary: 'Branch inventory summary',
+  inventoryDiscrepancy: 'Inventory discrepancy',
+  physicalInventoryCount: 'Physical inventory count',
+};
+
+const inventoryReportIcons: Record<InventoryReportKey, ImageSourcePropType> = {
+  totalIngredientQuantity: require('../../assets/Inventory Reporting/Ingredient Quantity.png'),
+  ingredientCategorySummary: require('../../assets/Inventory Reporting/Category Sum.png'),
+  ingredientStockStatus: require('../../assets/Inventory Reporting/Stock Status.png'),
+  branchInventorySummary: require('../../assets/Inventory Reporting/Branch Inventory.png'),
+  inventoryDiscrepancy: require('../../assets/Inventory Reporting/Inventory Disrepancy.png'),
+  physicalInventoryCount: require('../../assets/Inventory Reporting/Physical Count.png'),
+};
+
+const moreNavigationIcons: Record<
+  'dailySales' | 'physicalCheck' | 'transactionHistory' | 'profileSettings',
+  ImageSourcePropType
+> = {
+  dailySales: require('../../assets/More Section/Daily Sales.png'),
+  physicalCheck: require('../../assets/More Section/Physical Check.png'),
+  transactionHistory: require('../../assets/More Section/Transaction History.png'),
+  profileSettings: require('../../assets/More Section/Profile and Settings.png'),
+};
+
+const stockNavigationIcons: Record<'stockIn' | 'waste' | 'batterBatch', ImageSourcePropType> = {
+  stockIn: require('../../assets/Stocks Icon/Stock-in.png'),
+  waste: require('../../assets/Stocks Icon/Waste.png'),
+  batterBatch: require('../../assets/Stocks Icon/Batter batch.png'),
 };
 
 const colors = {
@@ -512,15 +538,17 @@ function SearchBar({
   value,
   onChangeText,
   placeholder = 'Search ingredients',
+  inventoryStyle = false,
 }: {
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
+  inventoryStyle?: boolean;
 }) {
   const styles = useStaffStyles();
   const { colors: themeColors } = useTheme();
   return (
-    <View style={styles.searchBar}>
+    <View style={[styles.searchBar, inventoryStyle && styles.inventorySearchField]}>
       <Text style={styles.searchGlyph}>⌕</Text>
       <TextInput
         value={value}
@@ -540,22 +568,58 @@ function SearchBar({
   );
 }
 
+const ingredientImages: Record<string, number> = {
+  octopus: require('../../assets/Octopus · Ingredient icon.png'),
+  flour: require('../../assets/All-purpose flour · Ingredient icon.png'),
+  'all-purpose flour': require('../../assets/All-purpose flour · Ingredient icon.png'),
+  eggs: require('../../assets/Eggs · Ingredient icon.png'),
+  cheese: require('../../assets/Cheese · Ingredient icon.png'),
+  'cheese-cubes': require('../../assets/Cheese · Ingredient icon.png'),
+  'crab-sticks': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'crab stick': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'crab sticks': require('../../assets/Crab sticks · Ingredient icon.png'),
+  'bacon-bits': require('../../assets/Bacon bits · Ingredient icon.png'),
+  'bacon bits': require('../../assets/Bacon bits · Ingredient icon.png'),
+  bacon: require('../../assets/Bacon bits · Ingredient icon.png'),
+  'prepared-batter': require('../../assets/Takoyaki batter · Ingredient icon.png'),
+  'takoyaki batter': require('../../assets/Takoyaki batter · Ingredient icon.png'),
+  cabbage: require('../../assets/Cabbage (chopped) · Ingredient icon.png'),
+  'cabbage (chopped)': require('../../assets/Cabbage (chopped) · Ingredient icon.png'),
+  sauces: require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'takoyaki-sauce': require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'takoyaki sauce': require('../../assets/Takoyaki sauce · Ingredient icon.png'),
+  'japanese-mayonnaise': require('../../assets/Japanese mayonnaise · Ingredient icon.png'),
+  'japanese mayonnaise': require('../../assets/Japanese mayonnaise · Ingredient icon.png'),
+  'bonito-flakes': require('../../assets/Bonito flakes · Ingredient icon.png'),
+  'bonito flakes': require('../../assets/Bonito flakes · Ingredient icon.png'),
+  packaging: require('../../assets/Packaging · Ingredient icon.png'),
+  'dashi powder': require('../../assets/Dashi stock · Ingredient icon.png'),
+  dashi: require('../../assets/Dashi stock · Ingredient icon.png'),
+  salt: require('../../assets/Salt · Ingredient icon.png'),
+  'soy sauce': require('../../assets/Soy sauce · Ingredient icon.png'),
+  'soy-sauce': require('../../assets/Soy sauce · Ingredient icon.png'),
+  'baking-powder': require('../../assets/Baking powder · Ingredient icon.png'),
+  'baking powder': require('../../assets/Baking powder · Ingredient icon.png'),
+};
+
 function IngredientThumbnail({ item, large = false, small = false }: { item: Ingredient; large?: boolean; small?: boolean }) {
   const styles = useStaffStyles();
-  const { colors: themeColors, isDark } = useTheme();
+  const image = ingredientImages[item.id] ?? ingredientImages[item.name.trim().toLowerCase()];
   return (
     <View
       style={[
         styles.ingredientThumbnail,
         large && styles.largeThumbnail,
         small && styles.smallThumbnail,
-        { backgroundColor: isDark ? themeColors.surfaceSecondary : item.tint },
+        { backgroundColor: '#f2f2f4' },
       ]}
-      accessibilityLabel={`${item.name} image placeholder`}
+      accessibilityLabel={`${item.name} image`}
     >
-      <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
-        {item.emoji}
-      </Text>
+      {image
+        ? <Image source={image} resizeMode="contain" style={styles.thumbnailImage} />
+        : <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
+            {item.emoji}
+          </Text>}
     </View>
   );
 }
@@ -624,8 +688,8 @@ function InventoryIngredientCard({
         <Text style={styles.inventoryIngredientName} numberOfLines={1}>{item.name}</Text>
         <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{categoryLabel} · {item.unit}</Text>
         {packInfo ? <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{packInfo}</Text> : null}
-        {showInventoryStatuses ? (
-          <Text style={styles.dashboardExpiration}>
+        {showInventoryStatuses && (item.expirationStatus || item.expiration) ? (
+          <Text style={[styles.dashboardExpiration, item.expirationStatus && styles.inventoryExpirationText]}>
             {item.expirationStatus ? `${item.expirationStatus}: ` : item.expiration ? 'Expires: ' : 'Expiration: '}
             {item.expiration ?? 'Not recorded'}
           </Text>
@@ -692,20 +756,6 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function WasteTrashIcon({ color = colors.pink }: { color?: string }) {
-  const styles = useStaffStyles();
-  return (
-    <View style={styles.wasteTrashIcon} accessibilityLabel="Waste confirmation">
-      <View style={[styles.wasteTrashHandle, { backgroundColor: color }]} />
-      <View style={[styles.wasteTrashLid, { backgroundColor: color }]} />
-      <View style={[styles.wasteTrashBody, { borderColor: color }]}>
-        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />
-        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />
-      </View>
-    </View>
-  );
-}
-
 function ActionCard({
   title,
   description,
@@ -714,7 +764,7 @@ function ActionCard({
 }: {
   title: string;
   description: string;
-  icon: string | React.ReactNode;
+  icon: ImageSourcePropType;
   onPress: () => void;
 }) {
   const styles = useStaffStyles();
@@ -725,8 +775,13 @@ function ActionCard({
       onPress={onPress}
       style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}
     >
-      <View style={styles.actionIconBox}>
-        {typeof icon === 'string' ? <Text style={styles.actionIcon}>{icon}</Text> : icon}
+      <View style={styles.inventoryReportIndex}>
+        <Image
+          source={icon}
+          resizeMode="contain"
+          style={styles.inventoryReportIcon}
+          accessibilityIgnoresInvertColors
+        />
       </View>
       <View style={styles.actionCopy}>
         <Text style={styles.actionTitle}>{title}</Text>
@@ -810,7 +865,7 @@ function DatePickerField({
   allowClear = false,
   maxDate,
   useConfirmation = false,
-  confirmLabel = 'Use Date',
+  confirmLabel = 'Use date',
   triggerLabel,
 }: {
   label: string;
@@ -2366,35 +2421,33 @@ export default function StaffWorkspace({
     if (!user?.branchId) {
       throw new Error('Your account does not have an assigned branch.');
     }
+    const transactionReference = menuTransactionReference
+      ?? 'SALE-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    if (pendingSaleCheckoutLocks.current.has(transactionReference)) return;
     menuSaleSubmissionLock.current = true;
+    pendingSaleCheckoutLocks.current.add(transactionReference);
+    setMenuTransactionReference(transactionReference);
     try {
-      const transactionReference = menuTransactionReference
-        ?? `SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const request = {
+        ...input,
+        branchId: user.branchId,
+        transactionReference,
+        requestId: transactionReference,
+        actorId: user.id,
+        actorLabel: staffName,
+        branchLabel: assignedBranch,
+        createdAt: new Date().toISOString(),
+      };
+      validateSaleSubmission(request);
+      const saved = await pendingSaleCheckoutStore.save(request);
       let sale: Awaited<ReturnType<typeof submitSale>>;
       try {
-        sale = await submitSale({
-          ...input,
-          branchId: user.branchId,
-          transactionReference,
-        });
+        sale = await submitSale(request);
       } catch (error) {
-        if (!isRetryableSaleSubmissionError(error)) throw error;
-        try {
-          const saved = await pendingSaleCheckoutStore.save({
-            ...input,
-            branchId: user.branchId,
-            transactionReference,
-            requestId: transactionReference,
-            actorId: user.id,
-            actorLabel: staffName,
-            branchLabel: assignedBranch,
-            createdAt: new Date().toISOString(),
-          });
+        if (isRetryableSaleSubmissionError(error)) {
           setPendingSaleCheckouts(saved);
-        } catch (storageError) {
-          setDashboardMessage(storageError instanceof Error
-            ? `${storageError.message} The checkout could not be saved for recovery.`
-            : 'The checkout could not be saved for recovery.');
+        } else {
+          setPendingSaleCheckouts(await pendingSaleCheckoutStore.resolve(transactionReference));
         }
         throw error;
       }
@@ -2408,6 +2461,7 @@ export default function StaffWorkspace({
       setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
       openSaleReceipt(sale.id);
     } finally {
+      pendingSaleCheckoutLocks.current.delete(transactionReference);
       menuSaleSubmissionLock.current = false;
     }
   };
@@ -2431,6 +2485,10 @@ export default function StaffWorkspace({
         addons: request.addons,
       });
       setPendingSaleCheckouts(await pendingSaleCheckoutStore.resolve(request.requestId));
+      if (menuTransactionReference === request.transactionReference) {
+        setMenuCart([]);
+        setMenuTransactionReference(null);
+      }
       setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
       setMenuInventoryRetrySale(shouldOfferInventoryRetry(sale.inventory_processing_status)
         ? { id: sale.id, reference: sale.transaction_reference }
@@ -3689,7 +3747,7 @@ export default function StaffWorkspace({
       )}
       <View style={styles.summaryCard}>
         <View style={styles.summaryCopy}>
-          <Text style={styles.summaryEyebrow}>INVENTORY SUMMARY</Text>
+          <Text style={styles.summaryEyebrow}>Inventory summary</Text>
           <View style={styles.summaryTotalRow}>
             <Text style={styles.summaryTotal}>
               {backendLoading
@@ -3727,21 +3785,21 @@ export default function StaffWorkspace({
       </View>
 
       <View style={styles.sectionHeadingRow}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <Text style={styles.sectionTitle}>Quick actions</Text>
         <Text style={styles.sectionHint}>At a glance</Text>
       </View>
       <View style={styles.quickActions}>
         {[
-          { title: 'Stock-In', icon: '+', onPress: () => openForm('stockIn', 'menu') },
-          { title: 'Stock-Out', icon: '↗', onPress: () => openForm('stockOut', 'menu') },
+          { title: 'Stock-in', icon: '+', onPress: () => openForm('stockIn', 'menu') },
+          { title: 'Stock-out', icon: '↗', onPress: () => openForm('stockOut', 'menu') },
           { title: 'Waste', icon: '×', onPress: () => openForm('waste', 'menu') },
           {
-            title: 'Daily Check',
+            title: 'Daily check',
             icon: '✓',
             onPress: startDailyInventoryCheck,
           },
           {
-            title: 'Prepare Batter',
+            title: 'Prepare batter',
             icon: '＋',
             onPress: () => {
               const date = manilaBusinessDate();
@@ -3766,7 +3824,7 @@ export default function StaffWorkspace({
         ))}
       </View>
       <View style={styles.sectionHeadingRow}>
-        <Text style={styles.sectionTitle}>Low-Stock Items</Text>
+        <Text style={styles.sectionTitle}>Low-stock items</Text>
         <Text style={styles.sectionHint}>{lowStockItems.length} items</Text>
       </View>
       <ScrollView
@@ -3793,7 +3851,7 @@ export default function StaffWorkspace({
       </ScrollView>
 
       <View style={[styles.sectionHeadingRow, styles.expirationHeading]}>
-        <Text style={styles.sectionTitle}>Nearing Expiration</Text>
+        <Text style={styles.sectionTitle}>Nearing expiration</Text>
         <Text style={styles.sectionHint}>{expiringItems.length} items</Text>
       </View>
       <View style={styles.dashboardIngredientList}>
@@ -3860,8 +3918,8 @@ export default function StaffWorkspace({
       <View style={styles.inventoryPageHeader}>
         <View style={styles.inventoryHeaderRow}>
           <View style={styles.inventoryHeaderCopy}>
-            <Text style={styles.pageTitle}>Inventory</Text>
-            <Text style={styles.pageSubtitle}>{assignedBranch} · Read only</Text>
+            <Text style={styles.inventoryPageTitle}>Inventory</Text>
+            <Text style={styles.inventoryPageSubtitle}>{assignedBranch} · Read only</Text>
           </View>
           <View style={styles.inventoryHeaderActions}>
             <Pressable
@@ -3923,6 +3981,7 @@ export default function StaffWorkspace({
                 value={search}
                 onChangeText={setSearch}
                 placeholder="Search ingredients or supplies…"
+                inventoryStyle
               />
             </View>
             <ScrollView
@@ -3945,6 +4004,12 @@ export default function StaffWorkspace({
             <Text style={styles.inventoryCount}>
               {visibleIngredients.length} {visibleIngredients.length === 1 ? 'item' : 'items'} · Expected quantity
             </Text>
+            <View style={styles.inventorySourceNotice}>
+              <Text style={styles.inventorySourceNoticeIcon}>i</Text>
+              <Text style={styles.inventorySourceNoticeText}>
+                Expected quantities reflect recorded balances. Batch details are shown when available.
+              </Text>
+            </View>
           </>
         }
         renderItem={({ item }) => (
@@ -4212,7 +4277,7 @@ export default function StaffWorkspace({
             const alert = selectedIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
               ? classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays))
               : null;
-            const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
+            const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near expiry' : null;
             return (
               <View key={batch.reference} style={styles.inventoryBatchCard}>
                 <Text style={styles.inventoryBatchTitle}>Batch {batch.reference}</Text>
@@ -4374,7 +4439,7 @@ export default function StaffWorkspace({
     );
     return (
       <View style={styles.wasteFormSurface}>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.stockOperationHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to Stocks"
@@ -4384,7 +4449,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Batter Batch</Text>
+            <Text style={[styles.formTitle, styles.stockOperationTitle]}>Batter batch</Text>
             <Text style={styles.formSubtitle}>1 batch · {assignedBranch}</Text>
           </View>
         </View>
@@ -4395,7 +4460,7 @@ export default function StaffWorkspace({
         >
           <Text style={styles.batterSectionTitle}>Raw ingredients</Text>
           <View style={styles.batterRecipeCard}>
-            <Text style={styles.batterRecipeTitle}>Owner recipe · Read-only</Text>
+            <Text style={styles.batterRecipeTitle}>Branch inventory · Owner recipe · Read-only</Text>
             <View style={styles.batterRecipeHeaderRow}>
               <Text style={styles.batterRecipeHeaderText}>Required for 1 batch</Text>
               <Text style={styles.batterRecipeHeaderText}>Current expected</Text>
@@ -4428,12 +4493,12 @@ export default function StaffWorkspace({
           </View>
 
           <View style={styles.batterMetaCard}>
-            <Text style={styles.fieldLabel}>Batch Reference · Auto-generated</Text>
+            <Text style={styles.fieldLabel}>Batch reference · auto-generated</Text>
             <Text style={styles.batterReferenceText}>{batterBatchReference || 'Auto-generated on confirmation'}</Text>
           </View>
 
           <DatePickerField
-            label="Preparation Date *"
+            label="Preparation date *"
             value={batterPreparationDate}
             useConfirmation
             maxDate={today}
@@ -4463,7 +4528,7 @@ export default function StaffWorkspace({
             >
               {batterPreparationSubmitting
                 ? <ActivityIndicator size="small" color={colors.white} />
-                : <Text style={styles.saveButtonText}>Record Batch</Text>}
+                : <Text style={styles.saveButtonText}>Record batch</Text>}
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -4485,27 +4550,30 @@ export default function StaffWorkspace({
   const renderStocks = () => (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.pageContent}
+      contentContainerStyle={styles.stockLandingContent}
       showsVerticalScrollIndicator={false}
     >
-      {renderTopHeader('Stocks', `${assignedBranch} · Inventory operations`)}
+      <View style={styles.stockLandingHeader}>
+        <Text style={styles.stockLandingTitle}>Stocks</Text>
+        <Text style={styles.stockLandingSubtitle}>{assignedBranch} · Inventory operations</Text>
+      </View>
       <View style={styles.stockActionList}>
         <ActionCard
-          title="Stock-In"
+          title="Stock-in"
           description="Receive inventory"
-          icon={<Text style={styles.actionIcon}>↓</Text>}
+          icon={stockNavigationIcons.stockIn}
           onPress={() => openForm('stockIn', 'stocks')}
         />
         <ActionCard
-          title="Waste &amp; Spillage"
+          title="Waste & Spillage"
           description="Record waste or spillage"
-          icon={<WasteTrashIcon color={colors.orange} />}
+          icon={stockNavigationIcons.waste}
           onPress={() => openForm('waste', 'stocks')}
         />
         <ActionCard
-          title="Batter Batch Recording"
+          title="Prepared batter batch"
           description="Record a prepared batter batch"
-          icon={<Text style={styles.actionIcon}>◒</Text>}
+          icon={stockNavigationIcons.batterBatch}
           onPress={() => {
             const date = manilaBusinessDate();
             setBatterPreparationDate(date);
@@ -4555,7 +4623,7 @@ export default function StaffWorkspace({
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.alertLandingHeader}>
-          <Text style={styles.alertPageTitle}>Alert Details</Text>
+          <Text style={styles.alertPageTitle}>Alert details</Text>
           <Text style={styles.alertBranchName}>
             {assignedBranch} · {activeAlertCount === null ? '— active alerts' : `${activeAlertCount} active alerts`}
           </Text>
@@ -4665,7 +4733,7 @@ export default function StaffWorkspace({
         <Text style={styles.inventoryAlertDetail}>{alert.detail}</Text>
         {latestStockIn ? (
           <Text style={styles.inventoryAlertMovement}>
-            Stock-In · +{formatUnitQuantity(latestStockIn.quantity, latestStockIn.unit)} · {formatDate(latestStockIn.transactionDate)}
+            Stock-in · +{formatUnitQuantity(latestStockIn.quantity, latestStockIn.unit)} · {formatDate(latestStockIn.transactionDate)}
           </Text>
         ) : null}
         <Text style={styles.alertCardAction}>View alert details</Text>
@@ -4676,9 +4744,9 @@ export default function StaffWorkspace({
   const renderAlerts = () => {
     const selectedAlerts = inventoryAlerts.filter((alert) => alert.kind === selectedAlertTab);
     const alertTabs: Array<{ kind: StaffAlertTab; label: string }> = [
-      { kind: 'lowStock', label: 'Low Stock' },
-      { kind: 'outOfStock', label: 'Out of Stock' },
-      { kind: 'nearExpiration', label: 'Near Expiration' },
+      { kind: 'lowStock', label: 'Low stock' },
+      { kind: 'outOfStock', label: 'Out of stock' },
+      { kind: 'nearExpiration', label: 'Near expiration' },
       { kind: 'expired', label: 'Expired' },
     ];
     const alertTabRows = [alertTabs.slice(0, 2), alertTabs.slice(2)];
@@ -4724,7 +4792,7 @@ export default function StaffWorkspace({
           <View style={styles.stockAlertsUpdatedBanner} accessibilityRole="alert">
             <View style={styles.stockAlertsUpdatedCopy}>
               <Text style={styles.stockAlertsUpdatedTitle}>Low-stock alerts updated</Text>
-              <Text style={styles.stockAlertsUpdatedText}>Updated automatically after Stock-In was saved.</Text>
+              <Text style={styles.stockAlertsUpdatedText}>Updated automatically after stock-in was saved.</Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -4818,7 +4886,7 @@ export default function StaffWorkspace({
             )}
             <View style={styles.alertInfoNote}>
               <Text style={styles.alertInfoText}>
-                Updates after Stock-In, Waste &amp; Spillage, sales, batter batches and authorized adjustments.
+                Updates after stock-in, waste &amp; spillage, sales, batter batches and authorized adjustments.
               </Text>
               <Text style={styles.alertInfoText}>Assigned branch only · Read-only alerts.</Text>
             </View>
@@ -4833,12 +4901,12 @@ export default function StaffWorkspace({
     const visibleLines = dailyCheckLines.filter((line) => line.name.toLowerCase().includes(term));
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable accessibilityRole="button" accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'} onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.backButton}>
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily Inventory Check</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Daily inventory check</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -4897,7 +4965,7 @@ export default function StaffWorkspace({
 
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
@@ -4907,7 +4975,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Daily inventory check</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5127,7 +5195,7 @@ export default function StaffWorkspace({
 
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}
@@ -5137,7 +5205,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Daily inventory check'}</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>{hasDiscrepancies ? 'Inventory discrepancy' : 'Daily inventory check'}</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5149,15 +5217,15 @@ export default function StaffWorkspace({
           <View style={styles.dailySuccessBanner} accessibilityRole="alert">
             <Text style={styles.dailySuccessIcon}>✓</Text>
             <Text style={styles.dailySuccessText}>
-              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Daily inventory check saved successfully.'}
+              {hasDiscrepancies ? 'Submitted for owner review.' : 'Daily inventory check saved successfully.'}
             </Text>
           </View>
           <View style={styles.dailySummaryCard}>
-            <Text style={styles.dailySummaryTitle}>{hasDiscrepancies ? 'Pending Review' : 'Check submitted'}</Text>
+            <Text style={styles.dailySummaryTitle}>{hasDiscrepancies ? 'Pending review' : 'Check submitted'}</Text>
             <Text style={styles.dailySummaryCount}>{check.lines.length} counted</Text>
             <Text style={styles.dailySummarySubtitle}>
               {discrepancyCount} {discrepancyCount === 1 ? 'discrepancy' : 'discrepancies'} ·{' '}
-              {hasDiscrepancies ? 'Pending Review' : 'Submitted'}
+              {hasDiscrepancies ? 'Pending review' : 'Submitted'}
             </Text>
           </View>
 
@@ -5185,7 +5253,7 @@ export default function StaffWorkspace({
                 Staff remarks (read-only): {check.remarks || '—'}
               </Text>
               <Text style={styles.inventoryReportRecordDetail}>
-                Count changes require a correction request in Override Inventory Count.
+                Count changes require a correction request in override inventory count.
               </Text>
             </View>
           ) : null}
@@ -5199,7 +5267,7 @@ export default function StaffWorkspace({
               ['Employee account', `${staffName} · Signed-in staff`],
               [
                 'Discrepancies',
-                hasDiscrepancies ? `${discrepancyCount} · Pending Review` : '0 · None',
+                hasDiscrepancies ? `${discrepancyCount} · Pending review` : '0 · None',
               ],
             ].map(([label, value]) => (
               <View key={label} style={styles.dailyReceiptRow}>
@@ -5245,7 +5313,7 @@ export default function StaffWorkspace({
     const capturedAt = dailyCheckStartedAt ?? new Date();
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader('Inventory Discrepancy', 'Back to physical count', () => {
+        {renderInventoryReportHeader('Inventory discrepancy', 'Back to physical count', () => {
           if (dailyDiscrepancies.length > 0 && !dailyCheckSubmitting) {
             setDailyCheckLeavePromptVisible(true);
           } else {
@@ -5313,7 +5381,7 @@ export default function StaffWorkspace({
             style={[styles.dailyRemarksInput, styles.inventoryDiscrepancyRemarks]}
           />
           <Text style={styles.inventoryReportRecordDetail}>
-            Remarks lock after submission. Count changes require a correction request in Override Inventory Count.
+            Remarks lock after submission. Count changes require a correction request in override inventory count.
           </Text>
           {formError ? (
             <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{formError}</Text>
@@ -5350,7 +5418,7 @@ export default function StaffWorkspace({
               </View>
             ) : (
               <Text style={styles.dailyPrimaryButtonText}>
-                {dailyCheckSaveFailed ? 'Retry' : 'Submit for Owner Review'}
+                {dailyCheckSaveFailed ? 'Retry' : 'Submit for owner review'}
               </Text>
             )}
           </Pressable>
@@ -5405,11 +5473,11 @@ export default function StaffWorkspace({
   ) => (
     <View style={[
       styles.formHeader,
-      (title === 'Ingredient Category Summary Report' ||
-        title === 'Ingredient Stock Status Report' ||
-        title === 'Branch Inventory Summary Report' ||
-        title === 'Inventory Discrepancy Report' ||
-        title === 'Physical Inventory Count Report') &&
+      (title === 'Ingredient category summary report' ||
+        title === 'Ingredient stock status report' ||
+        title === 'Branch inventory summary report' ||
+        title === 'Inventory discrepancy report' ||
+        title === 'Physical inventory count report') &&
         styles.categoryReportHeader,
     ]}>
       <Pressable
@@ -5423,28 +5491,35 @@ export default function StaffWorkspace({
       <View style={styles.formHeaderCopy}>
         <Text style={[
           styles.formTitle,
-          title === 'Ingredient Category Summary Report' && styles.categoryReportTitle,
-          title === 'Ingredient Stock Status Report' && styles.stockStatusReportTitle,
-          title === 'Branch Inventory Summary Report' && styles.branchSummaryReportTitle,
-          title === 'Inventory Discrepancy Report' && styles.discrepancyReportTitle,
-          title === 'Physical Inventory Count Report' && styles.physicalCountReportTitle,
+          (title === 'Inventory reporting' ||
+            title === 'Total ingredient quantity report' ||
+            title === 'Ingredient category summary report' ||
+            title === 'Ingredient stock status report' ||
+            title === 'Branch inventory summary report' ||
+            title === 'Inventory discrepancy report' ||
+            title === 'Physical inventory count report') && styles.inventoryReportPageTitle,
+          title === 'Ingredient category summary report' && styles.categoryReportTitle,
+          title === 'Ingredient stock status report' && styles.stockStatusReportTitle,
+          title === 'Branch inventory summary report' && styles.branchSummaryReportTitle,
+          title === 'Inventory discrepancy report' && styles.discrepancyReportTitle,
+          title === 'Physical inventory count report' && styles.physicalCountReportTitle,
         ]}>
-          {title === 'Ingredient Stock Status Report'
-            ? 'Ingredient Stock Status\nReport'
-            : title === 'Branch Inventory Summary Report'
-              ? 'Branch Inventory\nSummary Report'
-            : title === 'Inventory Discrepancy Report'
-              ? 'Inventory Discrepancy\nReport'
-            : title === 'Physical Inventory Count Report'
-              ? 'Physical Inventory Count\nReport'
+          {title === 'Ingredient stock status report'
+            ? 'Ingredient stock status\nreport'
+            : title === 'Branch inventory summary report'
+              ? 'Branch inventory\nsummary report'
+            : title === 'Inventory discrepancy report'
+              ? 'Inventory discrepancy\nreport'
+            : title === 'Physical inventory count report'
+              ? 'Physical inventory count\nreport'
             : title}
         </Text>
-        {title === 'Total Ingredient Quantity Report' ||
-          title === 'Ingredient Category Summary Report' ||
-          title === 'Ingredient Stock Status Report' ||
-          title === 'Branch Inventory Summary Report' ||
-          title === 'Inventory Discrepancy Report' ||
-          title === 'Physical Inventory Count Report' ? null : (
+        {title === 'Total ingredient quantity report' ||
+          title === 'Ingredient category summary report' ||
+          title === 'Ingredient stock status report' ||
+          title === 'Branch inventory summary report' ||
+          title === 'Inventory discrepancy report' ||
+          title === 'Physical inventory count report' ? null : (
           <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         )}
       </View>
@@ -5493,7 +5568,7 @@ export default function StaffWorkspace({
   const renderInventoryReportsList = () => (
     <View style={styles.inventoryReportPage}>
       {renderInventoryReportHeader(
-        'Inventory Reporting',
+        'Inventory reporting',
         inventoryReportingReturnRoute === 'inventory' ? 'Back to Inventory' : 'Back to More',
         () => setRoute(inventoryReportingReturnRoute),
       )}
@@ -5511,14 +5586,12 @@ export default function StaffWorkspace({
             style={({ pressed }) => [styles.inventoryReportLink, pressed && styles.pressed]}
           >
             <View style={styles.inventoryReportIndex}>
-              <Text style={styles.inventoryReportIndexText}>
-                {key === 'totalIngredientQuantity' ? '▦'
-                  : key === 'ingredientCategorySummary' ? '▥'
-                    : key === 'ingredientStockStatus' ? '▤'
-                      : key === 'branchInventorySummary' ? '◇'
-                        : key === 'inventoryDiscrepancy' ? '△'
-                          : '▣'}
-              </Text>
+              <Image
+                source={inventoryReportIcons[key]}
+                resizeMode="contain"
+                style={styles.inventoryReportIcon}
+                accessibilityIgnoresInvertColors
+              />
             </View>
             <Text style={styles.inventoryReportLinkText}>{inventoryReportSelectionTitles[key]}</Text>
             <Text style={styles.moreNavigationChevron}>›</Text>
@@ -5593,7 +5666,7 @@ export default function StaffWorkspace({
       })}
       {items.some((item) => inventoryStockStatus(item.quantity, item.minimumStock) === 'Out of Stock') ? (
         <Text style={styles.stockStatusExplanation}>
-          {'Out of Stock applies when the expected quantity is 0.\nThis is a separate stock condition.'}
+          {'Out of stock applies when the expected quantity is 0.\nThis is a separate stock condition.'}
         </Text>
       ) : null}
     </View>
@@ -5831,7 +5904,7 @@ export default function StaffWorkspace({
                 ? 'Adjusted'
                 : record.countStatus === 'Validated'
                   ? 'Validated'
-                  : 'Pending Review'}</Text>
+                  : 'Pending review'}</Text>
             ) : (
               <Text style={[
                 styles.inventoryReportStatus,
@@ -5959,7 +6032,7 @@ export default function StaffWorkspace({
     const title = inventoryReportTitles[selectedInventoryReport];
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader(title, 'Back to Inventory Reporting', () => setRoute('inventoryReporting'))}
+        {renderInventoryReportHeader(title, 'Back to Inventory reporting', () => setRoute('inventoryReporting'))}
         {selectedInventoryReport === 'totalIngredientQuantity' ? (
           renderTotalIngredientQuantityReport(data)
         ) : (
@@ -6001,9 +6074,17 @@ export default function StaffWorkspace({
                             </View>
                             <Text style={styles.categoryReportExpand}>{expanded ? '−' : '+'}</Text>
                           </Pressable>
-                          {expanded ? (
+                          {group.ingredients[0] ? (
+                            <Text style={styles.categoryReportPreview}>
+                              {group.ingredients[0].name} ·{' '}
+                              {group.ingredients[0].quantity == null
+                                ? 'Not recorded'
+                                : formatDailyUnitQuantity(group.ingredients[0].quantity, group.ingredients[0].unit)}
+                            </Text>
+                          ) : null}
+                          {expanded && group.ingredients.length > 1 ? (
                             <View style={styles.categoryReportItems}>
-                              {group.ingredients.map((item) => (
+                              {group.ingredients.slice(1).map((item) => (
                                 <View key={item.id} style={styles.categoryReportItem}>
                                   <Text style={styles.categoryReportItemName}>
                                     {item.name}
@@ -6072,7 +6153,7 @@ export default function StaffWorkspace({
       return (
         <View style={styles.inventoryReportPage}>
           {renderInventoryReportHeader(
-            'Physical Inventory Count Report',
+            'Physical inventory count report',
             'Back to physical count report',
             () => setRoute('inventoryReport'),
           )}
@@ -6191,16 +6272,16 @@ export default function StaffWorkspace({
                   {matches ? 'No difference from the expected quantity.' : 'A difference from the expected quantity remains for review.'}
                 </Text>
                 <Text style={styles.physicalCountDetailLine}>
-                  Only Submitted and Validated counts are included; drafts are excluded.
+                  Only submitted and validated counts are included; drafts are excluded.
                 </Text>
               </View>
             )}
             <Text style={styles.physicalCountReadOnly}>
               {validated
-                ? 'Read-only · Count changes require a correction request in Override Inventory Count.'
+                ? 'Read-only · count changes require a correction request in override inventory count.'
                 : record.revisedActualQuantity !== null
-                  ? 'No direct editing. Count changes require a correction request in Override Inventory Count.'
-                  : 'Read-only · Count changes require a correction request in Override Inventory Count.'}
+                  ? 'No direct editing. Count changes require a correction request in override inventory count.'
+                  : 'Read-only · count changes require a correction request in override inventory count.'}
             </Text>
             {validated || record.revisedActualQuantity !== null ? (
               <Pressable
@@ -6225,7 +6306,7 @@ export default function StaffWorkspace({
       return (
         <View style={styles.inventoryReportPage}>
           {renderInventoryReportHeader(
-            'Inventory Discrepancy Report',
+            'Inventory discrepancy report',
             'Back to discrepancy report',
             () => setRoute('inventoryReport'),
           )}
@@ -6289,7 +6370,7 @@ export default function StaffWorkspace({
                   Staff remarks: {record.remarks?.trim() ? record.remarks : 'None provided'}
                 </Text>
                 <Text style={styles.discrepancyReviewText}>
-                  Count changes require a correction request in Override Inventory Count.
+                  Count changes require a correction request in override inventory count.
                 </Text>
               </>
             ) : (
@@ -6369,7 +6450,7 @@ export default function StaffWorkspace({
               {record.correctionRequests.map((request) => (
                 <View key={request.requestId} style={styles.inventoryReportCorrection}>
                   <Text style={styles.inventoryReportRecordDetail}>
-                    {request.status.toUpperCase()} · corrected actual {formatDailyUnitQuantity(request.correctedActualQuantity, record.unit)}
+                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)} · corrected actual {formatDailyUnitQuantity(request.correctedActualQuantity, record.unit)}
                   </Text>
                   <Text style={styles.inventoryReportRecordDetail}>Staff reason: {request.reason}</Text>
                   {request.decisionReason ? (
@@ -6386,7 +6467,7 @@ export default function StaffWorkspace({
           ) : null}
           {record.validation ? (
             <View style={styles.inventoryReportRecord}>
-              <Text style={styles.inventoryReportRecordTitle}>Owner Validate Count audit</Text>
+              <Text style={styles.inventoryReportRecordTitle}>Owner validate count audit</Text>
               <Text style={styles.inventoryReportRecordDetail}>
                 Result: {record.validation.outcome === 'no_change' ? 'Resolved without inventory change' : 'Inventory adjusted'}
               </Text>
@@ -6436,7 +6517,7 @@ export default function StaffWorkspace({
                 <View style={styles.inventoryReportRecord}>
                   <Text style={styles.inventoryReportRecordTitle}>Request count correction</Text>
                   <Text style={styles.inventoryReportRecordDetail}>
-                    Original expected and actual quantities remain unchanged. The Owner must decide this request before using Validate Count.
+                    Original expected and actual quantities remain unchanged. the Owner must decide this request before using validate count.
                   </Text>
                   <Text style={styles.fieldLabel}>Corrected actual quantity ({record.unit})</Text>
                   <TextInput
@@ -6511,13 +6592,15 @@ export default function StaffWorkspace({
 
   const renderMore = () => (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.morePageContent} showsVerticalScrollIndicator={false}>
-      {renderTopHeader('More')}
+      <View style={styles.morePageHeader}>
+        <Text style={styles.morePageTitle}>More</Text>
+      </View>
       {renderStaffIdentityCard()}
       <View style={styles.moreNavigationList}>
         {([
           {
-            icon: '₱',
-            title: 'Daily Sales',
+            icon: moreNavigationIcons.dailySales,
+            title: 'Daily sales',
             description: 'Count, compare and submit for review',
             onPress: () => {
               setNavigationOrigin('more');
@@ -6525,8 +6608,8 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '☷',
-            title: 'Physical Inventory Check',
+            icon: moreNavigationIcons.physicalCheck,
+            title: 'Physical inventory check',
             description: 'Count, compare and submit for review',
             onPress: () => {
               setNavigationOrigin('more');
@@ -6534,7 +6617,7 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '⇩',
+            icon: moreNavigationIcons.transactionHistory,
             title: 'Transaction history',
             description: "Your branch's complete stock ledger",
             onPress: () => {
@@ -6543,7 +6626,7 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '♙',
+            icon: moreNavigationIcons.profileSettings,
             title: 'Profile & settings',
             description: 'Account, access and secure logout',
             onPress: () => {
@@ -6555,12 +6638,17 @@ export default function StaffWorkspace({
           <Pressable
             key={option.title}
             accessibilityRole="button"
-            disabled={option.title === 'Physical Inventory Check' && dailyCheckStarting}
+            disabled={option.title === 'Physical inventory check' && dailyCheckStarting}
             onPress={option.onPress}
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
-            <View style={styles.moreNavigationIcon}>
-              <Text style={styles.moreNavigationIconText}>{option.icon}</Text>
+            <View style={styles.inventoryReportIndex}>
+              <Image
+                source={option.icon}
+                resizeMode="contain"
+                style={styles.inventoryReportIcon}
+                accessibilityIgnoresInvertColors
+              />
             </View>
             <View style={styles.moreNavigationCopy}>
               <Text style={styles.moreNavigationTitle}>{option.title}</Text>
@@ -6575,7 +6663,7 @@ export default function StaffWorkspace({
         onPress={openLogoutConfirmation}
         style={({ pressed }) => [styles.logoutButton, styles.moreLogoutButton, pressed && styles.pressed]}
       >
-        <Text style={styles.logoutButtonText}>Log out</Text>
+        <Text style={styles.moreLogoutButtonText}>Log out</Text>
       </Pressable>
     </ScrollView>
   );
@@ -6584,12 +6672,12 @@ export default function StaffWorkspace({
     const productQuantity = dailySalesSummary?.products.reduce((total, product) => total + product.quantity, 0) ?? 0;
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.dailySalesContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => setRoute('more')} style={styles.backButton}>
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily Sales</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Daily sales</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} · {formatDate(dailySalesDate)}</Text>
           </View>
         </View>
@@ -6622,7 +6710,7 @@ export default function StaffWorkspace({
             ) : (
               <>
                 <View style={styles.dailySalesSection}>
-                  <Text style={styles.sectionTitle}>Sales per Payment Method</Text>
+                  <Text style={styles.sectionTitle}>Sales per payment method</Text>
                   <View style={styles.dailySalesRows}>
                     {dailySalesSummary.paymentMethods.map((payment) => (
                       <View key={payment.paymentMethod} style={styles.dailySalesRow}>
@@ -6640,7 +6728,7 @@ export default function StaffWorkspace({
                   </View>
                 </View>
                 <View style={styles.dailySalesSection}>
-                  <Text style={styles.sectionTitle}>Products Sold</Text>
+                  <Text style={styles.sectionTitle}>Products sold</Text>
                   <View style={styles.dailySalesRows}>
                     {dailySalesSummary.products.map((product) => (
                       <View key={`${product.productId}-${product.variationName ?? 'base'}`} style={styles.dailySalesRow}>
@@ -6698,7 +6786,7 @@ export default function StaffWorkspace({
   const renderProfileSettings = () => {
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to More"
@@ -6708,7 +6796,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Profile &amp; settings</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Profile &amp; settings</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -6937,12 +7025,12 @@ export default function StaffWorkspace({
 
   const renderStockInForm = () => (
     <View style={styles.wasteFormSurface}>
-      <View style={styles.formHeader}>
+      <View style={[styles.formHeader, styles.stockOperationHeader]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>Stock-In</Text>
+          <Text style={[styles.formTitle, styles.stockOperationTitle]}>Stock-in</Text>
         </View>
       </View>
       <ScrollView
@@ -6965,10 +7053,10 @@ export default function StaffWorkspace({
           </View>
         ) : null}
         {renderIngredientSelector()}
-        <View style={windowWidth >= 600 ? styles.formRowWide : styles.formRow}>
-          <View style={windowWidth >= 600 ? styles.rowField : undefined}>
+        <View style={styles.formRowWide}>
+          <View style={styles.rowField}>
             <TextField
-              label="Quantity Received *"
+              label="Quantity received *"
               value={quantity}
               onChangeText={changeQuantity}
               placeholder="Enter quantity"
@@ -6977,9 +7065,9 @@ export default function StaffWorkspace({
               suffix={selectedIngredient?.unit}
             />
           </View>
-          <View style={windowWidth >= 600 ? styles.rowField : undefined}>
+          <View style={styles.rowField}>
             <DatePickerField
-              label="Transaction Date *"
+              label="Transaction date *"
               value={transactionDate}
               maxDate={today}
               error={stockInFieldErrors.transactionDate}
@@ -6993,7 +7081,7 @@ export default function StaffWorkspace({
           </View>
         </View>
         <DatePickerField
-          label="Expiration Date"
+          label="Expiration date"
           value={expirationDate}
           error={stockInFieldErrors.expirationDate}
           allowClear
@@ -7004,9 +7092,9 @@ export default function StaffWorkspace({
             if (stockInValidationAttempted) updateStockInValidation({ expirationDateValue: date });
           }}
         />
-        <Text style={styles.helperText}>Track expiry by received batch.</Text>
+        <Text style={styles.helperText}>Expiration tracking enabled · Cannot be before transaction date.</Text>
         <TextField
-          label="Notes"
+          label="Supplier/Reference (optional)"
           value={notes}
           onChangeText={(value) => {
             setNotes(value);
@@ -7015,6 +7103,16 @@ export default function StaffWorkspace({
           placeholder="Delivered by Supplier"
           multiline
         />
+        <View style={styles.stockInBalanceCard}>
+          <Text style={styles.stockInBalanceText}>
+            Unit of measurement: {selectedIngredient?.unit ?? '—'} · Read-only
+          </Text>
+          <Text style={styles.stockInBalanceText}>
+            Current expected quantity: {selectedIngredient
+              ? formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)
+              : '—'}
+          </Text>
+        </View>
         <View style={styles.wasteFormActions}>
           <Pressable accessibilityRole="button" onPress={reviewTransaction} style={({ pressed }) => [styles.saveButton, styles.wasteFormActionButton, pressed && styles.pressed]}>
             <Text style={styles.saveButtonText}>Save</Text>
@@ -7023,13 +7121,16 @@ export default function StaffWorkspace({
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
+        <Text style={styles.stockOperationFooter}>
+          {assignedBranch} · Saved with your employee account
+        </Text>
       </ScrollView>
     </View>
   );
 
   const renderWasteForm = () => (
     <View style={styles.wasteFormSurface}>
-      <View style={styles.formHeader}>
+      <View style={[styles.formHeader, styles.stockOperationHeader]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Back to Stocks"
@@ -7046,8 +7147,7 @@ export default function StaffWorkspace({
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>Waste / Spoilage</Text>
-          <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
+          <Text style={[styles.formTitle, styles.stockOperationTitle]}>Waste &amp; Spillage</Text>
         </View>
       </View>
       <ScrollView
@@ -7131,8 +7231,8 @@ export default function StaffWorkspace({
           ) : null}
         </View>
 
-        <View style={windowWidth >= 600 ? styles.formRowWide : styles.formRow}>
-          <View style={windowWidth >= 600 ? styles.rowField : undefined}>
+        <View style={styles.formRowWide}>
+          <View style={styles.rowField}>
             <TextField
               label="Quantity *"
               value={quantity}
@@ -7143,7 +7243,7 @@ export default function StaffWorkspace({
               suffix={selectedIngredient?.unit}
             />
           </View>
-          <View style={windowWidth >= 600 ? styles.rowField : undefined}>
+          <View style={styles.rowField}>
             <DatePickerField
                 label="Date *"
               value={transactionDate}
@@ -7227,6 +7327,9 @@ export default function StaffWorkspace({
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
+        <Text style={styles.stockOperationFooter}>
+          {assignedBranch} · Saved with your employee account
+        </Text>
       </ScrollView>
     </View>
   );
@@ -7235,9 +7338,9 @@ export default function StaffWorkspace({
     const formTitle = route === 'waste'
       ? 'Waste / Spoilage'
       : route === 'stockOut'
-        ? 'Stock-Out'
-        : 'Stock-Out / Usage';
-    const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity Used *';
+        ? 'Stock-out'
+        : 'Stock-out / Usage';
+    const quantityLabel = route === 'waste' ? 'Quantity lost *' : 'Quantity used *';
     const reasonOptions = route === 'waste'
       ? ['Waste', 'Spillage', 'Spoilage', 'Other']
       : route === 'stockOut'
@@ -7246,12 +7349,12 @@ export default function StaffWorkspace({
 
     return (
     <View style={route === 'stockOut' ? styles.wasteFormSurface : styles.movementFormRoot}>
-      <View style={styles.formHeader}>
+      <View style={[styles.formHeader, styles.stockOperationHeader]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>{formTitle}</Text>
+          <Text style={[styles.formTitle, styles.stockOperationTitle]}>{formTitle}</Text>
           <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
@@ -7376,7 +7479,7 @@ export default function StaffWorkspace({
                 </View>
                 <View style={windowWidth >= 600 ? styles.rowField : undefined}>
                   <DatePickerField
-                    label="Transaction Date *"
+                    label="Transaction date *"
                     value={transactionDate}
                     error={stockOutFieldErrors.transactionDate}
                     onChange={(date) => {
@@ -7403,7 +7506,7 @@ export default function StaffWorkspace({
         )}
         {route === 'stockOut' && usageMode === 'manual' ? null : (
           <DatePickerField
-            label="Transaction Date *"
+            label="Transaction date *"
             value={transactionDate}
             error={route === 'stockOut' ? stockOutFieldErrors.transactionDate : undefined}
             onChange={(date) => {
@@ -7470,7 +7573,7 @@ export default function StaffWorkspace({
               pressed && styles.pressed,
             ]}
           >
-            <Text style={styles.saveButtonText}>{route === 'stockOut' ? 'Save' : 'Review Waste'}</Text>
+            <Text style={styles.saveButtonText}>{route === 'stockOut' ? 'Save' : 'Review waste'}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -7503,7 +7606,7 @@ export default function StaffWorkspace({
 
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.stockOperationHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to edit usage"
@@ -7513,7 +7616,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Usage preview</Text>
+            <Text style={[styles.formTitle, styles.stockOperationTitle]}>Usage preview</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -7608,7 +7711,7 @@ export default function StaffWorkspace({
 
     return (
       <>
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.stockOperationHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to Stocks"
@@ -7618,14 +7721,14 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Stock-Out / Usage</Text>
+            <Text style={[styles.formTitle, styles.stockOperationTitle]}>Stock-out / usage</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
           <View style={styles.successBanner} accessibilityRole="alert">
             <Text style={styles.successIcon}>✓</Text>
-            <Text style={styles.successText}>Stock-Out recorded successfully.</Text>
+            <Text style={styles.successText}>Stock-out recorded successfully.</Text>
           </View>
           <View style={styles.receiptSummaryCard}>
             <Text style={styles.receiptSummaryTitle}>
@@ -7703,7 +7806,7 @@ export default function StaffWorkspace({
         contentContainerStyle={styles.compactFormContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.stockOperationHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to Stocks"
@@ -7713,7 +7816,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Waste / Spoilage</Text>
+            <Text style={[styles.formTitle, styles.stockOperationTitle]}>Waste &amp; Spillage</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -7765,7 +7868,7 @@ export default function StaffWorkspace({
     if (!receipt || !ingredient) {
       return (
         <View style={styles.inventoryFallback}>
-          <Text style={styles.inventoryEmptyTitle}>No Stock-In receipt to display</Text>
+          <Text style={styles.inventoryEmptyTitle}>No stock-in receipt to display</Text>
           <Pressable onPress={() => setRoute('stocks')} style={styles.detailBackFallback}>
             <Text style={styles.detailBackLabel}>Back to Stocks</Text>
           </Pressable>
@@ -7774,12 +7877,12 @@ export default function StaffWorkspace({
     }
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.formHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to Stock-In" onPress={() => setRoute('stockIn')} style={styles.backButton}>
+        <View style={[styles.formHeader, styles.stockOperationHeader]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to stock-in" onPress={() => setRoute('stockIn')} style={styles.backButton}>
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Transaction History</Text>
+            <Text style={[styles.formTitle, styles.stockOperationTitle]}>Transaction history</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} · Read-only receipt</Text>
           </View>
         </View>
@@ -7790,29 +7893,29 @@ export default function StaffWorkspace({
         <View style={styles.receiptSummaryCard}>
           <Text style={styles.receiptSummaryTitle}>{ingredient.name} received · New expected: {formatUnitQuantity(receipt.newQuantity, ingredient.unit)}</Text>
           <Text style={styles.receiptSummaryQuantity}>+{formatUnitQuantity(receipt.quantity, ingredient.unit)}</Text>
-          <Text style={styles.receiptSummarySubtitle}>Stock-In · {formatDate(receipt.transactionDate)} · {assignedBranch}</Text>
+          <Text style={styles.receiptSummarySubtitle}>Stock-in · {formatDate(receipt.transactionDate)} · {assignedBranch}</Text>
         </View>
         <View style={styles.receiptDetails}>
           <DetailRow label="Reference" value={receipt.reference} />
-          <DetailRow label="Type" value="Stock-In" />
+          <DetailRow label="Type" value="Stock-in" />
           <DetailRow label="Ingredient" value={ingredient.name} />
           <DetailRow label="Date" value={formatDate(receipt.transactionDate)} />
           <DetailRow label="Quantity received" value={formatUnitQuantity(receipt.quantity, ingredient.unit)} />
           <DetailRow label="Expiration date" value={receipt.expirationDate ? formatDate(receipt.expirationDate) : 'Not recorded'} />
-          <DetailRow label="Supplier Reference" value={receipt.notes || 'Not provided'} />
+          <DetailRow label="Supplier reference" value={receipt.notes || 'Not provided'} />
           <DetailRow label="Branch" value={assignedBranch} />
           <DetailRow label="Employee" value={staffName} />
           <DetailRow label="Expected quantity update" value={`${formatUnitQuantity(receipt.previousQuantity, ingredient.unit)} + ${formatUnitQuantity(receipt.quantity, ingredient.unit)} = ${formatUnitQuantity(receipt.newQuantity, ingredient.unit)}`} />
         </View>
         <View style={styles.permissionNotice}>
           <Text style={styles.permissionIcon}>i</Text>
-          <Text style={styles.permissionText}>This saved Stock-In record cannot be edited or deleted by staff. Stock-In is retained in Transaction History.</Text>
+          <Text style={styles.permissionText}>This saved stock-in record cannot be edited or deleted by staff. stock-In is retained in transaction history.</Text>
         </View>
         <Pressable accessibilityRole="button" onPress={() => setRoute('stockHistory')} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
-          <Text style={styles.historyButtonText}>View Transaction History</Text>
+          <Text style={styles.historyButtonText}>View transaction history</Text>
         </Pressable>
         <Pressable accessibilityRole="button" onPress={() => openForm('stockIn', 'stocks')} style={({ pressed }) => [styles.cancelButton, styles.receiptBackButton, pressed && styles.pressed]}>
-          <Text style={styles.cancelButtonText}>Back to Stock-In</Text>
+          <Text style={styles.cancelButtonText}>Back to stock-in</Text>
         </Pressable>
       </ScrollView>
     );
@@ -7828,7 +7931,7 @@ export default function StaffWorkspace({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Stocks'}
@@ -7838,7 +7941,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Transaction History</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Transaction history</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} Â· View only</Text>
           </View>
         </View>
@@ -8017,7 +8120,7 @@ export default function StaffWorkspace({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.formHeader}>
+      <View style={[styles.formHeader, styles.moreSubpageHeader]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Back to transaction history"
@@ -8027,7 +8130,7 @@ export default function StaffWorkspace({
           <Text style={styles.backGlyph}>‹</Text>
         </Pressable>
         <View style={styles.formHeaderCopy}>
-          <Text style={styles.formTitle}>History filters</Text>
+          <Text style={[styles.formTitle, styles.moreSubpageTitle]}>History filters</Text>
           <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
         </View>
       </View>
@@ -8146,7 +8249,7 @@ export default function StaffWorkspace({
         contentContainerStyle={styles.historyDetailPageContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.formHeader}>
+        <View style={[styles.formHeader, styles.moreSubpageHeader]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back to transaction history"
@@ -8156,7 +8259,7 @@ export default function StaffWorkspace({
             <Text style={styles.backGlyph}>‹</Text>
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Transaction details</Text>
+            <Text style={[styles.formTitle, styles.moreSubpageTitle]}>Transaction details</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -8301,6 +8404,13 @@ export default function StaffWorkspace({
             <Text style={styles.formSubtitle}>{saleReceipt.branchName} / Staff</Text>
           </View>
         </View>
+        <View style={styles.saleCompletedCard} accessibilityRole="header">
+          <View style={styles.saleCompletedIcon}>
+            <Text style={styles.saleCompletedIconText}>✓</Text>
+          </View>
+          <Text style={styles.saleCompletedTitle}>Sale Completed</Text>
+          <Text style={styles.saleCompletedMeta}>Thank you for your purchase</Text>
+        </View>
         <View style={styles.saleReceiptHeader}>
           <Text style={styles.saleReceiptBusiness}>Gelo's Takoyaki</Text>
           <Text style={styles.saleReceiptBranch}>{saleReceipt.branchName}</Text>
@@ -8336,7 +8446,7 @@ export default function StaffWorkspace({
           onPress={() => void shareSaleReceipt()}
           style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
         >
-          <Text style={styles.saveButtonText}>Generate Receipt</Text>
+          <Text style={styles.saveButtonText}>Generate receipt</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -8348,7 +8458,7 @@ export default function StaffWorkspace({
           }}
           style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
         >
-          <Text style={styles.saveButtonText}>New Order</Text>
+          <Text style={styles.saveButtonText}>New order</Text>
         </Pressable>
         {saleReceiptShareError ? <Text style={styles.receiptErrorText}>{saleReceiptShareError}</Text> : null}
       </ScrollView>
@@ -8623,14 +8733,6 @@ export default function StaffWorkspace({
               <Pressable
                 accessibilityRole="button"
                 disabled={logoutPending}
-                onPress={() => setLogoutConfirmationVisible(false)}
-                style={({ pressed }) => [styles.logoutCancelAction, pressed && styles.pressed]}
-              >
-                <Text style={styles.logoutCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={logoutPending}
                 onPress={confirmLogout}
                 style={({ pressed }) => [
                   styles.logoutConfirmAction,
@@ -8638,7 +8740,15 @@ export default function StaffWorkspace({
                   logoutPending && styles.confirmButtonDisabled,
                 ]}
               >
-                <Text style={styles.logoutConfirmText}>{logoutPending ? 'Logging out…' : 'Log Out'}</Text>
+                <Text style={styles.logoutConfirmText}>{logoutPending ? 'Logging out…' : 'Log out'}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={logoutPending}
+                onPress={() => setLogoutConfirmationVisible(false)}
+                style={({ pressed }) => [styles.logoutCancelAction, pressed && styles.pressed]}
+              >
+                <Text style={styles.logoutCancelText}>Cancel</Text>
               </Pressable>
             </View>
           </View>
@@ -8662,7 +8772,7 @@ export default function StaffWorkspace({
               <>
                 <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
                 <Text style={styles.dailyModalTitle}>
-                  {dailyDiscrepancies.length > 0 ? 'Inventory Discrepancy' : 'Daily Inventory Check'}
+                  {dailyDiscrepancies.length > 0 ? 'Inventory discrepancy' : 'Daily inventory check'}
                 </Text>
                 <Text style={styles.dailyModalSubtitle}>
                   {dailyDiscrepancies.length > 0
@@ -8718,7 +8828,7 @@ export default function StaffWorkspace({
                     }}
                     style={({ pressed }) => [styles.dailyModalPrimaryButton, pressed && styles.pressed]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>{dailyDiscrepancies.length > 0 ? 'Save Check' : 'Continue'}</Text>
+                    <Text style={styles.dailyModalPrimaryText}>{dailyDiscrepancies.length > 0 ? 'Save check' : 'Continue'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -8727,7 +8837,7 @@ export default function StaffWorkspace({
                 <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
                   <Text style={styles.dailyModalIconText}>✓</Text>
                 </View>
-                <Text style={styles.dailyModalTitle}>Daily Inventory Check</Text>
+                <Text style={styles.dailyModalTitle}>Daily inventory check</Text>
                 <Text style={styles.dailyModalSubtitle}>
                   Submit the physical count for this branch?
                 </Text>
@@ -8780,7 +8890,7 @@ export default function StaffWorkspace({
                       dailyCheckSubmitting && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>{dailyCheckSubmitting ? 'Saving…' : 'Submit Count'}</Text>
+                    <Text style={styles.dailyModalPrimaryText}>{dailyCheckSubmitting ? 'Saving…' : 'Submit count'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -8800,7 +8910,7 @@ export default function StaffWorkspace({
             <Text style={styles.dailyModalTitle}>Unsubmitted discrepancy</Text>
             <Text style={styles.dailyModalSubtitle}>
               You have {dailyDiscrepancies.length} unsubmitted {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}.
-              Submit {dailyDiscrepancies.length === 1 ? 'it' : 'them'} for Owner Review now?
+              Submit {dailyDiscrepancies.length === 1 ? 'it' : 'them'} For owner review now?
             </Text>
             <View style={styles.dailyModalSummary}>
               {dailyDiscrepancies.map((line) => (
@@ -8832,7 +8942,7 @@ export default function StaffWorkspace({
                 ]}
               >
                 <Text style={styles.dailyModalPrimaryText}>
-                  {dailyCheckSubmitting ? 'Saving…' : 'Submit for Owner Review'}
+                  {dailyCheckSubmitting ? 'Saving…' : 'Submit for owner review'}
                 </Text>
               </Pressable>
             </View>
@@ -8856,14 +8966,14 @@ export default function StaffWorkspace({
             ) : null}
             <Text style={styles.confirmTitle}>
               {route === 'waste'
-                ? 'Record Waste / Spoilage'
+                ? 'Record waste / spoilage'
                 : route === 'stockOut'
-                ? 'Confirm Stock-Out / Usage'
+                ? 'Confirm stock-out / usage'
                 : route === 'usagePreview'
                 ? 'Confirm cooking usage'
                 : route === 'stockIn'
-                ? 'Confirm Stock-In'
-                : 'Confirm Stock-Out'}
+                ? 'Confirm stock-in'
+                : 'Confirm stock-out'}
             </Text>
             <Text style={styles.confirmSubtitle}>
               {route === 'waste'
@@ -8970,7 +9080,7 @@ export default function StaffWorkspace({
                       confirming && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Record Waste'}</Text>
+                    <Text style={styles.confirmButtonText}>{confirming ? 'Recording…' : 'Record waste'}</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -8998,7 +9108,7 @@ export default function StaffWorkspace({
                       confirming && styles.confirmButtonDisabled,
                     ]}
                   >
-                    <Text style={styles.confirmButtonText}>{confirming ? 'Saving…' : 'Confirm Stock-In'}</Text>
+                    <Text style={styles.confirmButtonText}>{confirming ? 'Saving…' : 'Confirm stock-in'}</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -9027,7 +9137,7 @@ export default function StaffWorkspace({
                     ]}
                   >
                     <Text style={styles.confirmButtonText}>
-                      {confirming ? 'Recording…' : 'Record Usage'}
+                      {confirming ? 'Recording…' : 'Record usage'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -9120,7 +9230,7 @@ export default function StaffWorkspace({
                   }}
                   style={({ pressed }) => [styles.lowStockAlertPrimary, pressed && styles.pressed]}
                 >
-                  <Text style={styles.lowStockAlertPrimaryText}>View Alerts</Text>
+                  <Text style={styles.lowStockAlertPrimaryText}>View alerts</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
@@ -9162,48 +9272,67 @@ function createStaffStyles(theme: AppTheme) {
   dashboardContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 20 },
   dashboardLowStockScroll: { flexGrow: 0, marginHorizontal: -18 },
   dashboardLowStockList: { gap: 10, paddingHorizontal: 18, paddingTop: 2, paddingBottom: 8 },
-  dashboardPageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 21, lineHeight: 28, marginBottom: 9 },
+  dashboardPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 24, lineHeight: 32, marginBottom: 9 },
+  stockLandingContent: {
+    flexGrow: 1, paddingHorizontal: 17, paddingTop: 16, paddingBottom: 24,
+    backgroundColor: '#F9F5F7',
+  },
+  stockLandingHeader: { marginBottom: 12 },
+  stockLandingTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 18, lineHeight: 24 },
+  stockLandingSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
   pageContent: { paddingHorizontal: 18, paddingTop: 22, paddingBottom: 24 },
-  inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 22, paddingBottom: 24 },
-  inventoryPageHeader: { marginBottom: 14 },
+  inventoryListContent: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 13, paddingBottom: 24 },
+  inventoryPageHeader: { marginBottom: 10 },
   inventoryHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  inventoryHeaderCopy: { flex: 1, minWidth: 0, paddingTop: 4 },
+  inventoryHeaderCopy: { flex: 1, minWidth: 0, paddingTop: 2 },
+  inventoryPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 18, lineHeight: 23 },
+  inventoryPageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 2 },
   inventoryHeaderActions: { alignItems: 'flex-end', justifyContent: 'center' },
   inventoryReportsButton: {
-    minHeight: 48, minWidth: 96, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 7, paddingHorizontal: 12, borderRadius: 24,
-    backgroundColor: '#F5F5F4',
+    minHeight: 34, minWidth: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingHorizontal: 11, borderRadius: 18,
+    backgroundColor: '#EEEEEF',
   },
   inventoryReportsIcon: {
-    width: 18, height: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 2,
+    width: 15, height: 15, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 2,
   },
   inventoryReportsBarOne: {
-    width: 3, height: 8, borderRadius: 1, backgroundColor: '#000000',
+    width: 3, height: 7, borderRadius: 1, backgroundColor: '#000000',
   },
   inventoryReportsBarTwo: {
-    width: 3, height: 13, borderRadius: 1, backgroundColor: '#000000',
+    width: 3, height: 11, borderRadius: 1, backgroundColor: '#000000',
   },
   inventoryReportsBarThree: {
-    width: 3, height: 10, borderRadius: 1, backgroundColor: '#000000',
+    width: 3, height: 8, borderRadius: 1, backgroundColor: '#000000',
   },
-  inventoryReportsButtonText: { color: '#000000', fontFamily: font.bold, fontSize: 11 },
+  inventoryReportsButtonText: { color: '#000000', fontFamily: font.bold, fontSize: 9 },
   inventoryUnitsLink: {
-    minHeight: 40, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 0, marginTop: -6, backgroundColor: 'transparent',
+    minHeight: 27, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 0, marginTop: -2, backgroundColor: 'transparent',
   },
-  inventoryUnitsLinkText: { color: '#EC1358', fontFamily: font.semibold, fontSize: 9 },
-  inventorySearch: { marginTop: 14 },
-  inventoryFilterScroll: { flexGrow: 0, marginBottom: 17 },
+  inventoryUnitsLinkText: { color: '#EC1358', fontFamily: font.semibold, fontSize: 8 },
+  inventorySearch: { marginTop: 9 },
+  inventorySearchField: { minHeight: 37, marginBottom: 8, borderWidth: 0, borderRadius: 19, backgroundColor: '#EEEEEF' },
+  inventoryFilterScroll: { flexGrow: 0, marginBottom: 11 },
   inventoryFilters: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 7, paddingRight: 8 },
-  inventoryCount: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginBottom: 10 },
+  inventoryCount: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginBottom: 8 },
+  inventorySourceNotice: {
+    minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 11,
+    backgroundColor: '#EFEEFA', marginBottom: 9,
+  },
+  inventorySourceNoticeIcon: {
+    width: 16, height: 16, overflow: 'hidden', borderRadius: 8,
+    backgroundColor: '#E8EAFE', color: colors.navy, fontFamily: font.semibold,
+    fontSize: 10, lineHeight: 16, textAlign: 'center',
+  },
+  inventorySourceNoticeText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11 },
   inventoryAssignedEmpty: { flex: 1, paddingHorizontal: 17, paddingTop: 22 },
   inventoryState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   inventoryCardSeparator: { height: 9 },
   inventoryCard: {
-    minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
-    paddingVertical: 8, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1,
-    borderColor: colors.line, elevation: 1, shadowColor: colors.navy, shadowOpacity: 0.05,
-    shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+    minHeight: 76, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    paddingVertical: 8, borderRadius: 14, backgroundColor: '#EEEEEF',
   },
   inventoryCardCopy: { flex: 1, minWidth: 0, marginLeft: 11 },
   inventoryIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
@@ -9212,6 +9341,7 @@ function createStaffStyles(theme: AppTheme) {
   inventoryQuantity: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
   inventoryBadgeStack: { alignItems: 'flex-end', gap: 4, marginTop: 4 },
   dashboardExpiration: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
+  inventoryExpirationText: { color: '#A87511' },
   inventoryChipSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
   inventoryChipText: { color: colors.navy },
   inventoryChipTextSelected: { color: colors.white },
@@ -9230,15 +9360,15 @@ function createStaffStyles(theme: AppTheme) {
   detailBackFallback: { padding: 12 },
   detailBackLabel: { color: colors.pink, fontFamily: font.medium, fontSize: 10 },
   detailPage: { paddingHorizontal: 19, paddingTop: 18, paddingBottom: 25 },
-  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   detailBackButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#EEEEEF', marginRight: 11 },
   detailBackArrow: { color: colors.navy, fontFamily: font.regular, fontSize: 30, lineHeight: 32, marginTop: -4 },
   detailHeaderCopy: { flex: 1 },
-  detailPageTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 17, lineHeight: 23 },
+  detailPageTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 22, lineHeight: 28 },
   ingredientSummary: { flexDirection: 'row', alignItems: 'center', marginBottom: 19 },
   ingredientSummaryCopy: { flex: 1, marginLeft: 14 },
-  detailIngredientName: { color: colors.navy, fontFamily: font.bold, fontSize: 19 },
-  detailIngredientCategory: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 2, marginBottom: 4 },
+  detailIngredientName: { color: colors.navy, fontFamily: font.semibold, fontSize: 18, lineHeight: 24, marginTop: 2, marginBottom: 4 },
+  detailIngredientCategory: { color: colors.muted, fontFamily: font.medium, fontSize: 12, lineHeight: 16, marginTop: 2, marginBottom: 4 },
   stockSummaryCard: {
     paddingHorizontal: 17, paddingVertical: 16, borderRadius: 18, backgroundColor: '#EEEEEF',
     elevation: 2, shadowColor: colors.navy, shadowOpacity: 0.06, shadowRadius: 5,
@@ -9265,8 +9395,41 @@ function createStaffStyles(theme: AppTheme) {
   historyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
   historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
-  historyPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  historyPageContent: {
+    paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1,
+    backgroundColor: colors.white,
+  },
   saleReceiptPage: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  saleCompletedCard: {
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  saleCompletedIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 24,
+    backgroundColor: '#38A169',
+  },
+  saleCompletedIconText: {
+    color: colors.white,
+    fontFamily: font.bold,
+    fontSize: 24,
+  },
+  saleCompletedTitle: {
+    color: colors.navy,
+    fontFamily: font.bold,
+    fontSize: 14,
+    marginTop: 8,
+  },
+  saleCompletedMeta: {
+    color: colors.muted,
+    fontFamily: font.regular,
+    fontSize: 8,
+    marginTop: 3,
+  },
   saleReceiptHeader: { alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.line },
   saleReceiptBusiness: { color: colors.navy, fontFamily: font.bold, fontSize: 16 },
   saleReceiptBranch: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 4 },
@@ -9282,8 +9445,12 @@ function createStaffStyles(theme: AppTheme) {
   saleReceiptTotalLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
   saleReceiptTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12 },
   saleReceiptDetails: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: 13, backgroundColor: '#EEEEEF', marginTop: 13, marginBottom: 12 },
-  historyFilterPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
-  historyDetailPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24 },
+  historyFilterPageContent: {
+    paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, backgroundColor: colors.white,
+  },
+  historyDetailPageContent: {
+    paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, backgroundColor: colors.white,
+  },
   historySearchWrap: { marginTop: 13, marginBottom: -3 },
   historyMetadataRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -9448,7 +9615,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   summaryImage: { width: '100%', height: '100%' },
   sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 15 },
+  sectionTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 20, lineHeight: 28 },
   sectionHint: { color: colors.muted, fontFamily: font.regular, fontSize: 9 },
   quickActions: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   quickAction: {
@@ -9463,6 +9630,7 @@ function createStaffStyles(theme: AppTheme) {
   dashboardIngredientList: { gap: 8 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
+  thumbnailImage: { width: '88%', height: '88%' },
   thumbnailEmoji: { fontSize: 29 },
   smallThumbnailEmoji: { fontSize: 20 },
   largeThumbnail: { width: 70, height: 80 },
@@ -9481,8 +9649,8 @@ function createStaffStyles(theme: AppTheme) {
   expirationHeading: { marginTop: 20 },
   demoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 22 },
   pageHeader: { marginBottom: 17 },
-  pageTitle: { color: colors.ink, fontFamily: font.semibold, fontSize: 22, lineHeight: 29 },
-  pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 10, marginTop: 2 },
+  pageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 32, lineHeight: 40 },
+  pageSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 14, lineHeight: 20, marginTop: 2 },
   categoryScroll: { flexGrow: 0, marginBottom: 19 },
   categoryList: { gap: 8, paddingRight: 6 },
   categoryChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: colors.pale, borderWidth: 1, borderColor: colors.pale },
@@ -9497,28 +9665,24 @@ function createStaffStyles(theme: AppTheme) {
   stocksSummaryCard: { paddingHorizontal: 15, paddingVertical: 15, borderRadius: 16, backgroundColor: colors.navy, marginBottom: 15 },
   stocksSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 14 },
   stocksSummarySubtitle: { color: '#D5D5DF', fontFamily: font.regular, fontSize: 9, marginTop: 4 },
-  stockActionList: { gap: 12, marginTop: 12 },
+  stockActionList: { gap: 8, marginTop: 5 },
   actionCard: {
-    minHeight: 82, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, paddingVertical: 11,
-    borderRadius: 16, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line,
-    elevation: 3, shadowColor: colors.navy, shadowOpacity: 0.07, shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    minHeight: 66, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, paddingVertical: 9,
+    borderRadius: 13, backgroundColor: '#EEEEEF',
   },
-  actionIconBox: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#FFF5E9', marginRight: 12 },
-  actionIcon: { color: colors.orange, fontFamily: font.medium, fontSize: 23, lineHeight: 28 },
   actionCopy: { flex: 1 },
-  actionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 16 },
-  actionDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 3 },
-  actionChevron: { color: colors.orange, fontFamily: font.regular, fontSize: 25, marginLeft: 8 },
-  stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 13, borderRadius: 13, backgroundColor: '#F7F6FB', marginTop: 19 },
+  actionTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
+  actionDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 3 },
+  actionChevron: { color: colors.pink, fontFamily: font.regular, fontSize: 22, marginLeft: 8 },
+  stockTip: { flexDirection: 'row', alignItems: 'flex-start', padding: 11, borderRadius: 12, backgroundColor: '#FFF5CB', marginTop: 13 },
   stockTipIcon: { width: 17, height: 17, borderRadius: 9, overflow: 'hidden', color: colors.white, backgroundColor: colors.navy, fontFamily: font.semibold, fontSize: 11, textAlign: 'center', marginRight: 9 },
   stockTipText: { flex: 1, color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14 },
   alertsPageContent: {
-    flexGrow: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.white,
+    flexGrow: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12,
   },
-  alertsScreen: { flex: 1, backgroundColor: colors.white },
+  alertsScreen: { flex: 1, backgroundColor: '#F5F5F5' },
   alertLandingHeader: { marginBottom: 13 },
-  alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 22, lineHeight: 29 },
+  alertPageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 24, lineHeight: 32 },
   alertBranchName: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 1 },
   alertBusinessDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 2 },
   alertTabsGrid: { gap: 7, marginBottom: 12 },
@@ -9621,45 +9785,45 @@ function createStaffStyles(theme: AppTheme) {
     borderRadius: 9, backgroundColor: '#EEEEEF', marginTop: 'auto',
   },
   alertDetailBackText: { color: '#000000', fontFamily: font.semibold, fontSize: 8 },
-  morePageContent: { paddingHorizontal: 17, paddingTop: 16, paddingBottom: 18 },
+  morePageContent: {
+    flexGrow: 1, paddingHorizontal: 17, paddingTop: 16, paddingBottom: 18,
+    backgroundColor: colors.white,
+  },
+  morePageHeader: { marginBottom: 11 },
+  morePageTitle: { color: colors.ink, fontFamily: font.bold, fontSize: 17, lineHeight: 23 },
   staffIdentityCard: {
-    minHeight: 81, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15,
-    paddingVertical: 13, borderRadius: 16, backgroundColor: colors.navy, marginBottom: 13,
-    elevation: 4, shadowColor: colors.navy, shadowOpacity: 0.13, shadowRadius: 7,
-    shadowOffset: { width: 0, height: 3 },
+    minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
+    paddingVertical: 10, borderRadius: 14, backgroundColor: colors.navy, marginBottom: 11,
   },
   staffIdentityAvatar: {
-    width: 43, height: 43, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 22, backgroundColor: colors.pink, marginRight: 11,
+    width: 38, height: 38, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 19, backgroundColor: colors.pink, marginRight: 10,
   },
   staffIdentityHead: {
-    width: 11, height: 11, borderRadius: 6, backgroundColor: colors.white, marginBottom: 2,
+    width: 9, height: 9, borderRadius: 5, backgroundColor: colors.white, marginBottom: 2,
   },
   staffIdentityBody: {
-    width: 22, height: 12, borderTopLeftRadius: 12, borderTopRightRadius: 12,
+    width: 18, height: 10, borderTopLeftRadius: 10, borderTopRightRadius: 10,
     backgroundColor: colors.white,
   },
   staffIdentityCopy: { flex: 1, minWidth: 0 },
-  staffIdentityName: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  staffIdentityName: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
   staffIdentitySubtitle: { color: colors.orange, fontFamily: font.medium, fontSize: 8, marginTop: 3 },
   moreNavigationList: { gap: 8 },
   moreNavigationCard: {
-    minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
-    paddingVertical: 9, borderRadius: 13, backgroundColor: colors.pale,
-    borderWidth: 1, borderColor: colors.line,
+    minHeight: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    paddingVertical: 8, borderRadius: 13, backgroundColor: '#EEEEEF',
   },
-  moreNavigationIcon: {
-    width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 11, backgroundColor: colors.yellow, borderWidth: 1, borderColor: colors.orange,
-    marginRight: 10,
-  },
-  moreNavigationIconText: { color: colors.orange, fontFamily: font.medium, fontSize: 18, lineHeight: 22 },
   moreNavigationCopy: { flex: 1, minWidth: 0 },
-  moreNavigationTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  moreNavigationTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   moreNavigationDescription: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 2 },
   moreNavigationChevron: { color: colors.muted, fontFamily: font.regular, fontSize: 22, marginLeft: 5 },
-  moreLogoutButton: { marginTop: 12, marginBottom: 3 },
-  profileSettingsContent: { paddingHorizontal: 17, paddingTop: 13, paddingBottom: 18 },
+  moreLogoutButton: { marginTop: 'auto', marginBottom: 3 },
+  moreLogoutButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  profileSettingsContent: {
+    flexGrow: 1, paddingHorizontal: 17, paddingTop: 13, paddingBottom: 18,
+    backgroundColor: colors.white,
+  },
   profileInformationCard: {
     paddingHorizontal: 12, paddingVertical: 9, borderRadius: 13, backgroundColor: '#EEEEEF',
     marginBottom: 13,
@@ -9776,23 +9940,28 @@ function createStaffStyles(theme: AppTheme) {
   preferenceLabel: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   moreItemTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
   moreItemDetail: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 5 },
-  logoutButton: { alignItems: 'center', justifyContent: 'center', minHeight: 47, borderRadius: 14, backgroundColor: colors.pale, marginTop: 22 },
-  logoutButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 11 },
+  logoutButton: { alignItems: 'center', justifyContent: 'center', minHeight: 40, borderRadius: 11, backgroundColor: '#EEEEEF', marginTop: 22 },
+  logoutButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   formHeader: {
     minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 17,
     borderBottomWidth: 1, borderBottomColor: colors.line,
   },
+  stockOperationHeader: { minHeight: 56, backgroundColor: colors.white, borderBottomWidth: 0 },
+  stockOperationTitle: { fontSize: 21, lineHeight: 27 },
+  moreSubpageHeader: { backgroundColor: colors.white, borderBottomWidth: 0 },
   categoryReportHeader: { minHeight: 74, alignItems: 'center', borderBottomWidth: 0 },
   formHeaderCopy: { flex: 1, marginLeft: 10 },
   backButton: { width: 37, height: 37, alignItems: 'center', justifyContent: 'center', borderRadius: 19, backgroundColor: colors.pale },
   backGlyph: { color: colors.navy, fontSize: 30, lineHeight: 32, marginTop: -3 },
-  formTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15, lineHeight: 19 },
+  formTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 32, lineHeight: 40 },
+  inventoryReportPageTitle: { fontSize: 17, lineHeight: 22 },
   categoryReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 17, lineHeight: 22,
   },
   formSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 1 },
-  dailyCheckContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 18 },
-  dailySalesContent: { paddingBottom: 20 },
+  dailyCheckContent: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 13, paddingBottom: 18, backgroundColor: colors.white },
+  dailySalesContent: { flexGrow: 1, paddingBottom: 20, backgroundColor: colors.white },
+  moreSubpageTitle: { fontSize: 17, lineHeight: 22 },
   inventoryReportPage: { flex: 1 },
   inventoryReportScroll: { flex: 1 },
   inventoryReportContent: { paddingHorizontal: 14, paddingTop: 13, paddingBottom: 22 },
@@ -9801,13 +9970,12 @@ function createStaffStyles(theme: AppTheme) {
   totalQuantityMetadataText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 12 },
   totalQuantityInstruction: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginBottom: 7 },
   totalQuantityTable: {
-    minWidth: 330, overflow: 'hidden', borderWidth: 1, borderColor: colors.line,
-    borderRadius: 10, backgroundColor: colors.white,
+    minWidth: 330, overflow: 'hidden', borderRadius: 13, backgroundColor: '#EEEEEF',
   },
-  totalQuantityTableHeader: { backgroundColor: colors.pale, borderBottomWidth: 1, borderBottomColor: colors.line },
+  totalQuantityTableHeader: { backgroundColor: '#E8E8EA' },
   totalQuantityTableRow: {
     minHeight: 29, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7,
-    borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.white,
+    backgroundColor: '#EEEEEF',
   },
   totalQuantityCell: { color: colors.navy, fontFamily: font.regular, fontSize: 8, paddingHorizontal: 4 },
   totalQuantityIngredientCell: { width: 168, fontFamily: font.medium },
@@ -9839,7 +10007,7 @@ function createStaffStyles(theme: AppTheme) {
   },
   inventoryReportMetadataText: { color: colors.navy, fontFamily: font.medium, fontSize: 8, lineHeight: 13 },
   physicalCountReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 17, lineHeight: 22,
   },
   physicalCountMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -9880,7 +10048,7 @@ function createStaffStyles(theme: AppTheme) {
   physicalCountSectionTitle: { color: '#000000', fontFamily: font.bold, fontSize: 9, lineHeight: 13 },
   physicalCountReadOnly: { color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 8 },
   branchSummaryReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 17, lineHeight: 22,
   },
   branchSummaryMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -9921,7 +10089,7 @@ function createStaffStyles(theme: AppTheme) {
     flexGrow: 1, minHeight: 360, alignItems: 'center', justifyContent: 'center',
   },
   discrepancyReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 17, lineHeight: 22,
   },
   discrepancyMetadata: {
     color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12,
@@ -9978,7 +10146,7 @@ function createStaffStyles(theme: AppTheme) {
     marginBottom: 10,
   },
   stockStatusReportTitle: {
-    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 16, lineHeight: 19,
+    maxWidth: 245, minHeight: 38, fontFamily: font.bold, fontSize: 17, lineHeight: 22,
   },
   stockStatusReportContent: { flexGrow: 1 },
   stockStatusCardList: { gap: 8 },
@@ -10017,15 +10185,14 @@ function createStaffStyles(theme: AppTheme) {
     color: colors.muted, fontFamily: font.medium, fontSize: 8, lineHeight: 12,
   },
   inventoryReportLink: {
-    minHeight: 55, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10,
-    borderRadius: 12, backgroundColor: '#EEEEEF', borderWidth: 1, borderColor: colors.line,
-    marginBottom: 7,
+    minHeight: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11,
+    borderRadius: 14, backgroundColor: '#EEEEEF', marginBottom: 8,
   },
   inventoryReportIndex: {
-    width: 28, height: 28, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 9, backgroundColor: colors.pale, marginRight: 9,
+    width: 30, height: 30, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 15, backgroundColor: '#FCA639', marginRight: 10,
   },
-  inventoryReportIndexText: { color: '#FCA639', fontFamily: font.semibold, fontSize: 9 },
+  inventoryReportIcon: { width: 22, height: 22 },
   inventoryReportLinkText: { flex: 1, color: colors.navy, fontFamily: font.semibold, fontSize: 9, lineHeight: 13 },
   inventoryReportState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
   inventoryReportErrorText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14, textAlign: 'center' },
@@ -10082,6 +10249,10 @@ function createStaffStyles(theme: AppTheme) {
   },
   categoryReportCategoryCount: {
     color: colors.muted, fontFamily: font.medium, fontSize: 8, marginLeft: 4,
+  },
+  categoryReportPreview: {
+    color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 12,
+    paddingHorizontal: 13, paddingBottom: 10,
   },
   categoryReportExpand: {
     minWidth: 28, textAlign: 'right', color: '#4A4A59',
@@ -10289,6 +10460,15 @@ function createStaffStyles(theme: AppTheme) {
   },
   dailyAuditText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   compactFormContent: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 22 },
+  stockOperationFooter: {
+    color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 12,
+    textAlign: 'center', marginTop: 14,
+  },
+  stockInBalanceCard: {
+    paddingHorizontal: 11, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: '#EEEEEF', marginTop: -4, marginBottom: 12,
+  },
+  stockInBalanceText: { color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
   receiptInfoBanner: { flexDirection: 'row', alignItems: 'flex-start', padding: 10, borderRadius: 11, backgroundColor: '#FFF5CB', marginBottom: 12 },
   receiptInfoIcon: { width: 17, height: 17, overflow: 'hidden', borderRadius: 9, color: colors.white, backgroundColor: colors.orange, fontFamily: font.bold, fontSize: 10, textAlign: 'center', marginRight: 8 },
   receiptInfoText: { flex: 1, color: colors.navy, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
@@ -10381,7 +10561,7 @@ function createStaffStyles(theme: AppTheme) {
   selectChevron: { color: colors.orange, fontSize: 18, marginLeft: 5 },
   dropdown: { maxHeight: 230, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.white, marginTop: 5, overflow: 'hidden' },
   dropdownSearchInput: { minHeight: 38, margin: 8, paddingHorizontal: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.pale, color: colors.ink, fontFamily: font.regular, fontSize: 9 },
-  ingredientCategoryHeading: { paddingHorizontal: 10, paddingTop: 9, paddingBottom: 4, color: colors.muted, fontFamily: font.semibold, fontSize: 8, textTransform: 'uppercase' },
+  ingredientCategoryHeading: { paddingHorizontal: 10, paddingTop: 9, paddingBottom: 4, color: colors.muted, fontFamily: font.semibold, fontSize: 8 },
   stockInDropdownCopy: { marginLeft: 0, paddingVertical: 2 },
   stockOutDropdownCopy: { marginLeft: 0, paddingVertical: 2 },
   ingredientPickerEmpty: {
@@ -10404,8 +10584,8 @@ function createStaffStyles(theme: AppTheme) {
   stockInFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },
   stockInFormButton: { width: '50%', maxWidth: 180, minHeight: 44 },
   formButtons: { gap: 9, marginTop: 7 },
-  wasteFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },
-  wasteFormActionButton: { width: '50%', maxWidth: 180, minHeight: 44 },
+  wasteFormActions: { alignItems: 'stretch', gap: 8, marginTop: 7 },
+  wasteFormActionButton: { width: '100%', minHeight: 44 },
   saveButton: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
   saveButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#EEEEF0' },
@@ -10431,15 +10611,6 @@ function createStaffStyles(theme: AppTheme) {
   usageWarningText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14 },
   usageConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
   wasteConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
-  wasteTrashIcon: { width: 20, height: 22, alignItems: 'center', justifyContent: 'flex-end' },
-  wasteTrashHandle: { width: 7, height: 2, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: colors.pink, marginBottom: 2 },
-  wasteTrashLid: { width: 16, height: 2, borderRadius: 1, backgroundColor: colors.pink, marginBottom: 2 },
-  wasteTrashBody: {
-    width: 13, height: 14, flexDirection: 'row', justifyContent: 'space-evenly',
-    paddingTop: 3, borderWidth: 1.5, borderTopWidth: 0, borderColor: colors.pink,
-    borderBottomLeftRadius: 3, borderBottomRightRadius: 3,
-  },
-  wasteTrashLine: { width: 1, height: 6, backgroundColor: colors.pink },
   receiptSummaryCard: { paddingHorizontal: 16, paddingVertical: 15, borderRadius: 17, backgroundColor: colors.navy, marginBottom: 14 },
   receiptSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
   receiptSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 31, lineHeight: 37, marginTop: 3 },

@@ -1,3 +1,5 @@
+import { typography } from '../../theme/typography';
+
 export const ownerColors = {
   primary: '#EC1358',
   navy: '#0F1025',
@@ -21,13 +23,20 @@ export const ownerColors = {
 } as const;
 
 export const ownerTypography = {
-  pageTitle: { fontFamily: 'Poppins_700Bold', fontSize: 20, color: ownerColors.navy },
-  cardTitle: { fontFamily: 'Poppins_600SemiBold', fontSize: 16, color: ownerColors.navy },
-  label: { fontFamily: 'Poppins_400Regular', fontSize: 14, color: ownerColors.black },
-  value: { fontFamily: 'Poppins_400Regular', fontSize: 16, color: ownerColors.black },
+  display: { ...typography.display, color: ownerColors.navy },
+  h1: { ...typography.h1, color: ownerColors.navy },
+  h2: { ...typography.h2, color: ownerColors.navy },
+  h3: { ...typography.h3, color: ownerColors.navy },
+  titleLarge: { ...typography.titleLarge, color: ownerColors.navy },
+  titleMedium: { ...typography.titleMedium, color: ownerColors.navy },
+  pageTitle: { ...typography.h1, color: ownerColors.navy },
+  cardTitle: { ...typography.titleMedium, color: ownerColors.navy },
+  label: { ...typography.labelButton, color: ownerColors.navy },
+  value: { ...typography.bodyLarge, color: ownerColors.black },
   caption: { fontFamily: 'Poppins_500Medium', fontSize: 12, color: ownerColors.secondaryText },
-  button: { fontFamily: 'Poppins_600SemiBold', fontSize: 14, color: ownerColors.navy },
-  badge: { fontFamily: 'Poppins_500Medium', fontSize: 11, color: ownerColors.navy },
+  button: { ...typography.labelButton, color: ownerColors.navy },
+  badge: { ...typography.caption, color: ownerColors.navy },
+  small: { ...typography.small, color: ownerColors.secondaryText },
 } as const;
 
 export const ownerSpacing = {

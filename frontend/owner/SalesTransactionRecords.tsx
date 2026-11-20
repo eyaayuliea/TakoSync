@@ -178,7 +178,7 @@ export default function SalesTransactionRecords({
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
           <Text style={styles.backChevron}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>{detailTitle ? 'Sales Transaction Details' : 'Sales Transaction Records'}</Text>
+        <Text style={styles.headerTitle}>{detailTitle ? 'Sales transaction details' : 'Sales transaction records'}</Text>
       </View>
 
       {detailTitle ? (

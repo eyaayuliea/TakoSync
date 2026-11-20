@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
-  Modal,
   PanResponder,
   Pressable,
   Platform,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Modal from '../SessionProtectedModal';
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import { resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
@@ -684,19 +684,18 @@ export default function OwnerMobileWorkspace({
     const description = productForm.description.trim();
     if (!name) errors.product_name = 'Product name is required.';
     if (!description) errors.description = 'Product description is required.';
-    const variants = productEditorMode === 'edit' && selectedProduct
-      ? selectedProduct.variants.map((variant) => ({
+    const productToEdit = productEditorMode === 'edit' ? selectedProduct : null;
+    const newVariants = standardProductVariants.map((variant) => ({
+      ...variant,
+      key: variant.variant_code,
+      price: Number(productForm.variantPrices[variant.variant_code]),
+    }));
+    const variants = productToEdit
+      ? productToEdit.variants.map((variant) => ({
         key: variant.id,
-        variant_code: variant.variant_code,
-        size_label: variant.size_label,
-        piece_count: variant.piece_count,
         price: Number(productForm.variantPrices[variant.id]),
       }))
-      : standardProductVariants.map((variant) => ({
-        ...variant,
-        key: variant.variant_code,
-        price: Number(productForm.variantPrices[variant.variant_code]),
-      }));
+      : newVariants;
     if (variants.length === 0 || variants.some((variant) =>
       !productForm.variantPrices[variant.key]?.trim() ||
       !Number.isFinite(variant.price) ||
@@ -717,15 +716,15 @@ export default function OwnerMobileWorkspace({
         description,
         is_available: productForm.is_available,
       };
-      if (productEditorMode === 'edit' && selectedProduct) {
-        await updateProduct(selectedProduct.id, {
+      if (productToEdit) {
+        await updateProduct(productToEdit.id, {
           ...payload,
           variants: variants.map((variant) => ({ id: variant.key, price: variant.price })),
         });
       } else {
         await createProduct({
           ...payload,
-          variants: variants.map(({ variant_code, size_label, piece_count, price }) => ({
+          variants: newVariants.map(({ variant_code, size_label, piece_count, price }) => ({
             variant_code,
             size_label,
             piece_count,
@@ -904,7 +903,7 @@ export default function OwnerMobileWorkspace({
       </View>
 
       <Pressable accessibilityRole="button" onPress={() => resetProductForm('add')} style={styles.primaryActionButton}>
-        <Text style={styles.primaryActionText}>+ Add Product</Text>
+        <Text style={styles.primaryActionText}>+ Add product</Text>
       </Pressable>
 
       {productsError ? showError(productsError) : productsLoading && productRecords.length === 0 ? (
@@ -965,7 +964,7 @@ export default function OwnerMobileWorkspace({
             </View>
           </View>
           <Pressable accessibilityRole="button" onPress={() => resetProductForm('edit', selectedProduct)} style={styles.secondaryActionButton}>
-            <Text style={styles.secondaryActionText}>Edit Product</Text>
+            <Text style={styles.secondaryActionText}>Edit product</Text>
           </Pressable>
         </View>
       )}
@@ -974,7 +973,7 @@ export default function OwnerMobileWorkspace({
         <View style={styles.productModalBackdrop}>
           <View style={styles.productModalCard}>
             <View style={styles.productModalHeader}>
-              <Text style={styles.productModalTitle}>{productEditorMode === 'edit' ? 'Edit Product' : 'Add Product'}</Text>
+              <Text style={styles.productModalTitle}>{productEditorMode === 'edit' ? 'Edit product' : 'Add product'}</Text>
               <Pressable accessibilityRole="button" onPress={() => { setProductEditorMode(null); setProductFeedback(null); }} style={styles.closeActionButton}>
                 <Text style={styles.closeActionText}>×</Text>
               </Pressable>
@@ -984,7 +983,7 @@ export default function OwnerMobileWorkspace({
             <TextInput
               value={productForm.product_name}
               onChangeText={(value) => setProductForm((current) => ({ ...current, product_name: value }))}
-              placeholder="e.g. Takoyaki Special"
+              placeholder="e.g. Takoyaki special"
               placeholderTextColor={colors.muted}
               style={[styles.textInput, productFormErrors.product_name && styles.textInputError]}
               accessibilityLabel="Product name"
@@ -1013,7 +1012,9 @@ export default function OwnerMobileWorkspace({
             {(productEditorMode === 'edit' && selectedProduct
               ? selectedProduct.variants.map((variant) => ({
                 key: variant.id,
-                label: `${variant.size_label} · ${variant.piece_count} pieces`,
+                label: variant.piece_count === null
+                  ? `${variant.size_label} · piece count unavailable`
+                  : `${variant.size_label} · ${variant.piece_count} pieces`,
               }))
               : standardProductVariants.map((variant) => ({
                 key: variant.variant_code,
@@ -1102,7 +1103,7 @@ export default function OwnerMobileWorkspace({
         <SkeletonCard label="Loading sales" />
       ) : null}
 
-      <SectionHeading title="Branch Sales" />
+      <SectionHeading title="Branch sales" />
       {salesLoading && !salesData ? (
         <SkeletonCard label="Loading branch sales" />
       ) : salesError ? showError(OWNER_ALERT_LOAD_ERROR) : branchMetrics.length ? (
@@ -1278,7 +1279,7 @@ export default function OwnerMobileWorkspace({
         style={styles.omCompareButton}
       >
         <Text style={styles.omCompareButtonIcon}>▥</Text>
-        <Text style={styles.omCompareButtonText}>Compare Branches</Text>
+        <Text style={styles.omCompareButtonText}>Compare branches</Text>
       </Pressable>
 
       {inventoryLoading ? (
@@ -1379,7 +1380,7 @@ export default function OwnerMobileWorkspace({
           >
             <Text style={styles.omCompareBackText}>‹</Text>
           </Pressable>
-          <Text style={styles.omCompareHeaderTitle}>Compare Branches</Text>
+          <Text style={styles.omCompareHeaderTitle}>Compare branches</Text>
           <View style={styles.omCompareHeaderSpacer} />
         </View>
 
@@ -1776,7 +1777,7 @@ export default function OwnerMobileWorkspace({
             }} style={styles.omBackButton}>
               <Text style={styles.omBackText}>‹</Text>
             </Pressable>
-            <Text style={styles.omHeaderTitle}>Discrepancy Details</Text>
+            <Text style={styles.omHeaderTitle}>Discrepancy details</Text>
             <View style={styles.omHeaderSpacer} />
           </View>
           <View style={styles.omDiscrepancyCard}>
@@ -1809,7 +1810,7 @@ export default function OwnerMobileWorkspace({
             ))}
             {selected.decisionReason ? (
               <View style={styles.omDiscrepancyDetailRow}>
-                <Text style={styles.omDiscrepancyDetailLabel}>Owner decision</Text>
+                <Text style={styles.omDiscrepancyDetailLabel}>owner decision</Text>
                 <Text style={styles.omDiscrepancyDetailValue}>{selected.decisionReason}</Text>
               </View>
             ) : null}
@@ -1846,7 +1847,7 @@ export default function OwnerMobileWorkspace({
               onPress={() => openAction('validate')}
               style={styles.omPrimaryButton}
             >
-              <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
+              <Text style={styles.omPrimaryButtonText}>Validate count</Text>
             </Pressable>
           ) : null}
         </View>
@@ -1919,7 +1920,7 @@ export default function OwnerMobileWorkspace({
                 </View>
                 {item.validationTarget === 'correction_request' && (
                   <View style={styles.omStatusCorrection}>
-                    <Text style={styles.omStatusCorrectionText}>! Correction Request</Text>
+                    <Text style={styles.omStatusCorrectionText}>! Correction request</Text>
                   </View>
                 )}
               </View>
@@ -2012,17 +2013,17 @@ export default function OwnerMobileWorkspace({
     More: 'More',
     Products: 'Products & Menu',
     Ingredients: 'Ingredients & Recipes',
-    StockSettings: 'Stock Threshold & Expiration Settings',
-    BusinessHours: 'Business Closing Time',
+    StockSettings: 'Stock threshold & expiration settings',
+    BusinessHours: 'Business closing time',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
-    SalesTransactions: 'Sales Transaction Records',
+    SalesTransactions: 'Sales transaction records',
     RecordCategories: 'Records',
-    SalesConsumptionRecords: 'Sales Consumption Records',
-    StockInRecords: 'Stock-In Records',
-    WasteSpillageRecords: 'Waste and Spillage Records',
-    PhysicalCountRecords: 'Physical Inventory Count Records',
-    AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
+    SalesConsumptionRecords: 'Sales consumption records',
+    StockInRecords: 'Stock-in records',
+    WasteSpillageRecords: 'Waste and spillage records',
+    PhysicalCountRecords: 'Physical inventory count records',
+    AuthorizedAdjustmentRecords: 'Authorized adjustment records',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2043,11 +2044,11 @@ export default function OwnerMobileWorkspace({
             {page === 'Dashboard' ? (
               <>
                 <Text style={styles.ownerGreeting}>Hello,</Text>
-                <Text style={styles.ownerGreetingName}>{user.displayName || 'Isabel San Esteban'}!</Text>
+                <Text style={styles.ownerGreetingName}>{user.displayName || 'Owner'}!</Text>
               </>
             ) : (
               <>
-                <Text style={styles.appLabel}>TAKOSYNC · OWNER</Text>
+                <Text style={styles.appLabel}>TakoSync · owner</Text>
                 <Text style={styles.pageTitle}>{pageTitle[page]}</Text>
               </>
             )}
@@ -2071,7 +2072,7 @@ export default function OwnerMobileWorkspace({
 
       {!isMenuFlowPage && page !== 'Dashboard' && page !== 'Sales' && page !== 'Reports' && page !== 'Inventory' && page !== 'CompareInventory' && page !== 'Alerts' && page !== 'Profile' && page !== 'Ingredients' && page !== 'BusinessHours' && page !== 'StaffAccounts' && page !== 'ActivityDetail' && (
         <View style={styles.branchFilterBlock}>
-          <Text style={styles.filterLabel}>BRANCH</Text>
+          <Text style={styles.filterLabel}>Branch</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
             <Pressable accessibilityRole="button" accessibilityState={{ selected: branchId === null }} onPress={() => onBranchChange(null)} style={[styles.branchChip, branchId === null && styles.branchChipSelected]}>
               <Text style={[styles.branchChipText, branchId === null && styles.branchChipTextSelected]}>All</Text>
@@ -2256,7 +2257,7 @@ export default function OwnerMobileWorkspace({
                 style={styles.activityDetailAction}
               >
                 <Text style={styles.activityDetailActionText}>
-                  {selectedActivity.category === 'Sales' ? 'View Full Transaction Details' : 'View Record Details'}
+                  {selectedActivity.category === 'Sales' ? 'View full transaction details' : 'View record details'}
                 </Text>
               </Pressable>
             </Pressable>
@@ -2399,7 +2400,7 @@ export default function OwnerMobileWorkspace({
                   ? 'Approve correction request'
                   : discrepancyAction === 'reject'
                     ? 'Reject correction request'
-                    : 'Validate Count'}
+                    : 'Validate count'}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -2425,10 +2426,10 @@ export default function OwnerMobileWorkspace({
                 </Text>
                 <Text style={styles.modalWarning}>
                   {discrepancyAction === 'approve'
-                    ? 'Approval only accepts the Staff correction request. It does not change inventory. The Owner must separately use Validate Count.'
+                    ? 'Approval only accepts the staff correction request. it Does not change inventory. the Owner must separately use validate count.'
                     : discrepancyAction === 'reject'
                       ? 'Rejection is retained in the audit history. Staff may submit another correction request.'
-                      : 'Validate Count is a separate authorization. It is rejected if this ingredient’s stock changed since the count began. If corrected actual equals expected, it records a no-change resolution.'}
+                      : 'Validate count is a separate authorization. it Is rejected if this ingredient’s stock changed since the count began. if Corrected actual equals expected, it records a no-change resolution.'}
                 </Text>
                 <Text style={styles.fieldLabel}>
                   {discrepancyAction === 'validate' ? 'Validation reason *' : 'Decision reason *'}
@@ -2465,7 +2466,7 @@ export default function OwnerMobileWorkspace({
                         ? 'Confirm approval'
                         : discrepancyAction === 'reject'
                           ? 'Confirm rejection'
-                          : 'Confirm Validate Count'}
+                          : 'Confirm validate count'}
                     </Text>}
                 </Pressable>
                 <Pressable

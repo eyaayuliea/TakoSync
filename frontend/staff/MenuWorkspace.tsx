@@ -3,7 +3,6 @@ import {
   Alert,
   ActivityIndicator,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Modal from '../SessionProtectedModal';
 import type { ImageSourcePropType } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
 import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
@@ -74,6 +74,15 @@ const font = {
   medium: 'Poppins_500Medium',
   semibold: 'Poppins_600SemiBold',
   bold: 'Poppins_700Bold',
+} as const;
+
+const typeScale = {
+  micro: 8,
+  caption: 10,
+  body: 12,
+  section: 14,
+  heading: 16,
+  title: 18,
 } as const;
 
 const money = (value: number) => `₱${value.toLocaleString('en-PH')}`;
@@ -149,19 +158,32 @@ function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
       {[
         { number: 1, label: 'Menu' },
         { number: 2, label: 'Cart' },
-        { number: 3, label: 'Order' },
+        { number: 3, label: 'Payment' },
       ].map((step, index) => {
-        const complete = step.number <= active;
+        const complete = step.number < active;
+        const current = step.number === active;
         return (
           <React.Fragment key={step.number}>
             {index > 0 ? <View style={[styles.progressLine, step.number <= active && styles.progressLineActive]} /> : null}
             <View style={styles.progressStep}>
-              <View style={[styles.progressCircle, complete && styles.progressCircleActive]}>
-                <Text style={[styles.progressNumber, complete && styles.progressNumberActive]}>
+              <View style={[
+                styles.progressCircle,
+                complete && styles.progressCircleActive,
+                current && styles.progressCircleCurrent,
+              ]}>
+                <Text style={[
+                  styles.progressNumber,
+                  complete && styles.progressNumberActive,
+                  current && styles.progressNumberCurrent,
+                ]}>
                   {step.number < active ? '✓' : step.number}
                 </Text>
               </View>
-              <Text style={[styles.progressLabel, complete && styles.progressLabelActive]}>{step.label}</Text>
+              <Text style={[
+                styles.progressLabel,
+                complete && styles.progressLabelActive,
+                current && styles.progressLabelCurrent,
+              ]}>{step.label}</Text>
             </View>
           </React.Fragment>
         );
@@ -170,8 +192,9 @@ function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
   );
 }
 
-function ScreenHeader({ title, onBack }: {
+function ScreenHeader({ title, subtitle, onBack }: {
   title: string;
+  subtitle?: string;
   onBack: () => void;
 }) {
   return (
@@ -187,6 +210,7 @@ function ScreenHeader({ title, onBack }: {
         </Pressable>
         <Text style={styles.headerTitle}>{title}</Text>
       </View>
+      {subtitle ? <Text style={styles.headerSubtitle}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -251,6 +275,7 @@ function CartItemCard({
   const { isDark } = useTheme();
   return (
     <View style={[styles.cartItem, isDark && { backgroundColor: '#0F1025' }]}>
+      <ProductArtwork name={product.productName} />
       <View style={styles.cartItemCopy}>
         <Text style={[styles.cartItemName, isDark && { color: '#FFFFFF' }]} numberOfLines={2}>{product.name}</Text>
         <Text style={[styles.cartItemDetail, isDark && { color: '#B2B3C4' }]} numberOfLines={2}>{product.description || 'No description available'}</Text>
@@ -368,6 +393,7 @@ export default function MenuWorkspace({
   const darkWarningText = isDark ? { color: '#0F1025' } : undefined;
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
+  const [paymentMenuOpen, setPaymentMenuOpen] = useState(false);
   const [cashReceived, setCashReceived] = useState('');
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [saleSubmitting, setSaleSubmitting] = useState(false);
@@ -423,9 +449,11 @@ export default function MenuWorkspace({
   const emptyOrderMessage = menuOrderValidationMessage(cartProducts.length);
   const discardOrder = () => {
     setCashReceived('');
+    setPaymentMenuOpen(false);
     setSelectedAddonIds([]);
     setSaleError('');
     setSaleRetryAvailable(false);
+    setPaymentMenuOpen(false);
     setProceedBlocked(false);
     onCancelOrder();
     onSetPage('menu');
@@ -488,7 +516,7 @@ export default function MenuWorkspace({
   if (page === 'cart') {
     return (
       <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
-        <ScreenHeader title="Cart" onBack={() => onSetPage('menu')} />
+        <ScreenHeader title="Current Order Summary" onBack={() => onSetPage('menu')} />
         <ProgressSteps active={2} />
         <ScrollView
           style={styles.cartScroll}
@@ -519,32 +547,33 @@ export default function MenuWorkspace({
           >
             <Text style={styles.addMoreText}>＋  Add more items</Text>
           </Pressable>
+          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.cancelCartButton}>
+            <Text style={styles.cancelCartText}>Cancel order</Text>
+          </Pressable>
           <Text style={styles.previewNotice}>Cart is saved while you review checkout. No inventory changes occur yet.</Text>
         </ScrollView>
-        <View style={styles.totalFooter}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(totals.total)}</Text>
+        <View style={[styles.cartTotalFooter, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}>
+          <View style={styles.cartTotalRow}>
+            <Text style={[styles.cartTotalLabel, isDark && { color: '#FFFFFF' }]}>Total</Text>
+            <Text style={styles.cartTotalValue}>{money(totals.total)}</Text>
           </View>
-          <View style={styles.footerActions}>
-            <Pressable accessibilityRole="button" onPress={() => onSetPage('menu')} style={styles.footerSecondary}>
-              <Text style={styles.footerSecondaryText}>Go back to menu</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                if (emptyOrderMessage !== '') return;
-                onSetPage('checkout');
-              }}
-              style={[styles.placeOrderButton, emptyOrderMessage !== '' && styles.disabledButton]}
-            >
-            <Text style={styles.placeOrderText}>Proceed to Payment</Text>
-            </Pressable>
-          </View>
-          {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
-          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.checkoutBackButton}>
-            <Text style={styles.checkoutBackText}>Cancel order</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Proceed to Payment"
+            disabled={emptyOrderMessage !== ''}
+            onPress={() => {
+              if (emptyOrderMessage !== '') return;
+              onSetPage('checkout');
+            }}
+            style={({ pressed }) => [
+              styles.cartProceedButton,
+              emptyOrderMessage !== '' && styles.disabledButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.cartProceedText}>Proceed to Payment</Text>
           </Pressable>
+          {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
         </View>
       </View>
     );
@@ -553,22 +582,42 @@ export default function MenuWorkspace({
   if (page === 'checkout') {
     return (
       <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
-        <ScreenHeader title="Order" onBack={() => onSetPage('cart')} />
+        <ScreenHeader
+          title="Payment"
+          subtitle={`${branchName} · ${staffName}`}
+          onBack={() => onSetPage('cart')}
+        />
         <ProgressSteps active={3} />
-          <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <Text style={styles.checkoutTitle}>Review transaction</Text>
-          {cartProducts.map(({ product, quantity }) => (
-            <View key={product.id} style={[styles.checkoutLine, darkSecondarySurface]}>
-              <View style={styles.checkoutLineCopy}>
-              <Text style={[styles.checkoutLineName, darkSecondaryText]}>{product.name}</Text>
-              <Text style={[styles.checkoutLineMeta, darkSecondaryText]}>{quantity} × {money(product.price)}</Text>
+        <ScrollView
+          style={styles.checkoutScroll}
+          contentContainerStyle={styles.checkoutContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.paymentSummaryCard, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}>
+            <Text style={[styles.paymentSummaryTitle, isDark && { color: '#FFFFFF' }]}>Order Summary</Text>
+            {cartProducts.map(({ product, quantity }) => (
+              <View key={product.id} style={styles.paymentSummaryLine}>
+                <View style={styles.paymentSummaryCopy}>
+                  <Text style={[styles.paymentSummaryName, isDark && { color: '#FFFFFF' }]}>{product.name}</Text>
+                  <Text style={[styles.paymentSummaryMeta, isDark && { color: '#B8B8C5' }]}>{quantity} × {money(product.price)}</Text>
+                </View>
+                <Text style={[styles.paymentSummaryLineTotal, isDark && { color: '#FFFFFF' }]}>{money(product.price * quantity)}</Text>
               </View>
-              <Text style={styles.checkoutLineTotal}>{money(product.price * quantity)}</Text>
+            ))}
+            {selectedAddons.map((addon) => (
+              <View key={addon.id} style={styles.paymentSummaryLine}>
+                <View style={styles.paymentSummaryCopy}>
+                  <Text style={[styles.paymentSummaryName, isDark && { color: '#FFFFFF' }]}>{addon.name}</Text>
+                  <Text style={[styles.paymentSummaryMeta, isDark && { color: '#B8B8C5' }]}>Add-on</Text>
+                </View>
+                <Text style={[styles.paymentSummaryLineTotal, isDark && { color: '#FFFFFF' }]}>{money(addon.price)}</Text>
+              </View>
+            ))}
+            <View style={styles.paymentSummaryTotalRow}>
+              <Text style={[styles.paymentSummaryTotalLabel, isDark && { color: '#B8B8C5' }]}>Total</Text>
+              <Text style={[styles.paymentSummaryTotalValue, isDark && { color: '#FFFFFF' }]}>{money(checkoutTotal)}</Text>
             </View>
-          ))}
-          <View style={styles.checkoutTotalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
           <Text style={styles.paymentLabel}>Add-ons</Text>
           {displayAddons.length === 0 ? (
@@ -596,26 +645,47 @@ export default function MenuWorkspace({
               <Text style={styles.checkoutLineTotal}>{money(addonsTotal)}</Text>
             </View>
           ) : null}
-          <Text style={styles.paymentLabel}>Payment method</Text>
-          <Text style={styles.paymentMessage}>
-            The selected payment method is recorded with the sale after the transaction is saved.
-          </Text>
-          <View style={styles.paymentOptions}>
-            {(['Cash', 'QR'] as const).map((method) => (
-              <Pressable
-                key={method}
-                accessibilityRole="button"
-                accessibilityState={{ selected: paymentMethod === method }}
-                onPress={() => setPaymentMethod(method)}
-                style={[styles.paymentOption, paymentMethod === method && styles.paymentOptionSelected]}
-              >
-                <Text style={[styles.paymentOptionText, paymentMethod === method && styles.paymentOptionTextSelected]}>{method}</Text>
-              </Pressable>
-            ))}
-          </View>
+
+          <Text style={styles.paymentLabel}>Payment Method</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: paymentMenuOpen }}
+            onPress={() => setPaymentMenuOpen((open) => !open)}
+            style={[styles.paymentSelect, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}
+          >
+            <Text style={[styles.paymentSelectText, isDark && { color: '#FFFFFF' }]}>{paymentMethod === 'Cash' ? 'Cash' : 'G-Cash'}</Text>
+            <Text style={[styles.paymentSelectChevron, isDark && { color: '#FFFFFF' }]}>{paymentMenuOpen ? '⌃' : '⌄'}</Text>
+          </Pressable>
+          {paymentMenuOpen ? (
+            <View style={[styles.paymentMenu, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}>
+              {(['Cash', 'QR'] as const).map((method) => (
+                <Pressable
+                  key={method}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: paymentMethod === method }}
+                  onPress={() => {
+                    setPaymentMethod(method);
+                    setPaymentMenuOpen(false);
+                    if (method === 'QR') setCashReceived('');
+                  }}
+                  style={[
+                    styles.paymentMenuOption,
+                    paymentMethod === method && styles.paymentMenuOptionSelected,
+                  ]}
+                >
+                  <Text style={[
+                    styles.paymentMenuOptionText,
+                    paymentMethod === method && styles.paymentMenuOptionTextSelected,
+                  ]}>
+                    {method === 'Cash' ? 'Cash' : 'G-Cash'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
           {paymentMethod === 'Cash' ? (
-            <View>
-              <Text style={styles.paymentLabel}>Cash received</Text>
+            <View style={styles.cashSection}>
+              <Text style={styles.paymentLabel}>Cash Received</Text>
               <TextInput
                 accessibilityLabel="Cash received"
                 value={cashReceived}
@@ -623,7 +693,11 @@ export default function MenuWorkspace({
                 keyboardType="decimal-pad"
                 placeholder="Enter amount"
                 placeholderTextColor={colors.secondary}
-                style={[styles.paymentInput, cashReceived !== '' && !cashValid && styles.paymentInputError]}
+                style={[
+                  styles.paymentInput,
+                  isDark && { backgroundColor: '#0F1025', borderColor: '#292A43', color: '#FFFFFF' },
+                  cashReceived !== '' && !cashValid && styles.paymentInputError,
+                ]}
               />
               {cashReceived !== '' && !cashValid ? <Text style={styles.paymentError}>Cash received must cover the total.</Text> : null}
               {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - checkoutTotal)}</Text> : null}
@@ -649,36 +723,25 @@ export default function MenuWorkspace({
               ) : null}
             </View>
           ) : null}
-          <View style={styles.checkoutUnavailableBox}>
-            <Text style={styles.checkoutUnavailableTitle}>Sale and inventory status</Text>
-            <Text style={styles.checkoutMessage}>
-              A recorded sale may need inventory processing or recovery. The receipt keeps the sale details and inventory status separate.
-            </Text>
-          </View>
-          <Pressable accessibilityRole="button" onPress={() => onSetPage('cart')} style={styles.checkoutBackButton}>
-            <Text style={styles.checkoutBackText}>Return to cart</Text>
-          </Pressable>
+        </ScrollView>
+        <View style={[styles.paymentFooter, isDark && { backgroundColor: '#0F1025', borderColor: '#292A43' }]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Confirm transaction"
             disabled={!checkoutValid || saleSubmitting}
             onPress={() => void submitCheckout()}
-            style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
+            style={[styles.reviewOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
           >
-            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
+            <Text style={styles.reviewOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" disabled={saleSubmitting} onPress={cancelOrder} style={styles.checkoutBackButton}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={saleSubmitting}
+            onPress={cancelOrder}
+            style={styles.checkoutBackButton}
+          >
             <Text style={styles.checkoutBackText}>Cancel order</Text>
           </Pressable>
-        </ScrollView>
-        <View style={styles.totalFooter}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
-          </View>
-          <View style={styles.footerActions}>
-            <Text style={styles.previewNotice}>No order was placed</Text>
-          </View>
         </View>
       </View>
     );
@@ -733,7 +796,7 @@ export default function MenuWorkspace({
             onPress={() => setInfoProducts(selectedProductGroups)}
             style={({ pressed }) => [styles.viewMenuButton, pressed && styles.pressed]}
           >
-            <Text style={styles.viewMenuText}>View Menu</Text>
+            <Text style={styles.viewMenuText}>View menu</Text>
           </Pressable>
         </View>
         <ScrollView
@@ -784,7 +847,7 @@ export default function MenuWorkspace({
             {selectedProductGroups.map((group, index) => (
               <View key={group.id} style={styles.sizeGroup}>
                 <View style={styles.sizeGroupHeading}>
-                  <Text style={styles.sizeGroupTitle}>{index === 0 ? 'REGULAR' : 'COMBO + CHEESE'}</Text>
+                  <Text style={styles.sizeGroupTitle}>{index === 0 ? 'Regular' : 'Combo + cheese'}</Text>
                   <Text style={styles.sizeGroupProduct} numberOfLines={1}>{group.name}</Text>
                 </View>
                 <View style={styles.sizeOptionRow}>
@@ -803,12 +866,7 @@ export default function MenuWorkspace({
             <View style={styles.addonSection}>
               <Text style={styles.addonSectionTitle}>Add-ons</Text>
               {displayAddons.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.addonPills}
-                >
+                <View style={styles.addonPills}>
                   {displayAddons.map((addon) => {
                     const selected = selectedAddonIds.includes(addon.id);
                     return (
@@ -827,7 +885,7 @@ export default function MenuWorkspace({
                       </Pressable>
                     );
                   })}
-                </ScrollView>
+                </View>
               ) : (
                 <Text style={styles.addonUnavailableText}>No add-ons are configured in the live catalog.</Text>
               )}
@@ -841,7 +899,11 @@ export default function MenuWorkspace({
         )}
         </ScrollView>
       </View>
-      <View style={[styles.currentOrderPanel, darkSecondarySurface]}>
+      <View style={[
+        styles.currentOrderPanel,
+        darkSecondarySurface,
+        isDark && { borderColor: '#292A43' },
+      ]}>
         <View style={styles.currentOrderHeader}>
           <View style={styles.currentOrderHeadingCopy}>
             <Text style={[styles.currentOrderTitle, darkSecondaryText]}>Current Order</Text>
@@ -893,7 +955,10 @@ export default function MenuWorkspace({
             ))}
           </ScrollView>
         ) : (
-          <Text style={[styles.currentOrderEmpty, darkSecondaryText]}>Your order is empty. Select a size to begin.</Text>
+          <View style={styles.currentOrderEmpty}>
+            <Text style={[styles.currentOrderEmptyTitle, darkSecondaryText]}>Your order is empty</Text>
+            <Text style={styles.currentOrderEmptyMessage}>Tap a product above to start an order.</Text>
+          </View>
         )}
         <View style={styles.currentOrderTotalRow}>
           <Text style={[styles.currentOrderTotalLabel, darkSecondaryText]}>Total</Text>
@@ -913,11 +978,14 @@ export default function MenuWorkspace({
           }}
           style={({ pressed }) => [
             styles.proceedPaymentButton,
-            (cartProducts.length === 0 || catalogLoading || Boolean(catalogError)) && styles.proceedPaymentDisabled,
+            cartProducts.length > 0 && styles.proceedPaymentButtonActive,
             pressed && styles.pressed,
           ]}
         >
-          <Text style={styles.proceedPaymentText}>Proceed to Payment</Text>
+          <Text style={[
+            styles.proceedPaymentText,
+            cartProducts.length > 0 && styles.proceedPaymentTextActive,
+          ]}>Proceed to Payment</Text>
         </Pressable>
         {proceedBlocked && cartProducts.length === 0 ? (
           <Text style={styles.paymentError} accessibilityRole="alert">{emptyOrderMessage}</Text>
@@ -931,6 +999,17 @@ export default function MenuWorkspace({
       >
         <View style={styles.infoModalBackdrop}>
           <View style={[styles.infoModalCard, isDark && { backgroundColor: colors.navy }]}>
+            <View style={styles.infoModalTopBar}>
+              <Text style={styles.infoModalTopBarTitle}>Product Details</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close product details"
+                onPress={() => setInfoProducts(null)}
+                style={({ pressed }) => [styles.infoModalTopBarClose, pressed && styles.pressed]}
+              >
+                <Text style={styles.infoModalTopBarCloseText}>×</Text>
+              </Pressable>
+            </View>
             <ScrollView
               style={styles.infoModalScroll}
               contentContainerStyle={styles.infoModalContent}
@@ -969,13 +1048,16 @@ export default function MenuWorkspace({
                 </View>
               ))}
             </ScrollView>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setInfoProducts(null)}
-              style={[styles.infoModalClose, { backgroundColor: colors.pink }]}
-            >
-              <Text style={styles.infoModalCloseText}>Close</Text>
-            </Pressable>
+            <View style={[styles.infoModalFooter, isDark && { backgroundColor: '#0F1025' }]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close product details"
+                onPress={() => setInfoProducts(null)}
+                style={({ pressed }) => [styles.infoModalClose, pressed && styles.pressed]}
+              >
+                <Text style={styles.infoModalCloseText}>Close</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -990,11 +1072,12 @@ const styles = StyleSheet.create({
   headerTitleRow: { minHeight: 36, flexDirection: 'row', alignItems: 'center', marginBottom: 9 },
   backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   backGlyph: { color: colors.navy, fontFamily: font.regular, fontSize: 33, lineHeight: 37, marginTop: -4 },
-  headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: 21 },
+  headerTitle: { color: colors.text, fontFamily: font.bold, fontSize: typeScale.title },
+  headerSubtitle: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: -5, textAlign: 'center' },
   posScreen: { flex: 1, minHeight: 0, backgroundColor: colors.white },
   posHeader: { paddingHorizontal: 16, paddingTop: 9, paddingBottom: 7 },
-  posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: 16 },
-  posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 2, opacity: 0.9 },
+  posHeaderTitle: { color: colors.white, fontFamily: font.bold, fontSize: typeScale.heading },
+  posHeaderStaff: { color: colors.white, fontFamily: font.medium, fontSize: typeScale.caption, marginTop: 2, opacity: 0.9 },
   productSelectionSection: {
     flex: 1, minHeight: 0, backgroundColor: colors.pink,
     borderTopLeftRadius: 40, borderTopRightRadius: 40, overflow: 'hidden',
@@ -1012,23 +1095,23 @@ const styles = StyleSheet.create({
   },
   flavorImageFrameSelected: { borderWidth: 3, borderColor: colors.white },
   flavorImage: { width: 50, height: 50, borderRadius: 25 },
-  flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: 8, marginTop: 4, opacity: 0.85 },
+  flavorLabel: { color: colors.white, fontFamily: font.medium, fontSize: typeScale.caption, marginTop: 4, opacity: 0.85 },
   flavorLabelSelected: { fontFamily: font.bold, opacity: 1 },
   selectedProductBar: {
     minHeight: 48, flexDirection: 'row', alignItems: 'center',
     marginHorizontal: 12, marginBottom: 0, paddingHorizontal: 0, paddingVertical: 7,
   },
   selectedProductCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  selectedProductTitle: { color: colors.white, fontFamily: font.bold, fontSize: 11 },
-  selectedProductSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: 7, marginTop: 2, opacity: 0.9 },
-  viewMenuButton: { minHeight: 28, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
-  viewMenuText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+  selectedProductTitle: { color: colors.white, fontFamily: font.bold, fontSize: typeScale.section },
+  selectedProductSubtitle: { color: colors.white, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: 2, opacity: 0.9 },
+  viewMenuButton: { minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  viewMenuText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.caption },
   posProductScroll: { flex: 1, minHeight: 0 },
   posProductList: { gap: 10, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 11 },
   sizeGroup: { gap: 7 },
   sizeGroupHeading: { minHeight: 17, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  sizeGroupTitle: { color: colors.white, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.5 },
-  sizeGroupProduct: { flex: 1, color: colors.white, fontFamily: font.medium, fontSize: 7, textAlign: 'right', opacity: 0.9 },
+  sizeGroupTitle: { color: colors.white, fontFamily: font.bold, fontSize: typeScale.body, letterSpacing: 0.5 },
+  sizeGroupProduct: { flex: 1, color: colors.white, fontFamily: font.medium, fontSize: typeScale.caption, textAlign: 'right', opacity: 0.9 },
   sizeOptionRow: { flexDirection: 'row', gap: 7 },
   sizeOptionCard: {
     flex: 1, minWidth: 0, minHeight: 75, paddingHorizontal: 7, paddingVertical: 6,
@@ -1036,84 +1119,96 @@ const styles = StyleSheet.create({
   },
   sizeOptionCardUnavailable: { backgroundColor: '#F3F3F5', opacity: 0.72 },
   sizeOptionHeader: { minHeight: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sizeOptionLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
+  sizeOptionLabel: { color: colors.text, fontFamily: font.semibold, fontSize: typeScale.caption },
   sizeInfoButton: {
     width: 17, height: 17, alignItems: 'center', justifyContent: 'center',
     borderRadius: 9, backgroundColor: '#F4F4F7',
   },
-  sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: 9 },
+  sizeInfoButtonText: { color: colors.secondary, fontFamily: font.bold, fontSize: typeScale.micro },
   sizeOptionAction: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  sizeOptionPrice: { color: colors.navy, fontFamily: font.bold, fontSize: 12, marginTop: 2 },
+  sizeOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.title, marginTop: 2 },
   availabilityLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   availabilityDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#38A169' },
   availabilityDotOff: { backgroundColor: colors.secondary },
-  availabilityLabel: { color: '#2F8C57', fontFamily: font.medium, fontSize: 6 },
+  availabilityLabel: { color: '#2F8C57', fontFamily: font.medium, fontSize: typeScale.micro },
   unavailableText: { color: colors.secondary },
   addonSection: { gap: 6, paddingTop: 2 },
-  addonSectionTitle: { color: colors.white, fontFamily: font.bold, fontSize: 10 },
-  addonPills: { gap: 7, paddingRight: 10 },
+  addonSectionTitle: { color: colors.white, fontFamily: font.bold, fontSize: typeScale.body },
+  addonPills: {
+    width: '100%', flexDirection: 'row', flexWrap: 'wrap',
+    justifyContent: 'center', gap: 7,
+  },
   addonPill: {
-    minHeight: 29, justifyContent: 'center', paddingHorizontal: 10,
+    minHeight: 29, maxWidth: '100%', justifyContent: 'center', paddingHorizontal: 10,
     borderRadius: 16, backgroundColor: colors.white,
   },
   addonPillSelected: { backgroundColor: colors.navy },
-  addonPillText: { color: colors.text, fontFamily: font.medium, fontSize: 7 },
+  addonPillText: { flexShrink: 1, color: colors.text, fontFamily: font.medium, fontSize: typeScale.caption, textAlign: 'center' },
   addonPillTextSelected: { color: colors.white, fontFamily: font.semibold },
-  addonUnavailableText: { color: colors.white, fontFamily: font.regular, fontSize: 7, lineHeight: 11, opacity: 0.9 },
+  addonUnavailableText: { color: colors.white, fontFamily: font.regular, fontSize: typeScale.caption, lineHeight: 16, opacity: 0.9 },
   currentOrderPanel: {
-    flexShrink: 0, maxHeight: '44%', gap: 5, paddingHorizontal: 13, paddingTop: 9, paddingBottom: 10,
-    borderTopLeftRadius: 18, borderTopRightRadius: 18, backgroundColor: colors.white,
+    flexShrink: 0, maxHeight: '44%', paddingHorizontal: 19, paddingTop: 14, paddingBottom: 8,
+    borderWidth: 1, borderColor: '#EEE9EC',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: colors.white,
   },
-  currentOrderHeader: { minHeight: 29, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 7 },
-  currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
-  currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: 7 },
-  clearOrderButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 7 },
-  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  currentOrderHeader: {
+    minHeight: 35, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  currentOrderTitle: { color: '#171729', fontFamily: font.bold, fontSize: typeScale.section },
+  currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: typeScale.caption },
+  clearOrderButton: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 7 },
+  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: typeScale.caption },
   clearOrderDisabled: { color: '#B8B8C0' },
   currentOrderItems: { flexGrow: 0, maxHeight: 120 },
-  currentOrderItemsContent: { gap: 3, paddingVertical: 1 },
+  currentOrderItemsContent: { gap: 4, paddingVertical: 0 },
   currentOrderLine: {
-    minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
+    minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 5,
   },
   currentOrderCopy: { flex: 1, minWidth: 0 },
-  currentOrderName: { color: colors.text, fontFamily: font.semibold, fontSize: 7 },
-  currentOrderUnit: { color: colors.secondary, fontFamily: font.regular, fontSize: 6, marginTop: 1 },
-  currentOrderLineTotal: { width: 43, color: colors.navy, fontFamily: font.bold, fontSize: 7, textAlign: 'right' },
-  currentOrderQuantity: { height: 23, flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: '#F3F3F6' },
-  currentOrderQuantityButton: { width: 21, height: 23, alignItems: 'center', justifyContent: 'center' },
-  currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
-  currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
+  currentOrderName: { color: '#171729', fontFamily: font.semibold, fontSize: typeScale.body },
+  currentOrderUnit: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: 2 },
+  currentOrderLineTotal: { width: 52, color: '#171729', fontFamily: font.bold, fontSize: typeScale.body, textAlign: 'right' },
+  currentOrderQuantity: { height: 44, flexDirection: 'row', alignItems: 'center', borderRadius: 14, backgroundColor: '#F3F3F6' },
+  currentOrderQuantityButton: { width: 24, height: 44, alignItems: 'center', justifyContent: 'center' },
+  currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 14 },
+  currentOrderQuantityValue: { minWidth: 16, color: colors.text, fontFamily: font.semibold, fontSize: typeScale.caption, textAlign: 'center' },
   currentOrderRemove: { width: REMOVE_BUTTON_SIZE.width, height: REMOVE_BUTTON_SIZE.height, alignItems: 'center', justifyContent: 'center' },
-  currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
+  currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 18 },
   currentAddonLine: {
-    minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingVertical: 2, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
+    minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 4,
   },
-  currentAddonName: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 7 },
-  currentAddonPrice: { width: 43, color: colors.navy, fontFamily: font.semibold, fontSize: 7, textAlign: 'right' },
-  currentOrderEmpty: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center', paddingVertical: 7 },
+  currentAddonName: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: typeScale.caption },
+  currentAddonPrice: { width: 52, color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.caption, textAlign: 'right' },
+  currentOrderEmpty: {
+    minHeight: 52, alignItems: 'center', gap: 8,
+  },
+  currentOrderEmptyTitle: { color: '#171729', fontFamily: font.semibold, fontSize: typeScale.section, textAlign: 'center' },
+  currentOrderEmptyMessage: { color: '#92929B', fontFamily: font.regular, fontSize: typeScale.body, textAlign: 'center' },
   currentOrderTotalRow: {
-    minHeight: 27, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 4,
+    minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderTopWidth: 1, borderTopColor: '#EEE9EC', paddingTop: 8,
   },
-  currentOrderTotalLabel: { color: colors.text, fontFamily: font.semibold, fontSize: 9 },
-  currentOrderTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: 12 },
+  currentOrderTotalLabel: { color: '#171729', fontFamily: font.semibold, fontSize: typeScale.section },
+  currentOrderTotalValue: { color: '#171729', fontFamily: font.bold, fontSize: typeScale.heading },
   proceedPaymentButton: {
-    minHeight: 36, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 18, backgroundColor: colors.pink,
+    minHeight: 52, alignItems: 'center', justifyContent: 'center',
+    marginTop: 6, borderRadius: 14, backgroundColor: '#FFE1EB',
   },
-  proceedPaymentDisabled: { opacity: 0.5 },
-  proceedPaymentText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  proceedPaymentButtonActive: { backgroundColor: colors.pink },
+  proceedPaymentText: { color: '#171729', fontFamily: font.semibold, fontSize: typeScale.section },
+  proceedPaymentTextActive: { color: colors.white },
   feedbackBanner: {
     flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
   },
   feedbackMessagePressable: { flexDirection: 'row', alignItems: 'flex-start', flex: 1, gap: 8 },
   retryInventoryButton: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.pink },
-  retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
-  feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: 8 },
+  retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.caption },
+  feedbackText: { flex: 1, color: colors.navy, fontFamily: font.medium, fontSize: typeScale.caption },
   feedbackDismiss: { color: colors.navy, fontFamily: font.bold, fontSize: 16, paddingLeft: 8 },
   stateCard: {
     alignItems: 'center', gap: 7, paddingHorizontal: 16, paddingVertical: 22,
@@ -1123,12 +1218,12 @@ const styles = StyleSheet.create({
     minHeight: 34, justifyContent: 'center', paddingHorizontal: 18,
     borderRadius: 12, backgroundColor: colors.pink, marginTop: 7,
   },
-  retryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+  retryText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.caption },
   retryCheckoutButton: {
     minHeight: 38, justifyContent: 'center', alignItems: 'center',
     paddingHorizontal: 18, borderRadius: 12, backgroundColor: colors.pink, marginTop: 8,
   },
-  retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  retryCheckoutText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.caption },
   pressed: { opacity: 0.8 },
   productArtwork: {
     width: 56, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -1138,21 +1233,26 @@ const styles = StyleSheet.create({
   comboProductImage: { width: 25, height: 46 },
   infoModalTitleCopy: { flex: 1, minWidth: 0 },
   infoModalBackdrop: { flex: 1, backgroundColor: 'rgba(16,16,39,0.45)', alignItems: 'center', justifyContent: 'center', padding: 22 },
-  infoModalCard: { width: '100%', maxWidth: 360, maxHeight: '85%', borderRadius: 18, backgroundColor: colors.white, padding: 16 },
+  infoModalCard: { width: '100%', maxWidth: 390, maxHeight: '85%', borderRadius: 18, backgroundColor: colors.white, overflow: 'hidden' },
+  infoModalTopBar: { minHeight: 76, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, backgroundColor: colors.pink },
+  infoModalTopBarTitle: { color: colors.white, fontFamily: font.bold, fontSize: typeScale.title },
+  infoModalTopBarClose: { width: 42, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: '#E6E6EB', backgroundColor: '#F5F5F7' },
+  infoModalTopBarCloseText: { color: colors.text, fontFamily: font.medium, fontSize: typeScale.heading, lineHeight: 22 },
   infoModalScroll: { flexShrink: 1 },
-  infoModalContent: { gap: 14 },
+  infoModalContent: { gap: 14, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 20 },
   infoModalGroup: { gap: 5 },
   infoModalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  infoModalTitle: { color: colors.text, fontFamily: font.bold, fontSize: 18 },
-  infoModalSectionLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 6 },
+  infoModalTitle: { color: colors.text, fontFamily: font.bold, fontSize: typeScale.title },
+  infoModalSectionLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.section, marginTop: 6 },
   infoVariantRow: { minHeight: 35, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.border },
-  infoVariantSize: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: 8 },
-  infoVariantPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 8, marginRight: 9 },
+  infoVariantSize: { flex: 1, color: colors.text, fontFamily: font.medium, fontSize: typeScale.body },
+  infoVariantPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.body, marginRight: 9 },
   infoVariantStatus: { width: 75, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  infoVariantAvailability: { color: '#2F8C57', fontFamily: font.medium, fontSize: 7 },
-  infoModalDescription: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginTop: 3 },
-  infoModalClose: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.navy, marginTop: 10 },
-  infoModalCloseText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  infoVariantAvailability: { color: '#2F8C57', fontFamily: font.medium, fontSize: typeScale.caption },
+  infoModalDescription: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.body, lineHeight: 20, marginTop: 3 },
+  infoModalFooter: { minHeight: 64, justifyContent: 'center', paddingHorizontal: 20, backgroundColor: '#F5F5F7' },
+  infoModalClose: { minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.pink },
+  infoModalCloseText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.body },
   progress: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center',
     paddingHorizontal: 30, paddingTop: 8, paddingBottom: 17, backgroundColor: colors.background,
@@ -1163,124 +1263,146 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: '#C9C9D0', borderRadius: 14, backgroundColor: colors.white,
   },
   progressCircleActive: { borderColor: colors.navy, backgroundColor: colors.navy },
-  progressNumber: { color: colors.secondary, fontFamily: font.semibold, fontSize: 9 },
+  progressCircleCurrent: { borderColor: colors.pink, backgroundColor: colors.pink },
+  progressNumber: { color: colors.secondary, fontFamily: font.semibold, fontSize: typeScale.caption },
   progressNumberActive: { color: colors.white },
-  progressLabel: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, marginTop: 4 },
+  progressNumberCurrent: { color: colors.white },
+  progressLabel: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: 4 },
   progressLabelActive: { color: colors.navy, fontFamily: font.semibold },
+  progressLabelCurrent: { color: colors.pink, fontFamily: font.semibold },
   progressLine: { flex: 1, height: 2, backgroundColor: '#D8D8DE', marginTop: 13 },
   progressLineActive: { backgroundColor: colors.navy },
   cartScroll: { flex: 1, minHeight: 0 },
   cartList: { gap: 9, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 18 },
-  sectionHeading: { color: colors.navy, fontFamily: font.semibold, fontSize: 14, marginBottom: 1 },
-  itemCount: { color: colors.secondary, fontFamily: font.regular, fontSize: 10 },
+  sectionHeading: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.section, marginBottom: 1 },
+  itemCount: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption },
   cartItem: {
     minHeight: 104, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     paddingVertical: 11, borderRadius: 15, backgroundColor: colors.white,
     borderWidth: 1, borderColor: colors.border,
   },
   cartItemCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  cartItemName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
-  cartItemDetail: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
-  cartItemPrice: { color: colors.navy, fontFamily: font.medium, fontSize: 8, marginTop: 5 },
+  cartItemName: { color: colors.text, fontFamily: font.semibold, fontSize: typeScale.body },
+  cartItemDetail: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: 4 },
+  cartItemPrice: { color: colors.navy, fontFamily: font.medium, fontSize: typeScale.caption, marginTop: 5 },
   cartItemActions: { minWidth: 91, alignItems: 'flex-end' },
-  cartLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 11, marginBottom: 5 },
+  cartLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: typeScale.body, marginBottom: 5 },
   quantityControl: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center',
     borderRadius: 14, backgroundColor: colors.background,
   },
   quantityButton: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   quantityButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 16 },
-  quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: 9, textAlign: 'center' },
-  removeItem: { color: colors.error, fontFamily: font.medium, fontSize: 7, marginTop: 4 },
+  quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: typeScale.caption, textAlign: 'center' },
+  removeItem: { color: colors.error, fontFamily: font.medium, fontSize: typeScale.caption, marginTop: 4 },
   emptyCard: {
     alignItems: 'center', paddingHorizontal: 16, paddingVertical: 22,
     borderRadius: 15, backgroundColor: colors.white,
   },
-  emptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
-  emptyCopy: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, textAlign: 'center', marginTop: 4 },
+  emptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.body },
+  emptyCopy: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, textAlign: 'center', marginTop: 4 },
   addMoreButton: {
     minHeight: 42, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.pink, borderRadius: 13, backgroundColor: colors.white,
   },
-  addMoreText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
-  previewNotice: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center' },
-  totalFooter: {
-    paddingHorizontal: 16, paddingTop: 11, paddingBottom: 13,
-    borderTopLeftRadius: 21, borderTopRightRadius: 21, backgroundColor: colors.pink,
+  addMoreText: { color: colors.pink, fontFamily: font.semibold, fontSize: typeScale.caption },
+  cancelCartButton: { minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  cancelCartText: { color: colors.error, fontFamily: font.medium, fontSize: typeScale.caption },
+  previewNotice: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, textAlign: 'center' },
+  cartTotalFooter: {
+    paddingHorizontal: 20, paddingTop: 14, paddingBottom: 18,
+    borderTopLeftRadius: 12, borderTopRightRadius: 12,
+    borderWidth: 1, borderColor: '#F0E6EA', backgroundColor: colors.white,
   },
-  totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 },
-  totalLabel: { color: colors.white, fontFamily: font.medium, fontSize: 10 },
-  totalValue: { color: colors.white, fontFamily: font.bold, fontSize: 17 },
-  footerActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  footerSecondary: { paddingVertical: 8, paddingHorizontal: 3 },
-  footerSecondaryText: { color: colors.white, fontFamily: font.medium, fontSize: 8 },
-  placeOrderButton: {
-    minWidth: 132, minHeight: 40, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 16, borderRadius: 13, backgroundColor: colors.white,
+  cartTotalRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cartTotalLabel: { color: colors.text, fontFamily: font.semibold, fontSize: typeScale.section },
+  cartTotalValue: { color: colors.pink, fontFamily: font.bold, fontSize: typeScale.heading },
+  cartProceedButton: {
+    minHeight: 52, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 14, backgroundColor: colors.pink,
   },
+  cartProceedText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.section },
   disabledButton: { opacity: 0.65 },
-  placeOrderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutContent: {
-    paddingHorizontal: 16, paddingBottom: 20,
+    paddingHorizontal: 20, paddingTop: 8, paddingBottom: 20,
   },
   checkoutScroll: { flex: 1, minHeight: 0 },
-  checkoutLine: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 13,
-    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, marginBottom: 7,
+  paymentSummaryCard: {
+    borderRadius: 16, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.white, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10,
   },
-  checkoutLineCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  checkoutLineName: { color: colors.text, fontFamily: font.semibold, fontSize: 10 },
-  checkoutLineMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, marginTop: 3 },
-  checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 10 },
+  paymentSummaryTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.section, marginBottom: 9 },
+  paymentSummaryLine: {
+    minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
+  },
+  paymentSummaryCopy: { flex: 1, minWidth: 0, paddingRight: 10 },
+  paymentSummaryName: { color: colors.text, fontFamily: font.semibold, fontSize: typeScale.body },
+  paymentSummaryMeta: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, marginTop: 2 },
+  paymentSummaryLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: typeScale.body },
+  paymentSummaryTotalRow: {
+    minHeight: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  paymentSummaryTotalLabel: { color: colors.secondary, fontFamily: font.semibold, fontSize: typeScale.body },
+  paymentSummaryTotalValue: { color: colors.navy, fontFamily: font.bold, fontSize: typeScale.heading },
+  paymentSelect: {
+    minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, borderRadius: 13, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  paymentSelectText: { color: colors.text, fontFamily: font.medium, fontSize: typeScale.body },
+  paymentSelectChevron: { color: colors.text, fontFamily: font.medium, fontSize: typeScale.section },
+  paymentMenu: {
+    marginTop: 7, borderRadius: 13, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.white, padding: 5, gap: 5,
+  },
+  paymentMenuOption: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 10,
+  },
+  paymentMenuOptionSelected: { backgroundColor: '#FFE5ED' },
+  paymentMenuOptionText: { color: colors.text, fontFamily: font.medium, fontSize: typeScale.body },
+  paymentMenuOptionTextSelected: { color: colors.pink, fontFamily: font.semibold },
+  cashSection: { marginTop: 1 },
+  paymentFooter: {
+    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
+    borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background,
+  },
+  reviewOrderButton: {
+    minHeight: 52, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 14, backgroundColor: colors.pink,
+  },
+  reviewOrderText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.section },
+  checkoutLineTotal: { color: colors.navy, fontFamily: font.bold, fontSize: typeScale.body },
   addonOption: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 12, paddingVertical: 9, borderRadius: 12,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white, marginBottom: 6,
   },
-  addonOptionText: { color: colors.text, fontFamily: font.medium, fontSize: 9 },
-  addonOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  addonOptionText: { color: colors.text, fontFamily: font.medium, fontSize: typeScale.body },
+  addonOptionPrice: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.body },
   checkoutTotalRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, marginBottom: 12,
   },
-  paymentLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 8, marginBottom: 7 },
-  paymentOptions: { flexDirection: 'row', gap: 8 },
-  paymentOption: {
-    minWidth: 84, minHeight: 36, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.white,
-  },
-  paymentOptionSelected: { borderColor: colors.navy, backgroundColor: colors.navy },
-  paymentOptionText: { color: colors.secondary, fontFamily: font.medium, fontSize: 9 },
-  paymentOptionTextSelected: { color: colors.white, fontFamily: font.semibold },
+  paymentLabel: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.body, marginTop: 16, marginBottom: 9 },
   paymentInput: {
     height: 42, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1,
     borderColor: colors.border, backgroundColor: colors.white, color: colors.text,
-    fontFamily: font.regular, fontSize: 10,
+    fontFamily: font.regular, fontSize: typeScale.body,
   },
   paymentInputError: { borderColor: colors.error },
-  paymentError: { color: colors.error, fontFamily: font.medium, fontSize: 8, marginTop: 5 },
-  changeText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 7 },
-  paymentMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, lineHeight: 13 },
-  checkoutUnavailableBox: {
-    padding: 12, borderRadius: 13, backgroundColor: colors.warning, marginTop: 16,
-  },
-  checkoutUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  paymentError: { color: colors.error, fontFamily: font.medium, fontSize: typeScale.caption, marginTop: 5 },
+  changeText: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.caption, marginTop: 7 },
+  paymentMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: typeScale.caption, lineHeight: 18 },
   checkoutIcon: {
     width: 53, height: 53, alignItems: 'center', justifyContent: 'center',
     borderRadius: 27, backgroundColor: colors.warning, marginBottom: 14,
   },
   checkoutIconText: { color: colors.navy, fontFamily: font.bold, fontSize: 25 },
-  checkoutTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 15, textAlign: 'center' },
-  checkoutMessage: {
-    maxWidth: 330, color: colors.secondary, fontFamily: font.regular,
-    fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 8,
-  },
-  checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 15 },
+  checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: typeScale.body, marginTop: 15 },
   checkoutBackButton: {
     minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 13,
     backgroundColor: colors.pink, marginTop: 17,
   },
-  checkoutBackText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  checkoutBackText: { color: colors.white, fontFamily: font.semibold, fontSize: typeScale.body },
 });

@@ -181,7 +181,7 @@ export default function SalesConsumptionRecords({
 
   return (
     <View style={styles.screen}>
-      <SalesRecordHeader title={view === 'details' ? 'Sales Consumption Details' : 'Sales Consumption Records'} onBack={back} />
+      <SalesRecordHeader title={view === 'details' ? 'Sales consumption details' : 'Sales consumption records'} onBack={back} />
 
       {view === 'details' ? (
         detailLoading ? (

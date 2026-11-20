@@ -32,7 +32,7 @@ export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: 
   }, []);
   const back = () => { if (view === 'details') { setView('list'); setSelected(null); requestAnimationFrame(() => listRef.current?.scrollTo({ y: scrollOffset, animated: false })); } else onBack(); };
   return <View style={styles.screen}>
-    <OwnerRecordHeader title={view === 'details' ? 'Adjustment Details' : 'Authorized Adjustment Records'} onBack={back} />
+    <OwnerRecordHeader title={view === 'details' ? 'Adjustment details' : 'Authorized adjustment records'} onBack={back} />
     {view === 'details' && selected ? <View style={styles.detailsArea}><ScrollView style={styles.detailsScroll} contentContainerStyle={styles.detailsContent} showsVerticalScrollIndicator={false}>
       <View style={styles.detailCard}><View style={styles.detailHeader}><Text numberOfLines={1} style={styles.detailName}>{selected.ingredientName}</Text><StatusBadge /></View><View style={styles.detailDivider} />
         {[['Branch', selected.branchName], ['Previous expected quantity', formatAuthorizedAdjustmentQuantity(selected.previousExpectedQuantity, selected.unit)], ['Actual quantity', formatAuthorizedAdjustmentQuantity(selected.actualQuantity, selected.unit)], ['Adjusted quantity', formatAuthorizedAdjustmentQuantity(selected.adjustedQuantity, selected.unit)], ['Reason', selected.reason], ['Approving owner', selected.approvingOwner], ['Date & time', formatAuthorizedAdjustmentDateTime(selected.approvedAt)], ['Related discrepancy', selected.relatedDiscrepancy]].map(([label, value], index, rows) => <OwnerRecordDetailRow key={label} label={label} value={value} compact={index === 3 ? 'accent' : undefined} first={index === 0} last={index === rows.length - 1} />)}

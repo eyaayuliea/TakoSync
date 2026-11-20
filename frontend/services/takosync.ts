@@ -301,7 +301,7 @@ export type ProductManagementItem = ProductMenuItem & {
     id: string;
     variant_code: string;
     size_label: string;
-    piece_count: number;
+    piece_count: number | null;
     price: number;
     active: boolean;
     is_available: boolean;
@@ -316,7 +316,7 @@ export type StaffMenuCatalogItem = {
   category: string;
   sizeLabel: string;
   price: number;
-  pieceCount: number;
+  pieceCount: number | null;
   isAvailable: boolean;
 };
 
@@ -472,7 +472,7 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
   if (!session) return null;
 
   const clearRejectedSession = async () => {
-    const { error } = await client.auth.signOut();
+    const { error } = await client.auth.signOut(clientOverride ? { scope: 'local' } : undefined);
     assertNoError(error);
   };
 
@@ -508,7 +508,7 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
       .maybeSingle();
     assertNoError(branchError);
     if (!branchRecord) {
-      await signOut();
+      await clearRejectedSession();
       throw new Error('The assigned branch is inactive or unavailable. Ask the owner to check the assignment.');
     }
     branch = branchLabel(branchRecord.city, branchRecord.code);
@@ -575,7 +575,7 @@ export async function signIn(
   const user = await loadCurrentUser(client);
   if (!user) throw new Error('Supabase did not return an authenticated session.');
   if (user.role !== expectedRole) {
-    const { error: signOutError } = await client.auth.signOut();
+    const { error: signOutError } = await client.auth.signOut(clientOverride ? { scope: 'local' } : undefined);
     assertNoError(signOutError);
     throw new Error(`This account does not have ${expectedRole} access.`);
   }
@@ -632,7 +632,7 @@ export async function signInStaff(username: string, password: string, clientOver
   assertNoError(sessionError);
   const user = await loadCurrentUser(client);
   if (!user || user.role !== 'Staff') {
-    await client.auth.signOut();
+    await client.auth.signOut(clientOverride ? { scope: 'local' } : undefined);
     throw new Error('This account does not have Staff access.');
   }
   return user;
@@ -684,7 +684,7 @@ export async function signInOwner(username: string, password: string, clientOver
   assertNoError(sessionError);
   const user = await loadCurrentUser(client);
   if (!user || user.role !== 'Owner') {
-    await client.auth.signOut();
+    await client.auth.signOut(clientOverride ? { scope: 'local' } : undefined);
     throw new Error('Unauthorized access.');
   }
   return user;
@@ -736,7 +736,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
   assertNoError(sessionError);
   const user = await loadCurrentUser(client);
   if (!user || user.role !== 'Owner') {
-    await client.auth.signOut();
+    await client.auth.signOut(clientOverride ? { scope: 'local' } : undefined);
     throw new OwnerLoginError('unauthorized_access');
   }
   return user;
@@ -2146,7 +2146,6 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
     const variants = variantsByProduct.get(variant.product_id) ?? [];
     variants.push({
       ...variant,
-      piece_count: Number(variant.piece_count),
       price: Number(variant.price),
     });
     variantsByProduct.set(variant.product_id, variants);
@@ -3021,10 +3020,15 @@ export async function loadOwnerActivityData(input: {
   };
 }
 
+type DailyCheckReviewRow = Omit<
+  Database['public']['Tables']['daily_stock_checks']['Row'],
+  'request_id' | 'request_payload_hash'
+>;
+
 export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
   const client = requireSupabase();
   const pageSize = 500;
-  const pendingChecks: Database['public']['Tables']['daily_stock_checks']['Row'][] = [];
+  const pendingChecks: DailyCheckReviewRow[] = [];
   for (let offset = 0; ; offset += pageSize) {
     let query = client.from('daily_stock_checks')
       .select('id, reference, branch_id, submitted_by, check_date, remarks, status, created_at')
@@ -3091,7 +3095,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     assertNoError(error);
     lines.push(...(data ?? []));
   }
-  const checks: Database['public']['Tables']['daily_stock_checks']['Row'][] = [];
+  const checks: DailyCheckReviewRow[] = [];
   for (let index = 0; index < checkIds.length; index += pageSize) {
     let query = client.from('daily_stock_checks')
       .select('id, reference, branch_id, submitted_by, check_date, remarks, status, created_at')
