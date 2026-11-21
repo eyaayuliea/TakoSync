@@ -923,10 +923,10 @@ export async function verifyCurrentStaffPassword(password: string): Promise<void
     if (result.error.status === 0 || /fetch|network|connection|timeout/.test(message)) {
       throw new StaffLoginError('connection_failure');
     }
-    throw new Error('Unable to unlock. Please try again.');
+    throw new Error('Unable to check your password. Please try again.');
   }
   if (result.data.user?.id !== session.user.id) {
-    throw new Error('Unable to unlock. Please try again.');
+    throw new Error('Unable to check your password. Please try again.');
   }
   // Discard only the extra verification session; the daily session is untouched.
   try { await verifier.auth.signOut({ scope: 'local' }); } catch { /* best effort */ }
