@@ -217,6 +217,11 @@ export type Database = {
         inventory_processing_status: 'pending' | 'processing' | 'completed' | 'failed';
         inventory_processing_error: string | null;
         inventory_processed_at: string | null;
+        /** ST-05 c5: cash payments only (migration 202611220006). */
+        cash_received?: number | null;
+        change_amount?: number | null;
+        /** ST-05 c2: employee name saved with the sale. */
+        served_by_name?: string | null;
         created_at: string;
       }>;
       sale_void_requests: Table<{
@@ -528,6 +533,18 @@ export type Database = {
           p_total_amount: number;
           p_items: Json;
           p_addons?: Json;
+        };
+        Returns: Database['public']['Tables']['sales']['Row'];
+      };
+      submit_sale_with_payment: {
+        Args: {
+          p_transaction_reference: string;
+          p_branch_id: string;
+          p_payment_method: string;
+          p_total_amount: number;
+          p_items: Json;
+          p_addons?: Json;
+          p_cash_received?: number | null;
         };
         Returns: Database['public']['Tables']['sales']['Row'];
       };

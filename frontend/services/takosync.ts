@@ -375,6 +375,8 @@ export type SaleSubmission = {
   branchId: string;
   paymentMethod: 'Cash' | 'QR';
   totalAmount: number;
+  /** ST-05 c5 / ST-02 c8: cash handed over by the customer (Cash only). */
+  cashReceived?: number | null;
   items: Array<{
     variantId: string;
     quantity: number;
@@ -459,6 +461,14 @@ const ingredientVisuals: Record<string, { emoji: string; tint: string; type: str
   'spring-onions': { emoji: '🌱', tint: '#E8F6EC', type: 'Fresh produce' },
   'cooking-oil': { emoji: '🫗', tint: '#FFF4D8', type: 'Cooking oil' },
 };
+
+/** True when PostgREST cannot find this database function (migration not applied yet). */
+function isMissingRpcFunction(error: { code?: string; message?: string } | null, name: string): boolean {
+  if (!error) return false;
+  return error.code === 'PGRST202'
+    || error.code === '42883'
+    || ((error.message ?? '').includes(name) && /could not find|does not exist|schema cache/i.test(error.message ?? ''));
+}
 
 function assertNoError(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
@@ -1409,13 +1419,26 @@ export async function loadStaffDailySales(
 export async function loadStaffSaleReceipt(saleId: string, branchId: string): Promise<StaffSaleReceipt> {
   if (!saleId.trim() || !branchId.trim()) throw new Error('A sale and assigned branch are required to load a receipt.');
   const client = requireSupabase();
-  const { data: sale, error: saleError } = await client.from('sales')
-    .select('id, transaction_reference, branch_id, total_amount, payment_method, status, inventory_processing_status, created_at')
+  const receiptColumns = 'id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, inventory_processing_status, created_at';
+  // ST-05 c2, c5: payment details and the employee name, once the sales table has them (migration 202611220006).
+  let saleResult = await client.from('sales')
+    .select(`${receiptColumns}, cash_received, change_amount, served_by_name`)
     .eq('id', saleId)
     .eq('branch_id', branchId)
     .maybeSingle();
-  assertNoError(saleError);
+  if (saleResult.error?.code === '42703') {
+    saleResult = await client.from('sales')
+      .select(receiptColumns)
+      .eq('id', saleId)
+      .eq('branch_id', branchId)
+      .maybeSingle();
+  }
+  assertNoError(saleResult.error);
+  const sale = saleResult.data as (typeof saleResult.data & { served_by_name?: string | null }) | null;
   if (!sale) throw new Error('This sale is not available for your assigned branch.');
+  const servedByName = sale.served_by_name
+    ? null
+    : (await loadProfileNames(client, [sale.staff_id])).get(sale.staff_id) ?? null;
 
   const [branchResult, itemsResult, addonsResult] = await Promise.all([
     client.from('branches').select('city, code').eq('id', branchId).maybeSingle(),
@@ -1462,6 +1485,7 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
     products: productsResult.data ?? [],
     variants: variantsResult.data ?? [],
     addonNames: addonNamesResult.data ?? [],
+    servedByName,
   });
 }
 
@@ -2718,7 +2742,8 @@ export function isNetworkFailureMessage(message: string | undefined): boolean {
 export async function submitSale(input: SaleSubmission, client?: StaffServiceClient): Promise<OwnerSale> {
   validateSaleSubmission(input);
   const normalized = normalizeSalePayload(input);
-  const { data, error } = await staffServiceClient(client).rpc('submit_sale', {
+  const resolvedClient = staffServiceClient(client);
+  const saleArgs = {
     p_transaction_reference: input.transactionReference.trim(),
     p_branch_id: normalized.branchId,
     p_payment_method: input.paymentMethod.trim(),
@@ -2733,9 +2758,26 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
       quantity: addon.quantity,
       unit_price: addon.unitPrice,
     })),
-  });
+  };
+  const cashReceived = input.paymentMethod.trim().toLowerCase() === 'cash' && typeof input.cashReceived === 'number' && Number.isFinite(input.cashReceived)
+    ? Math.round(input.cashReceived * 100) / 100
+    : null;
+  // ST-05 c5: save the cash received and change with the sale. Until the
+  // database has submit_sale_with_payment, record the sale without them.
+  let { data, error } = cashReceived !== null
+    ? await resolvedClient.rpc('submit_sale_with_payment', { ...saleArgs, p_cash_received: cashReceived })
+    : await resolvedClient.rpc('submit_sale', saleArgs);
+  if (error && cashReceived !== null && isMissingRpcFunction(error, 'submit_sale_with_payment')) {
+    ({ data, error } = await resolvedClient.rpc('submit_sale', saleArgs));
+  }
   if (error) {
     const message = error.message.toLowerCase();
+    if (message.includes('cash received is less than the total')) {
+      throw new SaleSubmissionRejectedError('Cash received is less than the total. Check the amount and try again.');
+    }
+    if (message.includes('different cash amount')) {
+      throw new SaleSubmissionRejectedError('This checkout was already saved with a different cash amount. Check the receipt before trying again.');
+    }
     if (message.includes('different sale payload')) {
       throw new SaleSubmissionRejectedError('This transaction reference was already used with a different checkout payload.');
     }

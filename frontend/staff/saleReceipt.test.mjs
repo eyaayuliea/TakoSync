@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildStaffSaleReceipt, formatStaffSaleReceipt } from './saleReceipt.ts';
+import {
+  buildStaffSaleReceipt,
+  formatStaffSaleReceipt,
+  formatStaffSaleReceiptHtml,
+  saleReceiptFileName,
+} from './saleReceipt.ts';
 
 const receiptInput = {
   sale: {
@@ -124,4 +129,65 @@ test('a voided sale receipt is marked VOID (ST-05 c9, ST-07 c7)', () => {
   const text = formatStaffSaleReceipt(voided);
   assert.match(text.split('\n')[0], /\*\*\* VOID \*\*\*/);
   assert.match(text, /not counted in sales totals/);
+});
+
+test('the receipt shows the employee and, for cash, the cash received and change (ST-05 c2, c5)', () => {
+  const receipt = buildStaffSaleReceipt({
+    ...receiptInput,
+    sale: { ...receiptInput.sale, cash_received: '50.00', change_amount: '19.00', served_by_name: 'Ana Reyes' },
+  });
+  assert.equal(receipt.servedBy, 'Ana Reyes');
+  assert.equal(receipt.cashReceived, 50);
+  assert.equal(receipt.change, 19);
+  const text = formatStaffSaleReceipt(receipt);
+  assert.match(text, /Served by: Ana Reyes/);
+  assert.match(text, /Cash received: 50\.00/);
+  assert.match(text, /Change: 19\.00/);
+});
+
+test('older sales without saved details fall back to the looked-up name and omit cash lines', () => {
+  const receipt = buildStaffSaleReceipt({ ...receiptInput, servedByName: 'Ben Cruz' });
+  assert.equal(receipt.servedBy, 'Ben Cruz');
+  assert.equal(receipt.cashReceived, null);
+  assert.doesNotMatch(formatStaffSaleReceipt(receipt), /Cash received/);
+  assert.equal(buildStaffSaleReceipt(receiptInput).servedBy, null);
+});
+
+test('the printable receipt matches the saved sale (ST-05 c3, c4, c5, c7)', () => {
+  const html = formatStaffSaleReceiptHtml(buildStaffSaleReceipt({
+    ...receiptInput,
+    sale: { ...receiptInput.sale, cash_received: 50, change_amount: 19, served_by_name: 'Ana Reyes' },
+  }));
+  assert.match(html, /SALE-20261112-ABC123/);
+  assert.match(html, /Date Purchased/);
+  assert.match(html, /Served by/);
+  assert.match(html, /Octobits Cheese &middot; 4 PCS/);
+  assert.match(html, /2 &times; &#8369;12\.50/);
+  assert.match(html, /&#8369;25\.00/);
+  assert.match(html, /Total<\/td><td class="amount">&#8369;31\.00/);
+  assert.match(html, /Cash received<\/td><td class="amount">&#8369;50\.00/);
+  assert.match(html, /Change<\/td><td class="amount">&#8369;19\.00/);
+  assert.match(html, /not an official receipt/);
+  assert.doesNotMatch(html, /class="void"/);
+});
+
+test('the printable receipt of a voided sale is marked VOID (ST-05 c9)', () => {
+  const html = formatStaffSaleReceiptHtml(buildStaffSaleReceipt({
+    ...receiptInput,
+    sale: { ...receiptInput.sale, status: 'voided' },
+  }));
+  assert.match(html, /<div class="void">VOID<\/div>/);
+});
+
+test('names are escaped in the printable receipt', () => {
+  const html = formatStaffSaleReceiptHtml(buildStaffSaleReceipt({
+    ...receiptInput,
+    products: [{ id: 'product-1', product_name: '<b>Octo & Co</b>' }],
+  }));
+  assert.match(html, /&lt;b&gt;Octo &amp; Co&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>Octo/);
+});
+
+test('the PDF file is named after the transaction reference', () => {
+  assert.equal(saleReceiptFileName(buildStaffSaleReceipt(receiptInput)), 'SALE-20261112-ABC123-receipt.pdf');
 });

@@ -550,6 +550,7 @@ export default function MenuWorkspace({
       await onSubmitSale({
         paymentMethod,
         totalAmount: checkoutTotal,
+        cashReceived: paymentMethod === 'Cash' ? parsedCash : null,
         items: cartProducts.map(({ product, quantity }) => ({
           variantId: product.id,
           quantity,

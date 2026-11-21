@@ -26,6 +26,7 @@ function isPendingSaleCheckout(value: unknown): value is PendingSaleCheckout {
     && typeof sale.branchLabel === 'string'
     && (sale.paymentMethod === 'Cash' || sale.paymentMethod === 'QR')
     && Number.isFinite(sale.totalAmount)
+    && (sale.cashReceived === undefined || sale.cashReceived === null || Number.isFinite(sale.cashReceived))
     && Array.isArray(sale.items)
     && sale.items.length > 0
     && sale.items.every((item) => item

@@ -40,7 +40,7 @@ class RecordingSupabase {
     const failure = this.failures.get(name);
     if (failure) {
       this.failures.delete(name);
-      return { data: null, error: { message: failure } };
+      return { data: null, error: typeof failure === 'string' ? { message: failure } : failure };
     }
     switch (name) {
       case 'record_inventory_transactions_idempotent':
@@ -66,6 +66,17 @@ class RecordingSupabase {
             id: 'sale-1', transaction_reference: args.p_transaction_reference, branch_id: args.p_branch_id,
             total_amount: args.p_total_amount, payment_method: args.p_payment_method, status: 'completed',
             inventory_processing_status: 'completed', inventory_processing_error: null, created_at: '2026-11-13T01:00:00Z',
+          },
+          error: null,
+        };
+      case 'submit_sale_with_payment':
+        return {
+          data: {
+            id: 'sale-1', transaction_reference: args.p_transaction_reference, branch_id: args.p_branch_id,
+            total_amount: args.p_total_amount, payment_method: args.p_payment_method, status: 'completed',
+            inventory_processing_status: 'completed', inventory_processing_error: null, created_at: '2026-11-13T01:00:00Z',
+            cash_received: args.p_cash_received, change_amount: args.p_cash_received - args.p_total_amount,
+            served_by_name: 'Ana Reyes',
           },
           error: null,
         };
@@ -561,4 +572,45 @@ test('ST-06 c10: a second closing for the same day shows the server message', as
     recordDailyClosing({ branchId: 'branch-1', openingFloat: 1000, closingCashCount: 4240, clientRequestId: 'c-2' }, client),
     { message: 'The closing for this business day has already been recorded.' },
   );
+});
+
+const cashSale = {
+  branchId: 'branch-a', transactionReference: 'SALE-CASH-1', paymentMethod: 'Cash', totalAmount: 25,
+  items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 25 }], addons: [],
+};
+
+test('ST-05 c5: a cash sale is saved with the cash received', async () => {
+  const client = new RecordingSupabase();
+  await submitSale({ ...cashSale, cashReceived: 100 }, client);
+  assert.equal(client.calls.at(-1).name, 'submit_sale_with_payment');
+  assert.equal(client.calls.at(-1).args.p_cash_received, 100);
+  assert.equal(client.calls.at(-1).args.p_transaction_reference, 'SALE-CASH-1');
+});
+
+test('ST-05: a QR sale and a cash sale without an amount use the original sale call', async () => {
+  const client = new RecordingSupabase();
+  await submitSale({ ...cashSale, paymentMethod: 'QR', cashReceived: 100 }, client);
+  await submitSale({ ...cashSale, transactionReference: 'SALE-CASH-2' }, client);
+  assert.deepEqual(client.calls.map((call) => call.name), ['submit_sale', 'submit_sale']);
+});
+
+test('ST-05: before the database update, a cash sale falls back to the original sale call', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale_with_payment', {
+    code: 'PGRST202',
+    message: 'Could not find the function public.submit_sale_with_payment in the schema cache',
+  });
+  const sale = await submitSale({ ...cashSale, cashReceived: 100 }, client);
+  assert.deepEqual(client.calls.map((call) => call.name), ['submit_sale_with_payment', 'submit_sale']);
+  assert.equal(sale.transaction_reference, 'SALE-CASH-1');
+});
+
+test('ST-05: too little cash is refused without a retry', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale_with_payment', 'Cash received is less than the total.');
+  await assert.rejects(
+    submitSale({ ...cashSale, cashReceived: 10 }, client),
+    (error) => error instanceof SaleSubmissionRejectedError && /less than the total/.test(error.message),
+  );
+  assert.equal(client.calls.length, 1);
 });
