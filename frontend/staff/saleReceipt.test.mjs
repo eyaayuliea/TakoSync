@@ -65,6 +65,20 @@ test('receipt is composed from persisted sale, product, variant, and add-on valu
   ]);
 });
 
+test('the receipt shows the Bulk Order flag from the saved sale', () => {
+  assert.equal(buildStaffSaleReceipt(receiptInput).isBulkOrder, false, '2 items');
+  const bulkInput = { ...receiptInput, items: [{ ...receiptInput.items[0], quantity: 5, subtotal: 62.5 }] };
+  const bulk = buildStaffSaleReceipt(bulkInput);
+  assert.equal(bulk.isBulkOrder, true, '5 items');
+  assert.match(formatStaffSaleReceipt(bulk), /^Bulk Order$/m);
+  assert.doesNotMatch(formatStaffSaleReceipt(buildStaffSaleReceipt(receiptInput)), /Bulk Order/);
+  assert.equal(
+    buildStaffSaleReceipt({ ...bulkInput, sale: { ...bulkInput.sale, is_bulk_order: false } }).isBulkOrder,
+    false,
+    'a saved flag wins over the derived one',
+  );
+});
+
 test('receipts remain available when inventory processing is pending or failed', () => {
   for (const status of ['pending', 'failed']) {
     const receipt = buildStaffSaleReceipt({

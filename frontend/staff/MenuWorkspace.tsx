@@ -18,6 +18,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import type { MenuCartLine, MenuProduct } from './menuPreviewData';
 import { resolveMenuAddons } from './menuAddons';
+import { BULK_ORDER_LABEL, isBulkOrder } from '../services/bulkOrder';
 import {
   calculateSelectedAddonTotal,
   hitSlopForTarget,
@@ -283,6 +284,15 @@ function QuantityInput({
   );
 }
 
+/** ST-02 c7: shown on the order screens once the order reaches the Bulk Order threshold. */
+function BulkOrderBadge() {
+  return (
+    <View accessibilityRole="text" accessibilityLabel={`${BULK_ORDER_LABEL}. The price is not changed.`} style={styles.bulkBadge}>
+      <Text style={styles.bulkBadgeText}>{BULK_ORDER_LABEL.toUpperCase()}</Text>
+    </View>
+  );
+}
+
 function CartItemCard({
   product,
   quantity,
@@ -479,6 +489,7 @@ export default function MenuWorkspace({
   }, [catalogLoading, catalogError, products]);
 
   const totals = calculateMenuCart(cart, products);
+  const bulkOrder = isBulkOrder(totals.count);
   const { available: displayAddons, missingLabels: missingAddonNames } = useMemo(
     () => resolveMenuAddons(addons),
     [addons],
@@ -568,7 +579,10 @@ export default function MenuWorkspace({
           contentContainerStyle={styles.cartList}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.sectionHeading}>Your items <Text style={styles.itemCount}>({totals.count})</Text></Text>
+          <View style={styles.bulkHeadingRow}>
+            <Text style={styles.sectionHeading}>Your items <Text style={styles.itemCount}>({totals.count})</Text></Text>
+            {bulkOrder ? <BulkOrderBadge /> : null}
+          </View>
           {cartProducts.map(({ product, quantity }) => (
             <CartItemCard
               key={product.id}
@@ -630,7 +644,10 @@ export default function MenuWorkspace({
         <ScreenHeader title="Order" onBack={() => onSetPage('cart')} />
         <ProgressSteps active={3} />
           <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <Text style={styles.checkoutTitle}>Review transaction</Text>
+          <View style={styles.bulkHeadingRow}>
+            <Text style={styles.checkoutTitle}>Review transaction</Text>
+            {bulkOrder ? <BulkOrderBadge /> : null}
+          </View>
           {cartProducts.map(({ product, quantity }) => (
             <View key={product.id} style={[styles.checkoutLine, darkSecondarySurface]}>
               <View style={styles.checkoutLineCopy}>
@@ -917,7 +934,10 @@ export default function MenuWorkspace({
         <View style={styles.currentOrderHeader}>
           <View style={styles.currentOrderHeadingCopy}>
             <Text style={[styles.currentOrderTitle, darkSecondaryText]}>Current Order</Text>
-            <Text style={[styles.currentOrderCount, darkSecondaryText]}>{totals.count} {totals.count === 1 ? 'item' : 'items'}</Text>
+            <View style={styles.bulkHeadingRow}>
+              <Text style={[styles.currentOrderCount, darkSecondaryText]}>{totals.count} {totals.count === 1 ? 'item' : 'items'}</Text>
+              {bulkOrder ? <BulkOrderBadge /> : null}
+            </View>
           </View>
           <Pressable
             accessibilityRole="button"
@@ -1196,6 +1216,9 @@ const styles = StyleSheet.create({
     flexShrink: 0, maxHeight: '44%', gap: 5, paddingHorizontal: 13, paddingTop: 9, paddingBottom: 10,
     borderTopLeftRadius: 18, borderTopRightRadius: 18, backgroundColor: colors.white,
   },
+  bulkHeadingRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  bulkBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, backgroundColor: colors.navy },
+  bulkBadgeText: { color: colors.white, fontFamily: font.bold, fontSize: 7, letterSpacing: 0.6 },
   currentOrderHeader: { minHeight: 29, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 7 },
   currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },

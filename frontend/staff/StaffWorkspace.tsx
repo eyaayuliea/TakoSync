@@ -8348,6 +8348,7 @@ export default function StaffWorkspace({
           <Text style={styles.saleReceiptBranch}>{saleReceipt.branchName}</Text>
           <Text style={styles.saleReceiptReference}>{saleReceipt.transactionReference}</Text>
           <Text style={styles.saleReceiptDate}>{formatHistoryDateTime(new Date(saleReceipt.createdAt))}</Text>
+          {saleReceipt.isBulkOrder ? <Text style={styles.saleReceiptBulk}>BULK ORDER</Text> : null}
         </View>
         <View style={styles.saleReceiptLines}>
           {saleReceipt.lines.map((line) => (
@@ -9317,6 +9318,7 @@ function createStaffStyles(theme: AppTheme) {
   saleReceiptBranch: { color: colors.muted, fontFamily: font.regular, fontSize: 9, marginTop: 4 },
   saleReceiptReference: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 12 },
   saleReceiptDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
+  saleReceiptBulk: { color: colors.pink, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, marginTop: 8 },
   saleReceiptLines: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: colors.line },
   saleReceiptLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 8 },
   saleReceiptLineCopy: { flex: 1, minWidth: 0 },
