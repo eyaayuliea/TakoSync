@@ -80,6 +80,23 @@ export function groupMenuProducts(products: MenuProduct[]): MenuProductGroup[] {
       || left.name.localeCompare(right.name));
 }
 
+export type MenuViewState = 'loading' | 'error' | 'empty' | 'ready';
+
+/** ST-03 criterion 8: the View Menu screen's loading, error, empty or ready state. */
+export function menuViewState(loading: boolean, error: string, groupCount: number): MenuViewState {
+  if (loading) return 'loading';
+  if (error.trim() !== '') return 'error';
+  return groupCount === 0 ? 'empty' : 'ready';
+}
+
+/** ST-03 criterion 2: the portion type shown for a product group's catalog category. */
+export function menuPortionTypeLabel(category: string): string {
+  const normalized = category.trim().toLowerCase();
+  if (normalized === 'flavors') return 'Regular';
+  if (normalized === 'combo') return 'Combo + Cheese';
+  return category.trim() || 'Other';
+}
+
 export function selectFlavorMenuProducts(
   groups: MenuProductGroup[],
   regularProductName: string,
