@@ -112,7 +112,7 @@ insert into auth.users (
     '{"provider":"email","providers":["email"]}', '{"full_name":"Count Validation Test Staff"}'
   );
 update public.profiles
-set role = 'owner', branch_id = null, active = true
+set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = '${owner_id}';
 update public.profiles
 set role = 'staff', branch_id = '${branch_id}', active = true

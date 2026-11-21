@@ -99,7 +99,7 @@ insert into auth.users (
   );
 
 update public.profiles
-set role = 'owner', branch_id = null, active = true
+set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = current_setting('st11.owner_id')::uuid;
 update public.profiles
 set role = 'staff', branch_id = current_setting('st11.branch_id')::uuid, active = true

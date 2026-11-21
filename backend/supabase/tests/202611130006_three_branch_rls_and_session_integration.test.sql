@@ -39,18 +39,18 @@ grant select on rls_fixture to authenticated;
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data)
 select owner_id, 'authenticated', 'authenticated', 'rls-owner@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"RLS Owner"}' from rls_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"RLS Owner"}'::jsonb from rls_fixture
 union all
 select staff_1_id, 'authenticated', 'authenticated', 'rls-staff-1@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"RLS Staff 1"}' from rls_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"RLS Staff 1"}'::jsonb from rls_fixture
 union all
 select staff_2_id, 'authenticated', 'authenticated', 'rls-staff-2@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"RLS Staff 2"}' from rls_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"RLS Staff 2"}'::jsonb from rls_fixture
 union all
 select staff_3_id, 'authenticated', 'authenticated', 'rls-staff-3@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"RLS Staff 3"}' from rls_fixture;
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"RLS Staff 3"}'::jsonb from rls_fixture;
 
-update public.profiles set role = 'owner', branch_id = null, active = true
+update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = (select owner_id from rls_fixture);
 update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true
 where id = (select staff_1_id from rls_fixture);

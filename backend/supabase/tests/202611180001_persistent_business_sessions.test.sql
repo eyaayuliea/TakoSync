@@ -29,7 +29,7 @@ insert into auth.users (
   );
 
 update public.profiles
-set role = 'owner', branch_id = null, active = true
+set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = '11111111-aaaa-4111-8111-111111111111';
 update public.profiles
 set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001',

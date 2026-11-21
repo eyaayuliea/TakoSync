@@ -41,7 +41,7 @@ insert into auth.users (
   );
 
 update public.profiles
-set role = 'owner', branch_id = null, active = true
+set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = '66666666-6666-4666-8666-666666666666';
 update public.profiles
 set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true

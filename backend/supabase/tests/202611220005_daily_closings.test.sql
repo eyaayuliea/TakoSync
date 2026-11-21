@@ -19,19 +19,19 @@ grant select on close_fixture to authenticated;
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data)
 select staff_id, 'authenticated', 'authenticated', 'close-staff@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Close Staff"}' from close_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Close Staff"}'::jsonb from close_fixture
 union all
 select other_branch_staff_id, 'authenticated', 'authenticated', 'close-other@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Close Other"}' from close_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Close Other"}'::jsonb from close_fixture
 union all
 select owner_id, 'authenticated', 'authenticated', 'close-owner@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Close Owner"}' from close_fixture;
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Close Owner"}'::jsonb from close_fixture;
 
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900103', branch_id = '00000000-0000-4000-8000-000000000001'::uuid, active = true, must_change_password = false
 where id = (select staff_id from close_fixture);
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000002', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900104', branch_id = '00000000-0000-4000-8000-000000000002'::uuid, active = true, must_change_password = false
 where id = (select other_branch_staff_id from close_fixture);
-update public.profiles set role = 'owner', branch_id = null, active = true, must_change_password = false
+update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from close_fixture);
 
 insert into auth.sessions (id, user_id, created_at, updated_at)
@@ -43,11 +43,11 @@ union all select other_session_id, other_branch_staff_id, now(), now() from clos
 -- The void guard covers status updates only, so the fixture can insert the
 -- voided sale directly.
 insert into public.sales (transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at)
-select 'CLOSE-T1', '00000000-0000-4000-8000-000000000001', staff_id, 300, 'Cash', 'completed', now() from close_fixture
-union all select 'CLOSE-T2', '00000000-0000-4000-8000-000000000001', staff_id, 200, 'cash', 'completed', now() from close_fixture
-union all select 'CLOSE-T3', '00000000-0000-4000-8000-000000000001', staff_id, 50, 'Cash', 'voided', now() from close_fixture
-union all select 'CLOSE-T4', '00000000-0000-4000-8000-000000000001', staff_id, 999, 'QR', 'completed', now() from close_fixture
-union all select 'CLOSE-T5', '00000000-0000-4000-8000-000000000001', staff_id, 700, 'Cash', 'completed', now() - interval '1 day' from close_fixture;
+select 'CLOSE-T1', '00000000-0000-4000-8000-000000000001'::uuid, staff_id, 300, 'Cash', 'completed', now() from close_fixture
+union all select 'CLOSE-T2', '00000000-0000-4000-8000-000000000001'::uuid, staff_id, 200, 'cash', 'completed', now() from close_fixture
+union all select 'CLOSE-T3', '00000000-0000-4000-8000-000000000001'::uuid, staff_id, 50, 'Cash', 'voided', now() from close_fixture
+union all select 'CLOSE-T4', '00000000-0000-4000-8000-000000000001'::uuid, staff_id, 999, 'QR', 'completed', now() from close_fixture
+union all select 'CLOSE-T5', '00000000-0000-4000-8000-000000000001'::uuid, staff_id, 700, 'Cash', 'completed', now() - interval '1 day' from close_fixture;
 
 select ok(not has_table_privilege('authenticated', 'public.daily_closings', 'insert'), 'closings are written only by RPC');
 
@@ -58,15 +58,15 @@ select set_config('request.jwt.claims', json_build_object(
   'session_id', (select staff_session_id from close_fixture))::text, true);
 
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001', -1, 100, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, -1, 100, gen_random_uuid()),
   'P0001', 'Cash amounts cannot be negative.', 'negative amounts are refused');
 
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000002', 1000, 100, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000002'::uuid, 1000, 100, gen_random_uuid()),
   '42501', 'This branch is not your assigned branch.', 'staff close only their own branch');
 
 create temporary table close_result on commit drop as
-select (public.record_daily_closing('00000000-0000-4000-8000-000000000001', 1000, 1440, client_request_id)).*
+select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1000, 1440, client_request_id)).*
 from close_fixture;
 
 select is((select recorded_cash_sales from close_result), 550.00::numeric(12, 2),
@@ -80,11 +80,11 @@ select is((select business_date from close_result), (clock_timestamp() at time z
   'the closing is for the current business day');
 
 select is(
-  (select (public.record_daily_closing('00000000-0000-4000-8000-000000000001', 1000, 1440, client_request_id)).id from close_fixture),
+  (select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1000, 1440, client_request_id)).id from close_fixture),
   (select id from close_result), 'a retried submission returns the same closing');
 
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001', 1000, 1500, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, 1000, 1500, gen_random_uuid()),
   'P0001', 'The closing for this business day has already been recorded.', 'ST-06 c10: a day is closed only once');
 
 select set_config('request.jwt.claim.sub', (select other_branch_staff_id::text from close_fixture), true);
