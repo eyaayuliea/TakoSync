@@ -14,6 +14,8 @@ const {
   submitSale,
   requestSaleVoid,
   decideSaleVoid,
+  requestEntryReversal,
+  decideEntryReversal,
 } = await import('./takosync.ts');
 const {
   SaleSubmissionRejectedError,
@@ -75,6 +77,30 @@ class RecordingSupabase {
             sale_id: args.p_sale_id, branch_id: 'branch-1', requested_by: 'staff-1', reason: args.p_reason,
             status: 'pending', requested_at: '2026-11-22T03:00:00Z', decided_by: null, decided_at: null,
             decision_reason: null,
+          },
+          error: null,
+        };
+      case 'request_inventory_entry_reversal':
+        return {
+          data: {
+            id: 'rev-1', reference: 'REV-20261122-0001', client_request_id: args.p_client_request_id,
+            branch_id: 'branch-1', entry_kind: 'movement', entry_key: args.p_movement_id, movement_id: args.p_movement_id,
+            batch_reference: null, entry_type: 'stock_in', entry_reference: 'TX-1', item_name: 'Flour', quantity: 2,
+            unit: 'kg', entry_recorded_at: '2026-11-22T02:00:00Z', requested_by: 'staff-1', reason: args.p_reason,
+            status: 'pending', requested_at: '2026-11-22T03:00:00Z', decided_by: null, decided_at: null,
+            decision_reason: null,
+          },
+          error: null,
+        };
+      case 'decide_inventory_entry_reversal':
+        return {
+          data: {
+            id: args.p_request_id, reference: 'REV-20261122-0001', client_request_id: 'c-1', branch_id: 'branch-1',
+            entry_kind: 'movement', entry_key: 'mov-1', movement_id: 'mov-1', batch_reference: null,
+            entry_type: 'stock_in', entry_reference: 'TX-1', item_name: 'Flour', quantity: 2, unit: 'kg',
+            entry_recorded_at: '2026-11-22T02:00:00Z', requested_by: 'staff-1', reason: 'Typo',
+            status: args.p_decision === 'approve' ? 'approved' : 'rejected', requested_at: '2026-11-22T03:00:00Z',
+            decided_by: 'owner-1', decided_at: '2026-11-22T04:00:00Z', decision_reason: args.p_reason,
           },
           error: null,
         };
@@ -461,4 +487,46 @@ test('OM-15 c9: a request someone already decided shows a clear message', async 
     decideSaleVoid({ requestId: 'void-1', decision: 'approve' }, client),
     { message: 'This request has already been rejected and can no longer be changed.' },
   );
+});
+
+test('ST-13: a reversal request sends the movement, the trimmed reason, and the retry-safe id', async () => {
+  const client = new RecordingSupabase();
+  const saved = await requestEntryReversal({ movementId: 'mov-1', reason: ' Typo in quantity ', clientRequestId: 'c-1' }, client);
+  assert.deepEqual(client.calls.at(-1), {
+    name: 'request_inventory_entry_reversal',
+    args: { p_movement_id: 'mov-1', p_reason: 'Typo in quantity', p_client_request_id: 'c-1' },
+  });
+  assert.equal(saved.status, 'pending');
+  assert.equal(saved.entryKey, 'mov-1');
+});
+
+test('ST-13 c3: a blank reversal reason is rejected before calling Supabase', async () => {
+  const client = new RecordingSupabase();
+  await assert.rejects(
+    requestEntryReversal({ movementId: 'mov-1', reason: '', clientRequestId: 'c-1' }, client),
+    { message: 'Enter the reason for reversing this entry.' },
+  );
+  assert.equal(client.calls.length, 0);
+});
+
+test('ST-13: a used lot or another employee\'s entry shows the server message', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('request_inventory_entry_reversal', 'You can only reverse your own entries.');
+  await assert.rejects(
+    requestEntryReversal({ movementId: 'mov-1', reason: 'Typo', clientRequestId: 'c-2' }, client),
+    { message: 'You can only reverse your own entries.' },
+  );
+});
+
+test('OM-15: the owner approves or rejects an entry reversal; rejecting needs a reason', async () => {
+  const client = new RecordingSupabase();
+  const approved = await decideEntryReversal({ requestId: 'rev-1', decision: 'approve' }, client);
+  assert.equal(approved.status, 'approved');
+  assert.deepEqual(client.calls.at(-1).args, { p_request_id: 'rev-1', p_decision: 'approve', p_reason: null });
+  await assert.rejects(
+    decideEntryReversal({ requestId: 'rev-1', decision: 'reject', reason: '' }, client),
+    { message: 'Enter the reason for rejecting this request.' },
+  );
+  const rejected = await decideEntryReversal({ requestId: 'rev-1', decision: 'reject', reason: 'Entry was right' }, client);
+  assert.equal(rejected.decisionReason, 'Entry was right');
 });

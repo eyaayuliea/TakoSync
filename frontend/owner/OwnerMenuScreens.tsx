@@ -80,7 +80,7 @@ export function MoreMenuScreen({
 }: {
   onOpenRecords: () => void;
   onOpenProfile: () => void;
-  /** OM-15: void request review. The screen explains when the database is not updated yet. */
+  /** OM-15: void and entry reversal review. The screen explains when the database is not updated yet. */
   onOpenVoidRequests?: () => void;
 }) {
   return (
@@ -89,8 +89,8 @@ export function MoreMenuScreen({
       items={[
         ...(onOpenVoidRequests ? [{
           icon: 'check' as const,
-          title: 'Void Requests',
-          subtitle: 'Approve or reject staff requests to void a sale',
+          title: 'Requests',
+          subtitle: 'Approve or reject staff void and entry reversal requests',
           onTap: onOpenVoidRequests,
         }] : []),
         {

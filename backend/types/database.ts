@@ -75,7 +75,7 @@ export type Database = {
         branch_id: string;
         ingredient_id: string;
         actor_id: string;
-        type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out';
+        type: Database['public']['Enums']['inventory_transaction_type'];
         quantity: number;
         unit: string;
         movement: number;
@@ -90,6 +90,8 @@ export type Database = {
         request_payload_hash: string | null;
         /** Set only for `sales_consumption` rows: the sale that consumed the stock. */
         sale_id: string | null;
+        /** Set only for `entry_reversal` rows: the movement this one reverses. */
+        reverses_movement_id?: string | null;
         created_at: string;
       }>;
       daily_stock_checks: Table<{
@@ -223,6 +225,29 @@ export type Database = {
         client_request_id: string;
         sale_id: string;
         branch_id: string;
+        requested_by: string;
+        reason: string;
+        status: 'pending' | 'approved' | 'rejected';
+        requested_at: string;
+        decided_by: string | null;
+        decided_at: string | null;
+        decision_reason: string | null;
+      }>;
+      inventory_entry_reversal_requests: Table<{
+        id: string;
+        reference: string;
+        client_request_id: string;
+        branch_id: string;
+        entry_kind: 'movement' | 'batter_batch';
+        entry_key: string;
+        movement_id: string | null;
+        batch_reference: string | null;
+        entry_type: 'stock_in' | 'batter_preparation' | 'waste' | 'spillage' | 'spoilage';
+        entry_reference: string;
+        item_name: string;
+        quantity: number;
+        unit: string;
+        entry_recorded_at: string;
         requested_by: string;
         reason: string;
         status: 'pending' | 'approved' | 'rejected';
@@ -502,6 +527,14 @@ export type Database = {
         Args: { p_sale_id: string; p_reason: string; p_client_request_id: string };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];
       };
+      request_inventory_entry_reversal: {
+        Args: { p_movement_id: string; p_reason: string; p_client_request_id: string };
+        Returns: Database['public']['Tables']['inventory_entry_reversal_requests']['Row'];
+      };
+      decide_inventory_entry_reversal: {
+        Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
+        Returns: Database['public']['Tables']['inventory_entry_reversal_requests']['Row'];
+      };
       decide_sale_void: {
         Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];
@@ -509,7 +542,7 @@ export type Database = {
     };
     Enums: {
       app_role: 'owner' | 'staff';
-      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out' | 'void_reversal';
+      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out' | 'void_reversal' | 'entry_reversal';
     };
     CompositeTypes: Record<string, never>;
   };

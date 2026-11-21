@@ -59,7 +59,7 @@ function statusTone(status: SaleVoidRequestStatus): 'warning' | 'error' | 'neutr
  * first, and approves (the sale becomes Voided and its ingredients return to
  * stock) or rejects with a reason. Decided requests are read-only.
  */
-export default function SaleVoidRequestsScreen({ onBack }: { onBack: () => void }) {
+export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: () => void; switcher?: React.ReactNode }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
@@ -277,7 +277,8 @@ export default function SaleVoidRequestsScreen({ onBack }: { onBack: () => void 
 
   return (
     <View style={styles.screen}>
-      <OwnerHeader title={selected ? 'Void Request' : 'Void Requests'} onBack={back} />
+      <OwnerHeader title={selected ? 'Void Request' : 'Requests'} onBack={back} />
+      {!selected && switcher ? <View style={styles.switcher}>{switcher}</View> : null}
       {selected ? renderDetails(selected) : renderList()}
 
       <OwnerModal visible={confirmApprove} onClose={() => { if (!deciding) setConfirmApprove(false); }}>
@@ -322,6 +323,7 @@ function useStyles() {
   const theme = useTheme();
   return StyleSheet.create(createThemedStyles({
     screen: { flex: 1, minHeight: 520 },
+    switcher: { paddingHorizontal: 20, paddingTop: 8 },
     flex: { flex: 1 },
     listContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: OWNER_NAVIGATION_HEIGHT, gap: 10 },
     summary: { color: theme.colors.salesRecordNavy, fontFamily: font.semibold, fontSize: 11 },

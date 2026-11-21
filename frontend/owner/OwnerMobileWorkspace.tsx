@@ -24,7 +24,7 @@ import StockInRecordsScreen from './StockInRecordsScreen';
 import WasteSpillageRecordsScreen from './WasteSpillageRecordsScreen';
 import PhysicalCountRecordsScreen from './PhysicalCountRecordsScreen';
 import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScreen';
-import SaleVoidRequestsScreen from './SaleVoidRequestsScreen';
+import OwnerRequestsScreen from './OwnerRequestsScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
 import { OWNER_NAVIGATION_HEIGHT, OwnerBottomNav, type OwnerTab } from '../navigation/BottomNavigation';
 import {
@@ -2027,7 +2027,7 @@ export default function OwnerMobileWorkspace({
     WasteSpillageRecords: 'Waste and Spillage Records',
     PhysicalCountRecords: 'Physical Inventory Count Records',
     AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
-    VoidRequests: 'Void Requests',
+    VoidRequests: 'Requests',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2177,7 +2177,7 @@ export default function OwnerMobileWorkspace({
           />
         )}
         {page === 'AuthorizedAdjustmentRecords' && <AuthorizedAdjustmentRecordsScreen onBack={goBackFromMenu} />}
-        {page === 'VoidRequests' && <SaleVoidRequestsScreen onBack={goBackFromMenu} />}
+        {page === 'VoidRequests' && <OwnerRequestsScreen onBack={goBackFromMenu} />}
         {page === 'ActivityDetail' && renderActivityDetail()}
         {page === 'Profile' && (
           <OwnerProfileScreen

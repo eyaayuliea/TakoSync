@@ -51,6 +51,14 @@ import {
   validateSaleVoidRejectionReason,
   type SaleVoidRequest,
 } from './saleVoids';
+import {
+  entryReversalErrorMessage,
+  isMissingEntryReversalSupport,
+  mapEntryReversalRequestRow,
+  sortEntryReversalRequestsForReview,
+  validateEntryReversalReason,
+  type EntryReversalRequest,
+} from './entryReversals';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
@@ -184,6 +192,8 @@ export type TransactionHistoryItem = {
   staffId: string;
   staff: string;
   transactionDate: Date;
+  /** When the entry was recorded (ST-13: same-business-day reversals). */
+  createdAt?: Date;
   reason: string;
   notes: string;
   beforeQuantity: number;
@@ -1589,6 +1599,108 @@ export async function loadOwnerSaleVoidReviews(
   return { supported: true, requests: sortSaleVoidRequestsForReview(requests) as OwnerSaleVoidReview[] };
 }
 
+// ST-13 / OW-26 / OM-15: entry reversal requests. Hidden until the database
+// has migration 202611220004.
+
+const ENTRY_REVERSAL_REQUEST_COLUMNS =
+  'id, reference, branch_id, entry_kind, entry_key, entry_type, entry_reference, item_name, quantity, unit, entry_recorded_at, requested_by, reason, status, requested_at, decided_by, decided_at, decision_reason';
+
+/** ST-13 c5, c7, c8: the branch's reversal requests, newest first. */
+export async function loadBranchEntryReversalRequests(
+  branchId: string,
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; requests: EntryReversalRequest[] }> {
+  if (!branchId.trim()) return { supported: true, requests: [] };
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('inventory_entry_reversal_requests')
+    .select(ENTRY_REVERSAL_REQUEST_COLUMNS)
+    .eq('branch_id', branchId)
+    .order('requested_at', { ascending: false })
+    .limit(500);
+  if (isMissingEntryReversalSupport(error)) return { supported: false, requests: [] };
+  assertNoError(error);
+  const rows = data ?? [];
+  const names = await loadProfileNames(resolved, rows.flatMap((row) => [row.requested_by, row.decided_by ?? '']));
+  return { supported: true, requests: rows.map((row) => mapEntryReversalRequestRow(row, names)) };
+}
+
+export class EntryReversalRequestError extends Error {}
+
+/** ST-13 c2–c4: saves a reversal request for the entry this movement belongs to. */
+export async function requestEntryReversal(input: {
+  movementId: string;
+  reason: string;
+  clientRequestId: string;
+}, client?: StaffServiceClient): Promise<EntryReversalRequest> {
+  const reasonError = validateEntryReversalReason(input.reason);
+  if (reasonError) throw new EntryReversalRequestError(reasonError);
+  const { data, error } = await staffServiceClient(client).rpc('request_inventory_entry_reversal', {
+    p_movement_id: input.movementId,
+    p_reason: input.reason.trim(),
+    p_client_request_id: input.clientRequestId,
+  });
+  if (error) throw new EntryReversalRequestError(entryReversalErrorMessage(error));
+  if (!data || data.client_request_id !== input.clientRequestId) {
+    throw new EntryReversalRequestError('The reversal request could not be confirmed. Please try again.');
+  }
+  return mapEntryReversalRequestRow(data);
+}
+
+export type OwnerEntryReversalReview = EntryReversalRequest & { branchName: string };
+
+/** OM-15 c1, c2, c4: every entry reversal request, Pending first. */
+export async function loadOwnerEntryReversalReviews(
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; requests: OwnerEntryReversalReview[] }> {
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('inventory_entry_reversal_requests')
+    .select(ENTRY_REVERSAL_REQUEST_COLUMNS)
+    .order('requested_at', { ascending: false })
+    .limit(500);
+  if (isMissingEntryReversalSupport(error)) return { supported: false, requests: [] };
+  assertNoError(error);
+  const rows = data ?? [];
+  if (!rows.length) return { supported: true, requests: [] };
+  const branchIds = [...new Set(rows.map((row) => row.branch_id))];
+  const [branchesResult, names] = await Promise.all([
+    resolved.from('branches').select('id, city, code').in('id', branchIds),
+    loadProfileNames(resolved, rows.flatMap((row) => [row.requested_by, row.decided_by ?? ''])),
+  ]);
+  assertNoError(branchesResult.error);
+  const branchesById = new Map((branchesResult.data ?? []).map((branch) => [branch.id, branchLabel(branch.city, branch.code)]));
+  return {
+    supported: true,
+    requests: sortEntryReversalRequestsForReview(rows.map((row) => ({
+      ...mapEntryReversalRequestRow(row, names),
+      branchName: branchesById.get(row.branch_id) ?? 'Branch',
+    }))),
+  };
+}
+
+/** OW-26 c7–c9 / OM-15 c7–c9: approve (posts Entry Reversal movements) or reject with a reason. */
+export async function decideEntryReversal(input: {
+  requestId: string;
+  decision: 'approve' | 'reject';
+  reason?: string;
+}, client?: StaffServiceClient): Promise<EntryReversalRequest> {
+  const reason = input.reason?.trim() ?? '';
+  if (input.decision === 'reject') {
+    const reasonError = validateSaleVoidRejectionReason(reason);
+    if (reasonError) throw new EntryReversalRequestError(reasonError);
+  }
+  const { data, error } = await staffServiceClient(client).rpc('decide_inventory_entry_reversal', {
+    p_request_id: input.requestId,
+    p_decision: input.decision,
+    p_reason: reason || null,
+  });
+  if (error) throw new EntryReversalRequestError(entryReversalErrorMessage(error));
+  const expected = input.decision === 'approve' ? 'approved' : 'rejected';
+  if (!data || data.id !== input.requestId || data.status !== expected) {
+    throw new EntryReversalRequestError('The decision could not be confirmed. Refresh and check the request.');
+  }
+  return mapEntryReversalRequestRow(data);
+}
+
 /** OW-26 c5–c9 / OM-15 c5–c9: approve (posts Void Reversal entries) or reject with a reason. */
 export async function decideSaleVoid(input: {
   requestId: string;
@@ -2282,6 +2394,7 @@ export async function loadTransactionHistory(branchId: string): Promise<Transact
       staffEmail: profiles.get(row.actor_id)?.email ?? null,
       staffRole: profiles.get(row.actor_id)?.role ?? null,
       transactionDate: new Date(row.transaction_date),
+      createdAt: row.created_at ? new Date(row.created_at) : undefined,
       reason: row.reason,
       notes: row.notes,
       beforeQuantity: Number(row.before_quantity),
@@ -2380,7 +2493,7 @@ async function fetchTransactionPage(
   pageSize: number,
 ) {
   const { data, error } = await client.from('inventory_transactions')
-    .select('id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit, movement, before_quantity, after_quantity, transaction_date, reason, notes, batch_id')
+    .select('id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit, movement, before_quantity, after_quantity, transaction_date, reason, notes, batch_id, created_at')
     .eq('branch_id', branchId)
     .order('transaction_date', { ascending: false })
     .order('id', { ascending: false })
