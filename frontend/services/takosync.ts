@@ -1675,6 +1675,16 @@ export async function loadOwnerSaleVoidReviews(
   return { supported: true, requests: sortSaleVoidRequestsForReview(requests) as OwnerSaleVoidReview[] };
 }
 
+/** OM-16 c3: the active branches' labels, in code order, for the record branch selectors. */
+export async function loadOwnerBranchLabels(client?: StaffServiceClient): Promise<string[]> {
+  const { data, error } = await staffServiceClient(client).from('branches')
+    .select('city, code')
+    .eq('active', true)
+    .order('code');
+  assertNoError(error);
+  return (data ?? []).map((branch) => branchLabel(branch.city, branch.code));
+}
+
 // ST-06 c7–c10 / OW-11 / OM-11: daily closing. Hidden until the database has
 // migration 202611220005.
 

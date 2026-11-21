@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import OwnerRecordFilterBar, { OwnerFilteredEmptyState, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
+import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
@@ -126,6 +128,26 @@ export default function StockInRecordsScreen({
     }
   };
 
+  // OM-16 c3–c4: branch and date selectors for this list.
+  const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
+  const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  const branchOptions = useOwnerBranchFilterOptions(records.map((record) => record.branchName));
+  const filteredRecords = filterOwnerRecords(records, {
+    branch: recordBranch,
+    period: recordPeriod,
+    branchOf: (record) => record.branchName,
+    dateOf: (record) => record.createdAt,
+  });
+  const recordFilterBar = (
+    <OwnerRecordFilterBar
+      branchOptions={branchOptions}
+      branch={recordBranch}
+      onBranchChange={setRecordBranch}
+      period={recordPeriod}
+      onPeriodChange={setRecordPeriod}
+    />
+  );
+
   return (
     <View style={styles.screen}>
       <OwnerRecordHeader title={view === 'details' ? 'Stock-In Details' : 'Stock-In Records'} onBack={back} />
@@ -177,6 +199,11 @@ export default function StockInRecordsScreen({
       ) : records.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (
+        <>
+          {recordFilterBar}
+          {filteredRecords.length === 0 ? (
+            <OwnerFilteredEmptyState branch={recordBranch} period={recordPeriod} />
+          ) : (
         <ScrollView
           ref={listRef}
           style={styles.listScroll}
@@ -185,7 +212,7 @@ export default function StockInRecordsScreen({
           onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)}
           scrollEventThrottle={16}
         >
-          {records.map((record) => (
+          {filteredRecords.map((record) => (
             <Pressable
               key={record.id}
               accessibilityRole="button"
@@ -207,6 +234,8 @@ export default function StockInRecordsScreen({
             </Pressable>
           ))}
         </ScrollView>
+          )}
+        </>
       )}
     </View>
   );

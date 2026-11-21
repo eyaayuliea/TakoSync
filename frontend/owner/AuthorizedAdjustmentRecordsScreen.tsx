@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import OwnerRecordFilterBar, { OwnerFilteredEmptyState, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
+import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
@@ -30,6 +32,13 @@ export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: 
     loadRecords();
     return () => { requestId.current += 1; };
   }, []);
+  // OM-21 c4: branch and date selectors.
+  const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
+  const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  const branchOptions = useOwnerBranchFilterOptions(records.map((record) => record.branchName));
+  const filteredRecords = filterOwnerRecords(records, {
+    branch: recordBranch, period: recordPeriod, branchOf: (record) => record.branchName, dateOf: (record) => record.approvedAt,
+  });
   const back = () => { if (view === 'details') { setView('list'); setSelected(null); requestAnimationFrame(() => listRef.current?.scrollTo({ y: scrollOffset, animated: false })); } else onBack(); };
   return <View style={styles.screen}>
     <OwnerRecordHeader title={view === 'details' ? 'Adjustment Details' : 'Authorized Adjustment Records'} onBack={back} />
@@ -37,9 +46,9 @@ export default function AuthorizedAdjustmentRecordsScreen({ onBack }: { onBack: 
       <View style={styles.detailCard}><View style={styles.detailHeader}><Text numberOfLines={1} style={styles.detailName}>{selected.ingredientName}</Text><StatusBadge /></View><View style={styles.detailDivider} />
         {[['Branch', selected.branchName], ['Previous expected quantity', formatAuthorizedAdjustmentQuantity(selected.previousExpectedQuantity, selected.unit)], ['Actual quantity', formatAuthorizedAdjustmentQuantity(selected.actualQuantity, selected.unit)], ['Adjusted quantity', formatAuthorizedAdjustmentQuantity(selected.adjustedQuantity, selected.unit)], ['Reason', selected.reason], ['Approving owner', selected.approvingOwner], ['Date & time', formatAuthorizedAdjustmentDateTime(selected.approvedAt)], ['Related discrepancy', selected.relatedDiscrepancy]].map(([label, value], index, rows) => <OwnerRecordDetailRow key={label} label={label} value={value} compact={index === 3 ? 'accent' : undefined} first={index === 0} last={index === rows.length - 1} />)}
       </View>
-    </ScrollView><OwnerRecordReadOnlyPill /></View> : loading ? <OwnerRecordLoadingState /> : error ? <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={loadRecords} /> : records.length === 0 ? <OwnerRecordEmptyState /> : <ScrollView ref={listRef} style={styles.listScroll} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)} scrollEventThrottle={16}>
-      {records.map((record) => <Pressable key={record.id} accessibilityRole="button" onPress={() => { setSelected(record); setView('details'); }} style={styles.adjustmentCard}><View style={styles.cardTop}><Text numberOfLines={1} style={styles.itemName}>{record.ingredientName}</Text><Text style={styles.adjustedQuantity}>{formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text></View><Text style={styles.comparison}>Previous expected {formatAuthorizedAdjustmentQuantity(record.previousExpectedQuantity, record.unit)} → Adjusted {formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text><View style={styles.branchLine}><OwnerMenuIcon name="mapPin" color={colors.salesRecordMuted} size={9} /><Text style={styles.branchText}>{record.branchName}</Text></View></Pressable>)}
-    </ScrollView>}
+    </ScrollView><OwnerRecordReadOnlyPill /></View> : loading ? <OwnerRecordLoadingState /> : error ? <OwnerRecordErrorState message={errorInfo?.message} detail={errorInfo?.detail} onRetry={loadRecords} /> : records.length === 0 ? <OwnerRecordEmptyState /> : <><OwnerRecordFilterBar branchOptions={branchOptions} branch={recordBranch} onBranchChange={setRecordBranch} period={recordPeriod} onPeriodChange={setRecordPeriod} />{filteredRecords.length === 0 ? <OwnerFilteredEmptyState branch={recordBranch} period={recordPeriod} /> : <ScrollView ref={listRef} style={styles.listScroll} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)} scrollEventThrottle={16}>
+      {filteredRecords.map((record) => <Pressable key={record.id} accessibilityRole="button" onPress={() => { setSelected(record); setView('details'); }} style={styles.adjustmentCard}><View style={styles.cardTop}><Text numberOfLines={1} style={styles.itemName}>{record.ingredientName}</Text><Text style={styles.adjustedQuantity}>{formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text></View><Text style={styles.comparison}>Previous expected {formatAuthorizedAdjustmentQuantity(record.previousExpectedQuantity, record.unit)} → Adjusted {formatAuthorizedAdjustmentQuantity(record.adjustedQuantity, record.unit)}</Text><View style={styles.branchLine}><OwnerMenuIcon name="mapPin" color={colors.salesRecordMuted} size={9} /><Text style={styles.branchText}>{record.branchName}</Text></View></Pressable>)}
+    </ScrollView>}</>}
   </View>;
 }
 

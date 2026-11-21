@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import OwnerRecordFilterBar, { OwnerFilteredEmptyState, OwnerLoadOlderButton, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
+import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
@@ -178,6 +180,26 @@ export default function SalesConsumptionRecords({
     } else onBack();
   };
 
+  // OM-16 c3–c4: branch and date selectors for this list.
+  const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
+  const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  const branchOptions = useOwnerBranchFilterOptions(items.map((record) => record.branchName));
+  const filteredRecords = filterOwnerRecords(items, {
+    branch: recordBranch,
+    period: recordPeriod,
+    branchOf: (record) => record.branchName,
+    dateOf: (record) => record.createdAt,
+  });
+  const recordFilterBar = (
+    <OwnerRecordFilterBar
+      branchOptions={branchOptions}
+      branch={recordBranch}
+      onBranchChange={setRecordBranch}
+      period={recordPeriod}
+      onPeriodChange={setRecordPeriod}
+    />
+  );
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -265,6 +287,15 @@ export default function SalesConsumptionRecords({
           <Text style={styles.emptySubtext}>Records will appear here once saved.</Text>
         </View>
       ) : (
+        <>
+          {recordFilterBar}
+          {filteredRecords.length === 0 ? (
+            <OwnerFilteredEmptyState
+              branch={recordBranch}
+              period={recordPeriod}
+              action={hasMore && !loadingMore ? { label: 'Load older records', onPress: loadMore } : null}
+            />
+          ) : (
         <ScrollView
           ref={listRef}
           style={styles.listScroll}
@@ -277,7 +308,7 @@ export default function SalesConsumptionRecords({
           }}
           scrollEventThrottle={16}
         >
-          {items.map((record) => (
+          {filteredRecords.map((record) => (
             <Pressable key={record.id} accessibilityRole="button" onPress={() => openDetails(record.id)} style={styles.tile}>
               <View style={styles.tileTop}>
                 <Text style={styles.ingredientName}>{record.ingredientName}</Text>
@@ -307,8 +338,13 @@ export default function SalesConsumptionRecords({
             <Pressable accessibilityRole="button" onPress={loadMore} style={styles.loadMoreRetry}>
               <Text style={styles.loadMoreRetryText}>Couldn't load more. Tap to retry.</Text>
             </Pressable>
+          ) : hasMore && (recordBranch !== ALL_BRANCHES || recordPeriod !== 'All dates') ? (
+            // A filtered list may be too short to scroll; let the owner load older pages.
+            <OwnerLoadOlderButton label="Load older records" onPress={loadMore} />
           ) : null}
         </ScrollView>
+          )}
+        </>
       )}
     </View>
   );
