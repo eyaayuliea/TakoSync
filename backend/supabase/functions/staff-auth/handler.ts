@@ -88,6 +88,84 @@ function getClients(options: HandlerOptions) {
   };
 }
 
+// ST-01 c2, c3: 5 failed password attempts lock a Staff account for 15 minutes.
+// The counters live in the database (migration 202611220007). Until it is
+// applied the functions are missing and sign-in works without a lockout.
+function isMissingFunction(error) {
+  return error?.code === 'PGRST202' || error?.code === '42883';
+}
+
+async function lockoutRpc(admin, name: string, profileId: string) {
+  try {
+    const { data, error } = await admin.rpc(name, { p_profile_id: profileId });
+    if (error) {
+      if (!isMissingFunction(error)) {
+        console.error('[staff-auth] lockout check failed', { name, code: error.code ?? null });
+      }
+      return null;
+    }
+    return data ?? null;
+  } catch {
+    console.error('[staff-auth] lockout check threw', { name });
+    return null;
+  }
+}
+
+function lockedResponse(lockedUntil: unknown) {
+  return response({ ok: false, code: 'locked_account', lockedUntil: typeof lockedUntil === 'string' ? lockedUntil : null });
+}
+
+/**
+ * Checks a Staff password with lockout counting. Returns 'ok', 'incorrect'
+ * (with attempts left), or 'locked'. The session created by the check is
+ * signed out again so it never replaces the caller's session.
+ */
+async function checkStaffPassword(
+  profileId: string,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+  keepSession = false,
+) {
+  const status = await lockoutRpc(admin, 'staff_login_lock_status', profileId);
+  if (status?.locked) return { result: 'locked' as const, lockedUntil: status.locked_until ?? null };
+
+  const { data: authUserData, error: authUserError } = await admin.auth.admin.getUserById(profileId);
+  const authEmail = typeof authUserData?.user?.email === 'string' ? authUserData.user.email.trim() : '';
+  if (authUserError || !authEmail || authUserData.user.id !== profileId) {
+    throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  if (!password) {
+    const failure = await lockoutRpc(admin, 'register_staff_login_failure', profileId);
+    if (failure?.locked) return { result: 'locked' as const, lockedUntil: failure.locked_until ?? null };
+    return { result: 'incorrect' as const, attemptsRemaining: failure?.attempts_remaining ?? null };
+  }
+  const { data, error } = await auth.auth.signInWithPassword({ email: authEmail, password });
+  if (error) {
+    const isInvalidCredentials =
+      error.code === 'invalid_credentials' ||
+      (error.status === 400 && error.message === 'Invalid login credentials');
+    if (!isInvalidCredentials) {
+      console.error('[staff-auth] Supabase Auth password check failed', { status: error.status ?? null, code: error.code ?? null });
+      throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+    }
+    const failure = await lockoutRpc(admin, 'register_staff_login_failure', profileId);
+    if (failure?.locked) return { result: 'locked' as const, lockedUntil: failure.locked_until ?? null };
+    return { result: 'incorrect' as const, attemptsRemaining: failure?.attempts_remaining ?? null };
+  }
+  if (status && Number(status.failed_attempts) > 0) {
+    await lockoutRpc(admin, 'clear_staff_login_failures', profileId);
+  }
+  if (!keepSession && data?.session?.access_token) {
+    try {
+      await admin.auth.admin.signOut(data.session.access_token, 'local');
+    } catch {
+      // The check session expires on its own; it is never handed to the client.
+    }
+  }
+  return { result: 'ok' as const, data };
+}
+
 async function requireOwner(
   request: Request,
   admin: ReturnType<HandlerOptions['createClient']>,
@@ -179,6 +257,9 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
     profileHasEmail: typeof profile.email === 'string' && Boolean(profile.email.trim()),
     authEmailResolved: true,
   });
+  // ST-01 c3: a locked account is refused before the password is tried.
+  const lockStatus = await lockoutRpc(admin, 'staff_login_lock_status', profile.id);
+  if (lockStatus?.locked) return lockedResponse(lockStatus.locked_until);
   const { data, error: authError } = await auth.auth.signInWithPassword({
     email: authEmail,
     password,
@@ -187,7 +268,15 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
     const isInvalidCredentials =
       authError.code === 'invalid_credentials' ||
       (authError.status === 400 && authError.message === 'Invalid login credentials');
-    if (isInvalidCredentials) return response({ ok: false, code: 'incorrect_password' });
+    if (isInvalidCredentials) {
+      const failure = await lockoutRpc(admin, 'register_staff_login_failure', profile.id);
+      if (failure?.locked) return lockedResponse(failure.locked_until);
+      return response({
+        ok: false,
+        code: 'incorrect_password',
+        attemptsRemaining: typeof failure?.attempts_remaining === 'number' ? failure.attempts_remaining : null,
+      });
+    }
 
     console.error('[staff-auth] Supabase Auth sign-in failed', {
       status: authError.status ?? null,
@@ -200,6 +289,9 @@ async function login(usernameValue: string, password: string, auth: ReturnType<H
       code: 'missing_session',
     });
     throw new HttpError(500, 'Staff authentication is temporarily unavailable.');
+  }
+  if (lockStatus && Number(lockStatus.failed_attempts) > 0) {
+    await lockoutRpc(admin, 'clear_staff_login_failures', profile.id);
   }
   return response({
     ok: true,
@@ -407,6 +499,8 @@ async function resetStaffPassword(
     .eq('role', 'staff')
     .eq('active', true);
   if (flagError) throw new HttpError(500, 'Unable to mark the Staff password as requiring change.');
+  // ST-01 c3: the owner's reset also unlocks the account.
+  await lockoutRpc(admin, 'clear_staff_login_failures', profile.id);
 
   return response({ ok: true, account: profile });
 }
@@ -514,26 +608,68 @@ async function saveAccount(
   return response({ ok: true, account: profile });
 }
 
+async function requireActiveStaff(request: Request, admin: ReturnType<HandlerOptions['createClient']>, action: string) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, 'Authentication is required.');
+  const { data: userData, error: userError } = await admin.auth.getUser(token);
+  if (userError || !userData?.user) throw new HttpError(401, 'Authentication is invalid or expired.');
+  const { data: profile, error: profileError } = await admin.from('profiles')
+    .select('id, role, active, employee_id, must_change_password')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile || profile.role !== 'staff' || !profile.active) {
+    throw new HttpError(403, `Only an active Staff account may ${action}.`);
+  }
+  return profile;
+}
+
+/** ST-01 c8 lock screen and ST-15 c5: checks the signed-in Staff member's password, with lockout. */
+async function verifyPassword(
+  request: Request,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+) {
+  const profile = await requireActiveStaff(request, admin, 'check this password');
+  const checked = await checkStaffPassword(profile.id, password, auth, admin);
+  if (checked.result === 'locked') return lockedResponse(checked.lockedUntil);
+  if (checked.result === 'incorrect') {
+    return response({ ok: false, code: 'incorrect_password', attemptsRemaining: checked.attemptsRemaining });
+  }
+  return response({ ok: true });
+}
+
 async function changePassword(
   request: Request,
   newPassword: string,
+  currentPassword: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
   admin: ReturnType<HandlerOptions['createClient']>,
 ) {
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, 'Authentication is required.');
   if (newPassword.length < 8) throw new HttpError(400, 'New password must be at least 8 characters.');
 
-  const { data: userData, error: userError } = await admin.auth.getUser(token);
-  if (userError || !userData?.user) throw new HttpError(401, 'Authentication is invalid or expired.');
-  const { data: profile, error: profileError } = await admin.from('profiles')
-    .select('id, role, active, employee_id')
-    .eq('id', userData.user.id)
-    .maybeSingle();
-  if (profileError) throw profileError;
-  if (!profile || profile.role !== 'staff' || !profile.active) {
-    throw new HttpError(403, 'Only an active Staff account may change this password.');
-  }
+  const profile = await requireActiveStaff(request, admin, 'change this password');
   if (newPassword === profile.employee_id) throw new HttpError(400, 'Choose a password different from your Employee ID.');
+  // ST-15 c3, c5: outside the forced first change, the current password is
+  // checked here, on the server, with the same lockout as sign-in.
+  if (profile.must_change_password !== true) {
+    const checked = await checkStaffPassword(profile.id, currentPassword, auth, admin);
+    if (checked.result === 'locked') return lockedResponse(checked.lockedUntil);
+    if (checked.result === 'incorrect') {
+      return response({
+        ok: false,
+        code: 'incorrect_password',
+        error: 'Your current password is incorrect. Please try again.',
+        attemptsRemaining: checked.attemptsRemaining,
+      });
+    }
+    if (newPassword === currentPassword) {
+      throw new HttpError(400, 'Choose a new password different from your current password.');
+    }
+  }
 
   const { error: passwordError } = await admin.auth.admin.updateUserById(profile.id, { password: newPassword });
   if (passwordError) throw new HttpError(500, 'Unable to update the Staff password securely.');
@@ -579,7 +715,16 @@ export function createStaffAuthHandler(options: HandlerOptions) {
         return await resetStaffPassword(request, account, admin, url, anonKey, options.createClient);
       }
       if (body.action === 'change-password') {
-        return await changePassword(request, typeof body.newPassword === 'string' ? body.newPassword : '', admin);
+        return await changePassword(
+          request,
+          typeof body.newPassword === 'string' ? body.newPassword : '',
+          typeof body.currentPassword === 'string' ? body.currentPassword : '',
+          auth,
+          admin,
+        );
+      }
+      if (body.action === 'verify-password') {
+        return await verifyPassword(request, typeof body.password === 'string' ? body.password : '', auth, admin);
       }
       if (body.action === 'list') {
         await requireOwner(request, admin);

@@ -10,6 +10,8 @@ export const DEFAULT_STAFF_INACTIVITY_LOCK_MS = 5 * 60_000;
 
 export const DAILY_SESSION_ENDED_MESSAGE = 'Your business day has ended. Please log in again.';
 
+export const STAFF_ACCOUNT_DEACTIVATED_MESSAGE = 'This account is inactive. Please contact the owner.';
+
 // Philippine time is UTC+8 all year (no daylight saving time).
 const MANILA_OFFSET_MS = 8 * 60 * 60_000;
 

@@ -25,6 +25,7 @@ function createFixture({
   authLoginError = null,
   sessionResult = { data: { active: true }, error: null },
   userError = null,
+  lockout = null,
 } = {}) {
   const calls = [];
   const accountOperations = [];
@@ -48,6 +49,13 @@ function createFixture({
       }
       if (key === 'service-role-key-for-test') {
         return {
+          // ST-01 lockout functions; missing (PGRST202) unless the test provides them.
+          rpc: async (name, args) => {
+            calls.push({ kind: 'rpc', name, args });
+            if (!lockout) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } };
+            const value = lockout[name];
+            return { data: typeof value === 'function' ? value() : value ?? null, error: null };
+          },
           auth: {
             getUser: async (token) => {
               calls.push({ kind: 'get-user', token });
@@ -204,8 +212,10 @@ function request(action, account, authorization = 'Bearer valid-token') {
   const headers = { 'Content-Type': 'application/json' };
   if (authorization) headers.Authorization = authorization;
   const body = action === 'change-password'
-    ? { action, newPassword: account?.newPassword }
-    : { action, ...(account ? { account } : {}) };
+    ? { action, newPassword: account?.newPassword, currentPassword: account?.currentPassword }
+    : action === 'verify-password'
+      ? { action, password: account?.password }
+      : { action, ...(account ? { account } : {}) };
   return new Request('https://function.test/staff-auth', {
     method: 'POST',
     headers,
@@ -581,10 +591,20 @@ test('active Staff may change a password when no first-login change is pending',
     callerUserId: 'staff-id',
     staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
   });
-  const result = await invoke(fixture, 'change-password', { newPassword: 'another-secure-password' }, 'Bearer staff-token');
+  const result = await invoke(
+    fixture,
+    'change-password',
+    { newPassword: 'another-secure-password', currentPassword: 'current-password' },
+    'Bearer staff-token',
+  );
 
   assert.equal(result.status, 200);
   assert.equal(result.body.ok, true);
+  assert.deepEqual(
+    fixture.calls.find((call) => call.kind === 'auth-login'),
+    { kind: 'auth-login', email: 'staff@example.test', password: 'current-password' },
+    'the current password is checked on the server',
+  );
   assert.deepEqual(fixture.authAdminPayloads[0][1], { password: 'another-secure-password' });
   assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), true);
 });
@@ -614,4 +634,135 @@ test('Owner bootstrap explicitly clears Employee ID and first-login state', () =
   assert.match(migration, /set employee_id = null,\s+must_change_password = false/);
   assert.match(ownerScript, /employee_id = null/);
   assert.match(ownerScript, /must_change_password = false/);
+});
+
+function staffLoginRequest(password = 'some-password') {
+  return new Request('https://function.test/staff-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'login', username: 'ana_staff', password }),
+  });
+}
+
+const invalidCredentials = { status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' };
+
+test('ST-01 c3: a locked Staff account is refused before the password is tried', async () => {
+  const fixture = createFixture({
+    lockout: { staff_login_lock_status: { locked: true, locked_until: '2026-11-22T10:15:00.000Z', failed_attempts: 5 } },
+  });
+  const result = await fixture.handler(staffLoginRequest());
+  const body = await result.json();
+  assert.equal(result.status, 200);
+  assert.deepEqual(body, { ok: false, code: 'locked_account', lockedUntil: '2026-11-22T10:15:00.000Z' });
+  assert.equal(fixture.calls.some((call) => call.kind === 'auth-login'), false);
+});
+
+test('ST-01 c3: a wrong password is counted and reports the attempts left', async () => {
+  const fixture = createFixture({
+    authLoginError: invalidCredentials,
+    lockout: {
+      staff_login_lock_status: { locked: false, failed_attempts: 2 },
+      register_staff_login_failure: { locked: false, failed_attempts: 3, attempts_remaining: 2 },
+    },
+  });
+  const body = await (await fixture.handler(staffLoginRequest())).json();
+  assert.deepEqual(body, { ok: false, code: 'incorrect_password', attemptsRemaining: 2 });
+  assert.deepEqual(
+    fixture.calls.filter((call) => call.kind === 'rpc').map((call) => [call.name, call.args.p_profile_id]),
+    [['staff_login_lock_status', 'staff-id'], ['register_staff_login_failure', 'staff-id']],
+  );
+});
+
+test('ST-01 c3: the fifth wrong password locks the account', async () => {
+  const fixture = createFixture({
+    authLoginError: invalidCredentials,
+    lockout: {
+      staff_login_lock_status: { locked: false, failed_attempts: 4 },
+      register_staff_login_failure: { locked: true, locked_until: '2026-11-22T10:15:00.000Z', failed_attempts: 5, attempts_remaining: 0 },
+    },
+  });
+  const body = await (await fixture.handler(staffLoginRequest())).json();
+  assert.deepEqual(body, { ok: false, code: 'locked_account', lockedUntil: '2026-11-22T10:15:00.000Z' });
+});
+
+test('ST-01 c3: a correct password clears earlier failed attempts', async () => {
+  const fixture = createFixture({
+    lockout: { staff_login_lock_status: { locked: false, failed_attempts: 3 } },
+  });
+  const result = await fixture.handler(staffLoginRequest());
+  assert.equal((await result.json()).ok, true);
+  assert.equal(fixture.calls.some((call) => call.kind === 'rpc' && call.name === 'clear_staff_login_failures'), true);
+});
+
+test('ST-01: sign-in still works before the lockout migration is applied', async () => {
+  const fixture = createFixture();
+  const result = await fixture.handler(staffLoginRequest());
+  assert.equal((await result.json()).ok, true);
+});
+
+test('ST-01 c3: the owner password reset also unlocks the account', async () => {
+  const fixture = createFixture({ lockout: {} });
+  const result = await invoke(fixture, 'reset-password', { id: 'staff-id' });
+  assert.equal(result.status, 200);
+  assert.equal(fixture.calls.some((call) => call.kind === 'rpc' && call.name === 'clear_staff_login_failures'), true);
+});
+
+test('ST-15 c5: a wrong current password does not change the password', async () => {
+  const fixture = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
+    authLoginError: invalidCredentials,
+    lockout: {
+      staff_login_lock_status: { locked: false, failed_attempts: 0 },
+      register_staff_login_failure: { locked: false, failed_attempts: 1, attempts_remaining: 4 },
+    },
+  });
+  const result = await invoke(
+    fixture,
+    'change-password',
+    { newPassword: 'another-secure-password', currentPassword: 'wrong-password' },
+    'Bearer staff-token',
+  );
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, false);
+  assert.equal(result.body.code, 'incorrect_password');
+  assert.equal(result.body.error, 'Your current password is incorrect. Please try again.');
+  assert.deepEqual(fixture.authAdminPayloads, []);
+});
+
+test('ST-15 c3: outside the first change, a missing current password is refused', async () => {
+  const fixture = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
+  });
+  const result = await invoke(fixture, 'change-password', { newPassword: 'another-secure-password' }, 'Bearer staff-token');
+  assert.equal(result.body.code, 'incorrect_password');
+  assert.deepEqual(fixture.authAdminPayloads, []);
+});
+
+test('ST-01 c8: the lock screen password is checked with lockout and the check session is not kept', async () => {
+  const fixture = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
+  });
+  const ok = await invoke(fixture, 'verify-password', { password: 'right-password' }, 'Bearer staff-token');
+  assert.deepEqual(ok.body, { ok: true });
+
+  const wrong = createFixture({
+    callerUserId: 'staff-id',
+    staffProfiles: [{ ...staffAccount, role: 'staff', must_change_password: false }],
+    authLoginError: invalidCredentials,
+    lockout: {
+      staff_login_lock_status: { locked: false, failed_attempts: 0 },
+      register_staff_login_failure: { locked: false, failed_attempts: 1, attempts_remaining: 4 },
+    },
+  });
+  const result = await invoke(wrong, 'verify-password', { password: 'nope' }, 'Bearer staff-token');
+  assert.deepEqual(result.body, { ok: false, code: 'incorrect_password', attemptsRemaining: 4 });
+});
+
+test('the lock screen check is only for active Staff', async () => {
+  const fixture = createFixture({ callerUserId: 'owner-id' });
+  const result = await invoke(fixture, 'verify-password', { password: 'x' }, 'Bearer valid-token');
+  assert.equal(result.status, 403);
 });

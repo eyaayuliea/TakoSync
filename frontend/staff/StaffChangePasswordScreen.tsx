@@ -76,7 +76,15 @@ export default function StaffChangePasswordScreen({
           throw reason;
         }
       }
-      await changeStaffPassword(password);
+      try {
+        await changeStaffPassword(password, requireCurrentPassword ? currentPassword : undefined);
+      } catch (reason: unknown) {
+        if (reason instanceof StaffLoginError && reason.code === 'incorrect_password') {
+          setCurrentPassword('');
+          throw new Error(CURRENT_PASSWORD_INCORRECT_MESSAGE);
+        }
+        throw reason;
+      }
       setCurrentPassword('');
       setPassword('');
       setConfirmation('');
