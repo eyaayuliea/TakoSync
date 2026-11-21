@@ -59,6 +59,12 @@ import {
   validateEntryReversalReason,
   type EntryReversalRequest,
 } from './entryReversals';
+import {
+  dailyClosingErrorMessage,
+  isMissingDailyClosingSupport,
+  mapDailyClosingRow,
+  type DailyClosing,
+} from './dailyClosing';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
@@ -1597,6 +1603,78 @@ export async function loadOwnerSaleVoidReviews(
     };
   });
   return { supported: true, requests: sortSaleVoidRequestsForReview(requests) as OwnerSaleVoidReview[] };
+}
+
+// ST-06 c7–c10 / OW-11 / OM-11: daily closing. Hidden until the database has
+// migration 202611220005.
+
+const DAILY_CLOSING_COLUMNS =
+  'id, reference, branch_id, business_date, opening_float, closing_cash_count, recorded_cash_sales, voided_cash_sales, expected_cash, over_short, cash_transaction_count, recorded_by, recorded_at';
+
+/** The closing recorded for one branch and business date (YYYY-MM-DD), if any. */
+export async function loadStaffDailyClosing(
+  branchId: string,
+  businessDate: string,
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; closing: DailyClosing | null }> {
+  if (!branchId.trim()) return { supported: true, closing: null };
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('daily_closings')
+    .select(DAILY_CLOSING_COLUMNS)
+    .eq('branch_id', branchId)
+    .eq('business_date', businessDate)
+    .maybeSingle();
+  if (isMissingDailyClosingSupport(error)) return { supported: false, closing: null };
+  assertNoError(error);
+  if (!data) return { supported: true, closing: null };
+  const names = await loadProfileNames(resolved, [data.recorded_by]);
+  return { supported: true, closing: mapDailyClosingRow(data, names) };
+}
+
+export class DailyClosingError extends Error {}
+
+/** ST-06 c7, c8, c10: records today's closing; a retry with the same id is safe. */
+export async function recordDailyClosing(input: {
+  branchId: string;
+  openingFloat: number;
+  closingCashCount: number;
+  clientRequestId: string;
+}, client?: StaffServiceClient): Promise<DailyClosing> {
+  const { data, error } = await staffServiceClient(client).rpc('record_daily_closing', {
+    p_branch_id: input.branchId,
+    p_opening_float: input.openingFloat,
+    p_closing_cash_count: input.closingCashCount,
+    p_client_request_id: input.clientRequestId,
+  });
+  if (error) throw new DailyClosingError(dailyClosingErrorMessage(error));
+  if (!data || data.branch_id !== input.branchId) {
+    throw new DailyClosingError('The closing could not be confirmed. Please check Daily Sales before trying again.');
+  }
+  return mapDailyClosingRow(data);
+}
+
+/** OW-11 / OM-11: closings of every accessible branch between two business dates. */
+export async function loadOwnerDailyClosings(
+  input: { startDate: string; endDate: string },
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; closings: DailyClosing[]; branches: Array<{ id: string; name: string }> }> {
+  const resolved = staffServiceClient(client);
+  const [closingsResult, branchesResult] = await Promise.all([
+    resolved.from('daily_closings')
+      .select(DAILY_CLOSING_COLUMNS)
+      .gte('business_date', input.startDate)
+      .lte('business_date', input.endDate)
+      .order('business_date', { ascending: false })
+      .limit(2000),
+    resolved.from('branches').select('id, city, code').eq('active', true).order('code'),
+  ]);
+  assertNoError(branchesResult.error);
+  const branches = (branchesResult.data ?? []).map((branch) => ({ id: branch.id, name: branchLabel(branch.city, branch.code) }));
+  if (isMissingDailyClosingSupport(closingsResult.error)) return { supported: false, closings: [], branches };
+  assertNoError(closingsResult.error);
+  const rows = closingsResult.data ?? [];
+  const names = await loadProfileNames(resolved, rows.map((row) => row.recorded_by));
+  return { supported: true, closings: rows.map((row) => mapDailyClosingRow(row, names)), branches };
 }
 
 // ST-13 / OW-26 / OM-15: entry reversal requests. Hidden until the database

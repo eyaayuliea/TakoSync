@@ -25,6 +25,7 @@ import WasteSpillageRecordsScreen from './WasteSpillageRecordsScreen';
 import PhysicalCountRecordsScreen from './PhysicalCountRecordsScreen';
 import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScreen';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
+import DailyClosingReportScreen from './DailyClosingReportScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
 import { OWNER_NAVIGATION_HEIGHT, OwnerBottomNav, type OwnerTab } from '../navigation/BottomNavigation';
 import {
@@ -73,7 +74,7 @@ import {
 } from './ownerInventoryStatus';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -757,7 +758,7 @@ export default function OwnerMobileWorkspace({
       : page === 'Records' || page === 'SalesTransactions' || page === 'RecordCategories'
         || page === 'SalesConsumptionRecords' || page === 'StockInRecords' || page === 'WasteSpillageRecords'
         || page === 'PhysicalCountRecords' || page === 'AuthorizedAdjustmentRecords' || page === 'Profile'
-        || page === 'VoidRequests'
+        || page === 'VoidRequests' || page === 'DailyClosingReport'
         || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' || page === 'BusinessHours'
         ? 'More' : page;
   const isOwnerMenuPage = page === 'More'
@@ -767,7 +768,8 @@ export default function OwnerMobileWorkspace({
     || page === 'WasteSpillageRecords'
     || page === 'PhysicalCountRecords'
     || page === 'AuthorizedAdjustmentRecords'
-    || page === 'VoidRequests';
+    || page === 'VoidRequests'
+    || page === 'DailyClosingReport';
   const isMenuFlowPage = isOwnerMenuPage || page === 'SalesTransactions';
 
   const calendarYear = calendarCursor.getFullYear();
@@ -2028,6 +2030,7 @@ export default function OwnerMobileWorkspace({
     PhysicalCountRecords: 'Physical Inventory Count Records',
     AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
     VoidRequests: 'Requests',
+    DailyClosingReport: 'Daily Closing Report',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2178,6 +2181,7 @@ export default function OwnerMobileWorkspace({
         )}
         {page === 'AuthorizedAdjustmentRecords' && <AuthorizedAdjustmentRecordsScreen onBack={goBackFromMenu} />}
         {page === 'VoidRequests' && <OwnerRequestsScreen onBack={goBackFromMenu} />}
+        {page === 'DailyClosingReport' && <DailyClosingReportScreen onBack={goBackFromMenu} />}
         {page === 'ActivityDetail' && renderActivityDetail()}
         {page === 'Profile' && (
           <OwnerProfileScreen

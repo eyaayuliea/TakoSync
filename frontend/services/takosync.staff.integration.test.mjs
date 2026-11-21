@@ -16,6 +16,7 @@ const {
   decideSaleVoid,
   requestEntryReversal,
   decideEntryReversal,
+  recordDailyClosing,
 } = await import('./takosync.ts');
 const {
   SaleSubmissionRejectedError,
@@ -101,6 +102,17 @@ class RecordingSupabase {
             entry_recorded_at: '2026-11-22T02:00:00Z', requested_by: 'staff-1', reason: 'Typo',
             status: args.p_decision === 'approve' ? 'approved' : 'rejected', requested_at: '2026-11-22T03:00:00Z',
             decided_by: 'owner-1', decided_at: '2026-11-22T04:00:00Z', decision_reason: args.p_reason,
+          },
+          error: null,
+        };
+      case 'record_daily_closing':
+        return {
+          data: {
+            id: 'close-1', reference: 'CLOSE-20261122-0001', client_request_id: args.p_client_request_id,
+            branch_id: args.p_branch_id, business_date: '2026-11-22', opening_float: args.p_opening_float,
+            closing_cash_count: args.p_closing_cash_count, recorded_cash_sales: 3300, voided_cash_sales: 50,
+            expected_cash: args.p_opening_float + 3250, over_short: args.p_closing_cash_count - (args.p_opening_float + 3250),
+            cash_transaction_count: 12, recorded_by: 'staff-1', recorded_at: '2026-11-22T13:00:00Z',
           },
           error: null,
         };
@@ -529,4 +541,24 @@ test('OM-15: the owner approves or rejects an entry reversal; rejecting needs a 
   );
   const rejected = await decideEntryReversal({ requestId: 'rev-1', decision: 'reject', reason: 'Entry was right' }, client);
   assert.equal(rejected.decisionReason, 'Entry was right');
+});
+
+test('ST-06 c7–c8: recording the closing sends both amounts and returns the server comparison', async () => {
+  const client = new RecordingSupabase();
+  const saved = await recordDailyClosing({ branchId: 'branch-1', openingFloat: 1000, closingCashCount: 4240, clientRequestId: 'c-1' }, client);
+  assert.deepEqual(client.calls.at(-1), {
+    name: 'record_daily_closing',
+    args: { p_branch_id: 'branch-1', p_opening_float: 1000, p_closing_cash_count: 4240, p_client_request_id: 'c-1' },
+  });
+  assert.equal(saved.expectedCash, 4250);
+  assert.equal(saved.overShort, -10);
+});
+
+test('ST-06 c10: a second closing for the same day shows the server message', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('record_daily_closing', 'The closing for this business day has already been recorded.');
+  await assert.rejects(
+    recordDailyClosing({ branchId: 'branch-1', openingFloat: 1000, closingCashCount: 4240, clientRequestId: 'c-2' }, client),
+    { message: 'The closing for this business day has already been recorded.' },
+  );
 });

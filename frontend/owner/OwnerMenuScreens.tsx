@@ -9,7 +9,8 @@ export type OwnerRecordRoute =
   | 'StockInRecords'
   | 'WasteSpillageRecords'
   | 'PhysicalCountRecords'
-  | 'AuthorizedAdjustmentRecords';
+  | 'AuthorizedAdjustmentRecords'
+  | 'DailyClosingReport';
 
 export type OwnerMenuIconName =
   | 'receipt'
@@ -124,6 +125,12 @@ export function RecordsMenuScreen({
           title: 'Sales Transaction',
           subtitle: 'Confirmed sales per branch',
           onTap: () => onSelectRecord('SalesTransactions'),
+        },
+        {
+          icon: 'salesChart',
+          title: 'Daily Closing',
+          subtitle: 'Closing cash count and over or short per branch',
+          onTap: () => onSelectRecord('DailyClosingReport'),
         },
         {
           icon: 'clipboardCheck',
