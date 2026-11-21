@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import type { ImageSourcePropType } from 'react-native';
+import type { ImageSourcePropType, StyleProp, TextStyle } from 'react-native';
 import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../services/takosync';
 import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
@@ -24,6 +24,8 @@ import {
   calculateMenuCart,
   groupMenuProducts,
   menuOrderValidationMessage,
+  parseMenuQuantityInput,
+  sanitizeMenuQuantityInput,
   selectFlavorMenuProducts,
   shouldOfferCheckoutRetry,
 } from './menuPreviewData';
@@ -40,6 +42,7 @@ type MenuWorkspaceProps = {
   onAddProduct: (productId: string) => void;
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
+  onSetQuantity: (productId: string, quantity: number) => void;
   onRemoveProduct: (productId: string) => void;
   onCancelOrder: () => void;
   onSubmitSale: (input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>) => Promise<void>;
@@ -235,17 +238,60 @@ function SizeOptionCard({
   );
 }
 
+/**
+ * ST-02 criterion 3: the order-line quantity can be typed directly. The draft
+ * is committed on blur or submit; an empty or invalid entry reverts to the
+ * current quantity, so a line is only removed by its remove control.
+ */
+function QuantityInput({
+  productName,
+  quantity,
+  onSetQuantity,
+  style,
+}: {
+  productName: string;
+  quantity: number;
+  onSetQuantity: (quantity: number) => void;
+  style: StyleProp<TextStyle>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const parsed = parseMenuQuantityInput(draft);
+    if (parsed !== null && parsed !== quantity) onSetQuantity(parsed);
+    setDraft(null);
+  };
+  return (
+    <TextInput
+      accessibilityLabel={`${productName} quantity`}
+      value={draft ?? String(quantity)}
+      onChangeText={(text) => setDraft(sanitizeMenuQuantityInput(text))}
+      onFocus={() => setDraft(String(quantity))}
+      onBlur={commit}
+      onSubmitEditing={commit}
+      keyboardType="number-pad"
+      inputMode="numeric"
+      returnKeyType="done"
+      maxLength={4}
+      selectTextOnFocus
+      style={[styles.quantityInput, style]}
+    />
+  );
+}
+
 function CartItemCard({
   product,
   quantity,
   onIncrease,
   onDecrease,
+  onSetQuantity,
   onRemove,
 }: {
   product: MenuProduct;
   quantity: number;
   onIncrease: () => void;
   onDecrease: () => void;
+  onSetQuantity: (quantity: number) => void;
   onRemove: () => void;
 }) {
   const { isDark } = useTheme();
@@ -267,7 +313,12 @@ function CartItemCard({
           >
             <Text style={styles.quantityButtonText}>−</Text>
           </Pressable>
-          <Text style={styles.quantityValue}>{quantity}</Text>
+          <QuantityInput
+            productName={product.name}
+            quantity={quantity}
+            onSetQuantity={onSetQuantity}
+            style={[styles.quantityValue, isDark && { color: '#FFFFFF' }]}
+          />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Increase ${product.name} quantity`}
@@ -290,12 +341,14 @@ function CurrentOrderLine({
   quantity,
   onIncrease,
   onDecrease,
+  onSetQuantity,
   onRemove,
 }: {
   product: MenuProduct;
   quantity: number;
   onIncrease: () => void;
   onDecrease: () => void;
+  onSetQuantity: (quantity: number) => void;
   onRemove: () => void;
 }) {
   const { isDark } = useTheme();
@@ -317,7 +370,12 @@ function CurrentOrderLine({
         >
           <Text style={styles.currentOrderQuantityText}>−</Text>
         </Pressable>
-        <Text style={[styles.currentOrderQuantityValue, darkQuantityText]}>{quantity}</Text>
+        <QuantityInput
+          productName={product.name}
+          quantity={quantity}
+          onSetQuantity={onSetQuantity}
+          style={[styles.currentOrderQuantityValue, darkQuantityText]}
+        />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Increase ${product.name} quantity`}
@@ -350,6 +408,7 @@ export default function MenuWorkspace({
   onAddProduct,
   onIncreaseQuantity,
   onDecreaseQuantity,
+  onSetQuantity,
   onRemoveProduct,
   onCancelOrder,
   onSubmitSale,
@@ -503,6 +562,7 @@ export default function MenuWorkspace({
               quantity={quantity}
               onIncrease={() => onIncreaseQuantity(product.id)}
               onDecrease={() => onDecreaseQuantity(product.id)}
+              onSetQuantity={(nextQuantity) => onSetQuantity(product.id, nextQuantity)}
               onRemove={() => onRemoveProduct(product.id)}
             />
           ))}
@@ -873,6 +933,7 @@ export default function MenuWorkspace({
                 quantity={quantity}
                 onIncrease={() => onIncreaseQuantity(product.id)}
                 onDecrease={() => onDecreaseQuantity(product.id)}
+                onSetQuantity={(nextQuantity) => onSetQuantity(product.id, nextQuantity)}
                 onRemove={() => onRemoveProduct(product.id)}
               />
             ))}
@@ -1190,6 +1251,7 @@ const styles = StyleSheet.create({
   },
   quantityButton: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   quantityButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 16 },
+  quantityInput: { paddingVertical: 0, paddingHorizontal: 2, borderWidth: 0 },
   quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: 9, textAlign: 'center' },
   removeItem: { color: colors.error, fontFamily: font.medium, fontSize: 7, marginTop: 4 },
   emptyCard: {

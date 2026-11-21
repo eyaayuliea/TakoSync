@@ -8,9 +8,33 @@ import {
   EMPTY_MENU_ORDER_MESSAGE,
   groupMenuProducts,
   menuOrderValidationMessage,
+  parseMenuQuantityInput,
+  sanitizeMenuQuantityInput,
   selectFlavorMenuProducts,
+  setMenuCartQuantity,
   shouldOfferCheckoutRetry,
 } from './menuPreviewData.ts';
+
+test('typed order quantities keep digits only and accept whole numbers of at least 1', () => {
+  assert.equal(sanitizeMenuQuantityInput('1a2-3. '), '123');
+  assert.equal(parseMenuQuantityInput('12'), 12);
+  assert.equal(parseMenuQuantityInput(' 7 '), 7);
+  assert.equal(parseMenuQuantityInput('007'), 7);
+  for (const invalid of ['', '0', '00', '-2', '1.5', 'abc', '99999999999999999999']) {
+    assert.equal(parseMenuQuantityInput(invalid), null, `"${invalid}" is rejected`);
+  }
+});
+
+test('setting a typed quantity updates one line, ignores invalid values and honours a maximum', () => {
+  const cart = [{ productId: 'a', quantity: 1 }, { productId: 'b', quantity: 3 }];
+  assert.deepEqual(setMenuCartQuantity(cart, 'a', 12), [{ productId: 'a', quantity: 12 }, { productId: 'b', quantity: 3 }]);
+  assert.equal(setMenuCartQuantity(cart, 'b', 3), cart, 'an unchanged quantity returns the same cart');
+  assert.equal(setMenuCartQuantity(cart, 'a', 0), cart, '0 does not remove the line');
+  assert.equal(setMenuCartQuantity(cart, 'a', 2.5), cart, 'fractions are ignored');
+  assert.deepEqual(setMenuCartQuantity(cart, 'a', 50, 10)[0], { productId: 'a', quantity: 10 }, 'capped at the maximum');
+  assert.deepEqual(setMenuCartQuantity(cart, 'a', 50, 0)[0], { productId: 'a', quantity: 50 }, 'an invalid maximum is ignored');
+  assert.equal(cart[0].quantity, 1, 'the input cart is not mutated');
+});
 
 test('branch menu filtering retains visible unavailable variants for the unavailable filter', () => {
   const variants = [

@@ -25,7 +25,7 @@ import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
-import { changeMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
+import { changeMenuCartQuantity, setMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
@@ -2344,6 +2344,10 @@ export default function StaffWorkspace({
 
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
     setMenuCart((current) => changeMenuCartQuantity(current, productId, change));
+  };
+
+  const setMenuProductQuantity = (productId: string, quantity: number) => {
+    setMenuCart((current) => setMenuCartQuantity(current, productId, quantity));
   };
 
   const removeMenuProduct = (productId: string) => {
@@ -8485,6 +8489,7 @@ export default function StaffWorkspace({
           onAddProduct={addMenuProduct}
           onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
           onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
+          onSetQuantity={setMenuProductQuantity}
           onRemoveProduct={removeMenuProduct}
           onCancelOrder={cancelMenuOrder}
           onSubmitSale={submitMenuSale}
