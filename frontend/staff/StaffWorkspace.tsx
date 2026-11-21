@@ -18,8 +18,6 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
@@ -151,7 +149,8 @@ import {
   type InventoryCountRecord,
   type InventoryReportData,
 } from './inventoryReports';
-import { formatStaffSaleReceipt } from './saleReceipt';
+import { downloadSaleReceiptPdf, printSaleReceipt } from './receiptOutput';
+import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
 import DailyClosingSection from './DailyClosingSection';
@@ -1112,6 +1111,8 @@ export default function StaffWorkspace({
   const [saleReceiptLoading, setSaleReceiptLoading] = useState(false);
   const [saleReceiptError, setSaleReceiptError] = useState('');
   const [saleReceiptShareError, setSaleReceiptShareError] = useState('');
+  const [saleReceiptOutputBusy, setSaleReceiptOutputBusy] = useState<'print' | 'pdf' | null>(null);
+  const [saleReceiptOutputNotice, setSaleReceiptOutputNotice] = useState('');
   // ST-07: void requests for the recent sales and the open receipt. Hidden
   // until the database has the void tables.
   const [saleVoidRequests, setSaleVoidRequests] = useState<SaleVoidRequest[]>([]);
@@ -2535,6 +2536,7 @@ export default function StaffWorkspace({
         branchId: request.branchId,
         paymentMethod: request.paymentMethod,
         totalAmount: request.totalAmount,
+        cashReceived: request.cashReceived ?? null,
         items: request.items,
         addons: request.addons,
       });
@@ -2697,36 +2699,22 @@ export default function StaffWorkspace({
     setSaleVoidModalVisible(false);
   };
 
-  const shareSaleReceipt = async () => {
-    if (!saleReceipt) return;
+  // ST-05 c7: print or download the receipt as a PDF, rendered from the saved sale.
+  const outputSaleReceipt = async (kind: 'print' | 'pdf') => {
+    if (!saleReceipt || saleReceiptOutputBusy) return;
     setSaleReceiptShareError('');
-    const text = formatStaffSaleReceipt(saleReceipt);
-    const fileName = `${saleReceipt.transactionReference.replace(/[^a-z0-9-]/gi, '-')}-receipt.txt`;
+    setSaleReceiptOutputNotice('');
+    setSaleReceiptOutputBusy(kind);
     try {
-      if (Platform.OS === 'web') {
-        if (typeof document === 'undefined') throw new Error('Receipt sharing is unavailable in this browser.');
-        const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        return;
+      if (kind === 'print') {
+        await printSaleReceipt(saleReceipt);
+      } else if (await downloadSaleReceiptPdf(saleReceipt) === 'print-dialog') {
+        setSaleReceiptOutputNotice('In the print window, choose “Save as PDF” to download the receipt.');
       }
-      const directory = FileSystem.cacheDirectory;
-      if (!directory) throw new Error('A temporary storage location is unavailable for this receipt.');
-      if (!await Sharing.isAvailableAsync()) throw new Error('Receipt sharing is not available on this device.');
-      const uri = `${directory}${fileName}`;
-      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
-      await Sharing.shareAsync(uri, {
-        mimeType: 'text/plain',
-        dialogTitle: 'Share sale receipt',
-        UTI: 'public.plain-text',
-      });
     } catch (error) {
-      setSaleReceiptShareError(error instanceof Error ? error.message : 'Unable to share this receipt.');
+      setSaleReceiptShareError(error instanceof Error ? error.message : 'Unable to create this receipt. Please try again.');
+    } finally {
+      setSaleReceiptOutputBusy(null);
     }
   };
 
@@ -8551,7 +8539,8 @@ export default function StaffWorkspace({
           <Text style={styles.saleReceiptBusiness}>Gelo's Takoyaki</Text>
           <Text style={styles.saleReceiptBranch}>{saleReceipt.branchName}</Text>
           <Text style={styles.saleReceiptReference}>{saleReceipt.transactionReference}</Text>
-          <Text style={styles.saleReceiptDate}>{formatHistoryDateTime(new Date(saleReceipt.createdAt))}</Text>
+          <Text style={styles.saleReceiptDate}>Date Purchased: {formatReceiptDatePurchased(saleReceipt.createdAt)}</Text>
+          {saleReceipt.servedBy ? <Text style={styles.saleReceiptDate}>Served by {saleReceipt.servedBy}</Text> : null}
           {saleReceipt.isBulkOrder ? <Text style={styles.saleReceiptBulk}>BULK ORDER</Text> : null}
           {saleReceipt.isVoided ? (
             <Text style={styles.saleReceiptVoid} accessibilityLabel="This sale is void">VOID</Text>
@@ -8578,6 +8567,8 @@ export default function StaffWorkspace({
         </View>
         <View style={styles.saleReceiptDetails}>
           <DetailRow label="Payment method" value={saleReceipt.paymentMethod} />
+          {saleReceipt.cashReceived !== null ? <DetailRow label="Cash received" value={formatSaleMoney(saleReceipt.cashReceived)} /> : null}
+          {saleReceipt.change !== null ? <DetailRow label="Change" value={formatSaleMoney(saleReceipt.change)} /> : null}
           <DetailRow label="Sale status" value={saleReceipt.saleStatus} />
           <DetailRow label="Inventory processing" value={saleReceipt.inventoryProcessingStatus} />
         </View>
@@ -8614,13 +8605,26 @@ export default function StaffWorkspace({
             </>
           );
         })() : null}
+        <Text style={styles.saleReceiptFooter}>{SALE_RECEIPT_FOOTER}</Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => void shareSaleReceipt()}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'print' }}
+          disabled={saleReceiptOutputBusy !== null}
+          onPress={() => void outputSaleReceipt('print')}
+          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
         >
-          <Text style={styles.saveButtonText}>Generate Receipt</Text>
+          <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'print' ? 'Preparing…' : 'Print Receipt'}</Text>
         </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'pdf' }}
+          disabled={saleReceiptOutputBusy !== null}
+          onPress={() => void outputSaleReceipt('pdf')}
+          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
+        >
+          <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'pdf' ? 'Preparing…' : 'Download PDF'}</Text>
+        </Pressable>
+        {saleReceiptOutputNotice ? <Text style={styles.saleReceiptFooter}>{saleReceiptOutputNotice}</Text> : null}
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -9560,6 +9564,7 @@ function createStaffStyles(theme: AppTheme) {
   saleReceiptDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
   saleReceiptBulk: { color: colors.pink, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, marginTop: 8 },
   dailySalesVoidedAmount: { textDecorationLine: 'line-through', color: colors.muted },
+  saleReceiptFooter: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', marginTop: 10 },
   saleReceiptVoid: {
     color: colors.red, fontFamily: font.bold, fontSize: 16, letterSpacing: 3, marginTop: 8,
     paddingHorizontal: 14, paddingVertical: 2, borderWidth: 2, borderColor: colors.red, borderRadius: 6,
