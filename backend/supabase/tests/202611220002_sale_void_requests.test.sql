@@ -26,19 +26,19 @@ grant select on void_fixture to authenticated;
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data)
 select owner_id, 'authenticated', 'authenticated', 'void-owner@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Void Owner"}' from void_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Void Owner"}'::jsonb from void_fixture
 union all
 select staff_1_id, 'authenticated', 'authenticated', 'void-staff-1@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Void Staff 1"}' from void_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Void Staff 1"}'::jsonb from void_fixture
 union all
 select staff_2_id, 'authenticated', 'authenticated', 'void-staff-2@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Void Staff 2"}' from void_fixture;
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Void Staff 2"}'::jsonb from void_fixture;
 
-update public.profiles set role = 'owner', branch_id = null, active = true, must_change_password = false
+update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from void_fixture);
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900101', branch_id = '00000000-0000-4000-8000-000000000001'::uuid, active = true, must_change_password = false
 where id = (select staff_1_id from void_fixture);
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000002', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900102', branch_id = '00000000-0000-4000-8000-000000000002'::uuid, active = true, must_change_password = false
 where id = (select staff_2_id from void_fixture);
 
 insert into auth.sessions (id, user_id, created_at, updated_at)
@@ -48,18 +48,18 @@ union all select staff_2_session_id, staff_2_id, now(), now() from void_fixture;
 
 -- Branch 1 had 10 kg of flour; the sale below consumed 2 kg.
 update public.branch_inventory set quantity = 8
-where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id = 'flour';
+where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour';
 insert into public.ingredient_batches (branch_id, ingredient_id, batch_reference, quantity_received, quantity_remaining)
-values ('00000000-0000-4000-8000-000000000001', 'flour', 'VOID-TEST-LOT', 10, 8);
+values ('00000000-0000-4000-8000-000000000001'::uuid, 'flour', 'VOID-TEST-LOT', 10, 8);
 
 insert into public.products (id, product_name, description, price)
 select product_id, product_name, 'Void fixture', 10 from void_fixture;
 insert into public.sales (id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status,
   inventory_processing_status, created_at)
-select sale_id, 'VOID-TEST-SALE', '00000000-0000-4000-8000-000000000001', staff_1_id, 20, 'Cash', 'completed',
+select sale_id, 'VOID-TEST-SALE', '00000000-0000-4000-8000-000000000001'::uuid, staff_1_id, 20, 'Cash', 'completed',
   'completed', now() from void_fixture
 union all
-select old_sale_id, 'VOID-TEST-OLD-SALE', '00000000-0000-4000-8000-000000000001', staff_1_id, 10, 'Cash', 'completed',
+select old_sale_id, 'VOID-TEST-OLD-SALE', '00000000-0000-4000-8000-000000000001'::uuid, staff_1_id, 10, 'Cash', 'completed',
   'completed', now() - interval '2 days' from void_fixture;
 insert into public.sale_items (sale_id, product_id, quantity, unit_price, subtotal)
 select sale_id, product_id, 2, 10, 20 from void_fixture;
@@ -69,7 +69,7 @@ insert into private.sales_processing_authorizations (backend_pid, transaction_id
 select pg_backend_pid(), txid_current(), sale_id from void_fixture;
 insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type, sale_id, quantity, unit,
   movement, before_quantity, after_quantity, reason, notes)
-select 'VOID-TEST-CONSUMPTION', '00000000-0000-4000-8000-000000000001', 'flour', staff_1_id, 'sales_consumption',
+select 'VOID-TEST-CONSUMPTION', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_1_id, 'sales_consumption',
   sale_id, 2, 'kg', -2, 10, 8, 'Sale fixture', 'sale:' || sale_id::text
 from void_fixture;
 delete from private.sales_processing_authorizations where backend_pid = pg_backend_pid();
@@ -154,12 +154,12 @@ select is((select status from public.sales where id = (select sale_id from void_
 
 select is(
   (select quantity from public.branch_inventory
-   where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id = 'flour'),
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
   10.000::numeric(12, 3), 'ST-07 c8: the consumed flour is back in stock');
 
 select is(
   (select quantity_remaining from public.ingredient_batches
-   where branch_id = '00000000-0000-4000-8000-000000000001' and batch_reference = 'VOID-TEST-LOT'),
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and batch_reference = 'VOID-TEST-LOT'),
   10.000::numeric(12, 3), 'the lot it came from is refilled');
 
 select results_eq(
@@ -184,7 +184,7 @@ select is((select status from public.sales where id = (select sale_id from void_
 select throws_ok(
   format($$insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type, sale_id,
     quantity, unit, movement, before_quantity, after_quantity)
-    values ('VOID-TEST-FORGED', '00000000-0000-4000-8000-000000000001', 'flour', %L, 'void_reversal', %L,
+    values ('VOID-TEST-FORGED', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', %L, 'void_reversal', %L,
     1, 'kg', 1, 10, 11)$$, (select owner_id from void_fixture), (select old_sale_id from void_fixture)),
   'P0001', 'This movement type requires an approved atomic workflow',
   'Void Reversal entries cannot be written outside an approved void');

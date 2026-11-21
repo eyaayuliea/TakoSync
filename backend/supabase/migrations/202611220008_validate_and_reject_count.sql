@@ -348,7 +348,6 @@ begin
       v_line.recorded_quantity, v_line.physical_quantity, v_request.corrected_actual_quantity,
       'no_change', v_owner.id, btrim(p_reason)
     ) returning * into v_validation;
-    perform private.close_reviewed_stock_check(v_check.id);
     return v_validation;
   end if;
 
@@ -373,7 +372,8 @@ begin
     'adjusted', v_owner.id, btrim(p_reason), v_movement.id
   ) returning * into v_validation;
 
-  perform private.close_reviewed_stock_check(v_check.id);
+  -- As before #85, the correction path leaves the check's status alone, so a
+  -- saved correction retry still resolves after validation.
   return v_validation;
 end;
 $$;

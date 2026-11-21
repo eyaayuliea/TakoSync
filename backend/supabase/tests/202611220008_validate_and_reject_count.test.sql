@@ -20,13 +20,13 @@ grant select on count_fixture to authenticated;
 
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
 select owner_id, 'authenticated', 'authenticated', 'count-owner@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Count Owner"}' from count_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Count Owner"}'::jsonb from count_fixture
 union all
 select staff_id, 'authenticated', 'authenticated', 'count-staff@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Count Staff"}' from count_fixture;
-update public.profiles set role = 'owner', branch_id = null, active = true, must_change_password = false
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Count Staff"}'::jsonb from count_fixture;
+update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from count_fixture);
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900106', branch_id = '00000000-0000-4000-8000-000000000001', active = true, must_change_password = false
 where id = (select staff_id from count_fixture);
 insert into auth.sessions (id, user_id, created_at, updated_at)
 select owner_session_id, owner_id, now(), now() from count_fixture;

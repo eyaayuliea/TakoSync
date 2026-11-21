@@ -26,17 +26,17 @@ grant select on rev_fixture to authenticated;
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data)
 select owner_id, 'authenticated', 'authenticated', 'rev-owner@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Rev Owner"}' from rev_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Rev Owner"}'::jsonb from rev_fixture
 union all
 select staff_id, 'authenticated', 'authenticated', 'rev-staff@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Rev Staff"}' from rev_fixture
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Rev Staff"}'::jsonb from rev_fixture
 union all
 select other_staff_id, 'authenticated', 'authenticated', 'rev-other@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Rev Other"}' from rev_fixture;
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Rev Other"}'::jsonb from rev_fixture;
 
-update public.profiles set role = 'owner', branch_id = null, active = true, must_change_password = false
+update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from rev_fixture);
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true, must_change_password = false
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-' || case when id = (select staff_id from rev_fixture) then '900001' else '900002' end, branch_id = '00000000-0000-4000-8000-000000000001'::uuid, active = true, must_change_password = false
 where id in (select staff_id from rev_fixture union all select other_staff_id from rev_fixture);
 
 insert into auth.sessions (id, user_id, created_at, updated_at)
@@ -46,29 +46,29 @@ union all select staff_session_id, staff_id, now(), now() from rev_fixture;
 -- Branch 1 flour: 10 kg on an older lot, then today's 3 kg Stock-In on its own
 -- lot, then 1 kg spilled from the older lot. 12 kg on hand.
 update public.branch_inventory set quantity = 12
-where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id = 'flour';
+where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour';
 insert into public.ingredient_batches (id, branch_id, ingredient_id, batch_reference, received_date, quantity_received, quantity_remaining)
-select gen_random_uuid(), '00000000-0000-4000-8000-000000000001', 'flour', 'REV-OLD-LOT', current_date - 3, 10, 9 from rev_fixture
+select gen_random_uuid(), '00000000-0000-4000-8000-000000000001'::uuid, 'flour', 'REV-OLD-LOT', current_date - 3, 10, 9 from rev_fixture
 union all
-select stock_lot_id, '00000000-0000-4000-8000-000000000001', 'flour', 'REV-STOCK-LOT', current_date, 3, 3 from rev_fixture
+select stock_lot_id, '00000000-0000-4000-8000-000000000001'::uuid, 'flour', 'REV-STOCK-LOT', current_date, 3, 3 from rev_fixture
 union all
-select used_lot_id, '00000000-0000-4000-8000-000000000001', 'flour', 'REV-USED-LOT', current_date, 2, 1 from rev_fixture;
+select used_lot_id, '00000000-0000-4000-8000-000000000001'::uuid, 'flour', 'REV-USED-LOT', current_date, 2, 1 from rev_fixture;
 
 insert into public.inventory_movements (id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit,
   movement, before_quantity, after_quantity, reason, notes, batch_id, created_at)
-select stock_in_id, 'REV-STOCK-IN', '00000000-0000-4000-8000-000000000001', 'flour', staff_id, 'stock_in',
+select stock_in_id, 'REV-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
   3, 'kg', 3, 10, 13, '', '', stock_lot_id, now() from rev_fixture
 union all
-select spillage_id, 'REV-SPILL', '00000000-0000-4000-8000-000000000001', 'flour', staff_id, 'waste',
+select spillage_id, 'REV-SPILL', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'waste'::public.inventory_transaction_type,
   1, 'kg', -1, 13, 12, 'Spillage', 'Dropped a bag', null, now() from rev_fixture
 union all
-select old_stock_in_id, 'REV-OLD-STOCK-IN', '00000000-0000-4000-8000-000000000001', 'flour', staff_id, 'stock_in',
+select old_stock_in_id, 'REV-OLD-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
   1, 'kg', 1, 9, 10, '', '', null, now() - interval '2 days' from rev_fixture
 union all
-select other_stock_in_id, 'REV-OTHER-STOCK-IN', '00000000-0000-4000-8000-000000000001', 'flour', other_staff_id, 'stock_in',
+select other_stock_in_id, 'REV-OTHER-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', other_staff_id, 'stock_in'::public.inventory_transaction_type,
   1, 'kg', 1, 9, 10, '', '', null, now() from rev_fixture
 union all
-select used_stock_in_id, 'REV-USED-STOCK-IN', '00000000-0000-4000-8000-000000000001', 'flour', staff_id, 'stock_in',
+select used_stock_in_id, 'REV-USED-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
   2, 'kg', 2, 8, 10, '', '', used_lot_id, now() from rev_fixture;
 
 select ok(not has_table_privilege('authenticated', 'public.inventory_entry_reversal_requests', 'insert'),
@@ -112,7 +112,7 @@ select is(
 
 select is(
   (select quantity from public.branch_inventory
-   where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id = 'flour'),
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
   12.000::numeric(12, 3), 'ST-13 c5: stock is unchanged while requests are pending');
 
 -- Owner ------------------------------------------------------------------------
@@ -138,7 +138,7 @@ select is(
 
 select is(
   (select quantity from public.branch_inventory
-   where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id = 'flour'),
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
   9.000::numeric(12, 3), 'the 3 kg Stock-In is taken back out of stock');
 
 select is(
@@ -170,7 +170,7 @@ reset role;
 select throws_ok(
   format($$insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type,
     reverses_movement_id, quantity, unit, movement, before_quantity, after_quantity)
-    values ('REV-FORGED', '00000000-0000-4000-8000-000000000001', 'flour', %L, 'entry_reversal', %L,
+    values ('REV-FORGED', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', %L, 'entry_reversal', %L,
     1, 'kg', 1, 9, 10)$$, (select owner_id from rev_fixture), (select spillage_id from rev_fixture)),
   'P0001', 'This movement type requires an approved atomic workflow',
   'Entry Reversal movements cannot be written outside an approved request');

@@ -7,8 +7,9 @@ set local search_path = public, extensions;
 
 select plan(7);
 
-select has_function_privilege('authenticated',
-  'public.submit_sale_with_payment(text,uuid,text,numeric,jsonb,jsonb,numeric)', 'execute');
+select ok(has_function_privilege('authenticated',
+  'public.submit_sale_with_payment(text,uuid,text,numeric,jsonb,jsonb,numeric)', 'execute'),
+  'signed-in staff can record a sale with payment details');
 
 select throws_ok(
   $$select public.submit_sale_with_payment('PAY-1', '00000000-0000-4000-8000-000000000001', 'Cash', 25,
@@ -31,7 +32,7 @@ select is((select count(*)::int from public.sales where transaction_reference li
 -- The saved details must add up, whoever writes them.
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
 values ('81000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'pay-staff@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Pay Staff"}');
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Pay Staff"}'::jsonb);
 
 select throws_ok(
   $$insert into public.sales (transaction_reference, branch_id, staff_id, total_amount, payment_method, status,

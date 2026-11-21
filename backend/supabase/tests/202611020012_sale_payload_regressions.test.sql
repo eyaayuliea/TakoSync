@@ -16,7 +16,7 @@ insert into auth.users (
 );
 
 update public.profiles
-set role = 'owner', branch_id = null, active = true
+set role = 'owner', branch_id = null, employee_id = null, active = true
 where id = '90000000-0000-4000-8000-000000000002';
 
 insert into auth.sessions (id, user_id, created_at, updated_at) values

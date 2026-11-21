@@ -8,8 +8,8 @@ select plan(10);
 
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
 values ('91000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'lock-staff@test.invalid', '', now(),
-  '{"provider":"email","providers":["email"]}', '{"full_name":"Lock Staff"}');
-update public.profiles set role = 'staff', branch_id = '00000000-0000-4000-8000-000000000001', active = true
+  '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Lock Staff"}'::jsonb);
+update public.profiles set role = 'staff', employee_id = 'EMP-2026-900105', branch_id = '00000000-0000-4000-8000-000000000001', active = true
 where id = '91000000-0000-4000-8000-000000000001';
 
 select ok(not has_function_privilege('authenticated', 'public.register_staff_login_failure(uuid)', 'execute'),
