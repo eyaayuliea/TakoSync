@@ -24,8 +24,10 @@ import {
   hitSlopForTarget,
   calculateMenuCart,
   groupMenuProducts,
+  isAtMenuQuantityLimit,
   menuOrderValidationMessage,
   menuPortionTypeLabel,
+  menuQuantityLimitMessage,
   menuViewState,
   parseMenuQuantityInput,
   sanitizeMenuQuantityInput,
@@ -309,6 +311,7 @@ function CartItemCard({
   onRemove: () => void;
 }) {
   const { isDark } = useTheme();
+  const atLimit = isAtMenuQuantityLimit(quantity, product.maxQuantity);
   return (
     <View style={[styles.cartItem, isDark && { backgroundColor: '#0F1025' }]}>
       <View style={styles.cartItemCopy}>
@@ -336,12 +339,19 @@ function CartItemCard({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Increase ${product.name} quantity`}
+            accessibilityState={{ disabled: atLimit }}
+            disabled={atLimit}
             onPress={onIncrease}
-            style={styles.quantityButton}
+            style={[styles.quantityButton, atLimit && styles.quantityButtonDisabled]}
           >
             <Text style={styles.quantityButtonText}>+</Text>
           </Pressable>
         </View>
+        {atLimit ? (
+          <Text style={styles.quantityLimitText} accessibilityRole="alert">
+            {menuQuantityLimitMessage(product.maxQuantity!)}
+          </Text>
+        ) : null}
         <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${product.name}`} hitSlop={REMOVE_BUTTON_HIT_SLOP} onPress={onRemove}>
           <Text style={styles.removeItem}>Remove</Text>
         </Pressable>
@@ -368,11 +378,14 @@ function CurrentOrderLine({
   const { isDark } = useTheme();
   const darkText = isDark ? { color: '#FFFFFF' } : undefined;
   const darkQuantityText = isDark ? { color: '#0F1025' } : undefined;
+  const atLimit = isAtMenuQuantityLimit(quantity, product.maxQuantity);
   return (
     <View style={styles.currentOrderLine}>
       <View style={styles.currentOrderCopy}>
         <Text style={[styles.currentOrderName, darkText]} numberOfLines={1}>{product.name}</Text>
-        <Text style={[styles.currentOrderUnit, darkText]}>{money(product.price)} each</Text>
+        <Text style={[styles.currentOrderUnit, atLimit ? styles.quantityLimitText : darkText]}>
+          {atLimit ? menuQuantityLimitMessage(product.maxQuantity!) : `${money(product.price)} each`}
+        </Text>
       </View>
       <Text style={[styles.currentOrderLineTotal, darkText]}>{money(product.price * quantity)}</Text>
       <View style={styles.currentOrderQuantity}>
@@ -393,8 +406,11 @@ function CurrentOrderLine({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Increase ${product.name} quantity`}
+          accessibilityHint={atLimit ? menuQuantityLimitMessage(product.maxQuantity!) : undefined}
+          accessibilityState={{ disabled: atLimit }}
+          disabled={atLimit}
           onPress={onIncrease}
-          style={styles.currentOrderQuantityButton}
+          style={[styles.currentOrderQuantityButton, atLimit && styles.quantityButtonDisabled]}
         >
           <Text style={styles.currentOrderQuantityText}>+</Text>
         </Pressable>
@@ -463,6 +479,7 @@ export default function MenuWorkspace({
       name: `${product.name} - ${product.sizeLabel}`,
       description: product.description,
       price: product.price,
+      maxQuantity: product.maxQuantity,
       isAvailable: product.isAvailable,
     })),
     [catalog],
@@ -1352,6 +1369,8 @@ const styles = StyleSheet.create({
   },
   quantityButton: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   quantityButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 16 },
+  quantityButtonDisabled: { opacity: 0.35 },
+  quantityLimitText: { color: colors.error, fontFamily: font.medium, fontSize: 7, marginTop: 3 },
   quantityInput: { paddingVertical: 0, paddingHorizontal: 2, borderWidth: 0 },
   quantityValue: { minWidth: 20, color: colors.text, fontFamily: font.semibold, fontSize: 9, textAlign: 'center' },
   removeItem: { color: colors.error, fontFamily: font.medium, fontSize: 7, marginTop: 4 },

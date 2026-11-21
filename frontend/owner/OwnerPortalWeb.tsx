@@ -1358,6 +1358,8 @@ function OwnerProductEditor({ products, onSaved }: {
     '8pcs': '',
     '10plus1pcs': '',
   });
+  // OW-21 c4: maximum quantity per order for each size; blank = no maximum.
+  const [maxQuantityDrafts, setMaxQuantityDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const selectedProduct = products.find((product) => product.id === productId);
 
@@ -1367,6 +1369,7 @@ function OwnerProductEditor({ products, onSaved }: {
       setDescription('');
       setAvailable(true);
       setPriceDrafts({ '4pcs': '', '8pcs': '', '10plus1pcs': '' });
+      setMaxQuantityDrafts({});
       return;
     }
 
@@ -1377,12 +1380,16 @@ function OwnerProductEditor({ products, onSaved }: {
       const current = selectedProduct.variants.find((item) => item.variant_code === variant.variant_code);
       return [variant.variant_code, current ? String(current.price) : ''];
     })));
+    setMaxQuantityDrafts(Object.fromEntries(standardProductVariants.map((variant) => {
+      const current = selectedProduct.variants.find((item) => item.variant_code === variant.variant_code);
+      return [variant.variant_code, current?.max_order_quantity ? String(current.max_order_quantity) : ''];
+    })));
   }, [selectedProduct]);
 
   const save = async () => {
     setSaving(true);
     try {
-      const variantPrices = buildOwnerPortalVariantPrices(priceDrafts, standardProductVariants);
+      const variantPrices = buildOwnerPortalVariantPrices(priceDrafts, standardProductVariants, maxQuantityDrafts);
       const productInput = {
         product_name: name,
         description,
@@ -1396,13 +1403,17 @@ function OwnerProductEditor({ products, onSaved }: {
         if (missingVariant) {
           throw new Error(`Cannot edit this product because its ${missingVariant.size_label} variant is missing.`);
         }
-        const pricesByCode = new Map(variantPrices.map((variant) => [variant.variant_code, variant.price]));
+        const builtByCode = new Map(variantPrices.map((variant) => [variant.variant_code, variant]));
         await updateProduct(selectedProduct.id, {
           ...productInput,
-          variants: selectedProduct.variants.map((variant) => ({
-            id: variant.id,
-            price: pricesByCode.get(variant.variant_code) ?? variant.price,
-          })),
+          variants: selectedProduct.variants.map((variant) => {
+            const built = builtByCode.get(variant.variant_code);
+            return {
+              id: variant.id,
+              price: built?.price ?? variant.price,
+              ...(built ? { max_order_quantity: built.max_order_quantity ?? null } : {}),
+            };
+          }),
         });
       } else {
         await createProduct({ ...productInput, variants: variantPrices });
@@ -1437,18 +1448,32 @@ function OwnerProductEditor({ products, onSaved }: {
       <TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} />
       <TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} />
       {standardProductVariants.map((variant) => (
-        <TextInput
-          key={variant.variant_code}
-          value={priceDrafts[variant.variant_code]}
-          onChangeText={(value) => setPriceDrafts((current) => ({
-            ...current,
-            [variant.variant_code]: value,
-          }))}
-          keyboardType="decimal-pad"
-          placeholder={`${variant.size_label} selling price`}
-          style={styles.input}
-        />
+        <View key={variant.variant_code} style={styles.variantFieldRow}>
+          <TextInput
+            value={priceDrafts[variant.variant_code]}
+            onChangeText={(value) => setPriceDrafts((current) => ({
+              ...current,
+              [variant.variant_code]: value,
+            }))}
+            keyboardType="decimal-pad"
+            placeholder={`${variant.size_label} selling price`}
+            accessibilityLabel={`${variant.size_label} selling price`}
+            style={[styles.input, styles.variantFieldWide]}
+          />
+          <TextInput
+            value={maxQuantityDrafts[variant.variant_code] ?? ''}
+            onChangeText={(value) => setMaxQuantityDrafts((current) => ({
+              ...current,
+              [variant.variant_code]: value,
+            }))}
+            keyboardType="number-pad"
+            placeholder="Max per order"
+            accessibilityLabel={`${variant.size_label} maximum quantity per order, leave blank for no maximum`}
+            style={[styles.input, styles.variantFieldNarrow]}
+          />
+        </View>
       ))}
+      <Text style={styles.muted}>Max per order limits how many of a size one order can hold. Leave it blank for no limit.</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ checked: available }}
@@ -1973,4 +1998,4 @@ function ProfileEditor({ user, onSaved }: {
 }
 
 const C = { pink: '#EC1358', navy: '#0F1025', bg: '#F5F5F4', surface: '#FDFDFC', border: '#E3E3E6', muted: '#858591' };
-const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });
+const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, variantFieldRow: { flexDirection: 'row', gap: 8 }, variantFieldWide: { flex: 2, minWidth: 0 }, variantFieldNarrow: { flex: 1, minWidth: 0 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });

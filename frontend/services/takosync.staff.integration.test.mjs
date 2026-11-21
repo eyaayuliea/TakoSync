@@ -217,6 +217,20 @@ test('Staff sale service classifies known inventory rejection as non-retryable',
   assert.equal(client.calls.filter((call) => call.name === 'submit_sale').length, 1);
 });
 
+test('Staff sale service treats a server maximum-quantity rejection as non-retryable (ST-02 c5)', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale', 'Order quantity exceeds the maximum of 10 per order for this product');
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-OVER-MAX', paymentMethod: 'Cash', totalAmount: 110,
+      items: [{ variantId: 'variant-1', quantity: 11, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    (error) => error instanceof SaleSubmissionRejectedError
+      && !isRetryableSaleSubmissionError(error)
+      && /maximum of 10 per order/.test(error.message),
+  );
+});
+
 test('Staff sale submission refuses to present an unresolved inventory sale as completed', async () => {
   const client = new RecordingSupabase();
   const originalRpc = client.rpc.bind(client);

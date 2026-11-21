@@ -12,6 +12,8 @@ export const standardProductVariants = [
 export type ProductVariantPrice = {
   id: string;
   price: number;
+  /** ST-02 c5 / OW-21 c4: maximum quantity per order; null = no maximum. Omit to keep the current value. */
+  max_order_quantity?: number | null;
 };
 
 export type ProductVariantPriceInput = {
@@ -19,7 +21,16 @@ export type ProductVariantPriceInput = {
   size_label: string;
   piece_count: number;
   price: number;
+  max_order_quantity?: number | null;
 };
+
+/** OW-21 c6: a maximum quantity per order must be a whole number greater than zero. */
+export function assertValidMaxOrderQuantity(value: number | null | undefined, label: string) {
+  if (value === null || value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`The maximum quantity per order for ${label} must be a whole number greater than zero.`);
+  }
+}
 
 export type OwnerProductInput = {
   product_name: string;
@@ -47,6 +58,7 @@ function assertValidVariantPrices(variants: ProductVariantPriceInput[]) {
     ) {
       throw new Error(`Enter a valid selling price for ${variant.size_label}.`);
     }
+    assertValidMaxOrderQuantity(submitted.max_order_quantity, variant.size_label);
   }
 }
 
@@ -68,16 +80,21 @@ export function parseCatalogPrice(value: unknown, label: string): number {
   return price;
 }
 
+/** `max_order_quantity` undefined = the column is not available, so it is left untouched. */
+type VariantRestorePoint = { id: string; price: number; max_order_quantity?: number | null };
+
 async function restoreVariantPrices(
   client: ProductCatalogClient,
   productId: string,
-  changed: Array<{ id: string; price: number }>,
+  changed: VariantRestorePoint[],
 ): Promise<string[]> {
   const failures: string[] = [];
   for (const variant of [...changed].reverse()) {
     const { error } = await client
       .from('product_variants')
-      .update({ price: variant.price })
+      .update(variant.max_order_quantity === undefined
+        ? { price: variant.price }
+        : { price: variant.price, max_order_quantity: variant.max_order_quantity })
       .eq('id', variant.id)
       .eq('product_id', productId);
     if (error) failures.push(`variant ${variant.id}: ${error.message}`);
@@ -113,6 +130,7 @@ export async function createOwnerProduct(
       size_label: variant.size_label,
       piece_count: variant.piece_count,
       price: variant.price,
+      ...(variant.max_order_quantity ? { max_order_quantity: variant.max_order_quantity } : {}),
       active: true,
       is_available: true,
     })))
@@ -142,7 +160,10 @@ export async function updateOwnerProduct(
   input: OwnerProductInput & { variants: ProductVariantPrice[] },
 ) {
   assertValidProduct(input);
-  for (const variant of input.variants) assertValidPrice(variant.price);
+  for (const variant of input.variants) {
+    assertValidPrice(variant.price);
+    assertValidMaxOrderQuantity(variant.max_order_quantity, 'this size');
+  }
   if (new Set(input.variants.map((variant) => variant.id)).size !== input.variants.length) {
     throw new Error('A product variant may only be updated once.');
   }
@@ -155,10 +176,20 @@ export async function updateOwnerProduct(
   if (productLoadError) throw new Error(`Unable to load the current product: ${productLoadError.message}`);
   if (!currentProduct) throw new Error('The product no longer exists.');
 
-  const { data: currentVariants, error: variantsLoadError } = await client
+  let maxOrderQuantitySupported = true;
+  let variantsLoad = await client
     .from('product_variants')
-    .select('id, variant_code, price')
+    .select('id, variant_code, price, max_order_quantity')
     .eq('product_id', productId);
+  if (isMissingMaxOrderQuantityColumn(variantsLoad.error)) {
+    maxOrderQuantitySupported = false;
+    const legacy = await client
+      .from('product_variants')
+      .select('id, variant_code, price')
+      .eq('product_id', productId);
+    variantsLoad = { ...legacy, data: (legacy.data ?? []).map((variant) => ({ ...variant, max_order_quantity: null })) } as typeof variantsLoad;
+  }
+  const { data: currentVariants, error: variantsLoadError } = variantsLoad;
   if (variantsLoadError) throw new Error(`Unable to load current product variants: ${variantsLoadError.message}`);
 
   const currentById = new Map((currentVariants ?? []).map((variant) => [variant.id, variant]));
@@ -169,23 +200,34 @@ export async function updateOwnerProduct(
     throw new Error('The product variants changed while editing. Reload the product and try again.');
   }
 
-  const changed: Array<{ id: string; price: number }> = [];
+  const changed: VariantRestorePoint[] = [];
   try {
     for (const variant of input.variants) {
       const current = currentById.get(variant.id);
-      if (!current || Number(current.price) === variant.price) continue;
+      if (!current) continue;
+      const previousMax = current.max_order_quantity ?? null;
+      const nextMax = variant.max_order_quantity === undefined || !maxOrderQuantitySupported
+        ? previousMax
+        : variant.max_order_quantity;
+      if (Number(current.price) === variant.price && previousMax === nextMax) continue;
       const previousPrice = Number(current.price);
 
       const { data, error } = await client
         .from('product_variants')
-        .update({ price: variant.price })
+        .update(maxOrderQuantitySupported
+          ? { price: variant.price, max_order_quantity: nextMax }
+          : { price: variant.price })
         .eq('id', variant.id)
         .eq('product_id', productId)
         .select('id')
         .maybeSingle();
       if (error) throw new Error(`Unable to update variant ${variant.id}: ${error.message}`);
       if (!data) throw new Error(`Variant ${variant.id} no longer belongs to this product.`);
-      changed.push({ id: variant.id, price: previousPrice });
+      changed.push({
+        id: variant.id,
+        price: previousPrice,
+        ...(maxOrderQuantitySupported ? { max_order_quantity: previousMax } : {}),
+      });
     }
 
     const regularVariant = input.variants.find((variant) => currentById.get(variant.id)?.variant_code === '4pcs');
@@ -222,6 +264,7 @@ export function buildStaffMenuProducts(
     size_label: string;
     price: number;
     piece_count: number;
+    max_order_quantity?: number | null;
     active: boolean;
     is_available: boolean;
   }>,
@@ -245,7 +288,26 @@ export function buildStaffMenuProducts(
       sizeLabel: variant.size_label,
       price: parseCatalogPrice(variant.price, `Menu variant ${variant.id}`),
       pieceCount: Number(variant.piece_count),
+      maxQuantity: normalizeMaxOrderQuantity(variant.max_order_quantity),
       isAvailable: product.is_available && variant.is_available,
     }];
   });
+}
+
+/** A usable maximum quantity per order, or null when none (or an invalid one) is set. */
+export function normalizeMaxOrderQuantity(value: unknown): number | null {
+  const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
+/**
+ * True when the database has not received the #30 migration yet, so callers can
+ * fall back to the previous columns instead of breaking the menu or product screens.
+ * PostgREST reports 42703 for an unknown selected column and PGRST204 for an
+ * unknown column in a write payload.
+ */
+export function isMissingMaxOrderQuantityColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  return Boolean(error)
+    && (error!.code === '42703' || error!.code === 'PGRST204')
+    && /max_order_quantity/.test(error!.message ?? '');
 }

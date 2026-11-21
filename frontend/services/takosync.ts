@@ -6,6 +6,8 @@ import { filterBranchVisibleMenuVariants } from './menuCatalog';
 import {
   buildStaffMenuProducts,
   createOwnerProduct,
+  isMissingMaxOrderQuantityColumn,
+  normalizeMaxOrderQuantity,
   updateOwnerProduct,
   parseCatalogPrice,
   type OwnerProductInput,
@@ -302,6 +304,7 @@ export type ProductManagementItem = ProductMenuItem & {
     size_label: string;
     piece_count: number;
     price: number;
+    max_order_quantity: number | null;
     active: boolean;
     is_available: boolean;
   }>;
@@ -316,6 +319,8 @@ export type StaffMenuCatalogItem = {
   sizeLabel: string;
   price: number;
   pieceCount: number;
+  /** ST-02 c5: owner-set maximum quantity per order; null = no maximum. */
+  maxQuantity: number | null;
   isAvailable: boolean;
 };
 
@@ -2213,20 +2218,35 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
       .select('id, product_name, description, price, is_available, created_at, updated_at')
       .order('product_name', { ascending: true }),
     client.from('product_variants')
-      .select('id, product_id, variant_code, size_label, piece_count, price, active, is_available')
+      .select('id, product_id, variant_code, size_label, piece_count, price, max_order_quantity, active, is_available')
       .order('product_id')
       .order('variant_code'),
   ]);
   assertNoError(productsResult.error);
-  assertNoError(variantsResult.error);
+  let variantRows: Array<Omit<ProductManagementItem['variants'][number], 'max_order_quantity'> & {
+    product_id: string;
+    max_order_quantity?: unknown;
+  }> = variantsResult.data ?? [];
+  if (isMissingMaxOrderQuantityColumn(variantsResult.error)) {
+    // The #30 migration is not applied yet: show the products without a maximum.
+    const legacy = await client.from('product_variants')
+      .select('id, product_id, variant_code, size_label, piece_count, price, active, is_available')
+      .order('product_id')
+      .order('variant_code');
+    assertNoError(legacy.error);
+    variantRows = legacy.data ?? [];
+  } else {
+    assertNoError(variantsResult.error);
+  }
 
   const variantsByProduct = new Map<string, ProductManagementItem['variants']>();
-  for (const variant of variantsResult.data ?? []) {
+  for (const variant of variantRows) {
     const variants = variantsByProduct.get(variant.product_id) ?? [];
     variants.push({
       ...variant,
       piece_count: Number(variant.piece_count),
       price: Number(variant.price),
+      max_order_quantity: normalizeMaxOrderQuantity(variant.max_order_quantity),
     });
     variantsByProduct.set(variant.product_id, variants);
   }
@@ -2251,7 +2271,7 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
     client.from('products')
       .select('id, product_name, description, is_available, category'),
     client.from('product_variants')
-      .select('id, product_id, size_label, price, piece_count, is_available, active')
+      .select('id, product_id, size_label, price, piece_count, max_order_quantity, is_available, active')
       .eq('active', true),
     client.from('branch_product_visibility')
       .select('product_variant_id, is_visible')
@@ -2263,12 +2283,25 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
       .order('addon_name', { ascending: true }),
   ]);
   assertNoError(productsResult.error);
-  assertNoError(variantsResult.error);
   assertNoError(visibilityResult.error);
   assertNoError(addonsResult.error);
+  let variantRows: Array<{
+    id: string; product_id: string; size_label: string; price: number; piece_count: number;
+    max_order_quantity?: number | null; is_available: boolean; active: boolean;
+  }> = variantsResult.data ?? [];
+  if (isMissingMaxOrderQuantityColumn(variantsResult.error)) {
+    // The #30 migration is not applied yet: keep the POS working without a maximum.
+    const legacy = await client.from('product_variants')
+      .select('id, product_id, size_label, price, piece_count, is_available, active')
+      .eq('active', true);
+    assertNoError(legacy.error);
+    variantRows = legacy.data ?? [];
+  } else {
+    assertNoError(variantsResult.error);
+  }
 
   const visibleVariantIds = new Set((visibilityResult.data ?? []).map((row) => row.product_variant_id));
-  const visibleVariants = filterBranchVisibleMenuVariants(variantsResult.data ?? [], visibleVariantIds);
+  const visibleVariants = filterBranchVisibleMenuVariants(variantRows, visibleVariantIds);
   const products = buildStaffMenuProducts(
     productsResult.data ?? [],
     visibleVariants,
@@ -2358,6 +2391,13 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     }
     if (message.includes('exceeds available stock') || message.includes('insufficient stock')) {
       throw new SaleSubmissionRejectedError('Insufficient inventory to complete this sale.');
+    }
+    if (message.includes('exceeds the maximum of')) {
+      // ST-02 c5: the owner's maximum per order changed after the order was built.
+      const limit = /maximum of (\d+)/.exec(error.message)?.[1];
+      throw new SaleSubmissionRejectedError(limit
+        ? `Order changed: a product is above its maximum of ${limit} per order. Adjust the quantity and try again.`
+        : 'Order changed: a product is above its maximum per order. Adjust the quantity and try again.');
     }
     if (message.includes('unavailable for this branch')) {
       throw new SaleSubmissionRejectedError('One of the selected products is no longer available.');
