@@ -257,6 +257,22 @@ export type Database = {
         decided_at: string | null;
         decision_reason: string | null;
       }>;
+      daily_closings: Table<{
+        id: string;
+        reference: string;
+        client_request_id: string;
+        branch_id: string;
+        business_date: string;
+        opening_float: number;
+        closing_cash_count: number;
+        recorded_cash_sales: number;
+        voided_cash_sales: number;
+        expected_cash: number;
+        over_short: number;
+        cash_transaction_count: number;
+        recorded_by: string;
+        recorded_at: string;
+      }>;
       sale_items: Table<{
         id: string;
         sale_id: string;
@@ -535,6 +551,10 @@ export type Database = {
       decide_inventory_entry_reversal: {
         Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
         Returns: Database['public']['Tables']['inventory_entry_reversal_requests']['Row'];
+      };
+      record_daily_closing: {
+        Args: { p_branch_id: string; p_opening_float: number; p_closing_cash_count: number; p_client_request_id: string };
+        Returns: Database['public']['Tables']['daily_closings']['Row'];
       };
       decide_sale_void: {
         Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };

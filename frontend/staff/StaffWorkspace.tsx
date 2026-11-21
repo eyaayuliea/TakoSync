@@ -154,6 +154,7 @@ import {
 import { formatStaffSaleReceipt } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
+import DailyClosingSection from './DailyClosingSection';
 import {
   entryReversalAvailability,
   entryReversalState,
@@ -6865,6 +6866,14 @@ export default function StaffWorkspace({
             </View>
             <Text style={styles.dailySalesReadOnly}>Confirmed sales only · Voided sales are not counted · Read-only</Text>
           </>
+        ) : null}
+        {user?.branchId ? (
+          <DailyClosingSection
+            branchId={user.branchId}
+            businessDate={formatLocalIsoDate(dailySalesDate)}
+            isToday={formatLocalIsoDate(dailySalesDate) === formatLocalIsoDate(today)}
+            refreshKey={dailySalesRefreshKey}
+          />
         ) : null}
         <View style={styles.dailySalesBottomActions}>
           <Pressable
