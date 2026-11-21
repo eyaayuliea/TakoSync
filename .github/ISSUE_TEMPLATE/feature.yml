@@ -1,0 +1,44 @@
+name: Feature / change request
+description: New functionality or a change to existing behavior
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      multiple: true
+      options:
+        - Staff mobile app (POS)
+        - Owner Web Portal
+        - Owner mobile app
+        - Backend (Supabase)
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options:
+        - Professor's comment
+        - User Story
+        - Gap found in review
+        - Other
+  - type: textarea
+    id: need
+    attributes:
+      label: What's needed
+      description: Use a checklist so progress is trackable.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on decisions
+      placeholder: e.g. #13

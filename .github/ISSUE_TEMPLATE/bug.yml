@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in TakoSync is not working as expected
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - Staff mobile app (POS)
+        - Owner Web Portal
+        - Owner mobile app
+        - Backend (Supabase)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Log in as Branch 1 staff
+        2. Add 8 pcs Octobits to the order
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include error messages or screenshots.
+    validations:
+      required: true
+  - type: input
+    id: story
+    attributes:
+      label: Related user story / criterion
+      placeholder: e.g. ST-02 criterion 17
+  - type: input
+    id: env
+    attributes:
+      label: Device / platform
+      placeholder: e.g. Android 14 physical phone, Chrome on web
