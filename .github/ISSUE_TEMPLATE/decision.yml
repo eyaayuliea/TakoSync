@@ -1,0 +1,24 @@
+name: Decision needed
+description: A scope or behavior question the group must answer before building
+labels: ["question", "needs-confirmation"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      placeholder: |
+        - [ ] Option A
+        - [ ] Option B
+    validations:
+      required: true
+  - type: textarea
+    id: blocks
+    attributes:
+      label: Blocks
+      description: Issues that wait on this decision.

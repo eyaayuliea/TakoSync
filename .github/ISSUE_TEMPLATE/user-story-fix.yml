@@ -1,0 +1,27 @@
+name: Failed user story criterion
+description: A User Story acceptance criterion that failed testing
+labels: ["bug", "source: user-story"]
+body:
+  - type: input
+    id: story
+    attributes:
+      label: Story ID and criterion
+      placeholder: e.g. ST-02 criterion 9
+    validations:
+      required: true
+  - type: textarea
+    id: criterion
+    attributes:
+      label: Acceptance criterion (as written)
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened during testing
+    validations:
+      required: true
+  - type: input
+    id: tester
+    attributes:
+      label: Tested on (date / device)
