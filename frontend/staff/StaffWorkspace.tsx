@@ -150,6 +150,7 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { downloadSaleReceiptPdf, printSaleReceipt } from './receiptOutput';
+import { blindCountProgress, compareCount, countComparisonLabel } from './blindCount';
 import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
@@ -5017,7 +5018,7 @@ export default function StaffWorkspace({
               <View style={styles.dailyIngredientOverviewCopy}>
                 <Text style={styles.dailyIngredientOverviewName}>{line.name}</Text>
                 <Text style={styles.dailyIngredientOverviewRecorded}>
-                  Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)}
+                  {line.physicalQuantity.trim() !== '' ? `Counted ${line.physicalQuantity.trim()} ${line.unit}` : 'Not counted yet'}
                 </Text>
               </View>
               <Text style={styles.dailyIngredientOverviewEdit}>Edit ›</Text>
@@ -5040,14 +5041,7 @@ export default function StaffWorkspace({
     const unresolvedDailyChecks = pendingDailyStockChecks.filter(
       (request) => request.actorId === user.id && request.branchId === user.branchId,
     );
-    const discrepancyMessage = dailyDiscrepancies.length === 1
-      ? `1 discrepancy found. Review ${dailyDiscrepancies[0].name}'s ${formatDailyDifference(
-          dailyDiscrepancies[0].difference ?? 0,
-          dailyDiscrepancies[0].unit,
-        )} difference before submitting.`
-      : `${dailyDiscrepancies.length} discrepancies found. Review ${dailyDiscrepancies
-          .map((line) => `${line.name}'s ${formatDailyDifference(line.difference ?? 0, line.unit)}`)
-          .join(' and ')} differences before submitting.`;
+    const countProgress = blindCountProgress(dailyCheckLines);
 
     return (
       <>
@@ -5071,7 +5065,10 @@ export default function StaffWorkspace({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.dailyCheckIntro}>Enter the actual count. Difference = Actual − Recorded.</Text>
+          <Text style={styles.dailyCheckIntro}>
+            Count each item and enter what you actually see. The expected quantity is shown after you submit, so count
+            without looking it up.
+          </Text>
           <TextInput
             accessibilityLabel="Search inventory ingredients"
             value={dailyCheckSearch}
@@ -5107,27 +5104,19 @@ export default function StaffWorkspace({
           ))}
           <View style={styles.dailyTableHeader}>
             <Text style={[styles.dailyColumnTitle, styles.dailyIngredientColumn]}>Ingredient</Text>
-            <Text style={[styles.dailyColumnTitle, styles.dailyRecordedColumn]}>Recorded</Text>
-            <Text style={[styles.dailyColumnTitle, styles.dailyPhysicalColumn]}>Physical</Text>
-            <Text style={[styles.dailyColumnTitle, styles.dailyDifferenceColumn]}>Diff.</Text>
+            <Text style={[styles.dailyColumnTitle, styles.dailyPhysicalColumn]}>Actual count</Text>
           </View>
           <View style={styles.dailyRows}>
             {dailyCheckResults.filter((line) => line.name.toLowerCase().includes(dailyCheckSearch.trim().toLowerCase())).map((line) => {
-              const discrepant = line.valid && line.difference !== 0;
+              // ST-12 c2: blind count. The expected quantity and the difference stay hidden until submission.
               const showError = !line.valid && (dailyCheckAttempted || line.physicalQuantity.trim() !== '');
               const errorText = dailyQuantityErrorText(line.physicalQuantity, line.unit, line.precision);
               const physicalError = showError ? errorText : '';
 
               return (
-                <View
-                  key={line.ingredientId}
-                  style={[styles.dailyIngredientRow, discrepant && styles.dailyIngredientRowDiscrepant]}
-                >
-                  <Text style={[styles.dailyIngredientName, styles.dailyIngredientColumn]} numberOfLines={1}>
-                    {line.name}
-                  </Text>
-                  <Text style={[styles.dailyRecordedValue, styles.dailyRecordedColumn]} numberOfLines={1}>
-                    {formatDailyUnitQuantity(line.recordedQuantity, line.unit)}
+                <View key={line.ingredientId} style={styles.dailyIngredientRow}>
+                  <Text style={[styles.dailyIngredientName, styles.dailyIngredientColumn]} numberOfLines={2}>
+                    {line.name} <Text style={styles.dailyRecordedValue}>({line.unit})</Text>
                   </Text>
                   <View style={[styles.dailyPhysicalColumn, styles.dailyPhysicalCell]}>
                     <TextInput
@@ -5145,7 +5134,6 @@ export default function StaffWorkspace({
                       keyboardType={line.precision === 0 ? 'number-pad' : 'decimal-pad'}
                       style={[
                         styles.dailyPhysicalInput,
-                        discrepant && styles.dailyPhysicalInputDiscrepant,
                         physicalError !== '' && styles.dailyPhysicalInputError,
                       ]}
                     />
@@ -5153,19 +5141,6 @@ export default function StaffWorkspace({
                       <Text style={styles.dailyFieldError}>{physicalError}</Text>
                     ) : null}
                   </View>
-                  <Text
-                    style={[
-                      styles.dailyDifferenceValue,
-                      styles.dailyDifferenceColumn,
-                      line.valid && line.difference === 0 && styles.dailyDifferenceZero,
-                      discrepant && styles.dailyDifferenceNegative,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {line.valid && line.difference !== null
-                      ? formatDailyDifference(line.difference, line.unit)
-                      : '—'}
-                  </Text>
                 </View>
               );
             })}
@@ -5177,19 +5152,13 @@ export default function StaffWorkspace({
               accessibilityLabel="Remarks"
               value={dailyCheckRemarks}
               onChangeText={setDailyCheckRemarks}
-              placeholder="Add remarks"
+              placeholder="e.g. damaged packs, spillage, items found elsewhere"
               placeholderTextColor={colors.muted}
               style={styles.dailyRemarksInput}
               multiline
             />
           </View>
 
-          {dailyDiscrepancies.length > 0 ? (
-            <View style={styles.dailyDiscrepancyBanner} accessibilityRole="alert">
-              <Text style={styles.dailyDiscrepancyIcon}>!</Text>
-              <Text style={styles.dailyDiscrepancyText}>{discrepancyMessage}</Text>
-            </View>
-          ) : null}
           {dailyCheckAttempted && !dailyCheckValid ? (
             <Text style={styles.dailyFormError} accessibilityRole="alert">
               Correct the highlighted quantities before continuing.
@@ -5235,7 +5204,7 @@ export default function StaffWorkspace({
               onPress={openDailyCheckReview}
               style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailyPrimaryButtonText}>{dailyDiscrepancies.length > 0 ? 'Save' : 'Review differences'}</Text>
+              <Text style={styles.dailyPrimaryButtonText}>Review count</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -5254,7 +5223,8 @@ export default function StaffWorkspace({
             </Pressable>
           </View>
           <Text style={styles.dailyDemoNote}>
-            Daily checks are saved for owner review. Physical counts never adjust recorded stock.
+            {countProgress.counted} of {countProgress.total} items counted. Counts are sent for owner review and never
+            change recorded stock by themselves.
           </Text>
         </ScrollView>
       </>
@@ -5315,34 +5285,43 @@ export default function StaffWorkspace({
             </Text>
           </View>
 
-          {hasDiscrepancies ? (
-            <View style={styles.inventoryReportRecord}>
-              <Text style={styles.inventoryReportRecordTitle}>Submitted discrepancies</Text>
-              {check.lines.filter((line) => line.difference !== 0).map((line) => (
+          {/* ST-12 c6: the expected quantity is revealed only now, frozen at submission (c7). */}
+          <View style={styles.inventoryReportRecord}>
+            <Text style={styles.inventoryReportRecordTitle}>Count results</Text>
+            {check.lines.map((line) => {
+              const comparison = compareCount(line.recordedQuantity, line.physicalQuantity);
+              return (
                 <View key={line.ingredientId} style={styles.inventoryReportCorrection}>
                   <Text style={styles.inventoryReportRecordDetail}>{line.name}</Text>
                   <Text style={styles.inventoryReportRecordDetail}>
-                    Expected {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} · Actual{' '}
+                    Expected {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} · Counted{' '}
                     {formatDailyUnitQuantity(line.physicalQuantity, line.unit)}
                   </Text>
                   <Text style={[
                     styles.inventoryReportRecordDifference,
-                    line.difference < 0
+                    comparison.kind === 'lower'
                       ? styles.inventoryReportDifferenceNegative
-                      : styles.inventoryReportDifferencePositive,
+                      : comparison.kind === 'higher'
+                        ? styles.inventoryReportDifferencePositive
+                        : styles.dailyDifferenceZero,
                   ]}>
-                    {formatDailyDifference(line.difference, line.unit)}
+                    {countComparisonLabel(comparison, (quantity) => formatDailyUnitQuantity(quantity, line.unit))}
                   </Text>
                 </View>
-              ))}
+              );
+            })}
+            {hasDiscrepancies ? (
               <Text style={styles.inventoryReportRecordDetail}>
-                Staff remarks (read-only): {check.remarks || '—'}
+                {discrepancyCount === 1 ? 'The difference was' : `The ${discrepancyCount} differences were`} sent to the owner for review.
               </Text>
-              <Text style={styles.inventoryReportRecordDetail}>
-                Count changes require a correction request in Override Inventory Count.
-              </Text>
-            </View>
-          ) : null}
+            ) : null}
+            <Text style={styles.inventoryReportRecordDetail}>
+              Staff remarks (read-only): {check.remarks || '—'}
+            </Text>
+            <Text style={styles.inventoryReportRecordDetail}>
+              Count changes require a correction request in Override Inventory Count.
+            </Text>
+          </View>
 
           <View style={styles.dailyReceiptDetails}>
             {[
@@ -8951,47 +8930,23 @@ export default function StaffWorkspace({
             {dailyCheckModal === 'review' ? (
               <>
                 <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
-                <Text style={styles.dailyModalTitle}>
-                  {dailyDiscrepancies.length > 0 ? 'Inventory Discrepancy' : 'Daily Inventory Check'}
-                </Text>
+                <Text style={styles.dailyModalTitle}>Review your count</Text>
                 <Text style={styles.dailyModalSubtitle}>
-                  {dailyDiscrepancies.length > 0
-                    ? 'Review the difference before saving.'
-                    : 'All physical counts match their recorded balances. No stock will be changed.'}
+                  Check each count before submitting. The expected quantities are shown after you submit.
                 </Text>
                 <View style={styles.dailyModalSummary}>
-                  {dailyDiscrepancies.length > 0 ? (
-                    <>
-                      <Text style={styles.dailyModalSummaryText}>
-                        {assignedBranch} · {formatDate(today)} · {formatManilaTime(new Date())}
-                      </Text>
-                      <Text style={styles.dailyModalSummaryText}>Submitting employee account: {user.id}</Text>
-                      {dailyDiscrepancies.map((line) => (
-                        <React.Fragment key={line.ingredientId}>
-                          <Text style={styles.dailyModalSummaryText}>
-                            {line.name} · {assignedBranch}
-                          </Text>
-                          <Text style={styles.dailyModalSummaryText}>
-                            {line.name} · Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Actual{' '}
-                            {formatDailyUnitQuantity(line.parsedQuantity, line.unit)}
-                          </Text>
-                          <Text style={styles.dailyModalSummaryEmphasis}>
-                            Difference {formatDailyDifference(line.difference ?? 0, line.unit)} · {dailyCheckRemarks.trim() || 'No remarks'}
-                          </Text>
-                        </React.Fragment>
-                      ))}
-                      <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
-                      <Text style={styles.dailyModalSummaryText}>Pending owner review after submission</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.dailyModalSummaryText}>{assignedBranch}</Text>
-                      <Text style={styles.dailyModalSummaryText}>
-                        {dailyCheckLines.length} ingredients counted · 0 discrepancies
-                      </Text>
-                      <Text style={styles.dailyModalSummaryText}>Recorded balances remain unchanged</Text>
-                    </>
-                  )}
+                  <Text style={styles.dailyModalSummaryText}>
+                    {assignedBranch} · {formatDate(today)} · {formatManilaTime(new Date())}
+                  </Text>
+                  <Text style={styles.dailyModalSummaryEmphasis}>
+                    {dailyCheckResults.filter((line) => line.valid).length} of {dailyCheckResults.length} items counted
+                  </Text>
+                  {dailyCheckResults.map((line) => (
+                    <Text key={line.ingredientId} style={styles.dailyModalSummaryText}>
+                      {line.name}: {line.valid ? formatDailyUnitQuantity(line.parsedQuantity, line.unit) : '—'}
+                    </Text>
+                  ))}
+                  <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
                 </View>
                 <View style={styles.dailyModalActions}>
                   <Pressable
@@ -9008,7 +8963,7 @@ export default function StaffWorkspace({
                     }}
                     style={({ pressed }) => [styles.dailyModalPrimaryButton, pressed && styles.pressed]}
                   >
-                    <Text style={styles.dailyModalPrimaryText}>{dailyDiscrepancies.length > 0 ? 'Save Check' : 'Continue'}</Text>
+                    <Text style={styles.dailyModalPrimaryText}>Continue</Text>
                   </Pressable>
                 </View>
               </>
@@ -9025,33 +8980,23 @@ export default function StaffWorkspace({
                   <Text style={styles.dailyModalSummaryText}>{assignedBranch} · {formatDate(today)}</Text>
                   <Text style={styles.dailyModalSummaryText}>Submitting employee account: {user.id}</Text>
                   <Text style={styles.dailyModalSummaryEmphasis}>
-                    {dailyCheckLines.length} ingredients counted · {dailyDiscrepancies.length}{' '}
-                    {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}
+                    {dailyCheckLines.length} ingredients counted
                   </Text>
-                  {(dailyDiscrepancies.length > 0 ? dailyDiscrepancies : dailyCheckResults).map((line) => (
-                    <React.Fragment key={line.ingredientId}>
-                      <Text style={styles.dailyModalSummaryText}>
-                        {line.name}: Recorded {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} / Physical{' '}
-                        {line.valid ? formatDailyUnitQuantity(line.parsedQuantity, line.unit) : '—'}
-                      </Text>
-                      <Text style={styles.dailyModalSummaryText}>
-                        Difference {line.valid ? formatDailyDifference(line.difference ?? 0, line.unit) : '—'}
-                      </Text>
-                    </React.Fragment>
+                  {dailyCheckResults.map((line) => (
+                    <Text key={line.ingredientId} style={styles.dailyModalSummaryText}>
+                      {line.name}: {line.valid ? formatDailyUnitQuantity(line.parsedQuantity, line.unit) : '—'}
+                    </Text>
                   ))}
+                  <Text style={styles.dailyModalSummaryText}>
+                    After you submit, each count is compared with the expected quantity. Differences are sent to the owner for review.
+                  </Text>
                   <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
                 </View>
                 <View style={styles.dailyModalActions}>
                   <Pressable
                     accessibilityRole="button"
                     onPress={() =>
-                      setDailyCheckModal(
-                        route === 'inventoryDiscrepancySubmission'
-                          ? null
-                          : dailyDiscrepancies.length > 0
-                            ? 'review'
-                            : null,
-                      )
+                      setDailyCheckModal(route === 'inventoryDiscrepancySubmission' ? null : 'review')
                     }
                     style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
                   >
