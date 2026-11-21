@@ -56,3 +56,18 @@ test('summarizes normal, low-stock, and out-of-stock inventory separately', () =
     { quantity: 'invalid', minimum_stock: 5 },
   ]), { normal: 1, lowStock: 1, outOfStock: 1 });
 });
+
+test('OM-02 c4: inventory status is counted per branch', async () => {
+  const { summarizeOwnerInventoryStatusByBranch } = await import('./ownerDashboardSummary.ts');
+  const rows = summarizeOwnerInventoryStatusByBranch([
+    { branch_id: 'b1', quantity: 10, minimum_stock: 2 },
+    { branch_id: 'b1', quantity: 1, minimum_stock: 2 },
+    { branch_id: 'b2', quantity: 0, minimum_stock: 2 },
+    { branch_id: 'b2', quantity: null, minimum_stock: 2 },
+  ], [{ id: 'b1', name: 'Branch 1' }, { id: 'b2', name: 'Branch 2' }, { id: 'b3', name: 'Branch 3' }]);
+  assert.deepEqual(rows, [
+    { id: 'b1', name: 'Branch 1', normal: 1, lowStock: 1, outOfStock: 0 },
+    { id: 'b2', name: 'Branch 2', normal: 0, lowStock: 0, outOfStock: 1 },
+    { id: 'b3', name: 'Branch 3', normal: 0, lowStock: 0, outOfStock: 0 },
+  ]);
+});

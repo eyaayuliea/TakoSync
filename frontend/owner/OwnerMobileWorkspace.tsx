@@ -6,6 +6,7 @@ import {
   PanResponder,
   Pressable,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -62,11 +63,21 @@ import { manilaDateKey } from '../services/businessDaySettings';
 import {
   OWNER_ALERT_EMPTY_MESSAGE,
   OWNER_ALERT_LOAD_ERROR,
+  OWNER_ALERT_TABS,
+  OWNER_ALERTS_DECISION_NOTE,
   buildOwnerAlertSnapshot,
   countOwnerAlertsWhenReady,
   filterOwnerRecordsByBranch,
+  splitOwnerAlertsByTab,
+  type OwnerAlertTab,
+  type OwnerExpirationAlert,
+  type OwnerLowStockAlert,
 } from './ownerAlerts';
-import { summarizeOwnerDashboardSales, summarizeOwnerInventoryStatus } from './ownerDashboardSummary';
+import {
+  summarizeOwnerDashboardSales,
+  summarizeOwnerInventoryStatus,
+  summarizeOwnerInventoryStatusByBranch,
+} from './ownerDashboardSummary';
 import { sortOwnerActivities } from './ownerActivities';
 import {
   buildOwnerInventoryComparisonRows,
@@ -339,7 +350,10 @@ export default function OwnerMobileWorkspace({
   const [selectedActivity, setSelectedActivity] = useState<OwnerActivity | null>(null);
   const [activityReturnPage, setActivityReturnPage] = useState<'Dashboard' | 'Records'>('Dashboard');
   const [inventorySearch, setInventorySearch] = useState('');
-  const [alertCategory, setAlertCategory] = useState<'Low Stock' | 'Expiration'>('Low Stock');
+  // OM-12 c1, c5: the Inventory page has its own branch (first branch by default) and a category filter.
+  const [inventoryBranchId, setInventoryBranchId] = useState<string | null>(null);
+  const [inventoryCategory, setInventoryCategory] = useState('All categories');
+  const [alertCategory, setAlertCategory] = useState<OwnerAlertTab>('Low Stock');
   const [recordType, setRecordType] = useState<'All' | 'Sales' | 'Inventory' | 'Counts' | 'Audit'>('All');
   const [productRecords, setProductRecords] = useState<ProductRecord[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -417,8 +431,7 @@ export default function OwnerMobileWorkspace({
       branchId,
     });
   }, [branchId, branches, data]);
-  const selectedInventory = filterOwnerRecordsByBranch(data?.inventory ?? [], branchId);
-  const inventoryRows = selectedInventory.flatMap((record) => {
+  const allInventoryRows = (data?.inventory ?? []).flatMap((record) => {
     const ingredient = ingredients.get(record.ingredient_id);
     if (!ingredient) return [];
     const quantity = record.quantity === null ? null : Number(record.quantity);
@@ -462,6 +475,10 @@ export default function OwnerMobileWorkspace({
       batches: batchRows,
     }];
   });
+  const inventoryRows = branchId ? allInventoryRows.filter((row) => row.branchId === branchId) : allInventoryRows;
+  const effectiveInventoryBranchId = inventoryBranchId ?? branches[0]?.id ?? null;
+  const inventoryPageRows = allInventoryRows.filter((row) => row.branchId === effectiveInventoryBranchId);
+  const inventoryCategoryOptions = ['All categories', ...[...new Set(inventoryPageRows.map((row) => row.category))].sort()];
   const dashboardLowStock = inventoryRows.filter((item) => item.status === 'Low Stock' || item.status === 'Out of Stock');
   const inventoryStatusCounts = summarizeOwnerInventoryStatus(inventoryRows.map((item) => ({
     quantity: item.quantity,
@@ -559,8 +576,9 @@ export default function OwnerMobileWorkspace({
   ];
   const sortedActivities = sortOwnerActivities(activities);
   const visibleActivities = sortedActivities.filter((item) => recordType === 'All' || item.category === recordType);
-  const filteredInventory = inventoryRows.filter((item) =>
-    `${item.name} ${item.category} ${item.branch}`.toLowerCase().includes(inventorySearch.trim().toLowerCase()),
+  const filteredInventory = inventoryPageRows.filter((item) =>
+    (inventoryCategory === 'All categories' || item.category === inventoryCategory)
+    && `${item.name} ${item.category} ${item.branch}`.toLowerCase().includes(inventorySearch.trim().toLowerCase()),
   );
   const alertCounts = countOwnerAlertsWhenReady(alertSnapshot.counts, inventoryLoading, inventoryError);
   const visibleProducts = productRecords.filter((product) =>
@@ -1167,6 +1185,22 @@ export default function OwnerMobileWorkspace({
           ))}
         </View>
       )}
+      {/* OM-02 c4: the counts of each branch. */}
+      {!inventoryError && !inventoryLoading && inventoryRows.length > 0 ? (
+        <View style={styles.inventoryBranchStatusList}>
+          {summarizeOwnerInventoryStatusByBranch(
+            (data?.inventory ?? []).map((record) => ({ branch_id: record.branch_id, quantity: record.quantity, minimum_stock: record.minimum_stock })),
+            branches,
+          ).map((row) => (
+            <View key={row.id} style={styles.inventoryBranchStatusRow} accessibilityLabel={`${row.name}: ${row.normal} normal, ${row.lowStock} low stock, ${row.outOfStock} out of stock`}>
+              <Text style={styles.inventoryBranchStatusName}>{row.name}</Text>
+              <Text style={styles.inventoryBranchStatusCounts}>
+                {row.normal} Normal · {row.lowStock} Low · {row.outOfStock} Out
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <SectionHeading title="Low-Stock Items" action="See all" onAction={() => { setAlertCategory('Low Stock'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
@@ -1175,7 +1209,7 @@ export default function OwnerMobileWorkspace({
         <EmptyState text="No low-stock items." />
       )}
 
-      <SectionHeading title="Expiration Alerts" action="See all" onAction={() => { setAlertCategory('Expiration'); setPage('Alerts'); }} />
+      <SectionHeading title="Expiration Alerts" action="See all" onAction={() => { setAlertCategory('Near Expiration'); setPage('Alerts'); }} />
       {inventoryError ? showError(OWNER_ALERT_LOAD_ERROR) : inventoryLoading ? (
         <SkeletonCard label="Loading expiration alerts" />
       ) : sortedExpirationItems.length ? sortedExpirationItems.slice(0, 4).map((item) => (
@@ -1265,15 +1299,18 @@ export default function OwnerMobileWorkspace({
         ) : null}
       </View>
       <View style={styles.omInventoryBranchRow}>
-        {[{ id: null, name: 'All branches' }, ...branches].map((branch) => {
-          const selected = branch.id === branchId;
+        {branches.map((branch) => {
+          const selected = branch.id === effectiveInventoryBranchId;
           return (
             <Pressable
-              key={branch.id ?? 'all'}
+              key={branch.id}
               accessibilityRole="button"
               accessibilityState={{ selected, disabled: inventoryLoading }}
               disabled={inventoryLoading}
-              onPress={() => onBranchChange(branch.id)}
+              onPress={() => {
+                setInventoryBranchId(branch.id);
+                setInventoryCategory('All categories');
+              }}
               style={[styles.omInventoryBranchChip, selected && styles.omInventoryBranchChipSelected]}
             >
               <Text style={[styles.omInventoryBranchChipText, selected && styles.omInventoryBranchChipTextSelected]}>{branch.name}</Text>
@@ -1281,6 +1318,24 @@ export default function OwnerMobileWorkspace({
           );
         })}
       </View>
+      {inventoryCategoryOptions.length > 2 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.omInventoryBranchRow}>
+          {inventoryCategoryOptions.map((category) => {
+            const selected = category === inventoryCategory;
+            return (
+              <Pressable
+                key={category}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setInventoryCategory(category)}
+                style={[styles.omInventoryBranchChip, selected && styles.omInventoryBranchChipSelected]}
+              >
+                <Text style={[styles.omInventoryBranchChipText, selected && styles.omInventoryBranchChipTextSelected]}>{category}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         onPress={() => setPage('CompareInventory')}
@@ -1294,7 +1349,7 @@ export default function OwnerMobileWorkspace({
         <View style={styles.omInventoryLoadingCenter}>
           <ActivityIndicator size="large" color={colors.pink} />
           <Text style={styles.omInventoryLoadingText}>
-            Loading {branchId ? branchNames.get(branchId) ?? 'selected branch' : 'all branch'} inventory…
+            Loading {effectiveInventoryBranchId ? branchNames.get(effectiveInventoryBranchId) ?? 'selected branch' : 'branch'} inventory…
           </Text>
         </View>
       ) : inventoryError ? (
@@ -1357,7 +1412,7 @@ export default function OwnerMobileWorkspace({
           </View>
         </>
       ) : (
-        <EmptyState text="No inventory records match the selected branch and search." />
+        <EmptyState text="No inventory records match the selected branch, category, and search." />
       )}
     </>
   );
@@ -1548,9 +1603,12 @@ export default function OwnerMobileWorkspace({
   const renderAlerts = () => {
     const loading = inventoryLoading;
     const offlineError = Boolean(inventoryError);
-    const isEmpty = !loading && !offlineError && (
-      alertCategory === 'Low Stock' ? alertSnapshot.lowStock.length === 0 : alertSnapshot.expiration.length === 0
-    );
+    // OM-13 c1: four tabs, each with its own count.
+    const alertsByTab = splitOwnerAlertsByTab(alertSnapshot);
+    const isEmpty = !loading && !offlineError && alertsByTab[alertCategory].length === 0;
+    const isStockTab = alertCategory === 'Low Stock' || alertCategory === 'Out of Stock';
+    // OM-13 c4: expiration alerts also show the item's expected quantity and minimum stock.
+    const inventoryByKey = new Map((data?.inventory ?? []).map((record) => [`${record.branch_id}:${record.ingredient_id}`, record]));
 
     const formatExpirationDate = (value: string) => {
       const date = new Date(`${value.slice(0, 10)}T12:00:00`);
@@ -1558,16 +1616,15 @@ export default function OwnerMobileWorkspace({
       return `${date.getDate()} ${monthNames[date.getMonth()]} ${date.getFullYear()}`;
     };
 
-    const countLabel = (category: 'Low Stock' | 'Expiration') => {
+    const countLabel = (category: OwnerAlertTab) => {
       if (loading || offlineError) return '';
-      const count = category === 'Low Stock' ? alertCounts.lowStock : alertCounts.expiration;
-      return ` (${count})`;
+      return ` (${alertsByTab[category].length})`;
     };
 
     return (
       <View style={styles.alertsScreen}>
         <View style={styles.alertTabs}>
-          {(['Low Stock', 'Expiration'] as const).map((value) => {
+          {OWNER_ALERT_TABS.map((value) => {
             const selected = alertCategory === value;
             return (
               <Pressable
@@ -1632,13 +1689,17 @@ export default function OwnerMobileWorkspace({
             <Text style={styles.alertEmptyTitle}>{OWNER_ALERT_EMPTY_MESSAGE}</Text>
             <Text style={styles.alertEmptySubtext}>
               {alertCategory === 'Low Stock'
-                ? 'Low-stock alerts appear here.'
-                : 'Expiry alerts appear here.'}
+                ? 'Items at or below their minimum stock appear here.'
+                : alertCategory === 'Out of Stock'
+                  ? 'Items with no stock left appear here.'
+                  : alertCategory === 'Near Expiration'
+                    ? 'Lots close to their expiration date appear here.'
+                    : 'Expired lots appear here.'}
             </Text>
           </View>
-        ) : alertCategory === 'Low Stock' ? (
+        ) : isStockTab ? (
           <View style={styles.alertCardList}>
-            {alertSnapshot.lowStock.map((item) => (
+            {(alertsByTab[alertCategory] as OwnerLowStockAlert[]).map((item) => (
               <View key={item.id} style={styles.alertCard}>
                 <View style={styles.alertCardTop}>
                   <View style={styles.alertCardIdentity}>
@@ -1680,7 +1741,9 @@ export default function OwnerMobileWorkspace({
           </View>
         ) : (
           <View style={styles.alertCardList}>
-            {alertSnapshot.expiration.map((item) => (
+            {(alertsByTab[alertCategory] as OwnerExpirationAlert[]).map((item) => {
+              const stock = inventoryByKey.get(`${item.branchId}:${item.ingredientId}`);
+              return (
               <View key={item.id} style={styles.alertCard}>
                 <View style={styles.alertCardTop}>
                   <View style={styles.alertCardIdentity}>
@@ -1717,10 +1780,25 @@ export default function OwnerMobileWorkspace({
                     <Text style={styles.alertMetricValue}>{formatExpirationDate(item.expirationDate)}</Text>
                   </View>
                 </View>
+                {stock ? (
+                  <View style={styles.alertCardBottom}>
+                    <View>
+                      <Text style={styles.alertMetricLabel}>Expected quantity</Text>
+                      <Text style={styles.alertMetricValue}>{Number(stock.quantity ?? 0)} {item.unit}</Text>
+                    </View>
+                    <View style={styles.alertMetricRight}>
+                      <Text style={styles.alertMetricLabel}>Minimum stock level</Text>
+                      <Text style={styles.alertMetricValue}>{Number(stock.minimum_stock)} {item.unit}</Text>
+                    </View>
+                  </View>
+                ) : null}
               </View>
-            ))}
+              );
+            })}
           </View>
         )}
+        {/* OM-13 c8 */}
+        <Text style={styles.alertDecisionNote}>{OWNER_ALERTS_DECISION_NOTE}</Text>
 
       </View>
     );
@@ -2103,6 +2181,10 @@ export default function OwnerMobileWorkspace({
       )}
 
       <ScrollView
+        // OM-02 c8 / OM-13 c6: pull to refresh the dashboard, inventory, and alerts.
+        refreshControl={page === 'Dashboard' || page === 'Inventory' || page === 'Alerts' ? (
+          <RefreshControl refreshing={refreshing} onRefresh={() => void refreshOwnerData()} tintColor={colors.pink} colors={[colors.pink]} />
+        ) : undefined}
         style={[styles.contentScroll, isMenuFlowPage && { backgroundColor: ownerMenu.colors.background }]}
         contentContainerStyle={page === 'Profile' ? styles.profileContent : isOwnerMenuPage ? styles.ownerMenuContent : styles.content}
         keyboardShouldPersistTaps="handled"
@@ -2552,6 +2634,13 @@ function useStyles() {
     branchSalesAmount: { color: colors.navy, fontFamily: font.bold, fontSize: 9, marginLeft: 6 },
     branchSalesChevron: { color: colors.muted, fontFamily: font.semibold, fontSize: 18, marginLeft: 7 },
     inventoryStatusGrid: { flexDirection: 'row', gap: 7, marginBottom: 4 },
+    inventoryBranchStatusList: { marginTop: 8, gap: 6 },
+    inventoryBranchStatusRow: {
+      minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: 12, borderRadius: 10, backgroundColor: colors.alertGrayFill,
+    },
+    inventoryBranchStatusName: { color: colors.alertDarkText, fontFamily: font.semibold, fontSize: 10 },
+    inventoryBranchStatusCounts: { color: colors.alertDarkText, fontFamily: font.regular, fontSize: 10 },
     inventoryStatusCard: { flex: 1, minHeight: 74, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 14 },
     inventoryStatusNormal: { backgroundColor: '#E8F6EC' },
     inventoryStatusLow: { backgroundColor: '#FDE672' },
@@ -2700,9 +2789,10 @@ function useStyles() {
     feedbackError: { color: colors.red },
     dataDisclaimer: { color: colors.muted, fontFamily: font.regular, fontSize: 7, marginBottom: 10 },
     alertsScreen: { flex: 1, minHeight: 520 },
-    alertTabs: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-    alertTab: { flex: 1, minHeight: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.alertGrayFill },
+    alertTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+    alertTab: { flexBasis: '47%', flexGrow: 1, minHeight: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.alertGrayFill },
     alertTabSelected: { backgroundColor: colors.alertNavy },
+    alertDecisionNote: { color: colors.alertDarkText, fontFamily: font.regular, fontSize: 9, lineHeight: 13, textAlign: 'center', marginTop: 12, opacity: 0.75 },
     alertTabText: { color: colors.alertDarkText, fontFamily: font.semibold, fontSize: 10 },
     alertTabTextSelected: { color: colors.white, fontFamily: font.bold },
     alertBranchChips: { flexDirection: 'row', justifyContent: 'flex-start', gap: 8, marginBottom: 12 },

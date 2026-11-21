@@ -64,3 +64,15 @@ export function summarizeOwnerDashboardSales(
     branchMetrics,
   };
 }
+
+/** OM-02 c4: the Normal / Low Stock / Out of Stock counts of each branch. */
+export function summarizeOwnerInventoryStatusByBranch(
+  records: Array<DashboardInventoryRecord & { branch_id: string }>,
+  branches: Array<{ id: string; name: string }>,
+): Array<{ id: string; name: string; normal: number; lowStock: number; outOfStock: number }> {
+  return branches.map((branch) => ({
+    id: branch.id,
+    name: branch.name,
+    ...summarizeOwnerInventoryStatus(records.filter((record) => record.branch_id === branch.id)),
+  }));
+}

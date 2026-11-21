@@ -176,3 +176,22 @@ export function buildOwnerAlertSnapshot(input: {
     counts: countOwnerAlertCategories(lowStock.length, visibleExpiration.length),
   };
 }
+
+// OM-13 c1: four alert tabs, each with its own count.
+export const OWNER_ALERT_TABS = ['Low Stock', 'Out of Stock', 'Near Expiration', 'Expired'] as const;
+export type OwnerAlertTab = (typeof OWNER_ALERT_TABS)[number];
+
+export function splitOwnerAlertsByTab(snapshot: {
+  lowStock: readonly OwnerLowStockAlert[];
+  expiration: readonly OwnerExpirationAlert[];
+}): Record<OwnerAlertTab, Array<OwnerLowStockAlert | OwnerExpirationAlert>> {
+  return {
+    'Low Stock': snapshot.lowStock.filter((alert) => alert.status === 'Low Stock'),
+    'Out of Stock': snapshot.lowStock.filter((alert) => alert.status === 'Out of Stock'),
+    'Near Expiration': snapshot.expiration.filter((alert) => alert.status === 'Near Expiration'),
+    Expired: snapshot.expiration.filter((alert) => alert.status === 'Expired'),
+  };
+}
+
+export const OWNER_ALERTS_DECISION_NOTE =
+  'Alerts help you decide what to restock or use first. They do not place purchase orders automatically.';

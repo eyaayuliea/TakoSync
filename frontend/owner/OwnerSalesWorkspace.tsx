@@ -310,6 +310,11 @@ export default function OwnerSalesWorkspace({
   const [branchId, setBranchId] = useState<string | null>(initialBranchId);
   const [reportTitle, setReportTitle] = useState('Sales performance report');
   const [liveData, setLiveData] = useState<OwnerSalesData | null>(null);
+  // OM-03 c4: the time the figures on screen were loaded.
+  const [figuresAsOf, setFiguresAsOf] = useState<Date | null>(null);
+  useEffect(() => {
+    if (liveData) setFiguresAsOf(new Date());
+  }, [liveData]);
   const [reportData, setReportData] = useState<OwnerSalesData | null>(null);
   const [reportRange, setReportRange] = useState<DateRange | null>(null);
   const [reportBranchId, setReportBranchId] = useState<string | null>(null);
@@ -1189,6 +1194,13 @@ export default function OwnerSalesWorkspace({
                 {/* OM-04 c4 / OM-07 c2: the number of completed transactions. */}
                 <Text style={styles.omSalesCount}>
                   {sales.length} completed {sales.length === 1 ? 'transaction' : 'transactions'} · voided sales excluded
+                </Text>
+                {/* OM-03 c4: the period, branch, and time the figures reflect. */}
+                <Text style={styles.omSalesCount}>
+                  {dateLabel} · {branchLabel}
+                  {figuresAsOf
+                    ? ` · as of ${figuresAsOf.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' })}`
+                    : ''}
                 </Text>
               </View>
             )}
