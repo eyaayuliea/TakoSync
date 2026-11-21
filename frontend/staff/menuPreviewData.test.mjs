@@ -8,6 +8,8 @@ import {
   EMPTY_MENU_ORDER_MESSAGE,
   groupMenuProducts,
   menuOrderValidationMessage,
+  menuPortionTypeLabel,
+  menuViewState,
   parseMenuQuantityInput,
   sanitizeMenuQuantityInput,
   selectFlavorMenuProducts,
@@ -137,4 +139,18 @@ test('order quantity controls never reduce a line below one and leave other line
   assert.deepEqual(changeMenuCartQuantity(cart, 'a', 1), [{ productId: 'a', quantity: 2 }, { productId: 'b', quantity: 3 }]);
   assert.deepEqual(changeMenuCartQuantity(cart, 'b', -1), [{ productId: 'a', quantity: 1 }, { productId: 'b', quantity: 2 }]);
   assert.equal(cart[1].quantity, 3, 'the input cart is not mutated');
+});
+
+test('View Menu state covers loading, error, empty and ready', () => {
+  assert.equal(menuViewState(true, 'stale error', 3), 'loading', 'loading wins while a refresh runs');
+  assert.equal(menuViewState(false, 'Network down', 3), 'error');
+  assert.equal(menuViewState(false, '   ', 0), 'empty', 'a blank error is not an error');
+  assert.equal(menuViewState(false, '', 2), 'ready');
+});
+
+test('portion type labels follow the catalog category', () => {
+  assert.equal(menuPortionTypeLabel('Flavors'), 'Regular');
+  assert.equal(menuPortionTypeLabel(' combo '), 'Combo + Cheese');
+  assert.equal(menuPortionTypeLabel('Drinks'), 'Drinks');
+  assert.equal(menuPortionTypeLabel(''), 'Other');
 });

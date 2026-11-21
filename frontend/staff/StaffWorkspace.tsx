@@ -1665,6 +1665,7 @@ export default function StaffWorkspace({
     setMenuCatalogLoaded(false);
     if (!user?.branchId) {
       setMenuCatalogError('Your account does not have an assigned branch. Contact the owner.');
+      setMenuCatalogLoading(false);
       return;
     }
     loadStaffMenuCatalog(user.branchId)

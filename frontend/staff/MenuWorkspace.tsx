@@ -16,7 +16,7 @@ import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../se
 import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
-import type { MenuCartLine, MenuProduct, MenuProductGroup } from './menuPreviewData';
+import type { MenuCartLine, MenuProduct } from './menuPreviewData';
 import { resolveMenuAddons } from './menuAddons';
 import {
   calculateSelectedAddonTotal,
@@ -24,6 +24,8 @@ import {
   calculateMenuCart,
   groupMenuProducts,
   menuOrderValidationMessage,
+  menuPortionTypeLabel,
+  menuViewState,
   parseMenuQuantityInput,
   sanitizeMenuQuantityInput,
   selectFlavorMenuProducts,
@@ -433,7 +435,9 @@ export default function MenuWorkspace({
   const [saleError, setSaleError] = useState('');
   const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
   const [proceedBlocked, setProceedBlocked] = useState(false);
-  const [infoProducts, setInfoProducts] = useState<MenuProductGroup[] | null>(null);
+  // ST-03: null = closed, 'all' = the full menu, otherwise one product group's details.
+  // Groups are looked up from the live catalog so a refresh shows the owner's latest changes.
+  const [menuInfo, setMenuInfo] = useState<'all' | { groupId: string } | null>(null);
   const selectedFlavor = flavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? flavorOptions[0];
   const products: MenuProduct[] = useMemo(
     () => catalog.map((product) => ({
@@ -455,6 +459,13 @@ export default function MenuWorkspace({
     () => selectFlavorMenuProducts(productGroups, selectedFlavor.productName, selectedFlavor.comboName),
     [productGroups, selectedFlavor],
   );
+
+  const infoGroups = useMemo(() => {
+    if (menuInfo === null) return [];
+    if (menuInfo === 'all') return productGroups;
+    return productGroups.filter((group) => group.id === menuInfo.groupId);
+  }, [menuInfo, productGroups]);
+  const infoViewState = menuViewState(catalogLoading, catalogError, infoGroups.length);
 
   useEffect(() => {
     if (catalogLoading || catalogError) return;
@@ -787,10 +798,8 @@ export default function MenuWorkspace({
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`View menu information for ${selectedFlavor.productName}`}
-            accessibilityState={{ disabled: selectedProductGroups.length === 0 }}
-            disabled={selectedProductGroups.length === 0}
-            onPress={() => setInfoProducts(selectedProductGroups)}
+            accessibilityLabel="View the full menu"
+            onPress={() => setMenuInfo('all')}
             style={({ pressed }) => [styles.viewMenuButton, pressed && styles.pressed]}
           >
             <Text style={styles.viewMenuText}>View Menu</Text>
@@ -854,7 +863,7 @@ export default function MenuWorkspace({
                       productName={group.name}
                       variant={variant}
                       onAdd={() => onAddProduct(variant.id)}
-                      onViewInfo={() => setInfoProducts([group])}
+                      onViewInfo={() => setMenuInfo({ groupId: group.id })}
                     />
                   ))}
                 </View>
@@ -985,54 +994,113 @@ export default function MenuWorkspace({
         ) : null}
       </View>
       <Modal
-        visible={infoProducts !== null}
+        visible={menuInfo !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => setInfoProducts(null)}
+        onRequestClose={() => setMenuInfo(null)}
       >
         <View style={styles.infoModalBackdrop}>
           <View style={[styles.infoModalCard, isDark && { backgroundColor: colors.navy }]}>
+            <View style={styles.infoModalTopBar}>
+              <Text style={[styles.infoModalHeading, isDark && { color: colors.white }]}>
+                {menuInfo === 'all' ? 'Menu' : 'Product details'}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh menu"
+                accessibilityState={{ disabled: catalogLoading }}
+                disabled={catalogLoading}
+                onPress={onRetryCatalog}
+                style={[styles.infoModalRefresh, catalogLoading && styles.disabledButton]}
+              >
+                <Text style={styles.infoModalRefreshText}>Refresh</Text>
+              </Pressable>
+            </View>
             <ScrollView
               style={styles.infoModalScroll}
               contentContainerStyle={styles.infoModalContent}
               showsVerticalScrollIndicator={false}
             >
-              {infoProducts?.map((group) => (
-                <View key={group.id} style={styles.infoModalGroup}>
-                  <View style={styles.infoModalHeader}>
-                    <ProductArtwork name={group.name} />
-                    <View style={styles.infoModalTitleCopy}>
-                      <Text style={[styles.infoModalTitle, isDark && { color: colors.white }]}>{group.name}</Text>
-                      <Text style={[styles.infoModalDescription, isDark && { color: colors.white }]}>
-                        {group.description || 'No description available.'}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={[styles.infoModalSectionLabel, isDark && { color: colors.white }]}>Sizes and prices</Text>
-                  {group.variants.map((variant) => (
-                    <View key={variant.id} style={styles.infoVariantRow}>
-                      <Text style={[styles.infoVariantSize, isDark && { color: colors.white }]}>{variant.sizeLabel}</Text>
-                      <Text style={[styles.infoVariantPrice, isDark && { color: colors.white }]}>{money(variant.price)}</Text>
-                      <View style={styles.infoVariantStatus}>
-                        <View style={[
-                          styles.availabilityDot,
-                          !variant.isAvailable && styles.availabilityDotOff,
-                        ]} />
-                        <Text style={[
-                          styles.infoVariantAvailability,
-                          !variant.isAvailable && styles.unavailableText,
-                        ]}>
-                          {variant.isAvailable ? 'Available' : 'Unavailable'}
-                        </Text>
+              {infoViewState === 'loading' ? (
+                <View style={styles.infoModalState}>
+                  <ActivityIndicator color={colors.pink} />
+                  <Text style={styles.emptyCopy}>Loading menu…</Text>
+                </View>
+              ) : infoViewState === 'error' ? (
+                <View style={styles.infoModalState}>
+                  <Text style={styles.emptyTitle}>Unable to load menu</Text>
+                  <Text style={styles.emptyCopy}>{catalogError}</Text>
+                </View>
+              ) : infoViewState === 'empty' ? (
+                <View style={styles.infoModalState}>
+                  <Text style={styles.emptyTitle}>
+                    {menuInfo === 'all' ? 'No menu items' : 'Product not found'}
+                  </Text>
+                  <Text style={styles.emptyCopy}>
+                    {menuInfo === 'all'
+                      ? 'The owner has not configured any products for this branch.'
+                      : 'This product is no longer in the branch menu.'}
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {infoGroups.map((group) => (
+                    <View key={group.id} style={styles.infoModalGroup}>
+                      <View style={styles.infoModalHeader}>
+                        <ProductArtwork name={group.name} />
+                        <View style={styles.infoModalTitleCopy}>
+                          <Text style={[styles.infoModalTitle, isDark && { color: colors.white }]}>{group.name}</Text>
+                          <Text style={styles.infoModalPortion}>{menuPortionTypeLabel(group.category)}</Text>
+                          <Text style={[styles.infoModalDescription, isDark && { color: colors.white }]}>
+                            {group.description || 'No description available.'}
+                          </Text>
+                        </View>
                       </View>
+                      <Text style={[styles.infoModalSectionLabel, isDark && { color: colors.white }]}>Sizes and prices</Text>
+                      {group.variants.map((variant) => (
+                        <View
+                          key={variant.id}
+                          accessibilityLabel={`${group.name}, ${variant.sizeLabel}, ${money(variant.price)}, ${variant.isAvailable ? 'available' : 'unavailable'}`}
+                          style={[styles.infoVariantRow, !variant.isAvailable && styles.infoVariantRowUnavailable]}
+                        >
+                          <Text style={[styles.infoVariantSize, isDark && { color: colors.white }]}>{variant.sizeLabel}</Text>
+                          <Text style={[styles.infoVariantPrice, isDark && { color: colors.white }]}>{money(variant.price)}</Text>
+                          <View style={styles.infoVariantStatus}>
+                            <View style={[
+                              styles.availabilityDot,
+                              !variant.isAvailable && styles.availabilityDotOff,
+                            ]} />
+                            <Text style={[
+                              styles.infoVariantAvailability,
+                              !variant.isAvailable && styles.unavailableText,
+                            ]}>
+                              {variant.isAvailable ? 'Available' : 'Unavailable'}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
                     </View>
                   ))}
-                </View>
-              ))}
+                  <View style={styles.infoModalGroup}>
+                    <Text style={[styles.infoModalSectionLabel, isDark && { color: colors.white }]}>Add-ons</Text>
+                    {displayAddons.length === 0 ? (
+                      <Text style={[styles.infoModalDescription, isDark && { color: colors.white }]}>
+                        No add-ons are configured in the live catalog.
+                      </Text>
+                    ) : displayAddons.map((addon) => (
+                      <View key={addon.id} style={styles.infoVariantRow}>
+                        <Text style={[styles.infoVariantSize, isDark && { color: colors.white }]}>{addon.name}</Text>
+                        <Text style={[styles.infoVariantPrice, isDark && { color: colors.white }]}>+{money(addon.price)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
             </ScrollView>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setInfoProducts(null)}
+              accessibilityLabel="Close menu and return to the order"
+              onPress={() => setMenuInfo(null)}
               style={[styles.infoModalClose, { backgroundColor: colors.pink }]}
             >
               <Text style={styles.infoModalCloseText}>Close</Text>
@@ -1198,6 +1266,13 @@ const styles = StyleSheet.create({
   singleProductImage: { width: 50, height: 50 },
   comboProductImage: { width: 25, height: 46 },
   infoModalTitleCopy: { flex: 1, minWidth: 0 },
+  infoModalTopBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  infoModalHeading: { color: colors.text, fontFamily: font.bold, fontSize: 14 },
+  infoModalRefresh: { minHeight: 30, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 15, borderWidth: 1, borderColor: colors.pink },
+  infoModalRefreshText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  infoModalState: { alignItems: 'center', gap: 6, paddingVertical: 24 },
+  infoModalPortion: { color: colors.pink, fontFamily: font.semibold, fontSize: 8, marginTop: 2 },
+  infoVariantRowUnavailable: { opacity: 0.45 },
   infoModalBackdrop: { flex: 1, backgroundColor: 'rgba(16,16,39,0.45)', alignItems: 'center', justifyContent: 'center', padding: 22 },
   infoModalCard: { width: '100%', maxWidth: 360, maxHeight: '85%', borderRadius: 18, backgroundColor: colors.white, padding: 16 },
   infoModalScroll: { flexShrink: 1 },
