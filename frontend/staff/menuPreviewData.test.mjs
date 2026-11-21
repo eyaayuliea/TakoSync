@@ -7,6 +7,8 @@ import {
   changeMenuCartQuantity,
   EMPTY_MENU_ORDER_MESSAGE,
   groupMenuProducts,
+  isAtMenuQuantityLimit,
+  menuQuantityLimitMessage,
   menuOrderValidationMessage,
   menuPortionTypeLabel,
   menuViewState,
@@ -153,4 +155,19 @@ test('portion type labels follow the catalog category', () => {
   assert.equal(menuPortionTypeLabel(' combo '), 'Combo + Cheese');
   assert.equal(menuPortionTypeLabel('Drinks'), 'Drinks');
   assert.equal(menuPortionTypeLabel(''), 'Other');
+});
+
+test('the owner maximum stops the plus control and caps typed quantities', () => {
+  const cart = [{ productId: 'a', quantity: 9 }];
+  assert.deepEqual(changeMenuCartQuantity(cart, 'a', 1, 10), [{ productId: 'a', quantity: 10 }]);
+  const atLimit = [{ productId: 'a', quantity: 10 }];
+  assert.equal(changeMenuCartQuantity(atLimit, 'a', 1, 10)[0], atLimit[0], 'plus does nothing at the limit');
+  assert.deepEqual(changeMenuCartQuantity(atLimit, 'a', -1, 10), [{ productId: 'a', quantity: 9 }], 'minus still works');
+  assert.deepEqual(changeMenuCartQuantity(atLimit, 'a', 1, null), [{ productId: 'a', quantity: 11 }], 'no maximum set');
+  assert.deepEqual(setMenuCartQuantity(cart, 'a', 25, 10), [{ productId: 'a', quantity: 10 }], 'typed value is capped');
+  assert.equal(isAtMenuQuantityLimit(10, 10), true);
+  assert.equal(isAtMenuQuantityLimit(9, 10), false);
+  assert.equal(isAtMenuQuantityLimit(99, null), false);
+  assert.equal(isAtMenuQuantityLimit(99, 0), false, 'an invalid maximum is ignored');
+  assert.equal(menuQuantityLimitMessage(10), 'Maximum of 10 per order.');
 });

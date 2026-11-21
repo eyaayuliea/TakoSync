@@ -162,6 +162,7 @@ export type Database = {
         size_label: string;
         piece_count: number;
         price: number;
+        max_order_quantity: number | null;
         active: boolean;
         is_available: boolean;
         created_at: string;

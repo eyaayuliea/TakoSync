@@ -25,7 +25,13 @@ import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
-import { changeMenuCartQuantity, setMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
+import {
+  changeMenuCartQuantity,
+  isAtMenuQuantityLimit,
+  menuQuantityLimitMessage,
+  setMenuCartQuantity,
+  type MenuCartLine,
+} from './menuPreviewData';
 import { draftOrderStorageKey, loadDraftOrder, saveDraftOrder } from './draftOrderStorage';
 import {
   classifyExpirationAlert,
@@ -2338,6 +2344,11 @@ export default function StaffWorkspace({
       setDashboardMessage(`${product.name} is currently unavailable and was not added.`);
       return;
     }
+    const existingQuantity = menuCart.find((line) => line.productId === productId)?.quantity ?? 0;
+    if (product.maxQuantity !== null && isAtMenuQuantityLimit(existingQuantity, product.maxQuantity)) {
+      setDashboardMessage(`${product.name} · ${product.sizeLabel}: ${menuQuantityLimitMessage(product.maxQuantity)}`);
+      return;
+    }
     setMenuCart((current) => {
       const existing = current.find((line) => line.productId === productId);
       if (!menuTransactionReference) {
@@ -2349,12 +2360,20 @@ export default function StaffWorkspace({
     });
   };
 
+  const menuMaxQuantity = (productId: string) =>
+    menuCatalog.find((item) => item.id === productId)?.maxQuantity ?? null;
+
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
-    setMenuCart((current) => changeMenuCartQuantity(current, productId, change));
+    const maxQuantity = menuMaxQuantity(productId);
+    setMenuCart((current) => changeMenuCartQuantity(current, productId, change, maxQuantity));
   };
 
   const setMenuProductQuantity = (productId: string, quantity: number) => {
-    setMenuCart((current) => setMenuCartQuantity(current, productId, quantity));
+    const maxQuantity = menuMaxQuantity(productId);
+    if (maxQuantity !== null && quantity > maxQuantity) {
+      setDashboardMessage(`Quantity set to the limit. ${menuQuantityLimitMessage(maxQuantity)}`);
+    }
+    setMenuCart((current) => setMenuCartQuantity(current, productId, quantity, maxQuantity));
   };
 
   const removeMenuProduct = (productId: string) => {

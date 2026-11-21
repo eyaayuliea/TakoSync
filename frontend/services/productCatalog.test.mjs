@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildStaffMenuProducts,
   createOwnerProduct,
+  isMissingMaxOrderQuantityColumn,
   parseCatalogPrice,
   standardProductVariants,
   updateOwnerProduct,
@@ -50,7 +51,8 @@ class FakeQuery {
     return this;
   }
 
-  select() {
+  select(columns) {
+    if (this.action === 'select') this.columns = columns ?? '*';
     return this;
   }
 
@@ -73,8 +75,10 @@ class FakeQuery {
 
   async execute(single) {
     const failure = this.client.fail;
-    if (failure?.(this.table, this.action, this.payload, this.filters)) {
-      return { data: null, error: { message: 'injected database failure' } };
+    const injected = failure?.(this.table, this.action, this.payload, this.filters, this.columns);
+    if (injected) {
+      // A test may return its own error object (for example a PostgREST missing-column error).
+      return { data: null, error: typeof injected === 'object' ? injected : { message: 'injected database failure' } };
     }
 
     const rows = this.client.tables[this.table];
@@ -325,4 +329,94 @@ test('failed product update rolls back variant prices', async () => {
   );
   assert.deepEqual(client.tables.product_variants.map((variant) => variant.price), prices);
   assert.equal(client.tables.products[0].product_name, productInput.product_name);
+});
+
+test('Owner sets a maximum quantity per order for each size (OW-21 c4)', async () => {
+  const client = new FakeSupabase();
+  const product = await createOwnerProduct(client, {
+    ...productInput,
+    variants: productInput.variants.map((variant, index) => ({ ...variant, max_order_quantity: index === 0 ? 10 : null })),
+  });
+  assert.deepEqual(client.tables.product_variants.map((variant) => variant.max_order_quantity), [10, undefined, undefined]);
+  const [regular, medium, large] = client.tables.product_variants;
+
+  await updateOwnerProduct(client, product.id, {
+    ...productInput,
+    variants: [
+      { id: regular.id, price: 49, max_order_quantity: null },
+      { id: medium.id, price: 89, max_order_quantity: 6 },
+      { id: large.id, price: 120 },
+    ],
+  });
+  assert.deepEqual(client.tables.product_variants.map((variant) => variant.max_order_quantity ?? null), [null, 6, null]);
+
+  const staff = buildStaffMenuProducts(
+    [{ ...product, category: 'Flavors' }],
+    client.tables.product_variants,
+    new Set(client.tables.product_variants.map((variant) => variant.id)),
+  );
+  assert.deepEqual(staff.map((variant) => variant.maxQuantity), [null, 6, null]);
+});
+
+test('a maximum quantity per order must be a whole number greater than zero (OW-21 c6)', async () => {
+  for (const invalid of [0, -1, 2.5]) {
+    await assert.rejects(
+      createOwnerProduct(new FakeSupabase(), {
+        ...productInput,
+        variants: productInput.variants.map((variant) => ({ ...variant, max_order_quantity: invalid })),
+      }),
+      /whole number greater than zero/,
+    );
+  }
+});
+
+test('a failed product update also rolls back a changed maximum, including back to none', async () => {
+  const client = new FakeSupabase();
+  const product = await createOwnerProduct(client, productInput);
+  const [regular, medium, large] = client.tables.product_variants;
+  client.fail = (table, action) => table === 'products' && action === 'update';
+  await assert.rejects(
+    updateOwnerProduct(client, product.id, {
+      ...productInput,
+      variants: [
+        { id: regular.id, price: 49, max_order_quantity: 3 },
+        { id: medium.id, price: 89 },
+        { id: large.id, price: 120 },
+      ],
+    }),
+    /Unable to update the product/,
+  );
+  assert.equal(client.tables.product_variants[0].max_order_quantity, null);
+});
+
+test('product edits still work before the maximum-quantity migration is applied', async () => {
+  const client = new FakeSupabase();
+  const product = await createOwnerProduct(client, productInput);
+  const [regular, medium, large] = client.tables.product_variants;
+  const writes = [];
+  client.fail = (table, action, payload, _filters, columns) => {
+    if (table !== 'product_variants') return false;
+    if (action === 'select' && /max_order_quantity/.test(columns ?? '')) {
+      return { code: '42703', message: 'column product_variants.max_order_quantity does not exist' };
+    }
+    if (action === 'update') writes.push(payload);
+    return false;
+  };
+  await updateOwnerProduct(client, product.id, {
+    ...productInput,
+    variants: [
+      { id: regular.id, price: 55, max_order_quantity: 4 },
+      { id: medium.id, price: 89 },
+      { id: large.id, price: 120 },
+    ],
+  });
+  assert.deepEqual(writes, [{ price: 55 }], 'only the price is written');
+  assert.equal(client.tables.product_variants[0].price, 55);
+});
+
+test('missing-column detection only matches the maximum-quantity column', () => {
+  assert.equal(isMissingMaxOrderQuantityColumn({ code: '42703', message: 'column product_variants.max_order_quantity does not exist' }), true);
+  assert.equal(isMissingMaxOrderQuantityColumn({ code: 'PGRST204', message: "Could not find the 'max_order_quantity' column" }), true);
+  assert.equal(isMissingMaxOrderQuantityColumn({ code: '42703', message: 'column products.category does not exist' }), false);
+  assert.equal(isMissingMaxOrderQuantityColumn(null), false);
 });
