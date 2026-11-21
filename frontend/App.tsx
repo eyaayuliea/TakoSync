@@ -14,6 +14,7 @@ import {
 import appConfig from '../app.json';
 import {
   ActivityIndicator,
+  AppState,
   Image,
   ImageBackground,
   Modal,
@@ -33,21 +34,29 @@ import OwnerLoginScreen from './owner/OwnerLoginScreen';
 import OwnerSalesWorkspace from './owner/OwnerSalesWorkspace';
 import OwnerMobileWorkspace from './owner/OwnerMobileWorkspace';
 import StaffChangePasswordScreen from './staff/StaffChangePasswordScreen';
+import StaffLockScreen from './staff/StaffLockScreen';
 import OwnerPortalWeb from './owner/OwnerPortalWeb';
 import { createThemedStyles, ThemeProvider, useTheme } from './theme/ThemeProvider';
 import { ownerColors } from './owner/shared/ownerTokens';
 import { isSupabaseConfigured, supabase, supabaseConfigurationError } from './services/supabase';
 import { getAuthenticatedMobileDestination, shouldClearMobileSession } from './services/authSessionEvents';
 import { staffLoginFeedback } from './services/staffAuthentication';
+import {
+  DAILY_SESSION_ENDED_MESSAGE,
+  isDailySessionExpired,
+  shouldLockForInactivity,
+} from './services/staffDailySession';
 import { getManilaReportingRange, manilaDateKey, manilaHour } from './services/businessDaySettings';
 import {
   getCurrentUser,
   loadOwnerActivityData,
   loadOwnerInventory,
   loadOwnerSalesData,
+  loadStaffDailySessionStatus,
   signInOwnerWithEmail,
   signInStaff,
   signOut,
+  verifyCurrentStaffPassword,
   type AppUser,
   type OwnerSalesData,
 } from './services/takosync';
@@ -626,6 +635,85 @@ function AppContent() {
       logoutLock.current = false;
       setLoggingOut(false);
     }
+  };
+
+  // ST-01 c5–c8: the Staff daily session ends at the business-day cut-off (server
+  // time), and the screen locks after inactivity without ending that session.
+  const staffSessionActive = visibleScreen === 'staffWorkspace' && authenticatedUser?.role === 'Staff';
+  const [staffLocked, setStaffLocked] = useState(false);
+  const staffLockedRef = useRef(false);
+  staffLockedRef.current = staffLocked;
+  const lastStaffActivityAt = useRef(Date.now());
+  const dailySessionCheckLock = useRef(false);
+  const markStaffActivity = useCallback(() => {
+    lastStaffActivityAt.current = Date.now();
+    return false; // observe touches only; never take the responder from the workspace
+  }, []);
+
+  const endStaffDailySession = useCallback(async () => {
+    if (logoutLock.current) return;
+    logoutLock.current = true;
+    try {
+      await signOut();
+    } catch {
+      // Offline: local state is still cleared; the saved session is checked again on next launch.
+    } finally {
+      clearSignedInState();
+      setStaffLocked(false);
+      setLoginError(DAILY_SESSION_ENDED_MESSAGE);
+      setScreen('welcome');
+      logoutLock.current = false;
+    }
+  }, [clearSignedInState]);
+
+  /** Resolves true when the daily session has ended and staff were signed out. */
+  const checkStaffDailySession = useCallback(async (): Promise<boolean> => {
+    if (dailySessionCheckLock.current) return false;
+    dailySessionCheckLock.current = true;
+    try {
+      const { signedInAt, serverBusinessDate } = await loadStaffDailySessionStatus();
+      if (!isDailySessionExpired(signedInAt, serverBusinessDate)) return false;
+      await endStaffDailySession();
+      return true;
+    } catch {
+      // No connection or server answer: keep working; the next check decides.
+      return false;
+    } finally {
+      dailySessionCheckLock.current = false;
+    }
+  }, [endStaffDailySession]);
+
+  useEffect(() => {
+    if (!staffSessionActive) {
+      setStaffLocked(false);
+      return;
+    }
+    lastStaffActivityAt.current = Date.now();
+    void checkStaffDailySession();
+    const lockIfInactive = () => {
+      if (!staffLockedRef.current && shouldLockForInactivity(lastStaffActivityAt.current, Date.now())) {
+        setStaffLocked(true);
+      }
+    };
+    const lockTimer = setInterval(lockIfInactive, 5_000);
+    const sessionTimer = setInterval(() => void checkStaffDailySession(), 60_000);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      lockIfInactive();
+      void checkStaffDailySession();
+    });
+    return () => {
+      clearInterval(lockTimer);
+      clearInterval(sessionTimer);
+      appStateSubscription.remove();
+    };
+  }, [staffSessionActive, checkStaffDailySession]);
+
+  const unlockStaffScreen = async (unlockPassword: string) => {
+    if (await checkStaffDailySession()) return;
+    await verifyCurrentStaffPassword(unlockPassword);
+    lastStaffActivityAt.current = Date.now();
+    setStaffLocked(false);
   };
 
   const refreshOwnerDashboard = async () => {
@@ -1531,12 +1619,26 @@ function AppContent() {
               </View>
             )}
             {visibleScreen === 'staffWorkspace' && authenticatedUser?.role === 'Staff' && (
-              <StaffWorkspace
-                onLogout={handleLogout}
-                onChangePassword={() => setScreen('staffChangePassword')}
-                user={authenticatedUser}
-                appVersion={appConfig.expo.version}
-              />
+              <>
+                <View
+                  style={styles.staffActivityRoot}
+                  onStartShouldSetResponderCapture={markStaffActivity}
+                  onMoveShouldSetResponderCapture={markStaffActivity}
+                >
+                  <StaffWorkspace
+                    onLogout={handleLogout}
+                    onChangePassword={() => setScreen('staffChangePassword')}
+                    user={authenticatedUser}
+                    appVersion={appConfig.expo.version}
+                  />
+                </View>
+                <StaffLockScreen
+                  visible={staffLocked}
+                  staffName={authenticatedUser.displayName}
+                  onUnlock={unlockStaffScreen}
+                  onLogout={handleLogout}
+                />
+              </>
             )}
           </View>
         </View>
@@ -1549,6 +1651,7 @@ function useAppStyles() {
   const theme = useTheme();
   return useMemo(() => StyleSheet.create(createThemedStyles({
   safeArea: { flex: 1, backgroundColor: '#F1F1F4' },
+  staffActivityRoot: { flex: 1, minHeight: 0 },
   canvas: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   frameShadow: { backgroundColor: '#FFFFFF' },
   desktopShadow: {

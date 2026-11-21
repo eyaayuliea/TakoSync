@@ -1,4 +1,4 @@
-import { requireSupabase } from './supabase';
+import { createIsolatedAuthClient, requireSupabase } from './supabase';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../../backend/types/database';
@@ -824,6 +824,72 @@ export async function updateOwnerProfile(input: { fullName: string; newPassword?
     const { error: authError } = await client.auth.updateUser({ password: input.newPassword });
     assertNoError(authError);
   }
+}
+
+/**
+ * ST-01 c5/c7: what the daily-session check needs, all from the server. The
+ * session start is Supabase Auth's `last_sign_in_at`; the business date is the
+ * database's Manila date. `serverBusinessDate` is null when the server cannot say
+ * (for example an older `business_session_status` that reports inactive outside
+ * business hours), and a null never expires the session.
+ */
+export async function loadStaffDailySessionStatus(): Promise<{
+  signedInAt: string | null;
+  serverBusinessDate: string | null;
+}> {
+  const client = requireSupabase();
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+  assertNoError(sessionError);
+  const signedInAt = sessionData.session?.user.last_sign_in_at ?? null;
+  const { data, error } = await client.rpc('business_session_status');
+  assertNoError(error);
+  const status = data as { active?: unknown; business_date?: unknown } | null;
+  const serverBusinessDate = status?.active === true && typeof status.business_date === 'string'
+    ? status.business_date
+    : null;
+  return { signedInAt, serverBusinessDate };
+}
+
+/**
+ * ST-01 c8: checks the signed-in Staff member's password for the lock screen on
+ * an isolated client, so the daily session is kept and not replaced.
+ */
+export async function verifyCurrentStaffPassword(password: string): Promise<void> {
+  if (!password) throw new Error('Please enter your password.');
+  const { data: sessionData, error: sessionError } = await requireSupabase().auth.getSession();
+  assertNoError(sessionError);
+  const session = sessionData.session;
+  if (!session?.user.email) throw new Error('Your session has ended. Please log in again.');
+  const verifier = createIsolatedAuthClient();
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let result: Awaited<ReturnType<typeof verifier.auth.signInWithPassword>>;
+  try {
+    result = await Promise.race([
+      verifier.auth.signInWithPassword({ email: session.user.email, password }),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new StaffLoginError('connection_failure')), 10_000);
+      }),
+    ]);
+  } catch {
+    throw new StaffLoginError('connection_failure');
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+  if (result.error) {
+    const message = result.error.message.toLowerCase();
+    if (result.error.code === 'invalid_credentials' || message.includes('invalid login credentials')) {
+      throw new StaffLoginError('incorrect_password');
+    }
+    if (result.error.status === 0 || /fetch|network|connection|timeout/.test(message)) {
+      throw new StaffLoginError('connection_failure');
+    }
+    throw new Error('Unable to unlock. Please try again.');
+  }
+  if (result.data.user?.id !== session.user.id) {
+    throw new Error('Unable to unlock. Please try again.');
+  }
+  // Discard only the extra verification session; the daily session is untouched.
+  try { await verifier.auth.signOut({ scope: 'local' }); } catch { /* best effort */ }
 }
 
 export async function loadCurrentBusinessDaySettings(): Promise<BusinessDaySettings> {

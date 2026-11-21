@@ -26,6 +26,7 @@ import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvi
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
 import { changeMenuCartQuantity, setMenuCartQuantity, type MenuCartLine } from './menuPreviewData';
+import { draftOrderStorageKey, loadDraftOrder, saveDraftOrder } from './draftOrderStorage';
 import {
   classifyExpirationAlert,
   classifyStockAlert,
@@ -1037,6 +1038,11 @@ export default function StaffWorkspace({
   const [returnRoute, setReturnRoute] = useState<StaffTab>('stocks');
   const [menuCart, setMenuCart] = useState<MenuCartLine[]>([]);
   const [menuTransactionReference, setMenuTransactionReference] = useState<string | null>(null);
+  const [menuSelectedAddonIds, setMenuSelectedAddonIds] = useState<string[]>([]);
+  // ST-01 c9: the unconfirmed order is saved on this device per staff account and
+  // branch, so it survives the end of the daily session and an app restart.
+  const draftOrderKey = user?.id && user.branchId ? draftOrderStorageKey(user.id, user.branchId) : null;
+  const [draftOrderRestored, setDraftOrderRestored] = useState(false);
   const [menuCatalog, setMenuCatalog] = useState<StaffMenuCatalogItem[]>([]);
   const [menuAddons, setMenuAddons] = useState<StaffMenuAddon[]>([]);
   const menuSaleSubmissionLock = useRef(false);
@@ -2358,6 +2364,37 @@ export default function StaffWorkspace({
       return next;
     });
   };
+
+  useEffect(() => {
+    setDraftOrderRestored(false);
+    if (!draftOrderKey) return;
+    let active = true;
+    loadDraftOrder(AsyncStorage, draftOrderKey)
+      .then((draft) => {
+        if (!active || !draft) return;
+        // Only restore into an empty order; never overwrite one already in progress.
+        setMenuCart((current) => current.length > 0 ? current : draft.cart);
+        setMenuSelectedAddonIds((current) => current.length > 0 ? current : draft.addonIds);
+        setMenuTransactionReference((current) => current ?? draft.transactionReference);
+        setDashboardMessage('Your unfinished order was restored. It has not been recorded as a sale.');
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setDraftOrderRestored(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [draftOrderKey]);
+
+  useEffect(() => {
+    if (!draftOrderKey || !draftOrderRestored) return;
+    saveDraftOrder(AsyncStorage, draftOrderKey, {
+      cart: menuCart,
+      addonIds: menuSelectedAddonIds,
+      transactionReference: menuTransactionReference,
+    }).catch(() => undefined);
+  }, [draftOrderKey, draftOrderRestored, menuCart, menuSelectedAddonIds, menuTransactionReference]);
 
   const cancelMenuOrder = () => {
     setMenuCart([]);
@@ -8491,6 +8528,8 @@ export default function StaffWorkspace({
           onIncreaseQuantity={(productId) => changeMenuProductQuantity(productId, 1)}
           onDecreaseQuantity={(productId) => changeMenuProductQuantity(productId, -1)}
           onSetQuantity={setMenuProductQuantity}
+          selectedAddonIds={menuSelectedAddonIds}
+          onSetSelectedAddonIds={setMenuSelectedAddonIds}
           onRemoveProduct={removeMenuProduct}
           onCancelOrder={cancelMenuOrder}
           onSubmitSale={submitMenuSale}
