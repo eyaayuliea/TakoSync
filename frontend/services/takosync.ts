@@ -1835,6 +1835,44 @@ export async function loadOwnerEntryReversalReviews(
   };
 }
 
+/** OM-22 c2–c3: the Entry Reversal movements an approved request posted, with what they reversed. */
+export async function loadEntryReversalMovements(
+  requestReference: string,
+  client?: StaffServiceClient,
+): Promise<Array<{
+  id: string;
+  reference: string;
+  ingredientName: string;
+  quantity: number;
+  movement: number;
+  unit: string;
+  transactionDate: string;
+}>> {
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('inventory_transactions')
+    .select('id, reference, ingredient_id, quantity, movement, unit, transaction_date')
+    .eq('type', 'entry_reversal')
+    .eq('notes', `reversal:${requestReference}`)
+    .order('ingredient_id');
+  assertNoError(error);
+  const rows = data ?? [];
+  const ingredientIds = [...new Set(rows.map((row) => row.ingredient_id))];
+  const { data: ingredients, error: ingredientsError } = ingredientIds.length
+    ? await resolved.from('ingredients').select('id, name').in('id', ingredientIds)
+    : { data: [] as Array<{ id: string; name: string }>, error: null };
+  assertNoError(ingredientsError);
+  const names = new Map((ingredients ?? []).map((ingredient) => [ingredient.id, ingredient.name]));
+  return rows.map((row) => ({
+    id: row.id,
+    reference: row.reference,
+    ingredientName: names.get(row.ingredient_id) ?? row.ingredient_id,
+    quantity: Number(row.quantity),
+    movement: Number(row.movement),
+    unit: row.unit,
+    transactionDate: row.transaction_date,
+  }));
+}
+
 /** OW-26 c7–c9 / OM-15 c7–c9: approve (posts Entry Reversal movements) or reject with a reason. */
 export async function decideEntryReversal(input: {
   requestId: string;
