@@ -296,9 +296,12 @@ export type OwnerDiscrepancyReview = {
   correctionReason: string;
   remarks: string;
   submittedAt: string;
-  status: 'Pending' | 'Approved' | 'Rejected' | 'Validated';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Validated' | 'Rejected for Recount';
   canDecide: boolean;
   canValidate: boolean;
+  /** OM-14 c9 / OW-25 c9: the owner can reject the count and ask for a recount. */
+  canReject: boolean;
+  rejection: { reason: string; rejectedBy: string; rejectedAt: string } | null;
   validationTarget: 'count' | 'correction_request';
   decisionOwner: string | null;
   decisionReason: string | null;
@@ -323,7 +326,54 @@ export function isOwnerDiscrepancyActionable(review: Pick<OwnerDiscrepancyReview
 }
 
 export function isOwnerDiscrepancyValidatable(review: Pick<OwnerDiscrepancyReview, 'status' | 'canValidate'>): boolean {
-  return review.canValidate && review.status !== 'Validated' && review.status !== 'Rejected';
+  return review.canValidate && review.status !== 'Validated' && review.status !== 'Rejected for Recount';
+}
+
+/** OM-14 c9: Reject Count is offered while the count is still under review. */
+export function isOwnerDiscrepancyRecountable(review: Pick<OwnerDiscrepancyReview, 'status' | 'canReject'>): boolean {
+  return review.canReject && review.status !== 'Validated' && review.status !== 'Rejected for Recount';
+}
+
+/** OM-14 c1, c10: the review status shown to the owner. */
+export function ownerDiscrepancyStatusLabel(status: OwnerDiscrepancyReview['status']): 'Pending Review' | 'Adjusted' | 'Rejected for Recount' {
+  if (status === 'Validated') return 'Adjusted';
+  if (status === 'Rejected for Recount') return 'Rejected for Recount';
+  return 'Pending Review';
+}
+
+/** OM-14 c1: reviews still waiting for the owner first, then the newest. */
+export function sortOwnerDiscrepancyReviews<T extends { status: OwnerDiscrepancyReview['status']; submittedAt: string }>(reviews: T[]): T[] {
+  return [...reviews].sort((left, right) => {
+    const leftOpen = ownerDiscrepancyStatusLabel(left.status) === 'Pending Review' ? 0 : 1;
+    const rightOpen = ownerDiscrepancyStatusLabel(right.status) === 'Pending Review' ? 0 : 1;
+    if (leftOpen !== rightOpen) return leftOpen - rightOpen;
+    return new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime();
+  });
+}
+
+/** OM-14 c9: rejects a submitted count and asks staff for a recount. Stock is not changed. */
+export async function rejectOwnerSubmittedInventoryCount(input: {
+  countLineId: string;
+  reason: string;
+}, client?: StaffServiceClient) {
+  const countLineId = input.countLineId.trim();
+  const reason = input.reason.trim();
+  if (!countLineId) throw new Error('A count line ID is required.');
+  if (reason.length < 1 || reason.length > 1000) {
+    throw new Error('A reason of 1 to 1000 characters is required to request a recount.');
+  }
+  const { data, error } = await staffServiceClient(client).rpc('reject_submitted_inventory_count', {
+    p_count_line_id: countLineId,
+    p_reason: reason,
+  });
+  if (error && (error.code === 'PGRST202' || error.code === '42883')) {
+    throw new Error('Reject Count is not available yet. The database needs the latest update.');
+  }
+  assertNoError(error);
+  if (!data || data.daily_stock_count_line_id !== countLineId) {
+    throw new Error('The recount request could not be confirmed.');
+  }
+  return data;
 }
 
 export type ProductMenuItem = {
@@ -3802,15 +3852,37 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     if ((data?.length ?? 0) < pageSize) break;
   }
 
+  // OM-14 c9: counts rejected for a recount (migration 202611220008).
+  const rejections: Database['public']['Tables']['inventory_count_rejections']['Row'][] = [];
+  let rejectionSupported = true;
+  for (let offset = 0; ; offset += pageSize) {
+    let query = client.from('inventory_count_rejections')
+      .select('id, daily_stock_count_line_id, daily_stock_check_id, branch_id, ingredient_id, rejected_by, reason, rejected_at')
+      .order('rejected_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (branchId) query = query.eq('branch_id', branchId);
+    const { data, error } = await query.range(offset, offset + pageSize - 1);
+    if (error && (error.code === '42P01' || error.code === 'PGRST205')) {
+      rejectionSupported = false;
+      break;
+    }
+    assertNoError(error);
+    rejections.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+  const rejectionByLineId = new Map(rejections.map((rejection) => [rejection.daily_stock_count_line_id, rejection]));
+
   const lineIds = [...new Set([
     ...correctionRequests.map((request) => request.daily_stock_count_line_id),
     ...adjustments.map((adjustment) => adjustment.daily_stock_count_line_id),
     ...pendingLines.map((line) => line.id),
+    ...rejections.map((rejection) => rejection.daily_stock_count_line_id),
   ])];
   const checkIds = [...new Set([
     ...correctionRequests.map((request) => request.daily_stock_check_id),
     ...adjustments.map((adjustment) => adjustment.daily_stock_check_id),
     ...pendingChecks.map((check) => check.id),
+    ...rejections.map((rejection) => rejection.daily_stock_check_id),
   ])];
   const lines: Database['public']['Tables']['daily_stock_count_lines']['Row'][] = [];
   for (let index = 0; index < lineIds.length; index += pageSize) {
@@ -3854,6 +3926,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     ...validations.map((validation) => validation.validated_by),
     ...adjustments.map((adjustment) => adjustment.approved_by),
     ...checks.map((check) => check.submitted_by),
+    ...rejections.map((rejection) => rejection.rejected_by),
   ])];
   const profilesById = new Map<string, string>();
   for (let index = 0; index < profileIds.length; index += 10) {
@@ -3868,6 +3941,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     ...correctionRequests.map((request) => request.ingredient_id),
     ...adjustments.map((adjustment) => adjustment.ingredient_id),
     ...pendingLines.map((line) => line.ingredient_id),
+    ...rejections.map((rejection) => rejection.ingredient_id),
   ])];
   const ingredientNames = new Map<string, string>();
   for (let index = 0; index < ingredientIds.length; index += 10) {
@@ -3899,6 +3973,15 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     assertNoError(error);
     for (const movement of data ?? []) movements.set(movement.id, movement);
   }
+
+  const rejectionOf = (lineId: string): OwnerDiscrepancyReview['rejection'] => {
+    const rejection = rejectionByLineId.get(lineId);
+    return rejection ? {
+      reason: rejection.reason,
+      rejectedBy: profilesById.get(rejection.rejected_by) || 'Owner account unavailable',
+      rejectedAt: rejection.rejected_at,
+    } : null;
+  };
 
   const reviews: OwnerDiscrepancyReview[] = correctionRequests.flatMap((request) => {
     const line = lineById.get(request.daily_stock_count_line_id);
@@ -3933,10 +4016,17 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       correctionReason: request.reason,
       remarks: check.remarks,
       submittedAt: check.created_at,
-      status: validation ? 'Validated' : request.status[0].toUpperCase() + request.status.slice(1) as OwnerDiscrepancyReview['status'],
+      status: validation
+        ? 'Validated'
+        : rejectionByLineId.has(line.id)
+          ? 'Rejected for Recount'
+          : request.status[0].toUpperCase() + request.status.slice(1) as OwnerDiscrepancyReview['status'],
       canDecide: true,
-      canValidate: !validation && request.status === 'approved',
-      validationTarget: 'correction_request',
+      // After a rejected correction the original count can still be validated (or recounted).
+      canValidate: !validation && !rejectionByLineId.has(line.id) && (request.status === 'approved' || request.status === 'rejected'),
+      canReject: rejectionSupported && !validation && !rejectionByLineId.has(line.id) && request.status !== 'pending',
+      rejection: rejectionOf(line.id),
+      validationTarget: request.status === 'rejected' ? 'count' : 'correction_request',
       decisionOwner: request.decided_by ? profilesById.get(request.decided_by) ?? 'Owner account unavailable' : null,
       decisionReason: request.decision_reason,
       decisionAt: request.decided_at,
@@ -3987,6 +4077,8 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       status: 'Validated',
       canDecide: false,
       canValidate: false,
+      canReject: false,
+      rejection: null,
       validationTarget: 'count',
       decisionOwner: profilesById.get(adjustment.approved_by) || 'Owner account unavailable',
       decisionReason: adjustment.reason,
@@ -4007,10 +4099,21 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     });
   }
 
+  // Rejected counts stay listed after their check leaves the pending list.
+  const pendingLineIds = new Set(pendingLines.map((line) => line.id));
+  for (const rejection of rejections) {
+    const line = lineById.get(rejection.daily_stock_count_line_id);
+    if (line && !pendingLineIds.has(line.id)) {
+      pendingLines.push(line);
+      pendingLineIds.add(line.id);
+    }
+  }
+
   for (const line of pendingLines) {
     if (linesRepresentedByRequests.has(line.id)) continue;
     const check = checkById.get(line.daily_stock_check_id);
     if (!check) continue;
+    const rejection = rejectionOf(line.id);
     reviews.push({
       correctionRequestId: `pending-count:${line.id}`,
       countLineId: line.id,
@@ -4030,9 +4133,11 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       correctionReason: 'No correction request submitted.',
       remarks: check.remarks,
       submittedAt: check.created_at,
-      status: 'Pending',
+      status: rejection ? 'Rejected for Recount' : 'Pending',
       canDecide: false,
-      canValidate: true,
+      canValidate: !rejection,
+      canReject: rejectionSupported && !rejection,
+      rejection,
       validationTarget: 'count',
       decisionOwner: null,
       decisionReason: null,
@@ -4044,7 +4149,5 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
     });
   }
 
-  return reviews.sort((left, right) =>
-    new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime(),
-  );
+  return sortOwnerDiscrepancyReviews(reviews);
 }
