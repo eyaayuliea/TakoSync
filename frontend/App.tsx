@@ -43,6 +43,7 @@ import { getAuthenticatedMobileDestination, shouldClearMobileSession } from './s
 import { staffLoginFeedback } from './services/staffAuthentication';
 import {
   DAILY_SESSION_ENDED_MESSAGE,
+  STAFF_ACCOUNT_DEACTIVATED_MESSAGE,
   isDailySessionExpired,
   shouldLockForInactivity,
 } from './services/staffDailySession';
@@ -650,7 +651,7 @@ function AppContent() {
     return false; // observe touches only; never take the responder from the workspace
   }, []);
 
-  const endStaffDailySession = useCallback(async () => {
+  const endStaffDailySession = useCallback(async (message: string = DAILY_SESSION_ENDED_MESSAGE) => {
     if (logoutLock.current) return;
     logoutLock.current = true;
     try {
@@ -660,7 +661,7 @@ function AppContent() {
     } finally {
       clearSignedInState();
       setStaffLocked(false);
-      setLoginError(DAILY_SESSION_ENDED_MESSAGE);
+      setLoginError(message);
       setScreen('welcome');
       logoutLock.current = false;
     }
@@ -671,7 +672,12 @@ function AppContent() {
     if (dailySessionCheckLock.current) return false;
     dailySessionCheckLock.current = true;
     try {
-      const { signedInAt, serverBusinessDate } = await loadStaffDailySessionStatus();
+      const { signedInAt, serverBusinessDate, accountActive } = await loadStaffDailySessionStatus();
+      if (accountActive === false) {
+        // ST-01 c10: a deactivated account loses access right away.
+        await endStaffDailySession(STAFF_ACCOUNT_DEACTIVATED_MESSAGE);
+        return true;
+      }
       if (!isDailySessionExpired(signedInAt, serverBusinessDate)) return false;
       await endStaffDailySession();
       return true;

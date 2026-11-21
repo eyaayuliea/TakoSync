@@ -110,7 +110,9 @@ export type AppUser = {
 
 type StaffLoginResponse = {
   ok?: boolean;
-  code?: 'unknown_username' | 'incorrect_password' | 'inactive_account';
+  code?: 'unknown_username' | 'incorrect_password' | 'inactive_account' | 'locked_account';
+  lockedUntil?: string | null;
+  attemptsRemaining?: number | null;
   session?: Parameters<StaffServiceClient['auth']['setSession']>[0];
 };
 
@@ -659,8 +661,13 @@ export async function signInStaff(username: string, password: string, clientOver
   }
   const data = result.data as StaffLoginResponse | null;
   if (!data?.ok) {
-    if (data?.code === 'unknown_username' || data?.code === 'incorrect_password' || data?.code === 'inactive_account') {
-      throw new StaffLoginError(data.code);
+    if (
+      data?.code === 'unknown_username'
+      || data?.code === 'incorrect_password'
+      || data?.code === 'inactive_account'
+      || data?.code === 'locked_account'
+    ) {
+      throw new StaffLoginError(data.code, { lockedUntil: data.lockedUntil, attemptsRemaining: data.attemptsRemaining });
     }
     throw new StaffLoginError('connection_failure');
   }
@@ -823,12 +830,16 @@ export async function resetStaffPasswordToEmployeeId(id: string): Promise<StaffA
   return data.account as StaffAccount;
 }
 
-export async function changeStaffPassword(newPassword: string): Promise<void> {
+export async function changeStaffPassword(newPassword: string, currentPassword?: string): Promise<void> {
   if (newPassword.length < 8) throw new Error('New password must be at least 8 characters.');
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
-    body: { action: 'change-password', newPassword },
+    // ST-15 c5: the server checks the current password (with the ST-01 lockout).
+    body: { action: 'change-password', newPassword, ...(currentPassword ? { currentPassword } : {}) },
   });
   if (error) throw new Error('Unable to change the Staff password securely.');
+  if (data?.code === 'incorrect_password' || data?.code === 'locked_account') {
+    throw new StaffLoginError(data.code, { lockedUntil: data.lockedUntil, attemptsRemaining: data.attemptsRemaining });
+  }
   if (!data?.ok) throw new Error(data?.error ?? 'Unable to change the Staff password securely.');
 }
 
@@ -876,18 +887,30 @@ export async function updateOwnerProfile(input: { fullName: string; newPassword?
 export async function loadStaffDailySessionStatus(): Promise<{
   signedInAt: string | null;
   serverBusinessDate: string | null;
+  /** ST-01 c10: false only when the owner has deactivated this account. */
+  accountActive: boolean | null;
 }> {
   const client = requireSupabase();
   const { data: sessionData, error: sessionError } = await client.auth.getSession();
   assertNoError(sessionError);
   const signedInAt = sessionData.session?.user.last_sign_in_at ?? null;
-  const { data, error } = await client.rpc('business_session_status');
-  assertNoError(error);
-  const status = data as { active?: unknown; business_date?: unknown } | null;
+  const userId = sessionData.session?.user.id ?? null;
+  const [statusResult, profileResult] = await Promise.all([
+    client.rpc('business_session_status'),
+    userId
+      ? client.from('profiles').select('active').eq('id', userId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  assertNoError(statusResult.error);
+  const status = statusResult.data as { active?: unknown; business_date?: unknown } | null;
   const serverBusinessDate = status?.active === true && typeof status.business_date === 'string'
     ? status.business_date
     : null;
-  return { signedInAt, serverBusinessDate };
+  // Staff can always read their own profile, so only an explicit false counts.
+  const accountActive = !profileResult.error && profileResult.data && typeof profileResult.data.active === 'boolean'
+    ? profileResult.data.active
+    : null;
+  return { signedInAt, serverBusinessDate, accountActive };
 }
 
 /**
@@ -896,6 +919,24 @@ export async function loadStaffDailySessionStatus(): Promise<{
  */
 export async function verifyCurrentStaffPassword(password: string): Promise<void> {
   if (!password) throw new Error('Please enter your password.');
+  // ST-01 c3: check through staff-auth so wrong passwords count toward the
+  // lockout. An older staff-auth without this action falls back to a direct check.
+  let serverResult: Awaited<ReturnType<ReturnType<typeof requireSupabase>['functions']['invoke']>> | null = null;
+  try {
+    serverResult = await requireSupabase().functions.invoke('staff-auth', {
+      body: { action: 'verify-password', password },
+    });
+  } catch {
+    serverResult = null;
+  }
+  const serverData = serverResult && !serverResult.error ? serverResult.data as StaffLoginResponse | null : null;
+  if (serverData?.ok === true) return;
+  if (serverData?.code === 'incorrect_password' || serverData?.code === 'locked_account') {
+    throw new StaffLoginError(serverData.code, {
+      lockedUntil: serverData.lockedUntil,
+      attemptsRemaining: serverData.attemptsRemaining,
+    });
+  }
   const { data: sessionData, error: sessionError } = await requireSupabase().auth.getSession();
   assertNoError(sessionError);
   const session = sessionData.session;

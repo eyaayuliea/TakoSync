@@ -324,3 +324,23 @@ test('session restoration preserves an Owner session after business closing time
   assert.equal(user.role, 'Owner');
   assert.equal(client.signedOut, false);
 });
+
+test('ST-01 c2, c3: a locked account reports when it can try again', async () => {
+  const client = new AuthFixture();
+  const lockedUntil = new Date(Date.now() + 12 * 60_000 + 5_000).toISOString();
+  client.loginResult = { ok: false, code: 'locked_account', lockedUntil };
+  await assert.rejects(
+    () => signInStaff('Ana Cruz', 'EMP-001', client),
+    (error) => error.code === 'locked_account'
+      && /locked after 5 failed attempts\. Try again in 13 minutes, or ask the owner to reset your password\./.test(error.message),
+  );
+});
+
+test('ST-01 c3: the last attempts before a lock are announced', async () => {
+  const client = new AuthFixture();
+  client.loginResult = { ok: false, code: 'incorrect_password', attemptsRemaining: 1 };
+  await assert.rejects(
+    () => signInStaff('Ana Cruz', 'EMP-001', client),
+    { message: 'Incorrect password. 1 attempt left before the account is locked for 15 minutes.' },
+  );
+});
