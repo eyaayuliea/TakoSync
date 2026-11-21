@@ -77,7 +77,10 @@ import {
   shouldOfferInventoryRetry,
   loadInventory,
   loadRecentStaffSales,
+  loadSaleVoidRequests,
+  loadStaffSalesForBusinessDay,
   loadStaffSaleReceipt,
+  requestSaleVoid,
   loadUnresolvedSales,
   loadStaffMenuCatalog,
   loadSharedRecipes,
@@ -147,6 +150,14 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
+import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
+import {
+  latestSaleVoidRequest,
+  saleVoidAvailability,
+  saleVoidState,
+  saleVoidStatusLabel,
+  type SaleVoidRequest,
+} from '../services/saleVoids';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -1062,6 +1073,9 @@ export default function StaffWorkspace({
   const [recentSales, setRecentSales] = useState<StaffSaleRecord[]>([]);
   const [dailySalesDate, setDailySalesDate] = useState(() => manilaBusinessDate());
   const [dailySalesSummary, setDailySalesSummary] = useState<StaffDailySalesSummary | null>(null);
+  // ST-07: the day's receipts, so a sale can be reopened to request a void.
+  const [dailySalesReceipts, setDailySalesReceipts] = useState<StaffSaleRecord[]>([]);
+  const [dailySalesReceiptsError, setDailySalesReceiptsError] = useState('');
   const [dailySalesLoading, setDailySalesLoading] = useState(false);
   const [dailySalesError, setDailySalesError] = useState('');
   const [dailySalesRefreshKey, setDailySalesRefreshKey] = useState(0);
@@ -1081,10 +1095,16 @@ export default function StaffWorkspace({
   const [retryingSaleIds, setRetryingSaleIds] = useState<Set<string>>(() => new Set());
   const inventoryRetryLocks = useRef(new Set<string>());
   const [selectedSaleReceiptId, setSelectedSaleReceiptId] = useState<string | null>(null);
+  const [saleReceiptReturnRoute, setSaleReceiptReturnRoute] = useState<'menu' | 'dailySales'>('menu');
   const [saleReceipt, setSaleReceipt] = useState<StaffSaleReceipt | null>(null);
   const [saleReceiptLoading, setSaleReceiptLoading] = useState(false);
   const [saleReceiptError, setSaleReceiptError] = useState('');
   const [saleReceiptShareError, setSaleReceiptShareError] = useState('');
+  // ST-07: void requests for the recent sales and the open receipt. Hidden
+  // until the database has the void tables.
+  const [saleVoidRequests, setSaleVoidRequests] = useState<SaleVoidRequest[]>([]);
+  const [saleVoidSupported, setSaleVoidSupported] = useState(false);
+  const [saleVoidModalVisible, setSaleVoidModalVisible] = useState(false);
   const [backendLoading, setBackendLoading] = useState(true);
   const [backendError, setBackendError] = useState('');
   const [pendingInventoryTransactions, setPendingInventoryTransactions] = useState<PendingInventoryTransaction[]>([]);
@@ -1576,6 +1596,17 @@ export default function StaffWorkspace({
     setDailySalesLoading(true);
     setDailySalesError('');
     setDailySalesSummary(null);
+    setDailySalesReceiptsError('');
+    loadStaffSalesForBusinessDay(branchId, dailySalesDate)
+      .then((sales) => {
+        if (active) setDailySalesReceipts(sales);
+      })
+      .catch(() => {
+        if (active) {
+          setDailySalesReceipts([]);
+          setDailySalesReceiptsError('Unable to load the receipts for this day. Tap Refresh to try again.');
+        }
+      });
     getStaffDailySalesLoadResult(() => loadStaffDailySales(branchId, dailySalesDate))
       .then(({ summary, error }) => {
         if (active) {
@@ -2561,7 +2592,8 @@ export default function StaffWorkspace({
     });
   };
 
-  const openSaleReceipt = (saleId: string) => {
+  const openSaleReceipt = (saleId: string, returnRoute: 'menu' | 'dailySales' = 'menu') => {
+    setSaleReceiptReturnRoute(returnRoute);
     setSelectedSaleReceiptId(saleId);
     setSaleReceipt(null);
     setSaleReceiptError('');
@@ -2594,6 +2626,39 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [route, selectedSaleReceiptId, user?.branchId]);
+
+  const saleVoidLookupKey = [
+    ...recentSales.map((sale) => sale.id),
+    ...dailySalesReceipts.map((sale) => sale.id),
+    saleReceipt?.id ?? '',
+  ].join(',');
+  useEffect(() => {
+    // Reload whenever the receipt or Daily Sales opens, so an owner decision shows up.
+    if (route !== 'saleReceipt' && route !== 'dailySales') return;
+    const saleIds = saleVoidLookupKey.split(',').filter(Boolean);
+    if (!saleIds.length) return;
+    let active = true;
+    loadSaleVoidRequests(saleIds)
+      .then(({ supported, requests }) => {
+        if (!active) return;
+        setSaleVoidSupported(supported);
+        setSaleVoidRequests(requests);
+      })
+      .catch(() => {
+        // The receipt and sale list still work without void information.
+        if (active) setSaleVoidRequests([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [saleVoidLookupKey, route, dailySalesRefreshKey]);
+
+  const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
+    if (!saleReceipt) return;
+    const saved = await requestSaleVoid({ saleId: saleReceipt.id, reason, clientRequestId });
+    setSaleVoidRequests((current) => [saved, ...current.filter((request) => request.id !== saved.id)]);
+    setSaleVoidModalVisible(false);
+  };
 
   const shareSaleReceipt = async () => {
     if (!saleReceipt) return;
@@ -3732,7 +3797,10 @@ export default function StaffWorkspace({
                 <Text style={styles.unresolvedSaleDate}>
                   {new Date(sale.created_at).toLocaleString('en-PH')} · {sale.payment_method} · {formatSaleMoney(sale.total_amount)}
                 </Text>
-                <Text style={styles.unresolvedSaleStatus}>Inventory {sale.inventory_processing_status}</Text>
+                <Text style={styles.unresolvedSaleStatus}>
+                  {saleVoidStatusLabel(saleVoidState(sale, latestSaleVoidRequest(saleVoidRequests, sale.id)))
+                    ?? `Inventory ${sale.inventory_processing_status}`}
+                </Text>
               </View>
               <Pressable
                 accessibilityRole="button"
@@ -6724,7 +6792,42 @@ export default function StaffWorkspace({
                 </View>
               </>
             )}
-            <Text style={styles.dailySalesReadOnly}>Confirmed sales only · Read-only</Text>
+            <View style={styles.dailySalesSection}>
+              <Text style={styles.sectionTitle}>Receipts</Text>
+              {dailySalesReceiptsError ? (
+                <Text style={styles.recoveryErrorText}>{dailySalesReceiptsError}</Text>
+              ) : dailySalesReceipts.length ? (
+                <View style={styles.dailySalesRows}>
+                  {dailySalesReceipts.map((sale) => {
+                    const voidLabel = saleVoidStatusLabel(saleVoidState(sale, latestSaleVoidRequest(saleVoidRequests, sale.id)));
+                    return (
+                      <Pressable
+                        key={`day-receipt-${sale.id}`}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View receipt for ${sale.transaction_reference}${voidLabel ? `, ${voidLabel}` : ''}`}
+                        onPress={() => openSaleReceipt(sale.id, 'dailySales')}
+                        style={({ pressed }) => [styles.dailySalesRow, pressed && styles.pressed]}
+                      >
+                        <View style={styles.dailySalesRowCopy}>
+                          <Text style={styles.dailySalesRowTitle}>{sale.transaction_reference}</Text>
+                          <Text style={styles.dailySalesRowDetail}>
+                            {formatHistoryDateTime(new Date(sale.created_at))} · {sale.payment_method}
+                            {voidLabel ? ` · ${voidLabel}` : ''}
+                            {sale.status === 'voided' ? ' (not counted)' : ''}
+                          </Text>
+                        </View>
+                        <Text style={[styles.dailySalesRowAmount, sale.status === 'voided' && styles.dailySalesVoidedAmount]}>
+                          {formatSaleMoney(sale.total_amount)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.dailySalesEmpty}>No receipts for this day.</Text>
+              )}
+            </View>
+            <Text style={styles.dailySalesReadOnly}>Confirmed sales only · Voided sales are not counted · Read-only</Text>
           </>
         ) : null}
         <View style={styles.dailySalesBottomActions}>
@@ -8351,8 +8454,8 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back to POS"
-            onPress={() => setRoute('menu')}
+            accessibilityLabel={saleReceiptReturnRoute === 'dailySales' ? 'Back to Daily Sales' : 'Back to POS'}
+            onPress={() => setRoute(saleReceiptReturnRoute)}
             style={styles.backButton}
           >
             <Text style={styles.backGlyph}>‹</Text>
@@ -8368,6 +8471,9 @@ export default function StaffWorkspace({
           <Text style={styles.saleReceiptReference}>{saleReceipt.transactionReference}</Text>
           <Text style={styles.saleReceiptDate}>{formatHistoryDateTime(new Date(saleReceipt.createdAt))}</Text>
           {saleReceipt.isBulkOrder ? <Text style={styles.saleReceiptBulk}>BULK ORDER</Text> : null}
+          {saleReceipt.isVoided ? (
+            <Text style={styles.saleReceiptVoid} accessibilityLabel="This sale is void">VOID</Text>
+          ) : null}
         </View>
         <View style={styles.saleReceiptLines}>
           {saleReceipt.lines.map((line) => (
@@ -8393,6 +8499,39 @@ export default function StaffWorkspace({
           <DetailRow label="Sale status" value={saleReceipt.saleStatus} />
           <DetailRow label="Inventory processing" value={saleReceipt.inventoryProcessingStatus} />
         </View>
+        {saleVoidSupported ? (() => {
+          const latest = latestSaleVoidRequest(saleVoidRequests, saleReceipt.id);
+          const receiptSale = {
+            status: saleReceipt.saleStatus,
+            inventory_processing_status: saleReceipt.inventoryProcessingStatus,
+            created_at: saleReceipt.createdAt,
+          };
+          return (
+            <>
+              <SaleVoidStatusPanel
+                state={saleVoidState(receiptSale, latest)}
+                availability={saleVoidAvailability(receiptSale, latest)}
+                onRequestVoid={() => setSaleVoidModalVisible(true)}
+              />
+              <SaleVoidRequestModal
+                visible={saleVoidModalVisible}
+                sale={{
+                  transactionReference: saleReceipt.transactionReference,
+                  totalAmount: saleReceipt.totalAmount,
+                  lines: saleReceipt.lines.map((line) => ({
+                    id: `${line.kind}-${line.id}`,
+                    name: line.name,
+                    variantLabel: line.variantLabel,
+                    quantity: line.quantity,
+                    subtotal: line.subtotal,
+                  })),
+                }}
+                onClose={() => setSaleVoidModalVisible(false)}
+                onSubmit={submitSaleVoidRequest}
+              />
+            </>
+          );
+        })() : null}
         <Pressable
           accessibilityRole="button"
           onPress={() => void shareSaleReceipt()}
@@ -9338,6 +9477,11 @@ function createStaffStyles(theme: AppTheme) {
   saleReceiptReference: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginTop: 12 },
   saleReceiptDate: { color: colors.muted, fontFamily: font.regular, fontSize: 8, marginTop: 4 },
   saleReceiptBulk: { color: colors.pink, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, marginTop: 8 },
+  dailySalesVoidedAmount: { textDecorationLine: 'line-through', color: colors.muted },
+  saleReceiptVoid: {
+    color: colors.red, fontFamily: font.bold, fontSize: 16, letterSpacing: 3, marginTop: 8,
+    paddingHorizontal: 14, paddingVertical: 2, borderWidth: 2, borderColor: colors.red, borderRadius: 6,
+  },
   saleReceiptLines: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: colors.line },
   saleReceiptLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 8 },
   saleReceiptLineCopy: { flex: 1, minWidth: 0 },

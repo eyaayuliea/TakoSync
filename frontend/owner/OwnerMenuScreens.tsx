@@ -76,14 +76,23 @@ export function OwnerMenuScreen({
 export function MoreMenuScreen({
   onOpenRecords,
   onOpenProfile,
+  onOpenVoidRequests,
 }: {
   onOpenRecords: () => void;
   onOpenProfile: () => void;
+  /** OM-15: void request review. The screen explains when the database is not updated yet. */
+  onOpenVoidRequests?: () => void;
 }) {
   return (
     <OwnerMenuScreen
       title="More"
       items={[
+        ...(onOpenVoidRequests ? [{
+          icon: 'check' as const,
+          title: 'Void Requests',
+          subtitle: 'Approve or reject staff requests to void a sale',
+          onTap: onOpenVoidRequests,
+        }] : []),
         {
           icon: 'receipt',
           title: 'Records',

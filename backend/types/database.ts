@@ -212,11 +212,25 @@ export type Database = {
         staff_id: string;
         total_amount: number;
         payment_method: string;
-        status: 'pending' | 'completed' | 'cancelled';
+        status: 'pending' | 'completed' | 'cancelled' | 'voided';
         inventory_processing_status: 'pending' | 'processing' | 'completed' | 'failed';
         inventory_processing_error: string | null;
         inventory_processed_at: string | null;
         created_at: string;
+      }>;
+      sale_void_requests: Table<{
+        id: string;
+        reference: string;
+        client_request_id: string;
+        sale_id: string;
+        branch_id: string;
+        requested_by: string;
+        reason: string;
+        status: 'pending' | 'approved' | 'rejected';
+        requested_at: string;
+        decided_by: string | null;
+        decided_at: string | null;
+        decision_reason: string | null;
       }>;
       sale_items: Table<{
         id: string;
@@ -485,10 +499,18 @@ export type Database = {
         Args: { p_sale_id: string };
         Returns: Json;
       };
+      request_sale_void: {
+        Args: { p_sale_id: string; p_reason: string; p_client_request_id: string };
+        Returns: Database['public']['Tables']['sale_void_requests']['Row'];
+      };
+      decide_sale_void: {
+        Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
+        Returns: Database['public']['Tables']['sale_void_requests']['Row'];
+      };
     };
     Enums: {
       app_role: 'owner' | 'staff';
-      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out';
+      inventory_transaction_type: 'stock_in' | 'stock_out' | 'usage' | 'waste' | 'spoilage' | 'adjustment' | 'sales_consumption' | 'transfer_in' | 'transfer_out' | 'void_reversal';
     };
     CompositeTypes: Record<string, never>;
   };

@@ -113,3 +113,15 @@ test('receipt text includes the persisted payment, item prices, and inventory st
   assert.match(text, /Total: 31\.00/);
   assert.match(text, /Inventory processing: failed/);
 });
+
+test('a voided sale receipt is marked VOID (ST-05 c9, ST-07 c7)', () => {
+  const completed = buildStaffSaleReceipt(receiptInput);
+  assert.equal(completed.isVoided, false);
+  assert.doesNotMatch(formatStaffSaleReceipt(completed), /VOID/);
+
+  const voided = buildStaffSaleReceipt({ ...receiptInput, sale: { ...receiptInput.sale, status: 'voided' } });
+  assert.equal(voided.isVoided, true);
+  const text = formatStaffSaleReceipt(voided);
+  assert.match(text.split('\n')[0], /\*\*\* VOID \*\*\*/);
+  assert.match(text, /not counted in sales totals/);
+});
