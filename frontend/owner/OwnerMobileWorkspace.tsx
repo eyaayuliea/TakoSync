@@ -48,6 +48,9 @@ import {
   loadProductManagement,
   validateOwnerSubmittedInventoryCount,
   validateOwnerInventoryCountCorrection,
+  rejectOwnerSubmittedInventoryCount,
+  isOwnerDiscrepancyRecountable,
+  ownerDiscrepancyStatusLabel,
   isOwnerDiscrepancyActionable,
   isOwnerDiscrepancyValidatable,
   getOwnerSaleInventoryStatusLabel,
@@ -381,7 +384,7 @@ export default function OwnerMobileWorkspace({
   const [discrepancyError, setDiscrepancyError] = useState('');
   const [discrepancyFeedback, setDiscrepancyFeedback] = useState('');
   const [selectedDiscrepancyId, setSelectedDiscrepancyId] = useState<string | null>(null);
-  const [discrepancyAction, setDiscrepancyAction] = useState<'approve' | 'reject' | 'validate' | null>(null);
+  const [discrepancyAction, setDiscrepancyAction] = useState<'approve' | 'reject' | 'validate' | 'recount' | null>(null);
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentError, setAdjustmentError] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -667,7 +670,11 @@ export default function OwnerMobileWorkspace({
           });
         setDiscrepancyFeedback(validation.outcome === 'no_change'
           ? 'Count validated and discrepancy resolved without changing inventory.'
-          : 'Count validated and inventory adjustment recorded.');
+          : 'Count validated. The counted difference was added to the current balance, so later sales are kept.');
+      } else if (discrepancyAction === 'recount') {
+        // OM-14 c9: Reject Count asks staff for a new count; stock is not changed.
+        await rejectOwnerSubmittedInventoryCount({ countLineId: selectedDiscrepancy.countLineId, reason });
+        setDiscrepancyFeedback('Count rejected. Staff are asked to submit a new count; the expected quantity was not changed.');
       } else {
         throw new Error('Choose an Owner decision or Validate Count action.');
       }
@@ -1820,7 +1827,7 @@ export default function OwnerMobileWorkspace({
       status === 'Validated' ? styles.omStatusAdjustedText
         : status === 'Pending' ? styles.omStatusPendingText
           : styles.omStatusCorrectionText;
-    const openAction = (action: 'approve' | 'reject' | 'validate') => {
+    const openAction = (action: 'approve' | 'reject' | 'validate' | 'recount') => {
       if (!selectedDiscrepancy) return;
       setAdjustmentReason('');
       setAdjustmentError('');
@@ -1871,7 +1878,7 @@ export default function OwnerMobileWorkspace({
               <Text style={styles.omDiscrepancyName}>{selected.ingredient}</Text>
               <View style={[styles.omStatusBadge, statusStyle(selected.status)]}>
                 <Text style={[styles.omStatusBadgeText, statusTextStyle(selected.status)]}>
-                  {selected.status}
+                  {ownerDiscrepancyStatusLabel(selected.status)}
                 </Text>
               </View>
             </View>
@@ -1935,6 +1942,23 @@ export default function OwnerMobileWorkspace({
             >
               <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
             </Pressable>
+          ) : null}
+          {isOwnerDiscrepancyRecountable(selected) ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => openAction('recount')}
+              style={[styles.omCorrectionRejectButton, styles.discrepancyActionButton]}
+            >
+              <Text style={styles.omCorrectionRejectText}>Reject Count (request recount)</Text>
+            </Pressable>
+          ) : null}
+          {selected.rejection ? (
+            <View style={styles.adjustmentAudit}>
+              <Text style={styles.omDiscrepancyDetailLabel}>Rejected for recount</Text>
+              <Text style={styles.auditDetail}>Reason: {selected.rejection.reason}</Text>
+              <Text style={styles.auditDetail}>By {selected.rejection.rejectedBy} · {new Date(selected.rejection.rejectedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</Text>
+              <Text style={styles.auditDetail}>The expected quantity was not changed. Staff submit a new count.</Text>
+            </View>
           ) : null}
         </View>
       );
@@ -2001,7 +2025,8 @@ export default function OwnerMobileWorkspace({
               <View style={styles.omBadgeRow}>
                 <View style={[styles.omStatusBadge, statusStyle(item.status)]}>
                   <Text style={[styles.omStatusBadgeText, statusTextStyle(item.status)]}>
-                    {item.status}
+                    {ownerDiscrepancyStatusLabel(item.status)}
+                    {item.status === 'Approved' ? ' · correction approved' : item.status === 'Rejected' ? ' · correction rejected' : ''}
                   </Text>
                 </View>
                 {item.validationTarget === 'correction_request' && (
@@ -2039,7 +2064,7 @@ export default function OwnerMobileWorkspace({
               </View>
               <Text style={styles.omFilterSectionLabel}>Status</Text>
               <View style={styles.omFilterChipWrap}>
-                {(['All status', 'Pending', 'Approved', 'Rejected', 'Validated'] as const).map((status) => (
+                {(['All status', 'Pending', 'Approved', 'Rejected', 'Validated', 'Rejected for Recount'] as const).map((status) => (
                   <Pressable key={status} accessibilityRole="button" onPress={() => setDiscrepancyDraftStatus(status)} style={[styles.omFilterChip, discrepancyDraftStatus === status && styles.omFilterChipSelected]}>
                     <Text style={[styles.omFilterChipText, discrepancyDraftStatus === status && styles.omFilterChipTextSelected]}>{status}</Text>
                   </Pressable>
@@ -2520,7 +2545,7 @@ export default function OwnerMobileWorkspace({
                   Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; original actual {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
                   {'\n'}Adjusted quantity {selectedDiscrepancy.correctedActual} {selectedDiscrepancy.unit}.
                   {discrepancyAction === 'validate'
-                    ? `\nConfirm overwrite: expected quantity ${selectedDiscrepancy.expected} → ${selectedDiscrepancy.correctedActual} ${selectedDiscrepancy.unit}.`
+                    ? `\nAdjustment: ${selectedDiscrepancy.correctedActual - selectedDiscrepancy.expected > 0 ? '+' : ''}${Math.round((selectedDiscrepancy.correctedActual - selectedDiscrepancy.expected) * 1000) / 1000} ${selectedDiscrepancy.unit} added to the current balance.`
                     : ''}
                 </Text>
                 <Text style={styles.modalWarning}>
@@ -2528,10 +2553,12 @@ export default function OwnerMobileWorkspace({
                     ? 'Approval only accepts the Staff correction request. It does not change inventory. The Owner must separately use Validate Count.'
                     : discrepancyAction === 'reject'
                       ? 'Rejection is retained in the audit history. Staff may submit another correction request.'
-                      : 'Validate Count is a separate authorization. It is rejected if this ingredient’s stock changed since the count began. If corrected actual equals expected, it records a no-change resolution.'}
+                      : discrepancyAction === 'recount'
+                        ? 'Reject Count asks staff to count this item again. The expected quantity is not changed, and this count can no longer be validated.'
+                        : 'Validate Count adds the difference between the counted quantity and the expected quantity saved with the count to the current balance, so sales recorded since the count are kept. If corrected actual equals expected, it records a no-change resolution.'}
                 </Text>
                 <Text style={styles.fieldLabel}>
-                  {discrepancyAction === 'validate' ? 'Validation reason *' : 'Decision reason *'}
+                  {discrepancyAction === 'validate' ? 'Validation reason *' : discrepancyAction === 'recount' ? 'Reason for the recount *' : 'Decision reason *'}
                 </Text>
                 <TextInput
                   value={adjustmentReason}
@@ -2565,7 +2592,9 @@ export default function OwnerMobileWorkspace({
                         ? 'Confirm approval'
                         : discrepancyAction === 'reject'
                           ? 'Confirm rejection'
-                          : 'Confirm Validate Count'}
+                          : discrepancyAction === 'recount'
+                            ? 'Confirm Reject Count'
+                            : 'Confirm Validate Count'}
                     </Text>}
                 </Pressable>
                 <Pressable

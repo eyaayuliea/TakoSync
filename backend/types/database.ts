@@ -278,6 +278,16 @@ export type Database = {
         recorded_by: string;
         recorded_at: string;
       }>;
+      inventory_count_rejections: Table<{
+        id: string;
+        daily_stock_count_line_id: string;
+        daily_stock_check_id: string;
+        branch_id: string;
+        ingredient_id: string;
+        rejected_by: string;
+        reason: string;
+        rejected_at: string;
+      }>;
       sale_items: Table<{
         id: string;
         sale_id: string;
@@ -508,6 +518,10 @@ export type Database = {
       validate_inventory_count_correction: {
         Args: { p_request_id: string; p_reason: string };
         Returns: Database['public']['Tables']['inventory_count_validations']['Row'];
+      };
+      reject_submitted_inventory_count: {
+        Args: { p_count_line_id: string; p_reason: string };
+        Returns: Database['public']['Tables']['inventory_count_rejections']['Row'];
       };
       validate_submitted_inventory_count: {
         Args: { p_count_line_id: string; p_reason: string };

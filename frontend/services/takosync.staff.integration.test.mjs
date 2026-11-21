@@ -17,6 +17,7 @@ const {
   requestEntryReversal,
   decideEntryReversal,
   recordDailyClosing,
+  rejectOwnerSubmittedInventoryCount,
 } = await import('./takosync.ts');
 const {
   SaleSubmissionRejectedError,
@@ -114,6 +115,11 @@ class RecordingSupabase {
             status: args.p_decision === 'approve' ? 'approved' : 'rejected', requested_at: '2026-11-22T03:00:00Z',
             decided_by: 'owner-1', decided_at: '2026-11-22T04:00:00Z', decision_reason: args.p_reason,
           },
+          error: null,
+        };
+      case 'reject_submitted_inventory_count':
+        return {
+          data: { id: 'rej-1', daily_stock_count_line_id: args.p_count_line_id, reason: args.p_reason },
           error: null,
         };
       case 'record_daily_closing':
@@ -627,4 +633,20 @@ test('ST-05: too little cash is refused without a retry', async () => {
     (error) => error instanceof SaleSubmissionRejectedError && /less than the total/.test(error.message),
   );
   assert.equal(client.calls.length, 1);
+});
+
+test('OM-14 c9: Reject Count sends the count line and reason; a blank reason is refused first', async () => {
+  const client = new RecordingSupabase();
+  const saved = await rejectOwnerSubmittedInventoryCount({ countLineId: 'line-1', reason: ' Recount the flour ' }, client);
+  assert.equal(saved.daily_stock_count_line_id, 'line-1');
+  assert.deepEqual(client.calls.at(-1), {
+    name: 'reject_submitted_inventory_count',
+    args: { p_count_line_id: 'line-1', p_reason: 'Recount the flour' },
+  });
+  const before = client.calls.length;
+  await assert.rejects(
+    rejectOwnerSubmittedInventoryCount({ countLineId: 'line-1', reason: '  ' }, client),
+    /reason of 1 to 1000 characters/,
+  );
+  assert.equal(client.calls.length, before);
 });
