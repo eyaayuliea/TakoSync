@@ -36,6 +36,25 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+/**
+ * A throwaway Auth client that never stores or refreshes a session. Used to check
+ * a password (for example on the Staff lock screen) without replacing the
+ * signed-in session held by the main client.
+ */
+export function createIsolatedAuthClient() {
+  if (!isSupabaseConfigured) {
+    throw new Error(supabaseConfigurationError ?? 'Supabase is not configured.');
+  }
+  return createClient<Database>(supabaseUrl!, supabasePublishableKey!, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: 'takosync-isolated-auth-check',
+    },
+  });
+}
+
 export function requireSupabase() {
   if (!supabase) {
     throw new Error(supabaseConfigurationError ?? 'Supabase is not configured.');

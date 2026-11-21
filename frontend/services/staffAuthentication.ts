@@ -38,7 +38,7 @@ export class StaffLoginError extends Error {
 export function staffLoginErrorMessage(code: StaffLoginErrorCode): string {
   switch (code) {
     case 'unknown_username':
-      return 'Username not found. Please check your username.';
+      return 'Username not found. Please try again.';
     case 'incorrect_password':
       return 'Incorrect password. Please try again.';
     case 'inactive_account':

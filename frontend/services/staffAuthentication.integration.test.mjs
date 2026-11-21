@@ -151,7 +151,7 @@ test('Staff login preserves the first-login password-change flag', async () => {
 });
 
 for (const [code, expected] of [
-  ['unknown_username', 'Username not found. Please check your username.'],
+  ['unknown_username', 'Username not found. Please try again.'],
   ['incorrect_password', 'Incorrect password. Please try again.'],
   ['inactive_account', 'This account is inactive. Please contact the owner.'],
 ]) {

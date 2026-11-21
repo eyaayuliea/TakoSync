@@ -20,7 +20,7 @@ test('Staff usernames normalize consistently and aliases never expose the userna
 });
 
 test('Staff login messages remain explicit and distinct', () => {
-  assert.equal(staffLoginErrorMessage('unknown_username'), 'Username not found. Please check your username.');
+  assert.equal(staffLoginErrorMessage('unknown_username'), 'Username not found. Please try again.');
   assert.equal(staffLoginErrorMessage('incorrect_password'), 'Incorrect password. Please try again.');
   assert.equal(staffLoginErrorMessage('inactive_account'), 'This account is inactive. Please contact the owner.');
 });
@@ -28,7 +28,7 @@ test('Staff login messages remain explicit and distinct', () => {
 test('Staff login failures are placed under the field the ST-01 criteria name', async () => {
   const { staffLoginFeedback, StaffLoginError } = await import('./staffAuthentication.ts');
   assert.deepEqual(staffLoginFeedback(new StaffLoginError('unknown_username')), {
-    usernameError: 'Username not found. Please check your username.',
+    usernameError: 'Username not found. Please try again.',
     passwordError: '',
     banner: '',
     clearPassword: true,

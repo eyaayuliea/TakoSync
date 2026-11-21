@@ -45,6 +45,8 @@ type MenuWorkspaceProps = {
   onIncreaseQuantity: (productId: string) => void;
   onDecreaseQuantity: (productId: string) => void;
   onSetQuantity: (productId: string, quantity: number) => void;
+  selectedAddonIds: string[];
+  onSetSelectedAddonIds: React.Dispatch<React.SetStateAction<string[]>>;
   onRemoveProduct: (productId: string) => void;
   onCancelOrder: () => void;
   onSubmitSale: (input: Omit<SaleSubmission, 'branchId' | 'transactionReference'>) => Promise<void>;
@@ -411,6 +413,8 @@ export default function MenuWorkspace({
   onIncreaseQuantity,
   onDecreaseQuantity,
   onSetQuantity,
+  selectedAddonIds,
+  onSetSelectedAddonIds: setSelectedAddonIds,
   onRemoveProduct,
   onCancelOrder,
   onSubmitSale,
@@ -430,7 +434,6 @@ export default function MenuWorkspace({
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
-  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [saleSubmitting, setSaleSubmitting] = useState(false);
   const [saleError, setSaleError] = useState('');
   const [saleRetryAvailable, setSaleRetryAvailable] = useState(false);
