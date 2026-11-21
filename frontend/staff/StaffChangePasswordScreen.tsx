@@ -10,7 +10,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { changeStaffPassword } from '../services/takosync';
+import { changeStaffPassword, verifyCurrentStaffPassword } from '../services/takosync';
+import { StaffLoginError } from '../services/staffAuthentication';
+import {
+  CURRENT_PASSWORD_INCORRECT_MESSAGE,
+  validateStaffPasswordChange,
+} from '../services/staffPasswordChange';
 import { ownerColors, ownerRadii, ownerSpacing } from '../owner/shared/ownerTokens';
 
 const font = {
@@ -21,37 +26,58 @@ const font = {
 
 type Props = {
   employeeId: string | null;
+  /** ST-15 c3, c5: ask for the current password (not for a forced first change). */
+  requireCurrentPassword?: boolean;
   onChanged: () => void | Promise<void>;
   onCancel: () => void;
   onLogout: () => void | Promise<void>;
 };
 
-export default function StaffChangePasswordScreen({ employeeId, onChanged, onCancel, onLogout }: Props) {
+export default function StaffChangePasswordScreen({
+  employeeId,
+  requireCurrentPassword = true,
+  onChanged,
+  onCancel,
+  onLogout,
+}: Props) {
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const newPasswordInput = useRef<TextInput>(null);
   const confirmationInput = useRef<TextInput>(null);
 
   const submit = async () => {
     if (saving || loggingOut) return;
-    if (password.length < 8) {
-      setError('New password must be at least 8 characters.');
-      return;
-    }
-    if (password === employeeId) {
-      setError('Choose a password different from your Employee ID.');
-      return;
-    }
-    if (password !== confirmation) {
-      setError('The passwords do not match.');
+    const problem = validateStaffPasswordChange({
+      currentPassword,
+      newPassword: password,
+      confirmation,
+      employeeId,
+      requireCurrentPassword,
+    });
+    if (problem) {
+      setError(problem.message);
       return;
     }
     setSaving(true);
     setError('');
     try {
+      if (requireCurrentPassword) {
+        try {
+          await verifyCurrentStaffPassword(currentPassword);
+        } catch (reason: unknown) {
+          if (reason instanceof StaffLoginError && reason.code === 'incorrect_password') {
+            setCurrentPassword('');
+            throw new Error(CURRENT_PASSWORD_INCORRECT_MESSAGE);
+          }
+          throw reason;
+        }
+      }
       await changeStaffPassword(password);
+      setCurrentPassword('');
       setPassword('');
       setConfirmation('');
       await onChanged();
@@ -90,10 +116,37 @@ export default function StaffChangePasswordScreen({ employeeId, onChanged, onCan
             <Text style={styles.eyebrow}>ACCOUNT SECURITY</Text>
             <Text style={styles.title}>Change your password</Text>
             <Text style={styles.copy}>
-              Your Employee ID is your initial password. You can set a different password at any time.
+              {requireCurrentPassword
+                ? 'Enter your current password, then choose a new one with at least 8 characters.'
+                : 'Your Employee ID is your initial password. Choose a new password with at least 8 characters.'}
             </Text>
+            {requireCurrentPassword ? (
+              <>
+                <Text style={styles.label}>Current password</Text>
+                <TextInput
+                  value={currentPassword}
+                  onChangeText={(value) => {
+                    setCurrentPassword(value);
+                    setError('');
+                  }}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="current-password"
+                  textContentType="password"
+                  accessibilityLabel="Current password, required"
+                  editable={!saving && !loggingOut}
+                  returnKeyType="next"
+                  onSubmitEditing={() => newPasswordInput.current?.focus()}
+                  style={styles.input}
+                  placeholder="Your current password"
+                  placeholderTextColor={ownerColors.secondaryText}
+                />
+              </>
+            ) : null}
             <Text style={styles.label}>New password</Text>
             <TextInput
+              ref={newPasswordInput}
               value={password}
               onChangeText={(value) => {
                 setPassword(value);

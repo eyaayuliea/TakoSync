@@ -843,6 +843,7 @@ function AppContent() {
             {visibleScreen === 'staffChangePassword' && authenticatedUser?.role === 'Staff' && (
               <StaffChangePasswordScreen
                 employeeId={authenticatedUser.employeeId}
+                requireCurrentPassword={!authenticatedUser.mustChangePassword}
                 onChanged={handleStaffPasswordChanged}
                 onCancel={() => setScreen('staffWorkspace')}
                 onLogout={handleLogout}
