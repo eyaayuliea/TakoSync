@@ -1,4 +1,5 @@
 import type { OwnerSalesTransactionBundle } from '../services/takosync.ts';
+import { recordedSaleIsBulkOrder } from '../services/bulkOrder.ts';
 
 export const pageSize = 20;
 
@@ -13,10 +14,12 @@ export type SalesTransaction = {
   branchName: string;
   recordedBy: string;
   paymentMethod: string;
-  /** The database does not store cash tendered or change, so these are always null. */
+  /** OM-09 c3: cash received, for cash sales saved with it (null before #37's migration). */
   amountTendered: number | null;
   createdAt: string;
-  status: 'Recorded' | 'Pending' | 'Cancelled';
+  status: 'Recorded' | 'Pending' | 'Cancelled' | 'Voided';
+  /** OM-09 c4. */
+  isBulkOrder: boolean;
   items: Array<{
     name: string;
     quantity: number;
@@ -80,7 +83,9 @@ export function buildSalesTransactions(bundle: OwnerSalesTransactionBundle): Sal
         unitPrice: money(addon.unit_price),
         lineTotal: money(addon.subtotal),
       }));
-    const recordedBy = staff.get(sale.staff_id);
+    const recordedBy = sale.served_by_name?.trim() || staff.get(sale.staff_id);
+    const optionalMoney = (value: number | string | null | undefined) =>
+      value === null || value === undefined ? null : money(value);
     return {
       id: sale.id,
       transactionReference: sale.transaction_reference,
@@ -88,20 +93,37 @@ export function buildSalesTransactions(bundle: OwnerSalesTransactionBundle): Sal
       branchName: branches.get(sale.branch_id) ?? 'Branch unavailable',
       recordedBy: recordedBy ? `${recordedBy} (employee account)` : 'Employee account',
       paymentMethod: sale.payment_method,
-      amountTendered: null,
+      amountTendered: optionalMoney(sale.cash_received),
       createdAt: sale.created_at,
-      status: sale.status === 'cancelled' ? 'Cancelled' as const : sale.status === 'pending' ? 'Pending' as const : 'Recorded' as const,
+      status: sale.status === 'voided' ? 'Voided' as const
+        : sale.status === 'cancelled' ? 'Cancelled' as const
+          : sale.status === 'pending' ? 'Pending' as const
+            : 'Recorded' as const,
+      isBulkOrder: recordedSaleIsBulkOrder(undefined, productLines.map((line) => line.quantity)),
       items: [...productLines, ...addonLines],
       // The saved sale total is authoritative; it already includes add-ons.
       total: money(sale.total_amount),
-      change: null,
+      change: optionalMoney(sale.change_amount),
     };
   });
 }
 
-export async function loadSalesTransactionPage(offset = 0): Promise<SalesTransactionPage> {
+export type SalesTransactionFilters = {
+  branchKey?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+/** OM-09 c5: the completed total of the listed transactions; voided ones are not added. */
+export function completedTotal(transactions: SalesTransaction[]): number {
+  return transactions
+    .filter((transaction) => transaction.status === 'Recorded')
+    .reduce((sum, transaction) => sum + Math.round(transaction.total * 100), 0) / 100;
+}
+
+export async function loadSalesTransactionPage(offset = 0, filters: SalesTransactionFilters = {}): Promise<SalesTransactionPage> {
   const { loadOwnerSalesTransactionBundle } = await import('../services/takosync.ts');
-  const bundle = await loadOwnerSalesTransactionBundle({ offset, limit: pageSize });
+  const bundle = await loadOwnerSalesTransactionBundle({ offset, limit: pageSize, ...filters });
   return { transactions: buildSalesTransactions(bundle), hasMore: bundle.hasMore };
 }
 

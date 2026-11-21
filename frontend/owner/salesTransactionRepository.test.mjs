@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildSalesTransactions,
+  completedTotal,
   getForcedSalesTransactionState,
 } from './salesTransactionRepository.ts';
 
@@ -95,4 +96,32 @@ test('a sale opened by id keeps its real status instead of always saying Recorde
   const [cancelled] = buildSalesTransactions({ ...bundle, sales: [{ ...bundle.sales[0], status: 'cancelled' }] });
   assert.equal(pending.status, 'Pending');
   assert.equal(cancelled.status, 'Cancelled');
+});
+
+test('OM-09 c3–c5: cash details, Bulk Order, and Voided status come from the saved sale', () => {
+  const [cash] = buildSalesTransactions({
+    ...bundle,
+    sales: [{ ...bundle.sales[1], cash_received: '100.00', change_amount: '1.00', served_by_name: 'Ana Reyes' }],
+  });
+  assert.equal(cash.amountTendered, 100);
+  assert.equal(cash.change, 1);
+  assert.equal(cash.recordedBy, 'Ana Reyes (employee account)');
+
+  const [voided] = buildSalesTransactions({ ...bundle, sales: [{ ...bundle.sales[0], status: 'voided' }] });
+  assert.equal(voided.status, 'Voided');
+
+  const bulkBundle = {
+    ...bundle,
+    sales: [bundle.sales[0]],
+    items: [{ id: 'i-bulk', sale_id: bundle.sales[0].id, product_id: bundle.items[0].product_id, product_variant_id: null, quantity: 5, unit_price: 10, subtotal: 50 }],
+  };
+  assert.equal(buildSalesTransactions(bulkBundle)[0].isBulkOrder, true);
+});
+
+test('OM-09 c5: voided transactions are not added to the total', () => {
+  const transactions = buildSalesTransactions({
+    ...bundle,
+    sales: [bundle.sales[0], { ...bundle.sales[1], status: 'voided' }],
+  });
+  assert.equal(completedTotal(transactions), 297.5);
 });

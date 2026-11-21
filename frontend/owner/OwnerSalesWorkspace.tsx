@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  salesPerBranch,
+  salesPerDay,
+  salesPerWeek,
+  summarizeAddons,
+  summarizeProductVariants,
+} from './ownerSalesBreakdowns';
+import {
   ActivityIndicator,
   Animated,
   Modal,
@@ -553,17 +560,18 @@ export default function OwnerSalesWorkspace({
   );
   const items = data?.items ?? [];
   const products = useMemo(() => summarizeOwnerProducts(items), [items]);
-  const rankedProducts = useMemo(() => {
-    const sorted = [...products].sort((left, right) => {
-      if (left.quantity === right.quantity) return left.name.localeCompare(right.name);
-      return productSortDescending
-        ? right.quantity - left.quantity
-        : left.quantity - right.quantity;
-    });
-    return sorted;
-  }, [productSortDescending, products]);
   const payments = useMemo(() => summarizePayments(sales), [sales]);
   const totalSales = sales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
+  // OM-05 c4 / OM-06 c4 / OM-08 c2–c3: breakdowns of the loaded completed sales.
+  const salesByDay = salesPerDay(sales, selectedWeek.start, today);
+  const monthOfAnchor = ownerSalesMonthOf(anchorDate);
+  const monthBounds = monthKeyBounds(monthOfAnchor.year, monthOfAnchor.month);
+  const salesByWeek = salesPerWeek(sales, monthBounds.start, monthBounds.end, today);
+  const productVariants = [...summarizeProductVariants(items)].sort((left, right) =>
+    left.quantity === right.quantity
+      ? left.name.localeCompare(right.name)
+      : productSortDescending ? right.quantity - left.quantity : left.quantity - right.quantity);
+  const addonsSold = summarizeAddons(data?.addons ?? []);
   const previousSales = data?.previousSales ?? [];
   const previousTotal = previousSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0);
   const salesChange = totalSales - previousTotal;
@@ -788,14 +796,10 @@ export default function OwnerSalesWorkspace({
       { id: 'branch-2', name: 'Branch 2' },
       { id: 'branch-3', name: 'Branch 3' },
     ] as Branch[])
-      .filter((branch) => !branchId || branch.id === branchId)
-      .map((branch) => ({
-        id: branch.id,
-        name: branch.name,
-        total: sales.filter((sale) => sale.branch_id === branch.id)
-          .reduce((sum, sale) => sum + Number(sale.total_amount), 0),
-      }));
-    const branchCombinedTotal = branchSalesCards.reduce((sum, branch) => sum + branch.total, 0);
+      .filter((branch) => !branchId || branch.id === branchId);
+    // OM-07 c2, c5: every branch with its transactions and total, even without sales.
+    const branchSalesRows = salesPerBranch(sales, branchSalesCards);
+    const branchCombinedTotal = branchSalesRows.reduce((sum, branch) => sum + Math.round(branch.total * 100), 0) / 100;
     const calendarYear = calendarCursor.getFullYear();
     const calendarMonth = calendarCursor.getMonth();
     const calendarMonthLabel = calendarCursor.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
@@ -1182,6 +1186,10 @@ export default function OwnerSalesWorkspace({
                     ? currency(branchCombinedTotal)
                     : sales.length ? currency(totalSales) : '₱0'}
                 </Text>
+                {/* OM-04 c4 / OM-07 c2: the number of completed transactions. */}
+                <Text style={styles.omSalesCount}>
+                  {sales.length} completed {sales.length === 1 ? 'transaction' : 'transactions'} · voided sales excluded
+                </Text>
               </View>
             )}
 
@@ -1190,12 +1198,7 @@ export default function OwnerSalesWorkspace({
                 <View style={styles.omTransactionsHeader}>
                   <Text style={styles.omTransactionsTitle}>Sales per branch</Text>
                 </View>
-                {!sales.length ? (
-                  <View style={styles.omEmptyCard}>
-                    <Text style={styles.omEmptyIcon}>▤</Text>
-                    <Text style={styles.omEmptyText}>No sales recorded for this period.</Text>
-                  </View>
-                ) : branchSalesCards.length ? branchSalesCards.map((branch) => (
+                {branchSalesRows.length ? branchSalesRows.map((branch) => (
                   <Pressable
                     key={branch.id}
                     accessibilityRole="button"
@@ -1208,7 +1211,9 @@ export default function OwnerSalesWorkspace({
                     </View>
                     <View style={styles.omBranchCopy}>
                       <Text style={styles.omBranchName}>{branch.name}</Text>
-                      <Text style={styles.omBranchSupporting}>View transactions</Text>
+                      <Text style={styles.omBranchSupporting}>
+                        {branch.count} {branch.count === 1 ? 'transaction' : 'transactions'} · View
+                      </Text>
                     </View>
                     <Text style={styles.omBranchAmount}>{currency(branch.total)}</Text>
                     <Text style={styles.omTransactionChevron}>›</Text>
@@ -1231,8 +1236,8 @@ export default function OwnerSalesWorkspace({
                     </Text>
                   </Pressable>
                 </View>
-                {rankedProducts.length ? rankedProducts.map((product, index) => {
-                  const maxQuantity = rankedProducts.reduce(
+                {productVariants.length ? productVariants.map((product, index) => {
+                  const maxQuantity = productVariants.reduce(
                     (maximum, item) => Math.max(maximum, item.quantity),
                     0,
                   );
@@ -1244,7 +1249,9 @@ export default function OwnerSalesWorkspace({
                       </View>
                       <View style={styles.omProductRankCopy}>
                         <View style={styles.omProductRankTopLine}>
-                          <Text style={styles.omProductName} numberOfLines={1}>{product.name}</Text>
+                          <Text style={styles.omProductName} numberOfLines={1}>
+                            {product.name}{product.variantLabel ? ` · ${product.variantLabel}` : ''}
+                          </Text>
                           <Text style={styles.omProductSold}>{product.quantity} sold</Text>
                         </View>
                         <View style={styles.omProductProgressTrack}>
@@ -1259,9 +1266,39 @@ export default function OwnerSalesWorkspace({
                     <Text style={styles.omEmptyText}>{PRODUCTS_SOLD_EMPTY_MESSAGE}</Text>
                   </View>
                 )}
+                {addonsSold.length ? (
+                  <>
+                    <View style={styles.omTransactionsHeader}>
+                      <Text style={styles.omTransactionsTitle}>Add-ons sold</Text>
+                    </View>
+                    {addonsSold.map((addon) => (
+                      <View key={addon.id} style={styles.omBreakdownRow}>
+                        <Text style={styles.omBreakdownLabel}>{addon.name}</Text>
+                        <Text style={styles.omBreakdownValue}>{addon.quantity} sold · {currency(addon.total)}</Text>
+                      </View>
+                    ))}
+                  </>
+                ) : null}
               </>
             ) : (
               <>
+                {activeSalesTab === 'Weekly' || activeSalesTab === 'Monthly' ? (
+                  <>
+                    <View style={styles.omTransactionsHeader}>
+                      <Text style={styles.omTransactionsTitle}>
+                        {activeSalesTab === 'Weekly' ? 'Sales per day' : 'Sales per week'}
+                      </Text>
+                    </View>
+                    {(activeSalesTab === 'Weekly' ? salesByDay : salesByWeek).map((bucket) => (
+                      <View key={bucket.key} style={styles.omBreakdownRow}>
+                        <Text style={styles.omBreakdownLabel}>{bucket.label}</Text>
+                        <Text style={styles.omBreakdownValue}>
+                          {currency(bucket.total)} · {bucket.count} {bucket.count === 1 ? 'sale' : 'sales'}
+                        </Text>
+                      </View>
+                    ))}
+                  </>
+                ) : null}
                 <View style={styles.omTransactionsHeader}>
                   <Text style={styles.omTransactionsTitle}>Transactions</Text>
                   <Pressable
@@ -2008,6 +2045,13 @@ function useStyles() {
     omSalesCardLabel: { color: '#FFFFFF', fontFamily: 'Poppins_500Medium', fontSize: 10 },
     omLockIcon: { color: '#FFFFFF', fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
     omSalesAmount: { color: '#FFFFFF', fontFamily: 'Poppins_700Bold', fontSize: 30, lineHeight: 38, marginTop: 5 },
+    omSalesCount: { color: '#FFFFFF', fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 2, opacity: 0.9 },
+    omBreakdownRow: {
+      minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+      paddingHorizontal: 12, marginBottom: 6, borderRadius: 10, backgroundColor: DAILY_SALES_THEME.neutral,
+    },
+    omBreakdownLabel: { flex: 1, color: DAILY_SALES_THEME.navy, fontFamily: DAILY_SALES_THEME.font.regular, fontSize: 10 },
+    omBreakdownValue: { color: DAILY_SALES_THEME.navy, fontFamily: DAILY_SALES_THEME.font.bold, fontSize: 10 },
     omLoadingText: { color: DAILY_SALES_THEME.secondaryText, fontFamily: DAILY_SALES_THEME.font.regular, fontSize: 10, textAlign: 'center', marginTop: 10 },
     omSkeletonCard: { minHeight: 112, justifyContent: 'center', paddingHorizontal: 18, marginBottom: 14, borderRadius: 16, backgroundColor: '#EC1358' },
     omSkeletonLabel: { width: 100, height: 8, borderRadius: 4, backgroundColor: '#F7A7C2' },
