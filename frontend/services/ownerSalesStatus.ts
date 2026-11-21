@@ -1,4 +1,4 @@
-export type OwnerSaleStatus = 'pending' | 'completed' | 'cancelled';
+export type OwnerSaleStatus = 'pending' | 'completed' | 'cancelled' | 'voided';
 export type OwnerInventoryProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export class SalePayloadValidationError extends Error {
@@ -190,6 +190,7 @@ export function filterUnresolvedSales(
   return sales.filter((sale) =>
     sale.branch_id === branchId &&
     sale.status !== 'cancelled' &&
+    sale.status !== 'voided' &&
     shouldOfferInventoryRetry(sale.inventory_processing_status),
   );
 }

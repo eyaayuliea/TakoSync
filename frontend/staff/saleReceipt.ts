@@ -22,6 +22,8 @@ export type StaffSaleReceipt = {
   saleStatus: OwnerSaleStatus;
   inventoryProcessingStatus: OwnerInventoryProcessingStatus;
   isBulkOrder: boolean;
+  /** ST-05 c9 / ST-07 c7: the owner approved a void for this sale. */
+  isVoided: boolean;
   lines: SaleReceiptLine[];
 };
 
@@ -116,12 +118,16 @@ export function buildStaffSaleReceipt(input: {
     saleStatus: sale.status,
     inventoryProcessingStatus: sale.inventory_processing_status,
     isBulkOrder: recordedSaleIsBulkOrder(sale.is_bulk_order, input.items.map((item) => Number(item.quantity))),
+    isVoided: sale.status === 'voided',
     lines,
   };
 }
 
+export const SALE_RECEIPT_VOID_LABEL = '*** VOID ***';
+
 export function formatStaffSaleReceipt(receipt: StaffSaleReceipt): string {
   const lines = [
+    ...(receipt.isVoided ? [SALE_RECEIPT_VOID_LABEL] : []),
     "Gelo's Takoyaki",
     receipt.branchName,
     `Reference: ${receipt.transactionReference}`,
@@ -136,6 +142,7 @@ export function formatStaffSaleReceipt(receipt: StaffSaleReceipt): string {
     `Total: ${receipt.totalAmount.toFixed(2)}`,
     `Sale status: ${receipt.saleStatus}`,
     `Inventory processing: ${receipt.inventoryProcessingStatus}`,
+    ...(receipt.isVoided ? ['', 'This sale was voided and is not counted in sales totals.'] : []),
   ];
   return lines.join('\n');
 }

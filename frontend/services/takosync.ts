@@ -42,6 +42,15 @@ import {
   type StaffSaleRecord,
 } from './ownerSalesStatus';
 import { buildStaffSaleReceipt, type StaffSaleReceipt } from '../staff/saleReceipt';
+import {
+  isMissingSaleVoidSupport,
+  mapSaleVoidRequestRow,
+  saleVoidErrorMessage,
+  sortSaleVoidRequestsForReview,
+  validateSaleVoidReason,
+  validateSaleVoidRejectionReason,
+  type SaleVoidRequest,
+} from './saleVoids';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
@@ -195,7 +204,7 @@ export type OwnerSale = {
   recorded_by_name?: string;
   total_amount: number;
   payment_method: string;
-  status: 'pending' | 'completed' | 'cancelled';
+  status: 'pending' | 'completed' | 'cancelled' | 'voided';
   inventory_processing_status?: 'pending' | 'processing' | 'completed' | 'failed';
   inventory_processing_error?: string | null;
   created_at: string;
@@ -1282,6 +1291,28 @@ export async function loadRecentStaffSales(branchId: string): Promise<StaffSaleR
   })), branchId);
 }
 
+/** ST-06 / ST-07: every recorded sale of one business day (voided included), newest first. */
+export async function loadStaffSalesForBusinessDay(
+  branchId: string,
+  businessDate: Date,
+): Promise<StaffSaleRecord[]> {
+  if (!branchId.trim()) throw new Error('An assigned branch is required to load sale receipts.');
+  const { start, end } = getManilaBusinessDayRange(businessDate);
+  const { data, error } = await requireSupabase().from('sales')
+    .select('id, transaction_reference, branch_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at')
+    .eq('branch_id', branchId)
+    .neq('status', 'cancelled')
+    .gte('created_at', start)
+    .lt('created_at', end)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  assertNoError(error);
+  return filterStaffSaleHistory((data ?? []).map((sale) => ({
+    ...sale,
+    total_amount: Number(sale.total_amount),
+  })), branchId);
+}
+
 export async function loadStaffDailySales(
   branchId: string,
   businessDate: Date,
@@ -1416,6 +1447,170 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
     variants: variantsResult.data ?? [],
     addonNames: addonNamesResult.data ?? [],
   });
+}
+
+// ST-07 / OW-26 / OM-15: void requests. Until the database has the void
+// tables (migration 202611220002), loads report `supported: false` and the
+// screens hide the feature instead of failing.
+
+const SALE_VOID_REQUEST_COLUMNS =
+  'id, reference, sale_id, branch_id, requested_by, reason, status, requested_at, decided_by, decided_at, decision_reason';
+
+async function loadProfileNames(client: StaffServiceClient, ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return new Map();
+  const { data, error } = await client.from('profiles').select('id, full_name').in('id', unique);
+  // Staff can only read their own profile; a missing name is shown as unknown.
+  if (error) return new Map();
+  return new Map((data ?? []).map((profile) => [profile.id, profile.full_name]));
+}
+
+export async function loadSaleVoidRequests(
+  saleIds: string[],
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; requests: SaleVoidRequest[] }> {
+  const ids = [...new Set(saleIds.filter(Boolean))];
+  if (!ids.length) return { supported: true, requests: [] };
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('sale_void_requests')
+    .select(SALE_VOID_REQUEST_COLUMNS)
+    .in('sale_id', ids)
+    .order('requested_at', { ascending: false });
+  if (isMissingSaleVoidSupport(error)) return { supported: false, requests: [] };
+  assertNoError(error);
+  const rows = data ?? [];
+  const names = await loadProfileNames(resolved, rows.flatMap((row) => [row.requested_by, row.decided_by ?? '']));
+  return { supported: true, requests: rows.map((row) => mapSaleVoidRequestRow(row, names)) };
+}
+
+export class SaleVoidRequestError extends Error {}
+
+/** ST-07 c2–c4: saves a void request. A retry with the same request id is safe. */
+export async function requestSaleVoid(input: {
+  saleId: string;
+  reason: string;
+  clientRequestId: string;
+}, client?: StaffServiceClient): Promise<SaleVoidRequest> {
+  const reasonError = validateSaleVoidReason(input.reason);
+  if (reasonError) throw new SaleVoidRequestError(reasonError);
+  const { data, error } = await staffServiceClient(client).rpc('request_sale_void', {
+    p_sale_id: input.saleId,
+    p_reason: input.reason.trim(),
+    p_client_request_id: input.clientRequestId,
+  });
+  if (error) throw new SaleVoidRequestError(saleVoidErrorMessage(error));
+  if (!data || data.sale_id !== input.saleId) {
+    throw new SaleVoidRequestError('The void request could not be confirmed. Please try again.');
+  }
+  return mapSaleVoidRequestRow(data);
+}
+
+export type OwnerSaleVoidReview = SaleVoidRequest & {
+  branchName: string;
+  sale: {
+    transactionReference: string;
+    totalAmount: number;
+    createdAt: string;
+    status: string;
+    lines: Array<{ id: string; name: string; variantLabel: string | null; quantity: number; subtotal: number }>;
+  } | null;
+};
+
+/** OM-15 c1–c3: every void request with its sale, Pending first. */
+export async function loadOwnerSaleVoidReviews(
+  client?: StaffServiceClient,
+): Promise<{ supported: boolean; requests: OwnerSaleVoidReview[] }> {
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('sale_void_requests')
+    .select(SALE_VOID_REQUEST_COLUMNS)
+    .order('requested_at', { ascending: false })
+    .limit(500);
+  if (isMissingSaleVoidSupport(error)) return { supported: false, requests: [] };
+  assertNoError(error);
+  const rows = data ?? [];
+  if (!rows.length) return { supported: true, requests: [] };
+
+  const saleIds = [...new Set(rows.map((row) => row.sale_id))];
+  const branchIds = [...new Set(rows.map((row) => row.branch_id))];
+  const [salesResult, itemsResult, branchesResult, names] = await Promise.all([
+    resolved.from('sales').select('id, transaction_reference, total_amount, created_at, status').in('id', saleIds),
+    resolved.from('sale_items').select('id, sale_id, product_id, product_variant_id, quantity, subtotal').in('sale_id', saleIds),
+    resolved.from('branches').select('id, city, code').in('id', branchIds),
+    loadProfileNames(resolved, rows.flatMap((row) => [row.requested_by, row.decided_by ?? ''])),
+  ]);
+  assertNoError(salesResult.error);
+  assertNoError(itemsResult.error);
+  assertNoError(branchesResult.error);
+  const items = itemsResult.data ?? [];
+  const productIds = [...new Set(items.map((item) => item.product_id))];
+  const variantIds = [...new Set(items.flatMap((item) => item.product_variant_id ? [item.product_variant_id] : []))];
+  const [productsResult, variantsResult] = await Promise.all([
+    productIds.length
+      ? resolved.from('products').select('id, product_name').in('id', productIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; product_name: string }>, error: null }),
+    variantIds.length
+      ? resolved.from('product_variants').select('id, size_label').in('id', variantIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; size_label: string }>, error: null }),
+  ]);
+  assertNoError(productsResult.error);
+  assertNoError(variantsResult.error);
+
+  const salesById = new Map((salesResult.data ?? []).map((sale) => [sale.id, sale]));
+  const branchesById = new Map((branchesResult.data ?? []).map((branch) => [branch.id, branchLabel(branch.city, branch.code)]));
+  const productNames = new Map((productsResult.data ?? []).map((product) => [product.id, product.product_name]));
+  const variantLabels = new Map((variantsResult.data ?? []).map((variant) => [variant.id, variant.size_label]));
+  const linesBySale = new Map<string, NonNullable<OwnerSaleVoidReview['sale']>['lines']>();
+  for (const item of items) {
+    const lines = linesBySale.get(item.sale_id) ?? [];
+    lines.push({
+      id: item.id,
+      name: productNames.get(item.product_id) ?? 'Product',
+      variantLabel: item.product_variant_id ? variantLabels.get(item.product_variant_id) ?? null : null,
+      quantity: Number(item.quantity),
+      subtotal: Number(item.subtotal),
+    });
+    linesBySale.set(item.sale_id, lines);
+  }
+
+  const requests = rows.map((row): OwnerSaleVoidReview => {
+    const sale = salesById.get(row.sale_id);
+    return {
+      ...mapSaleVoidRequestRow(row, names),
+      branchName: branchesById.get(row.branch_id) ?? 'Branch',
+      sale: sale ? {
+        transactionReference: sale.transaction_reference,
+        totalAmount: Number(sale.total_amount),
+        createdAt: sale.created_at,
+        status: sale.status,
+        lines: linesBySale.get(sale.id) ?? [],
+      } : null,
+    };
+  });
+  return { supported: true, requests: sortSaleVoidRequestsForReview(requests) as OwnerSaleVoidReview[] };
+}
+
+/** OW-26 c5–c9 / OM-15 c5–c9: approve (posts Void Reversal entries) or reject with a reason. */
+export async function decideSaleVoid(input: {
+  requestId: string;
+  decision: 'approve' | 'reject';
+  reason?: string;
+}, client?: StaffServiceClient): Promise<SaleVoidRequest> {
+  const reason = input.reason?.trim() ?? '';
+  if (input.decision === 'reject') {
+    const reasonError = validateSaleVoidRejectionReason(reason);
+    if (reasonError) throw new SaleVoidRequestError(reasonError);
+  }
+  const { data, error } = await staffServiceClient(client).rpc('decide_sale_void', {
+    p_request_id: input.requestId,
+    p_decision: input.decision,
+    p_reason: reason || null,
+  });
+  if (error) throw new SaleVoidRequestError(saleVoidErrorMessage(error));
+  const expected = input.decision === 'approve' ? 'approved' : 'rejected';
+  if (!data || data.id !== input.requestId || data.status !== expected) {
+    throw new SaleVoidRequestError('The decision could not be confirmed. Refresh and check the request.');
+  }
+  return mapSaleVoidRequestRow(data);
 }
 
 export async function loadInventory(branchId: string, businessDate = new Date()): Promise<StaffInventoryData> {
