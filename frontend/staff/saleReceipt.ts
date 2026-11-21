@@ -1,4 +1,5 @@
 import type { OwnerInventoryProcessingStatus, OwnerSaleStatus } from '../services/ownerSalesStatus';
+import { BULK_ORDER_LABEL, recordedSaleIsBulkOrder } from '../services/bulkOrder.ts';
 
 export type SaleReceiptLine = {
   id: string;
@@ -20,6 +21,7 @@ export type StaffSaleReceipt = {
   totalAmount: number;
   saleStatus: OwnerSaleStatus;
   inventoryProcessingStatus: OwnerInventoryProcessingStatus;
+  isBulkOrder: boolean;
   lines: SaleReceiptLine[];
 };
 
@@ -32,6 +34,8 @@ type ReceiptSaleRow = {
   status: OwnerSaleStatus;
   inventory_processing_status: OwnerInventoryProcessingStatus;
   created_at: string;
+  /** Saved Bulk Order flag, once the sales table has one (#32). */
+  is_bulk_order?: boolean | null;
 };
 
 type ReceiptItemRow = {
@@ -111,6 +115,7 @@ export function buildStaffSaleReceipt(input: {
     totalAmount: Number(sale.total_amount),
     saleStatus: sale.status,
     inventoryProcessingStatus: sale.inventory_processing_status,
+    isBulkOrder: recordedSaleIsBulkOrder(sale.is_bulk_order, input.items.map((item) => Number(item.quantity))),
     lines,
   };
 }
@@ -122,6 +127,7 @@ export function formatStaffSaleReceipt(receipt: StaffSaleReceipt): string {
     `Reference: ${receipt.transactionReference}`,
     `Date: ${new Date(receipt.createdAt).toLocaleString('en-PH')}`,
     `Payment: ${receipt.paymentMethod}`,
+    ...(receipt.isBulkOrder ? [BULK_ORDER_LABEL] : []),
     '',
     ...receipt.lines.map((line) =>
       `${line.name}${line.variantLabel ? ` - ${line.variantLabel}` : ''} x${line.quantity} @ ${line.unitPrice.toFixed(2)} = ${line.subtotal.toFixed(2)}`,
