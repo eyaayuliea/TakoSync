@@ -26,6 +26,8 @@ import PhysicalCountRecordsScreen from './PhysicalCountRecordsScreen';
 import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScreen';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
 import DailyClosingReportScreen from './DailyClosingReportScreen';
+import VoidReportScreen from './VoidReportScreen';
+import ReversalReportScreen from './ReversalReportScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
 import { OWNER_NAVIGATION_HEIGHT, OwnerBottomNav, type OwnerTab } from '../navigation/BottomNavigation';
 import {
@@ -74,7 +76,7 @@ import {
 } from './ownerInventoryStatus';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -758,7 +760,7 @@ export default function OwnerMobileWorkspace({
       : page === 'Records' || page === 'SalesTransactions' || page === 'RecordCategories'
         || page === 'SalesConsumptionRecords' || page === 'StockInRecords' || page === 'WasteSpillageRecords'
         || page === 'PhysicalCountRecords' || page === 'AuthorizedAdjustmentRecords' || page === 'Profile'
-        || page === 'VoidRequests' || page === 'DailyClosingReport'
+        || page === 'VoidRequests' || page === 'DailyClosingReport' || page === 'VoidReport' || page === 'ReversalReport'
         || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' || page === 'BusinessHours'
         ? 'More' : page;
   const isOwnerMenuPage = page === 'More'
@@ -769,7 +771,9 @@ export default function OwnerMobileWorkspace({
     || page === 'PhysicalCountRecords'
     || page === 'AuthorizedAdjustmentRecords'
     || page === 'VoidRequests'
-    || page === 'DailyClosingReport';
+    || page === 'DailyClosingReport'
+    || page === 'VoidReport'
+    || page === 'ReversalReport';
   const isMenuFlowPage = isOwnerMenuPage || page === 'SalesTransactions';
 
   const calendarYear = calendarCursor.getFullYear();
@@ -2031,6 +2035,8 @@ export default function OwnerMobileWorkspace({
     AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
     VoidRequests: 'Requests',
     DailyClosingReport: 'Daily Closing Report',
+    VoidReport: 'Void Report',
+    ReversalReport: 'Reversal Report',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2182,6 +2188,8 @@ export default function OwnerMobileWorkspace({
         {page === 'AuthorizedAdjustmentRecords' && <AuthorizedAdjustmentRecordsScreen onBack={goBackFromMenu} />}
         {page === 'VoidRequests' && <OwnerRequestsScreen onBack={goBackFromMenu} />}
         {page === 'DailyClosingReport' && <DailyClosingReportScreen onBack={goBackFromMenu} />}
+        {page === 'VoidReport' && <VoidReportScreen onBack={goBackFromMenu} />}
+        {page === 'ReversalReport' && <ReversalReportScreen onBack={goBackFromMenu} />}
         {page === 'ActivityDetail' && renderActivityDetail()}
         {page === 'Profile' && (
           <OwnerProfileScreen

@@ -10,7 +10,9 @@ export type OwnerRecordRoute =
   | 'WasteSpillageRecords'
   | 'PhysicalCountRecords'
   | 'AuthorizedAdjustmentRecords'
-  | 'DailyClosingReport';
+  | 'DailyClosingReport'
+  | 'VoidReport'
+  | 'ReversalReport';
 
 export type OwnerMenuIconName =
   | 'receipt'
@@ -133,6 +135,12 @@ export function RecordsMenuScreen({
           onTap: () => onSelectRecord('DailyClosingReport'),
         },
         {
+          icon: 'receipt',
+          title: 'Void Report',
+          subtitle: 'Voided sales, reasons, and approvals',
+          onTap: () => onSelectRecord('VoidReport'),
+        },
+        {
           icon: 'clipboardCheck',
           title: 'Sales Consumption',
           subtitle: 'Ingredients deducted by sales',
@@ -161,6 +169,12 @@ export function RecordsMenuScreen({
           title: 'Authorized Adjustment',
           subtitle: 'Adjustments you authorized',
           onTap: () => onSelectRecord('AuthorizedAdjustmentRecords'),
+        },
+        {
+          icon: 'sync',
+          title: 'Reversal',
+          subtitle: 'Entries reversed with your approval',
+          onTap: () => onSelectRecord('ReversalReport'),
         },
       ]}
     />
