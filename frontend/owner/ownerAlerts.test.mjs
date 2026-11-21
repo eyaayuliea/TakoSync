@@ -144,3 +144,25 @@ test('does not turn a missing balance or null quantity into an out-of-stock aler
   assert.deepEqual(snapshot.lowStock, []);
   assert.deepEqual(snapshot.counts, { lowStock: 0, expiration: 0 });
 });
+
+test('OM-13 c1: alerts are split into Low Stock, Out of Stock, Near Expiration, and Expired', async () => {
+  const { splitOwnerAlertsByTab, OWNER_ALERT_TABS } = await import('./ownerAlerts.ts');
+  const tabs = splitOwnerAlertsByTab({
+    lowStock: [
+      { id: 'a', status: 'Low Stock' },
+      { id: 'b', status: 'Out of Stock' },
+      { id: 'c', status: 'Low Stock' },
+    ],
+    expiration: [
+      { id: 'd', status: 'Expired' },
+      { id: 'e', status: 'Near Expiration' },
+    ],
+  });
+  assert.deepEqual(OWNER_ALERT_TABS, ['Low Stock', 'Out of Stock', 'Near Expiration', 'Expired']);
+  assert.deepEqual(Object.fromEntries(OWNER_ALERT_TABS.map((tab) => [tab, tabs[tab].map((alert) => alert.id)])), {
+    'Low Stock': ['a', 'c'],
+    'Out of Stock': ['b'],
+    'Near Expiration': ['e'],
+    Expired: ['d'],
+  });
+});
