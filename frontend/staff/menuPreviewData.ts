@@ -10,6 +10,8 @@ export type MenuProduct = {
   name: string;
   description: string;
   price: number;
+  /** ST-02 c5: owner-set maximum quantity per order; null or absent = no maximum. */
+  maxQuantity?: number | null;
   isAvailable: boolean;
 };
 
@@ -132,12 +134,29 @@ export function changeMenuCartQuantity(
   cart: MenuCartLine[],
   productId: string,
   change: 1 | -1,
+  maxQuantity?: number | null,
 ): MenuCartLine[] {
   return cart.map((line) => {
     if (line.productId !== productId) return line;
-    const quantity = Math.max(1, line.quantity + change);
+    let quantity = Math.max(1, line.quantity + change);
+    if (change > 0 && isAtMenuQuantityLimit(line.quantity, maxQuantity)) quantity = line.quantity;
     return quantity === line.quantity ? line : { ...line, quantity };
   });
+}
+
+function validMaximum(maxQuantity: number | null | undefined): number | null {
+  return typeof maxQuantity === 'number' && Number.isSafeInteger(maxQuantity) && maxQuantity >= 1 ? maxQuantity : null;
+}
+
+/** ST-02 c5: true once a line has reached the owner's maximum, so + is disabled. */
+export function isAtMenuQuantityLimit(quantity: number, maxQuantity: number | null | undefined): boolean {
+  const limit = validMaximum(maxQuantity);
+  return limit !== null && quantity >= limit;
+}
+
+/** ST-02 c5: the message that shows the limit. */
+export function menuQuantityLimitMessage(maxQuantity: number): string {
+  return `Maximum of ${maxQuantity} per order.`;
 }
 
 /** Keeps only digits so the quantity field never holds signs, decimals or spaces. */
@@ -162,12 +181,11 @@ export function setMenuCartQuantity(
   cart: MenuCartLine[],
   productId: string,
   quantity: number,
-  maxQuantity?: number,
+  maxQuantity?: number | null,
 ): MenuCartLine[] {
   if (!Number.isSafeInteger(quantity) || quantity < 1) return cart;
-  const capped = maxQuantity !== undefined && Number.isSafeInteger(maxQuantity) && maxQuantity >= 1
-    ? Math.min(quantity, maxQuantity)
-    : quantity;
+  const limit = validMaximum(maxQuantity);
+  const capped = limit !== null ? Math.min(quantity, limit) : quantity;
   if (!cart.some((line) => line.productId === productId && line.quantity !== capped)) return cart;
   return cart.map((line) => line.productId === productId ? { ...line, quantity: capped } : line);
 }
