@@ -123,6 +123,38 @@ export function changeMenuCartQuantity(
   });
 }
 
+/** Keeps only digits so the quantity field never holds signs, decimals or spaces. */
+export function sanitizeMenuQuantityInput(text: string): string {
+  return text.replace(/\D/g, '');
+}
+
+/** A typed quantity is valid only as a whole number of at least 1. */
+export function parseMenuQuantityInput(text: string): number | null {
+  const digits = text.trim();
+  if (!/^\d+$/.test(digits)) return null;
+  const quantity = Number(digits);
+  return Number.isSafeInteger(quantity) && quantity >= 1 ? quantity : null;
+}
+
+/**
+ * ST-02 criterion 3: sets an order line to a typed quantity. Invalid values
+ * leave the cart unchanged (removal stays with the remove control), and an
+ * optional maximum purchasing quantity (#30) caps the line.
+ */
+export function setMenuCartQuantity(
+  cart: MenuCartLine[],
+  productId: string,
+  quantity: number,
+  maxQuantity?: number,
+): MenuCartLine[] {
+  if (!Number.isSafeInteger(quantity) || quantity < 1) return cart;
+  const capped = maxQuantity !== undefined && Number.isSafeInteger(maxQuantity) && maxQuantity >= 1
+    ? Math.min(quantity, maxQuantity)
+    : quantity;
+  if (!cart.some((line) => line.productId === productId && line.quantity !== capped)) return cart;
+  return cart.map((line) => line.productId === productId ? { ...line, quantity: capped } : line);
+}
+
 export const UNAVAILABLE_MENU_ITEM_MESSAGE = 'This item is currently unavailable.';
 
 export function calculateMenuCart(cart: MenuCartLine[], products: MenuProduct[]) {
