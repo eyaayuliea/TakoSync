@@ -78,6 +78,8 @@ import {
   loadInventory,
   loadRecentStaffSales,
   loadSaleVoidRequests,
+  loadBranchEntryReversalRequests,
+  requestEntryReversal,
   loadStaffSalesForBusinessDay,
   loadStaffSaleReceipt,
   requestSaleVoid,
@@ -151,6 +153,15 @@ import {
 } from './inventoryReports';
 import { formatStaffSaleReceipt } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
+import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
+import {
+  entryReversalAvailability,
+  entryReversalState,
+  entryReversalStatusLabel,
+  latestEntryReversalRequest,
+  reversibleEntryOf,
+  type EntryReversalRequest,
+} from '../services/entryReversals';
 import {
   latestSaleVoidRequest,
   saleVoidAvailability,
@@ -1105,6 +1116,10 @@ export default function StaffWorkspace({
   const [saleVoidRequests, setSaleVoidRequests] = useState<SaleVoidRequest[]>([]);
   const [saleVoidSupported, setSaleVoidSupported] = useState(false);
   const [saleVoidModalVisible, setSaleVoidModalVisible] = useState(false);
+  // ST-13: the branch's entry reversal requests. Hidden until the database has them.
+  const [entryReversalRequests, setEntryReversalRequests] = useState<EntryReversalRequest[]>([]);
+  const [entryReversalSupported, setEntryReversalSupported] = useState(false);
+  const [entryReversalModalVisible, setEntryReversalModalVisible] = useState(false);
   const [backendLoading, setBackendLoading] = useState(true);
   const [backendError, setBackendError] = useState('');
   const [pendingInventoryTransactions, setPendingInventoryTransactions] = useState<PendingInventoryTransaction[]>([]);
@@ -2652,6 +2667,27 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [saleVoidLookupKey, route, dailySalesRefreshKey]);
+
+  useEffect(() => {
+    // Reload whenever the history or a transaction opens, so an owner decision shows up.
+    if (route !== 'stockHistory' && route !== 'transactionDetails') return;
+    const branchId = user?.branchId;
+    if (!branchId) return;
+    let active = true;
+    loadBranchEntryReversalRequests(branchId)
+      .then(({ supported, requests }) => {
+        if (!active) return;
+        setEntryReversalSupported(supported);
+        setEntryReversalRequests(requests);
+      })
+      .catch(() => {
+        // The history still works without reversal information.
+        if (active) setEntryReversalRequests([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, user?.branchId]);
 
   const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
     if (!saleReceipt) return;
@@ -8143,6 +8179,13 @@ export default function StaffWorkspace({
                   </View>
                   <Text style={styles.historyTransactionMeta}>
                     {formatHistoryDateTime(transaction.transactionDate)} · {transaction.staff.split(' ')[0]} · {transaction.branch}
+                    {(() => {
+                      const entry = entryReversalSupported ? reversibleEntryOf(transaction) : null;
+                      const label = entry
+                        ? entryReversalStatusLabel(entryReversalState(latestEntryReversalRequest(entryReversalRequests, entry.key)))
+                        : null;
+                      return label ? ` · ${label}` : '';
+                    })()}
                   </Text>
                 </Pressable>
               ))}
@@ -8407,6 +8450,36 @@ export default function StaffWorkspace({
           {transaction.batchReference ? <DetailRow label="Batch reference" value={transaction.batchReference} /> : null}
           <DetailRow label="Notes" value={transaction.notes || '—'} />
         </View>
+        {entryReversalSupported ? (() => {
+          const entry = reversibleEntryOf(transaction);
+          if (!entry) return null;
+          const latest = latestEntryReversalRequest(entryReversalRequests, entry.key);
+          const batter = entry.type === 'batter_preparation';
+          return (
+            <>
+              <EntryReversalStatusPanel
+                state={entryReversalState(latest)}
+                availability={entryReversalAvailability(transaction, user?.id, latest)}
+                onRequestReversal={() => setEntryReversalModalVisible(true)}
+              />
+              <EntryReversalRequestModal
+                visible={entryReversalModalVisible}
+                entry={{
+                  type: entry.type,
+                  reference: batter ? entry.key : transaction.reference,
+                  itemName: batter ? 'Prepared batter' : transaction.ingredientName,
+                  quantityLabel: batter ? '5 bottles' : formatUnitQuantity(transaction.quantity, transaction.unit),
+                }}
+                onClose={() => setEntryReversalModalVisible(false)}
+                onSubmit={async (reason, clientRequestId) => {
+                  const saved = await requestEntryReversal({ movementId: transaction.id, reason, clientRequestId });
+                  setEntryReversalRequests((current) => [saved, ...current.filter((request) => request.id !== saved.id)]);
+                  setEntryReversalModalVisible(false);
+                }}
+              />
+            </>
+          );
+        })() : null}
         {ledgerExplanation ? (
           <View style={styles.historyLedgerBanner}>
             <Text style={styles.permissionIcon}>i</Text>

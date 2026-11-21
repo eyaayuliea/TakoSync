@@ -11,6 +11,7 @@ export const inventoryTransactionLabels = {
   transfer_out: 'Branch Transfer Out',
   adjustment: 'Authorized Adjustment',
   void_reversal: 'Void Reversal',
+  entry_reversal: 'Entry Reversal',
 } as const satisfies Record<Database['public']['Enums']['inventory_transaction_type'], string>;
 
 export type InventoryTransactionLabel =
