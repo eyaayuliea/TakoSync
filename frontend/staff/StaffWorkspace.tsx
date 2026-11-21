@@ -46,7 +46,7 @@ import {
   sortInventoryAlerts,
   type InventoryAlertKind,
 } from './inventoryAlerts';
-import { inventoryTransactionLabels, type InventoryTransactionLabel } from '../services/transactionLabels';
+import { type InventoryTransactionLabel } from '../services/transactionLabels';
 import {
   PREPARED_BATTER_BATCH_BOTTLES,
   findBatterShortages,
@@ -151,6 +151,13 @@ import {
 } from './inventoryReports';
 import { downloadSaleReceiptPdf, printSaleReceipt } from './receiptOutput';
 import { blindCountProgress, compareCount, countComparisonLabel } from './blindCount';
+import { inventoryDisplayItem } from './inventoryDisplay';
+import {
+  STAFF_HISTORY_TYPE_FILTERS,
+  historyTypeFilterTabLabel,
+  matchesHistoryTypeFilter,
+  type StaffHistoryTypeFilter,
+} from './historyTypeFilter';
 import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
@@ -188,15 +195,6 @@ const inventoryReportTitles: Record<InventoryReportKey, string> = {
   branchInventorySummary: 'Branch Inventory Summary Report',
   inventoryDiscrepancy: 'Inventory Discrepancy Report',
   physicalInventoryCount: 'Physical Inventory Count Report',
-};
-
-const inventoryReportSelectionTitles: Record<InventoryReportKey, string> = {
-  totalIngredientQuantity: 'Total Ingredient Quantity',
-  ingredientCategorySummary: 'Ingredient Category Summary',
-  ingredientStockStatus: 'Ingredient Stock Status',
-  branchInventorySummary: 'Branch Inventory Summary',
-  inventoryDiscrepancy: 'Inventory Discrepancy',
-  physicalInventoryCount: 'Physical Inventory Count',
 };
 
 const colors = {
@@ -389,7 +387,7 @@ type StockInReceipt = {
 };
 
 type HistoryTransactionType = InventoryTransactionLabel | 'Physical Inventory Count';
-type HistoryTypeFilter = 'All types' | InventoryTransactionLabel | 'Physical Inventory Count';
+type HistoryTypeFilter = StaffHistoryTypeFilter;
 
 type HistoryTransaction = {
   id: string;
@@ -435,11 +433,8 @@ type HistoryTransaction = {
   };
 };
 
-const historyTypeFilters: HistoryTypeFilter[] = [
-  'All types',
-  ...Object.values(inventoryTransactionLabels),
-  'Physical Inventory Count',
-];
+// ST-14 c2: exactly the types the story lists.
+const historyTypeFilters: HistoryTypeFilter[] = [...STAFF_HISTORY_TYPE_FILTERS];
 
 function formatHistoryDateTime(date: Date) {
   return `${formatDate(manilaBusinessDate(date))} · ${formatManilaTime(date)}`;
@@ -612,7 +607,7 @@ function StatusBadge({
 }
 
 function InventoryIngredientCard({
-  item,
+  item: storedItem,
   onPress,
   statusOverride,
   showExpiration = false,
@@ -628,8 +623,10 @@ function InventoryIngredientCard({
 }) {
   const styles = useStaffStyles();
   const { isDark } = useTheme();
+  // ST-04 c6: prepared batter in bottles; ST-04 c4: Normal / Low Stock / Out of Stock.
+  const item = inventoryDisplayItem(storedItem);
   const stockStatus = inventoryStockStatus(item.quantity, item.minimumStock);
-  const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'In Stock');
+  const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'Normal');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
   const stockStatusTone = stockStatus === 'Normal' ? 'good' : 'low';
   const expirationStatusTone = item.expirationStatus === 'Expired' ? 'low' : 'warning';
@@ -1099,7 +1096,9 @@ export default function StaffWorkspace({
   const [selectedInventoryReport, setSelectedInventoryReport] = useState<InventoryReportKey>('totalIngredientQuantity');
   const [selectedInventoryCountId, setSelectedInventoryCountId] = useState<string | null>(null);
   const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Set<string>>(() => new Set());
-  const [inventoryReportingReturnRoute, setInventoryReportingReturnRoute] = useState<'inventory' | 'more'>('inventory');
+  // ST-06 c6 / #43: Daily Sales is the only staff report. Staff reach their own counts and
+  // correction requests from the count section (ST-14 c6).
+  const [myCountsReturnRoute, setMyCountsReturnRoute] = useState<'dailyInventoryOverview' | 'dailyCheckSuccess' | 'inventory'>('dailyInventoryOverview');
   const [unresolvedSales, setUnresolvedSales] = useState<UnresolvedSale[]>([]);
   const [unresolvedSalesLoading, setUnresolvedSalesLoading] = useState(false);
   const [unresolvedSalesError, setUnresolvedSalesError] = useState('');
@@ -2091,7 +2090,7 @@ export default function StaffWorkspace({
       transaction.notes,
       transaction.batchReference ?? '',
     ].join(' ').toLowerCase().includes(normalizedHistorySearch);
-    const matchesType = historyTypeFilter === 'All types' || transaction.type === historyTypeFilter;
+    const matchesType = matchesHistoryTypeFilter(transaction, historyTypeFilter);
     const dateValue = manilaBusinessDate(transaction.transactionDate).getTime();
     const from = historyFromDate
       ? new Date(historyFromDate.getFullYear(), historyFromDate.getMonth(), historyFromDate.getDate()).getTime()
@@ -2355,14 +2354,13 @@ export default function StaffWorkspace({
     setRoute('dailySales');
   };
 
-  const openInventoryReporting = (returnRoute: 'inventory' | 'more' = 'inventory') => {
-    setSelectedInventoryReport('totalIngredientQuantity');
+  const openMyCounts = (returnRoute: 'dailyInventoryOverview' | 'dailyCheckSuccess' | 'inventory') => {
+    setSelectedInventoryReport('physicalInventoryCount');
     setSelectedInventoryCountId(null);
-    setExpandedInventoryCategories(new Set());
     setInventoryReportData(null);
     setInventoryReportError('');
-    setInventoryReportingReturnRoute(returnRoute);
-    setRoute('inventoryReporting');
+    setMyCountsReturnRoute(returnRoute);
+    setRoute('inventoryReport');
   };
 
   const openInventoryReport = (report: InventoryReportKey) => {
@@ -4021,16 +4019,11 @@ export default function StaffWorkspace({
           <View style={styles.inventoryHeaderActions}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Reports"
-              onPress={() => openInventoryReporting('inventory')}
+              accessibilityLabel="My counts and corrections"
+              onPress={() => openMyCounts('inventory')}
               style={({ pressed }) => [styles.inventoryReportsButton, pressed && styles.pressed]}
             >
-              <View style={styles.inventoryReportsIcon} accessibilityElementsHidden>
-                <View style={styles.inventoryReportsBarOne} />
-                <View style={styles.inventoryReportsBarTwo} />
-                <View style={styles.inventoryReportsBarThree} />
-              </View>
-              <Text style={styles.inventoryReportsButtonText}>Reports</Text>
+              <Text style={styles.inventoryReportsButtonText}>My counts</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -4266,16 +4259,18 @@ export default function StaffWorkspace({
       );
     }
 
-    const gap = selectedIngredient.minimumStock - selectedIngredient.quantity;
+    // ST-04 c6: prepared batter is shown in bottles on this screen.
+    const shownIngredient = inventoryDisplayItem(selectedIngredient);
+    const gap = shownIngredient.minimumStock - shownIngredient.quantity;
     const stockGap = gap > 0
-      ? `${formatInventoryQuantity(gap, selectedIngredient.quantityPrecision)} ${selectedIngredient.unit} below minimum`
+      ? `${formatInventoryQuantity(gap, shownIngredient.quantityPrecision)} ${shownIngredient.unit} below minimum`
       : gap < 0
-        ? `${formatInventoryQuantity(Math.abs(gap), selectedIngredient.quantityPrecision)} ${selectedIngredient.unit} above minimum`
+        ? `${formatInventoryQuantity(Math.abs(gap), shownIngredient.quantityPrecision)} ${shownIngredient.unit} above minimum`
         : 'At minimum stock';
-    const statusLabel = inventoryStockStatus(selectedIngredient.quantity, selectedIngredient.minimumStock);
+    const statusLabel = inventoryStockStatus(shownIngredient.quantity, shownIngredient.minimumStock);
     const statusTone = statusLabel === 'Normal' ? 'good' : 'low';
     const recentMovements = historyTransactions
-      .filter((transaction) => transaction.ingredientId === selectedIngredient.id)
+      .filter((transaction) => transaction.ingredientId === shownIngredient.id)
       .slice(0, 3);
 
     return (
@@ -4300,17 +4295,17 @@ export default function StaffWorkspace({
         </View>
 
         <View style={styles.ingredientSummary}>
-          <IngredientThumbnail item={selectedIngredient} large />
+          <IngredientThumbnail item={shownIngredient} large />
           <View style={styles.ingredientSummaryCopy}>
-            <Text style={styles.detailIngredientName}>{selectedIngredient.name}</Text>
+            <Text style={styles.detailIngredientName}>{shownIngredient.name}</Text>
             <Text style={styles.detailIngredientCategory}>
-              {displayInventoryCategory(selectedIngredient.category)} · {selectedIngredient.unit}
+              {displayInventoryCategory(shownIngredient.category)} · {shownIngredient.unit}
             </Text>
             <StatusBadge label={statusLabel} tone={statusTone} />
-            {selectedIngredient.expirationStatus ? (
+            {shownIngredient.expirationStatus ? (
               <StatusBadge
-                label={selectedIngredient.expirationStatus}
-                tone={selectedIngredient.expirationStatus === 'Expired' ? 'low' : 'warning'}
+                label={shownIngredient.expirationStatus}
+                tone={shownIngredient.expirationStatus === 'Expired' ? 'low' : 'warning'}
               />
             ) : null}
           </View>
@@ -4319,9 +4314,9 @@ export default function StaffWorkspace({
         <View style={styles.stockSummaryCard}>
           <Text style={styles.stockSummaryQuantity}>
             {formatInventoryUnitQuantity(
-              selectedIngredient.quantity,
-              selectedIngredient.unit,
-              selectedIngredient.quantityPrecision,
+              shownIngredient.quantity,
+              shownIngredient.unit,
+              shownIngredient.quantityPrecision,
             )}
           </Text>
           <Text style={styles.stockSummaryCaption}>Expected quantity</Text>
@@ -4330,9 +4325,9 @@ export default function StaffWorkspace({
             <Text style={styles.stockSummaryLabel}>Minimum stock</Text>
             <Text style={styles.stockSummaryValue}>
               {formatInventoryUnitQuantity(
-                selectedIngredient.minimumStock,
-                selectedIngredient.unit,
-                selectedIngredient.quantityPrecision,
+                shownIngredient.minimumStock,
+                shownIngredient.unit,
+                shownIngredient.quantityPrecision,
               )}
             </Text>
           </View>
@@ -4344,27 +4339,27 @@ export default function StaffWorkspace({
 
         <View style={styles.detailRows}>
           <DetailRow label="Branch" value={assignedBranch} />
-          <DetailRow label="Category" value={displayInventoryCategory(selectedIngredient.category)} />
-          <DetailRow label="Unit of measurement" value={selectedIngredient.unitName} />
+          <DetailRow label="Category" value={displayInventoryCategory(shownIngredient.category)} />
+          <DetailRow label="Unit of measurement" value={shownIngredient.unitName} />
           <DetailRow
             label="Pack size"
-            value={selectedIngredient.packageQuantity !== null && selectedIngredient.packageUnit
-              ? `${selectedIngredient.packageLabel ? `${selectedIngredient.packageLabel} · ` : ''}${formatInventoryQuantity(selectedIngredient.packageQuantity, 3)} ${selectedIngredient.packageUnit}`
+            value={shownIngredient.packageQuantity !== null && shownIngredient.packageUnit
+              ? `${shownIngredient.packageLabel ? `${shownIngredient.packageLabel} · ` : ''}${formatInventoryQuantity(shownIngredient.packageQuantity, 3)} ${shownIngredient.packageUnit}`
               : 'Not recorded'}
           />
-          <DetailRow label="Expiration" value={selectedIngredient.expiration ?? 'Not recorded'} />
-          {selectedIngredient.expirationStatus ? (
-            <DetailRow label="Expiration status" value={selectedIngredient.expirationStatus} />
+          <DetailRow label="Expiration" value={shownIngredient.expiration ?? 'Not recorded'} />
+          {shownIngredient.expirationStatus ? (
+            <DetailRow label="Expiration status" value={shownIngredient.expirationStatus} />
           ) : null}
-          <DetailRow label="Last updated" value={selectedIngredient.lastUpdated} />
+          <DetailRow label="Last updated" value={shownIngredient.lastUpdated} />
         </View>
 
         <View style={styles.inventoryDetailSection}>
           <Text style={styles.historyPlaceholderText}>Received batches</Text>
-          {selectedIngredient.batches.length > 0 ? selectedIngredient.batches.map((batch) => {
+          {shownIngredient.batches.length > 0 ? shownIngredient.batches.map((batch) => {
             const expirationDate = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
             const daysRemaining = expirationDate ? daysBetweenDates(manilaBusinessDate(), expirationDate) : null;
-            const alert = selectedIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
+            const alert = shownIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
               ? classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays))
               : null;
             const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
@@ -4376,8 +4371,8 @@ export default function StaffWorkspace({
                   label="Received quantity"
                   value={formatInventoryUnitQuantity(
                     batch.quantityReceived,
-                    selectedIngredient.unit,
-                    selectedIngredient.quantityPrecision,
+                    shownIngredient.unit,
+                    shownIngredient.quantityPrecision,
                   )}
                 />
                 <DetailRow label="Expiration date" value={batch.expirationDate ?? 'Not recorded'} />
@@ -4385,8 +4380,8 @@ export default function StaffWorkspace({
                   label="Remaining quantity"
                   value={formatInventoryUnitQuantity(
                     batch.quantityRemaining,
-                    selectedIngredient.unit,
-                    selectedIngredient.quantityPrecision,
+                    shownIngredient.unit,
+                    shownIngredient.quantityPrecision,
                   )}
                 />
                 {batchStatus ? (
@@ -4399,7 +4394,7 @@ export default function StaffWorkspace({
           )}
         </View>
 
-        {selectedIngredient.expirationTracking ? (
+        {shownIngredient.expirationTracking ? (
           <Pressable
             accessibilityRole="button"
             onPress={() => setRoute('expirationInfo')}
@@ -4424,7 +4419,7 @@ export default function StaffWorkspace({
                     Balance after: {formatInventoryUnitQuantity(
                       transaction.afterQuantity,
                       transaction.unit,
-                      selectedIngredient.quantityPrecision,
+                      shownIngredient.quantityPrecision,
                     )}
                   </Text>
                 ) : null}
@@ -4434,7 +4429,7 @@ export default function StaffWorkspace({
                 {formatInventoryUnitQuantity(
                   transaction.movement,
                   transaction.unit,
-                  selectedIngredient.quantityPrecision,
+                  shownIngredient.quantityPrecision,
                 )}
               </Text>
             </View>
@@ -5032,6 +5027,13 @@ export default function StaffWorkspace({
           >
             <Text style={styles.dailyPrimaryButtonText}>Continue count</Text>
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => openMyCounts('dailyInventoryOverview')}
+            style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.dailySecondaryButtonText}>My counts &amp; corrections</Text>
+          </Pressable>
         </ScrollView>
       </>
     );
@@ -5319,7 +5321,7 @@ export default function StaffWorkspace({
               Staff remarks (read-only): {check.remarks || '—'}
             </Text>
             <Text style={styles.inventoryReportRecordDetail}>
-              Count changes require a correction request in Override Inventory Count.
+              Count changes require a correction request in My counts & corrections.
             </Text>
           </View>
 
@@ -5349,17 +5351,10 @@ export default function StaffWorkspace({
           {hasDiscrepancies ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setSelectedInventoryReport('inventoryDiscrepancy');
-                setSelectedInventoryCountId(null);
-                setInventoryReportData(null);
-                setInventoryReportError('');
-                setInventoryReportingReturnRoute('inventory');
-                setRoute('inventoryReport');
-              }}
+              onPress={() => openMyCounts('dailyCheckSuccess')}
               style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailyPrimaryButtonText}>View discrepancy records</Text>
+              <Text style={styles.dailyPrimaryButtonText}>View my counts &amp; corrections</Text>
             </Pressable>
           ) : null}
           <Pressable
@@ -5446,7 +5441,7 @@ export default function StaffWorkspace({
             style={[styles.dailyRemarksInput, styles.inventoryDiscrepancyRemarks]}
           />
           <Text style={styles.inventoryReportRecordDetail}>
-            Remarks lock after submission. Count changes require a correction request in Override Inventory Count.
+            Remarks lock after submission. Count changes require a correction request in My counts & corrections.
           </Text>
           {formError ? (
             <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{formError}</Text>
@@ -5621,47 +5616,6 @@ export default function StaffWorkspace({
       )}
     </View>
     )
-  );
-
-  const renderInventoryReportsList = () => (
-    <View style={styles.inventoryReportPage}>
-      {renderInventoryReportHeader(
-        'Inventory Reporting',
-        inventoryReportingReturnRoute === 'inventory' ? 'Back to Inventory' : 'Back to More',
-        () => setRoute(inventoryReportingReturnRoute),
-      )}
-      <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.inventoryReportingMetadata}>
-          {assignedBranch} · {formatHistoryDateTime(new Date())}
-        </Text>
-        {(
-          Object.entries(inventoryReportTitles) as Array<[InventoryReportKey, string]>
-        ).map(([key], index) => (
-          <Pressable
-            key={key}
-            accessibilityRole="button"
-            onPress={() => openInventoryReport(key)}
-            style={({ pressed }) => [styles.inventoryReportLink, pressed && styles.pressed]}
-          >
-            <View style={styles.inventoryReportIndex}>
-              <Text style={styles.inventoryReportIndexText}>
-                {key === 'totalIngredientQuantity' ? '▦'
-                  : key === 'ingredientCategorySummary' ? '▥'
-                    : key === 'ingredientStockStatus' ? '▤'
-                      : key === 'branchInventorySummary' ? '◇'
-                        : key === 'inventoryDiscrepancy' ? '△'
-                          : '▣'}
-              </Text>
-            </View>
-            <Text style={styles.inventoryReportLinkText}>{inventoryReportSelectionTitles[key]}</Text>
-            <Text style={styles.moreNavigationChevron}>›</Text>
-          </Pressable>
-        ))}
-        <Text style={styles.inventoryReportingFooter}>
-          Assigned branch only · Reports are read-only.
-        </Text>
-      </ScrollView>
-    </View>
   );
 
   const renderInventoryReportState = () => {
@@ -6089,10 +6043,12 @@ export default function StaffWorkspace({
 
   const renderInventoryReportDetail = () => {
     const data = inventoryReportData;
-    const title = inventoryReportTitles[selectedInventoryReport];
+    const title = selectedInventoryReport === 'physicalInventoryCount'
+      ? 'My counts & corrections'
+      : inventoryReportTitles[selectedInventoryReport];
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader(title, 'Back to Inventory Reporting', () => setRoute('inventoryReporting'))}
+        {renderInventoryReportHeader(title, 'Back', () => setRoute(myCountsReturnRoute))}
         {selectedInventoryReport === 'totalIngredientQuantity' ? (
           renderTotalIngredientQuantityReport(data)
         ) : (
@@ -6330,10 +6286,10 @@ export default function StaffWorkspace({
             )}
             <Text style={styles.physicalCountReadOnly}>
               {validated
-                ? 'Read-only · Count changes require a correction request in Override Inventory Count.'
+                ? 'Read-only · Count changes require a correction request in My counts & corrections.'
                 : record.revisedActualQuantity !== null
-                  ? 'No direct editing. Count changes require a correction request in Override Inventory Count.'
-                  : 'Read-only · Count changes require a correction request in Override Inventory Count.'}
+                  ? 'No direct editing. Count changes require a correction request in My counts & corrections.'
+                  : 'Read-only · Count changes require a correction request in My counts & corrections.'}
             </Text>
             {validated || record.revisedActualQuantity !== null ? (
               <Pressable
@@ -6422,7 +6378,7 @@ export default function StaffWorkspace({
                   Staff remarks: {record.remarks?.trim() ? record.remarks : 'None provided'}
                 </Text>
                 <Text style={styles.discrepancyReviewText}>
-                  Count changes require a correction request in Override Inventory Count.
+                  Count changes require a correction request in My counts & corrections.
                 </Text>
               </>
             ) : (
@@ -7346,6 +7302,21 @@ export default function StaffWorkspace({
             <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>
           </Pressable>
           <Text style={styles.wasteReasonHelper}>Waste · Spillage · Spoilage · Other</Text>
+          {/* ST-10 c8: unexplained differences belong to the physical count, not here. */}
+          <View style={styles.wasteCountGuidance}>
+            <Text style={styles.wasteCountGuidanceText}>
+              Record only losses you know about. If stock is missing and you do not know why, record it in the
+              Physical Inventory Count instead.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open the Physical Inventory Count"
+              onPress={() => void startDailyInventoryCheck()}
+              hitSlop={6}
+            >
+              <Text style={styles.wasteCountGuidanceLink}>Open Physical Inventory Count ›</Text>
+            </Pressable>
+          </View>
           {reasonListOpen ? (
             <View style={styles.reasonDropdown}>
               {wasteReasons.map((option) => (
@@ -8062,7 +8033,7 @@ export default function StaffWorkspace({
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyTypeTabs}>
           {historyTypeFilters.map((filter) => {
             const selected = historyTypeFilter === filter;
-            const label = filter === 'All types' ? 'All' : filter === 'Sales Consumption' ? 'Sales' : filter;
+            const label = historyTypeFilterTabLabel(filter);
             return (
               <Pressable
                 key={filter}
@@ -8699,9 +8670,6 @@ export default function StaffWorkspace({
       break;
     case 'dailySales':
       screenContent = renderDailySales();
-      break;
-    case 'inventoryReporting':
-      screenContent = renderInventoryReportsList();
       break;
     case 'inventoryReport':
       screenContent = renderInventoryReportDetail();
@@ -10614,6 +10582,9 @@ function createStaffStyles(theme: AppTheme) {
   rowField: { flex: 1, minWidth: 0 },
   helperText: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: -8, marginBottom: 14 },
   wasteReasonHelper: { color: colors.muted, fontFamily: font.regular, fontSize: 8, lineHeight: 13, marginTop: 5, marginBottom: 12 },
+  wasteCountGuidance: { padding: 10, borderRadius: 11, backgroundColor: colors.pale, marginBottom: 12, gap: 4 },
+  wasteCountGuidanceText: { color: colors.ink, fontFamily: font.regular, fontSize: 9, lineHeight: 13 },
+  wasteCountGuidanceLink: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
   selectInput: {
     minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
     borderRadius: 11, borderWidth: 1, borderColor: '#E9E9ED', backgroundColor: '#EEEEEF',
