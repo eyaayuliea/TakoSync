@@ -239,6 +239,17 @@ export type OwnerSaleItem = {
   unit_price: number;
   subtotal: number;
   inventory_processing_status?: OwnerSale['inventory_processing_status'];
+  /** OM-08 c2: the portion (size) sold, e.g. "8 PCS". */
+  variant_label?: string | null;
+};
+
+/** OM-08 c3: an optional add-on sold with a sale. */
+export type OwnerSaleAddon = {
+  sale_id: string;
+  addon_id: string;
+  addon_name: string;
+  quantity: number;
+  subtotal: number;
 };
 
 export type OwnerSalesData = {
@@ -246,6 +257,7 @@ export type OwnerSalesData = {
   todaySales: OwnerSale[];
   previousSales: OwnerSale[];
   items: OwnerSaleItem[];
+  addons?: OwnerSaleAddon[];
 };
 
 export {
@@ -1086,19 +1098,59 @@ export async function loadOwnerSalesData(input: {
     const saleIdBatch = saleIds.slice(saleOffset, saleOffset + pageSize);
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await client.from('sale_items')
-        .select('id, sale_id, product_id, quantity, unit_price, subtotal')
+        .select('id, sale_id, product_id, product_variant_id, quantity, unit_price, subtotal')
         .in('sale_id', saleIdBatch)
         .order('id', { ascending: true })
         .range(offset, offset + pageSize - 1);
       assertNoError(error);
-      saleItems.push(...(data ?? []).map((item) => ({
+      saleItems.push(...(data ?? []).map(({ product_variant_id, ...item }) => ({
         ...item,
         product_name: '',
+        variant_label: product_variant_id ?? null,
         inventory_processing_status: salesById.get(item.sale_id)?.inventory_processing_status,
       })));
       if ((data?.length ?? 0) < pageSize) break;
     }
   }
+
+  // OM-08 c2: portion labels. The item holds its variant id until it is resolved here.
+  const variantIds = [...new Set(saleItems.flatMap((item) => item.variant_label ? [item.variant_label] : []))];
+  const variantLabels = new Map<string, string>();
+  for (let offset = 0; offset < variantIds.length; offset += pageSize) {
+    const { data, error } = await client.from('product_variants')
+      .select('id, size_label')
+      .in('id', variantIds.slice(offset, offset + pageSize));
+    assertNoError(error);
+    for (const variant of data ?? []) variantLabels.set(variant.id, variant.size_label);
+  }
+  for (const item of saleItems) {
+    item.variant_label = item.variant_label ? variantLabels.get(item.variant_label) ?? null : null;
+  }
+
+  // OM-08 c3: add-ons sold with these sales.
+  const saleAddons: OwnerSaleAddon[] = [];
+  for (let saleOffset = 0; saleOffset < saleIds.length; saleOffset += pageSize) {
+    const { data, error } = await client.from('sale_addons')
+      .select('sale_id, addon_id, quantity, subtotal')
+      .in('sale_id', saleIds.slice(saleOffset, saleOffset + pageSize));
+    assertNoError(error);
+    saleAddons.push(...(data ?? []).map((addon) => ({
+      ...addon,
+      addon_name: '',
+      quantity: Number(addon.quantity),
+      subtotal: Number(addon.subtotal),
+    })));
+  }
+  const addonIds = [...new Set(saleAddons.map((addon) => addon.addon_id))];
+  const addonNames = new Map<string, string>();
+  for (let offset = 0; offset < addonIds.length; offset += pageSize) {
+    const { data, error } = await client.from('menu_addons')
+      .select('id, addon_name')
+      .in('id', addonIds.slice(offset, offset + pageSize));
+    assertNoError(error);
+    for (const addon of data ?? []) addonNames.set(addon.id, addon.addon_name);
+  }
+  for (const addon of saleAddons) addon.addon_name = addonNames.get(addon.addon_id) ?? 'Add-on';
 
   const productIds = [...new Set(saleItems.map((item) => item.product_id))];
   for (let offset = 0; offset < productIds.length; offset += pageSize) {
@@ -1117,6 +1169,7 @@ export async function loadOwnerSalesData(input: {
       ...item,
       product_name: productNames.get(item.product_id) ?? 'Product unavailable',
     })),
+    addons: saleAddons,
   };
 }
 
@@ -1130,6 +1183,10 @@ export type OwnerSalesTransactionBundle = {
     payment_method: string;
     status: string;
     created_at: string;
+    /** ST-05 / OM-09 c3: saved with the sale from migration 202611220006. */
+    cash_received?: number | string | null;
+    change_amount?: number | string | null;
+    served_by_name?: string | null;
   }>;
   branches: Array<{ id: string; city: string; code: string }>;
   profiles: Array<{ id: string; full_name: string | null }>;
@@ -1167,19 +1224,55 @@ export async function loadOwnerSalesTransactionBundle(input: {
   offset?: number;
   limit?: number;
   saleId?: string;
+  /** OM-09 c1: "Branch N", or null for all branches. */
+  branchKey?: string | null;
+  /** OM-09 c1: Manila business dates (YYYY-MM-DD), inclusive. */
+  startDate?: string | null;
+  endDate?: string | null;
 }): Promise<OwnerSalesTransactionBundle> {
   const client = requireSupabase();
   const limit = Math.max(1, Math.min(100, input.limit ?? 20));
   const offset = Math.max(0, input.offset ?? 0);
 
-  let query = client.from('sales')
-    .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at')
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false });
-  // The list shows completed sales only. Opening one sale by id (for example from a Sales
-  // Consumption record) must resolve whatever its status is.
-  query = input.saleId ? query.eq('id', input.saleId) : query.eq('status', 'completed');
-  const { data: saleRows, error: salesError } = await query.range(offset, offset + limit);
+  let filterBranchIds: string[] | null = null;
+  if (!input.saleId && input.branchKey) {
+    const { data: branchRows, error: branchError } = await client.from('branches').select('id, city, code');
+    assertNoError(branchError);
+    const wanted = input.branchKey.toLowerCase();
+    filterBranchIds = (branchRows ?? [])
+      .filter((branch) => branchLabel(branch.city, branch.code).toLowerCase().endsWith(wanted))
+      .map((branch) => branch.id);
+    if (!filterBranchIds.length) {
+      return { sales: [], branches: [], profiles: [], items: [], products: [], variants: [], addons: [], addonNames: [], hasMore: false };
+    }
+  }
+
+  const baseColumns = 'id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, created_at';
+  const buildQuery = (columns: string) => {
+    let query = client.from('sales')
+      .select(columns)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    // The list shows completed and voided sales (OM-09 c5). Opening one sale by id (for
+    // example from a Sales Consumption record) must resolve whatever its status is.
+    if (input.saleId) return query.eq('id', input.saleId);
+    query = query.in('status', ['completed', 'voided']);
+    if (filterBranchIds) query = query.in('branch_id', filterBranchIds);
+    if (input.startDate) query = query.gte('created_at', new Date(`${input.startDate}T00:00:00+08:00`).toISOString());
+    if (input.endDate) {
+      const next = new Date(`${input.endDate}T00:00:00+08:00`);
+      next.setUTCDate(next.getUTCDate() + 1);
+      query = query.lt('created_at', next.toISOString());
+    }
+    return query;
+  };
+  // OM-09 c3: cash details once the sales table has them (202611220006).
+  let salesResult = await buildQuery(`${baseColumns}, cash_received, change_amount, served_by_name`).range(offset, offset + limit);
+  if (salesResult.error?.code === '42703') {
+    salesResult = await buildQuery(baseColumns).range(offset, offset + limit);
+  }
+  const saleRows = salesResult.data as unknown as OwnerSalesTransactionBundle['sales'] | null;
+  const salesError = salesResult.error;
   assertNoError(salesError);
   const fetched = saleRows ?? [];
   const hasMore = fetched.length > limit;

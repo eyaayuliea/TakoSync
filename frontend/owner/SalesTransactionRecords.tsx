@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import OwnerRecordFilterBar, { OwnerLoadOlderButton, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
+import { ALL_BRANCHES, recordPeriodRange, type OwnerRecordPeriod } from './ownerRecordFilters';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
   getForcedSalesTransactionState,
   loadSalesTransactionById,
+  completedTotal,
   loadSalesTransactionPage,
   type SalesTransaction,
 } from './salesTransactionRepository';
@@ -63,6 +66,16 @@ export default function SalesTransactionRecords({
   const [scrollOffset, setScrollOffset] = useState(0);
   const loadingMoreRef = useRef(false);
   const listRequestId = useRef(0);
+  // OM-09 c1: the same branch and period selection as the other reports.
+  const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
+  const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  const range = recordPeriodRange(recordPeriod);
+  const filters = {
+    branchKey: recordBranch === ALL_BRANCHES ? null : recordBranch,
+    startDate: range?.start ?? null,
+    endDate: range?.end ?? null,
+  };
+  const branchOptions = useOwnerBranchFilterOptions(items.map((transaction) => transaction.branchName));
   const detailRequestId = useRef(0);
 
   const loadFirst = () => {
@@ -86,7 +99,7 @@ export default function SalesTransactionRecords({
       setLoading(false);
       return;
     }
-    void loadSalesTransactionPage(0).then((page) => {
+    void loadSalesTransactionPage(0, filters).then((page) => {
       if (currentRequestId !== listRequestId.current) return;
       setItems(page.transactions);
       setHasMore(page.hasMore);
@@ -106,7 +119,7 @@ export default function SalesTransactionRecords({
       listRequestId.current += 1;
       detailRequestId.current += 1;
     };
-  }, []);
+  }, [recordBranch, recordPeriod]);
 
   const openDetails = (id: string) => {
     const currentRequestId = ++detailRequestId.current;
@@ -144,7 +157,7 @@ export default function SalesTransactionRecords({
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    void loadSalesTransactionPage(items.length).then((page) => {
+    void loadSalesTransactionPage(items.length, filters).then((page) => {
       if (currentRequestId !== listRequestId.current) return;
       setItems((current) => {
         const known = new Set(current.map((transaction) => transaction.id));
@@ -202,15 +215,17 @@ export default function SalesTransactionRecords({
             <View style={styles.detailCard}>
               <View style={styles.summaryTop}>
                 <Text style={styles.transactionId}>{selected.transactionReference}</Text>
-                <View style={styles.recordedBadge}>
+                <View style={[styles.recordedBadge, selected.status === 'Voided' && styles.voidedBadge]}>
                   {selected.status === 'Recorded' ? <Text style={styles.recordedCheck}>✓</Text> : null}
-                  <Text style={styles.recordedText}>{selected.status}</Text>
+                  <Text style={styles.recordedText}>{selected.status === 'Recorded' ? 'Completed' : selected.status}</Text>
                 </View>
               </View>
               {[
                 ['Date & time', dateTime(selected.createdAt)],
                 ['Branch', selected.branchName],
                 ['Recorded by', selected.recordedBy],
+                ...(selected.isBulkOrder ? [['Order', 'Bulk Order']] : []),
+                ...(selected.status === 'Voided' ? [['Sales totals', 'Not counted (voided)']] : []),
               ].map(([label, value]) => (
                 <View key={label} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{label}</Text>
@@ -243,7 +258,7 @@ export default function SalesTransactionRecords({
                 ['Payment method', selected.paymentMethod],
                 ...(selected.paymentMethod === 'Cash' && selected.amountTendered !== null
                   ? [
-                    ['Amount tendered', peso(selected.amountTendered)],
+                    ['Cash received', peso(selected.amountTendered)],
                     ['Change', peso(selected.change ?? 0)],
                   ]
                   : []),
@@ -276,13 +291,26 @@ export default function SalesTransactionRecords({
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
-      ) : items.length === 0 ? (
+      ) : (
+        <>
+          <OwnerRecordFilterBar
+            branchOptions={branchOptions}
+            branch={recordBranch}
+            onBranchChange={setRecordBranch}
+            period={recordPeriod}
+            onPeriodChange={setRecordPeriod}
+          />
+          {items.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyCircle}><Text style={styles.emptyIcon}>▣</Text></View>
-          <Text style={styles.emptyTitle}>No records found.</Text>
-          <Text style={styles.emptySubtext}>Records will appear here once saved.</Text>
+          <Text style={styles.emptyTitle}>No transactions found.</Text>
+          <Text style={styles.emptySubtext}>
+            {recordBranch === ALL_BRANCHES && recordPeriod === 'All dates'
+              ? 'Records will appear here once saved.'
+              : 'There are no transactions for this branch and period.'}
+          </Text>
         </View>
-      ) : (
+          ) : (
         <ScrollView
           ref={listRef}
           style={styles.listScroll}
@@ -297,6 +325,16 @@ export default function SalesTransactionRecords({
           }}
           scrollEventThrottle={16}
         >
+          {/* OM-09 c5: voided transactions are listed but not added to the total. */}
+          <View style={styles.summaryLine}>
+            <Text style={styles.summaryLineTitle}>
+              {peso(completedTotal(items))} from {items.filter((transaction) => transaction.status === 'Recorded').length} completed
+              {items.some((transaction) => transaction.status === 'Voided')
+                ? ` · ${items.filter((transaction) => transaction.status === 'Voided').length} voided (not counted)`
+                : ''}
+            </Text>
+            {hasMore ? <Text style={styles.summaryLineMeta}>Showing the newest {items.length}; scroll or load older records to include more.</Text> : null}
+          </View>
           {items.map((transaction) => (
             <Pressable
               key={transaction.id}
@@ -311,9 +349,19 @@ export default function SalesTransactionRecords({
                   <Text style={styles.pinIcon}>⌖</Text>
                   <Text style={styles.tileBranch}>{transaction.branchName}</Text>
                 </View>
+                <Text style={styles.tileDate}>
+                  {transaction.recordedBy} · {transaction.paymentMethod}
+                  {transaction.amountTendered !== null ? ` · cash ${peso(transaction.amountTendered)}, change ${peso(transaction.change ?? 0)}` : ''}
+                </Text>
+                <View style={styles.tagLine}>
+                  <Text style={[styles.statusTag, transaction.status === 'Voided' && styles.statusTagVoided]}>
+                    {transaction.status === 'Recorded' ? 'Completed' : transaction.status}
+                  </Text>
+                  {transaction.isBulkOrder ? <Text style={styles.statusTag}>Bulk Order</Text> : null}
+                </View>
               </View>
               <View style={styles.tileRight}>
-                <Text style={styles.tileAmount}>{peso(transaction.total)}</Text>
+                <Text style={[styles.tileAmount, transaction.status === 'Voided' && styles.tileAmountVoided]}>{peso(transaction.total)}</Text>
                 <Text style={styles.tileChevron}>›</Text>
               </View>
             </Pressable>
@@ -327,8 +375,12 @@ export default function SalesTransactionRecords({
             <Pressable accessibilityRole="button" onPress={loadMore} style={styles.loadMoreRetry}>
               <Text style={styles.loadMoreRetryText}>Couldn't load more. Tap to retry.</Text>
             </Pressable>
+          ) : hasMore ? (
+            <OwnerLoadOlderButton label="Load older records" onPress={loadMore} />
           ) : null}
         </ScrollView>
+          )}
+        </>
       )}
     </View>
   );
@@ -366,6 +418,17 @@ function useStyles() {
     pinIcon: { color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 8, marginRight: 3 },
     tileBranch: { color: theme.colors.secondaryText, fontFamily: font.regular, fontSize: 8 },
     tileRight: { flexDirection: 'row', alignItems: 'center' },
+    summaryLine: { paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, borderRadius: 12, backgroundColor: theme.colors.salesRecordTile, gap: 2 },
+    summaryLineTitle: { color: theme.colors.salesRecordNavy, fontFamily: font.bold, fontSize: 11 },
+    summaryLineMeta: { color: theme.colors.salesRecordMuted, fontFamily: font.regular, fontSize: 8 },
+    tagLine: { flexDirection: 'row', gap: 6, marginTop: 3 },
+    statusTag: {
+      color: theme.colors.salesRecordNavy, fontFamily: font.semibold, fontSize: 8, paddingHorizontal: 6, paddingVertical: 1,
+      borderRadius: 4, backgroundColor: theme.colors.salesRecordCategoryTag, overflow: 'hidden',
+    },
+    statusTagVoided: { color: '#FFFFFF', backgroundColor: theme.colors.salesRecordCrimson },
+    tileAmountVoided: { textDecorationLine: 'line-through', opacity: 0.6 },
+    voidedBadge: { backgroundColor: theme.colors.salesRecordCrimson },
     tileAmount: { color: theme.colors.salesRecordNavy, fontFamily: font.bold, fontSize: 11, marginRight: 8 },
     tileChevron: { color: theme.colors.secondaryText, fontFamily: font.bold, fontSize: 16 },
     loadingMore: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 },
