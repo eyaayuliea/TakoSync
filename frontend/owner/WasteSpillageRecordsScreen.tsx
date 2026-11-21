@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import OwnerRecordFilterBar, { OwnerFilteredEmptyState, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
+import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
@@ -124,7 +126,7 @@ export default function WasteSpillageRecordsScreen({
 
   const loadMore = () => {
     if (loadingMoreRef.current || items.length === 0) return;
-    if (loadedPages * pageSize >= items.length) return;
+    if (loadedPages * pageSize >= filteredRecords.length) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setLoadedPages((value) => Math.min(value + 1, Math.ceil(items.length / pageSize)));
@@ -134,7 +136,35 @@ export default function WasteSpillageRecordsScreen({
     });
   };
 
-  const visibleItems = items.slice(0, loadedPages * pageSize);
+  // OM-16 c3–c4: branch and date selectors for this list.
+  const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
+  const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  // OM-19 c4: category filter.
+  const [recordCategory, setRecordCategory] = useState('All categories');
+  const branchOptions = useOwnerBranchFilterOptions(items.map((record) => record.branchName));
+  const filteredRecords = filterOwnerRecords(items, {
+    branch: recordBranch,
+    period: recordPeriod,
+    branchOf: (record) => record.branchName,
+    dateOf: (record) => record.createdAt,
+  }).filter((record) => recordCategory === 'All categories' || record.category === recordCategory.toLowerCase());
+  const recordFilterBar = (
+    <OwnerRecordFilterBar
+      branchOptions={branchOptions}
+      branch={recordBranch}
+      onBranchChange={setRecordBranch}
+      period={recordPeriod}
+      onPeriodChange={setRecordPeriod}
+      extra={{
+        label: 'Category',
+        options: ['All categories', 'Waste', 'Spillage', 'Spoilage', 'Other'],
+        selected: recordCategory,
+        onChange: setRecordCategory,
+      }}
+    />
+  );
+
+  const visibleItems = filteredRecords.slice(0, loadedPages * pageSize);
 
   const back = () => {
     if (view === 'details') {
@@ -195,6 +225,11 @@ export default function WasteSpillageRecordsScreen({
       ) : items.length === 0 ? (
         <OwnerRecordEmptyState />
       ) : (
+        <>
+          {recordFilterBar}
+          {filteredRecords.length === 0 ? (
+            <OwnerFilteredEmptyState branch={recordBranch} period={recordPeriod} />
+          ) : (
         <ScrollView
           ref={listRef}
           style={styles.listScroll}
@@ -235,6 +270,8 @@ export default function WasteSpillageRecordsScreen({
             onRetry={loadMore}
           />
         </ScrollView>
+          )}
+        </>
       )}
     </View>
   );
