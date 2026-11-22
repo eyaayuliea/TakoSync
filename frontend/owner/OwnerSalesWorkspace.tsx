@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { recordedSaleIsBulkOrder } from '../services/bulkOrder';
 import {
+  orderBranchesForSales,
   salesPerBranch,
   salesPerDay,
   salesPerWeek,
@@ -793,10 +795,10 @@ export default function OwnerSalesWorkspace({
           ? ownerSalesMonthLabel(anchorDate)
           : dailyLabel;
     const branchLabel = branches.find((branch) => branch.id === branchId)?.name ?? 'All branches';
-    const orderedBranches = branches
-      .filter((branch) => /^Branch [123]$/.test(branch.name))
-      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
-    const branchSalesCards = (orderedBranches.length === 3 ? orderedBranches : [
+    // The real branches, shown by their short "Branch N" label. Their names carry the store
+    // name ("Gelo's Takoyaki · Branch 1"), so they are matched by their ending, not exactly.
+    const orderedBranches = orderBranchesForSales(branches);
+    const branchSalesCards = (orderedBranches.length ? orderedBranches : [
       { id: 'branch-1', name: 'Branch 1' },
       { id: 'branch-2', name: 'Branch 2' },
       { id: 'branch-3', name: 'Branch 3' },
@@ -919,6 +921,12 @@ export default function OwnerSalesWorkspace({
     const selectedSale = allTransactionRows.find((row) => row.sale.id === selectedSaleId)?.sale ?? null;
     if (selectedSale) {
       const selectedSaleItems = productBySale.get(selectedSale.id) ?? [];
+      // OM-09 c3, c4, c6: add-ons, the Bulk Order flag, and the cash details saved with the sale.
+      const selectedSaleAddons = (data?.addons ?? []).filter((addon) => addon.sale_id === selectedSale.id);
+      const selectedSaleIsBulk = recordedSaleIsBulkOrder(undefined, selectedSaleItems.map((item) => Number(item.quantity)));
+      const paidInCash = selectedSale.payment_method?.trim().toLowerCase() === 'cash';
+      const cashReceived = selectedSale.cash_received === null || selectedSale.cash_received === undefined ? null : Number(selectedSale.cash_received);
+      const changeAmount = selectedSale.change_amount === null || selectedSale.change_amount === undefined ? null : Number(selectedSale.change_amount);
       const selectedSaleBranch = branches.find((branch) => branch.id === selectedSale.branch_id)?.name ?? 'Branch unavailable';
       return (
         <View style={styles.workspace}>
@@ -938,8 +946,14 @@ export default function OwnerSalesWorkspace({
           <View style={styles.omDetailCard}>
             <View style={styles.omDetailTitleRow}>
               <Text style={styles.omDetailReference}>{selectedSale.transaction_reference}</Text>
-              <View style={styles.omRecordedBadge}><Text style={styles.omRecordedText}>✓ Recorded</Text></View>
+              <View style={styles.omRecordedBadge}><Text style={styles.omRecordedText}>✓ Completed</Text></View>
             </View>
+            {selectedSaleIsBulk ? (
+              <View style={styles.omDetailRow}>
+                <Text style={styles.omDetailLabel}>Order type</Text>
+                <Text style={styles.omDetailValue}>Bulk Order</Text>
+              </View>
+            ) : null}
             <View style={styles.omDetailRow}>
               <Text style={styles.omDetailLabel}>Date & time</Text>
               <Text style={styles.omDetailValue}>{compactDate(selectedSale.created_at)}</Text>
@@ -959,7 +973,7 @@ export default function OwnerSalesWorkspace({
             {selectedSaleItems.length ? selectedSaleItems.map((item) => (
               <View key={item.id} style={styles.omItemRow}>
                 <View style={styles.omItemCopy}>
-                  <Text style={styles.omItemName}>{item.product_name}</Text>
+                  <Text style={styles.omItemName}>{item.product_name}{item.variant_label ? ` · ${item.variant_label}` : ''}</Text>
                   <Text style={styles.omItemMeta}>{item.quantity} × {currency(Number(item.unit_price))}</Text>
                 </View>
                 <Text style={styles.omItemAmount}>{currency(Number(item.subtotal))}</Text>
@@ -967,6 +981,15 @@ export default function OwnerSalesWorkspace({
             )) : (
               <Text style={styles.omDetailUnavailable}>Item details are unavailable for this transaction.</Text>
             )}
+            {selectedSaleAddons.map((addon) => (
+              <View key={`addon-${addon.addon_id}`} style={styles.omItemRow}>
+                <View style={styles.omItemCopy}>
+                  <Text style={styles.omItemName}>{addon.addon_name}</Text>
+                  <Text style={styles.omItemMeta}>Add-on · {addon.quantity} × {currency(Number(addon.subtotal) / Math.max(1, Number(addon.quantity)))}</Text>
+                </View>
+                <Text style={styles.omItemAmount}>{currency(Number(addon.subtotal))}</Text>
+              </View>
+            ))}
             <View style={styles.omItemTotalRow}>
               <Text style={styles.omItemTotalLabel}>Total</Text>
               <Text style={styles.omItemTotalAmount}>{currency(Number(selectedSale.total_amount))}</Text>
@@ -979,14 +1002,18 @@ export default function OwnerSalesWorkspace({
               <Text style={styles.omDetailLabel}>Payment method</Text>
               <Text style={styles.omDetailValue}>{selectedSale.payment_method || 'Unavailable'}</Text>
             </View>
-            <View style={styles.omDetailRow}>
-              <Text style={styles.omDetailLabel}>Amount tendered</Text>
-              <Text style={styles.omDetailValue}>Unavailable</Text>
-            </View>
-            <View style={styles.omDetailRow}>
-              <Text style={styles.omDetailLabel}>Change</Text>
-              <Text style={styles.omDetailValue}>Unavailable</Text>
-            </View>
+            {paidInCash ? (
+              <>
+                <View style={styles.omDetailRow}>
+                  <Text style={styles.omDetailLabel}>Cash received</Text>
+                  <Text style={styles.omDetailValue}>{cashReceived === null ? 'Not recorded' : currency(cashReceived)}</Text>
+                </View>
+                <View style={styles.omDetailRow}>
+                  <Text style={styles.omDetailLabel}>Change</Text>
+                  <Text style={styles.omDetailValue}>{changeAmount === null ? 'Not recorded' : currency(changeAmount)}</Text>
+                </View>
+              </>
+            ) : null}
           </View>
 
           <View style={styles.omReadOnly}>
