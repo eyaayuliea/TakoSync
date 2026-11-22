@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   createIngredient,
@@ -21,7 +22,7 @@ import {
   saveProductRecipe,
   saveSharedRecipe,
   saveStaffAccount,
-  signInOwner,
+  signInOwnerWithEmail,
   signOut,
   updateIngredient,
   updateMinimumStock,
@@ -66,6 +67,8 @@ export default function OwnerPortalWeb() {
   const { width } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
   const [page, setPage] = useState<Page>('Dashboard'); const [branch, setBranch] = useState<Branch>('All Branches');
   const [dark, setDark] = useState(false); const [username, setUsername] = useState(''); const [password, setPassword] = useState('');
+  // OW-01 c3, c9: a message per empty field, and a Retry when the connection failed.
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({}); const [connectionFailed, setConnectionFailed] = useState(false);
   const [showPassword, setShowPassword] = useState(false); const [user, setUser] = useState<AppUser | null>(null);
   const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [logoutBusy, setLogoutBusy] = useState(false); const [error, setError] = useState('');
   const [dataError, setDataError] = useState(''); const [query, setQuery] = useState(''); const [toast, setToast] = useState('');
@@ -175,7 +178,36 @@ export default function OwnerPortalWeb() {
   const visibleRows = filterOwnerPortalInventory(rows, branch).filter((row) =>
     row.name.toLowerCase().includes(query.toLowerCase()),
   );
-  const login = async () => { if (!username.trim() || !password) { setError('Enter your username and password.'); return; } setBusy(true); setError(''); try { setUser(await signInOwner(username, password)); } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : 'Unable to sign in with Supabase.'); } finally { setBusy(false); } };
+  // OW-01: the owner signs in with email and password, like the owner mobile app.
+  const login = async () => {
+    if (busy) return;
+    const missing = {
+      ...(!username.trim() ? { email: 'Please enter your email.' } : {}),
+      ...(!password ? { password: 'Please enter your password.' } : {}),
+    };
+    setFieldErrors(missing);
+    setError('');
+    setConnectionFailed(false);
+    if (missing.email || missing.password) return;
+    setBusy(true);
+    try {
+      const signedIn = await signInOwnerWithEmail(username, password);
+      setPassword('');
+      setUser(signedIn);
+      // OW-01 c10: Back must not return to the login form.
+      if (typeof window !== 'undefined' && window.history?.replaceState) window.history.replaceState(null, '', window.location.pathname);
+    } catch (reason: unknown) {
+      if (reason instanceof OwnerLoginError && reason.code === 'email_not_found') setFieldErrors({ email: reason.message });
+      else if (reason instanceof OwnerLoginError && reason.code === 'incorrect_password') { setFieldErrors({ password: reason.message }); setPassword(''); }
+      else {
+        const offline = isOwnerConnectionFailure(reason);
+        setConnectionFailed(offline);
+        setError(offline ? new OwnerLoginError('connection_failure').message : reason instanceof Error ? reason.message : 'Unable to sign in. Please try again.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
   const logout = async () => {
     setLogoutBusy(true);
     setDataError('');
@@ -189,7 +221,7 @@ export default function OwnerPortalWeb() {
     }
   };
   if (authBusy) return <View style={styles.center}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Restoring secure Supabase session…</Text></View>;
-  if (!user) return <Login username={username} password={password} error={error} busy={busy} showPassword={showPassword} setUsername={setUsername} setPassword={setPassword} setShowPassword={setShowPassword} login={login} narrow={narrow} />;
+  if (!user) return <Login username={username} password={password} error={error} fieldErrors={fieldErrors} connectionFailed={connectionFailed} busy={busy} showPassword={showPassword} setUsername={(value: string) => { setUsername(value); setFieldErrors((current) => ({ ...current, email: undefined })); }} setPassword={(value: string) => { setPassword(value); setFieldErrors((current) => ({ ...current, password: undefined })); }} setShowPassword={setShowPassword} login={login} narrow={narrow} />;
   const refreshInventory = async (message: string, isError = false) => {
     if (isError) {
       notify(message, true);
@@ -296,7 +328,7 @@ export default function OwnerPortalWeb() {
   );
 }
 
-function Login({ username, password, error, busy, showPassword, setUsername, setPassword, setShowPassword, login, narrow }: any) {
+function Login({ username, password, error, fieldErrors = {}, connectionFailed = false, busy, showPassword, setUsername, setPassword, setShowPassword, login, narrow }: any) {
   return (
     <View style={[styles.login, narrow && { flexDirection: 'column' }]}>
       <View style={[styles.loginPanel, narrow && { padding: 24, minHeight: 520 }]}>
@@ -305,20 +337,35 @@ function Login({ username, password, error, busy, showPassword, setUsername, set
         </View>
         <Text style={styles.kicker}>OWNER WEB MANAGEMENT PORTAL</Text>
         <Text style={styles.loginTitle}>Welcome back, Gelo.</Text>
-        <Text style={styles.loginSub}>Sign in with your Supabase Owner account.</Text>
+        <Text style={styles.loginSub}>Sign in with your Owner email and password.</Text>
         <View style={[styles.form, narrow && { width: '100%' }]}>
-          <Text style={styles.label}>Username</Text>
-          <TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} autoComplete="username" style={styles.input} placeholder="Enter your username" />
+          <Text style={styles.label}>Email</Text>
+          <TextInput value={username} onChangeText={setUsername} onSubmitEditing={login} autoCapitalize="none" autoCorrect={false} autoComplete="email" keyboardType="email-address" accessibilityLabel="Email, required" style={[styles.input, fieldErrors.email && { borderColor: '#B9244C' }]} placeholder="Enter your email" />
+          {fieldErrors.email ? <Text style={[styles.errorText, { marginTop: 6 }]} accessibilityRole="alert">{fieldErrors.email}</Text> : null}
           <Text style={styles.label}>Password</Text>
-          <View style={styles.password}>
-            <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} style={styles.passwordInput} placeholder="Enter your password" />
-            <Pressable onPress={() => setShowPassword(!showPassword)}><Text style={styles.pinkText}>{showPassword ? 'Hide' : 'Show'}</Text></Pressable>
+          <View style={[styles.password, fieldErrors.password && { borderColor: '#B9244C' }]}>
+            <TextInput value={password} onChangeText={setPassword} onSubmitEditing={login} secureTextEntry={!showPassword} accessibilityLabel="Password, required" style={styles.passwordInput} placeholder="Enter your password" />
+            <Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} onPress={() => setShowPassword(!showPassword)} style={{ paddingHorizontal: 13, paddingVertical: 10 }}><Text style={styles.pinkText}>{showPassword ? 'Hide' : 'Show'}</Text></Pressable>
           </View>
-          {error && <Text style={styles.errorText}>{error}</Text>}
-          <Pressable onPress={login} disabled={busy} style={styles.loginButton}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.loginButtonText}>Sign in to portal →</Text>}
+          {fieldErrors.password ? <Text style={[styles.errorText, { marginTop: 6 }]} accessibilityRole="alert">{fieldErrors.password}</Text> : null}
+          {error ? (
+            <View style={[styles.errorBanner, { marginTop: 14, marginBottom: 0 }]} accessibilityRole="alert">
+              <Text style={styles.errorText}>{error}</Text>
+              {connectionFailed ? <Pressable accessibilityRole="button" onPress={login} style={{ marginTop: 8 }}><Text style={styles.pinkText}>Retry</Text></Pressable> : null}
+            </View>
+          ) : null}
+          <Pressable accessibilityRole="button" accessibilityLabel="Log In" onPress={login} disabled={busy} style={styles.loginButton}>
+            <Text style={styles.loginButtonText}>Log In</Text>
           </Pressable>
         </View>
+        {busy ? (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(16,16,39,0.42)', alignItems: 'center', justifyContent: 'center' }} accessibilityRole="alert">
+            <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 24, alignItems: 'center', gap: 12, minWidth: 220 }}>
+              <ActivityIndicator color={C.pink} size="large" />
+              <Text style={styles.strong}>Logging in…</Text>
+            </View>
+          </View>
+        ) : null}
         <Text style={[styles.loginFooter, narrow && { left: 24, bottom: 12 }]}>Authentication and access are enforced by Supabase.</Text>
       </View>
       {!narrow && <View style={styles.loginArt}><Text style={styles.artEmoji}>🐙</Text><Text style={styles.artTitle}>Make every count count.</Text><Text style={styles.artCopy}>One secure view across all three Gelo's Takoyaki branches.</Text></View>}
