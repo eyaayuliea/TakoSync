@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
 import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortalDailyClosingReport';
+import { buildWebReversalReport, REVERSAL_REPORT_HEADERS, type ReversingEntry } from './ownerPortalReversalReport';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
@@ -27,6 +28,9 @@ import {
   loadIngredientRecipeConfiguration,
   loadOwnerActivityData,
   loadOwnerDiscrepancyReviews,
+  loadOwnerEntryReversalReviews,
+  loadEntryReversalMovementsByRequest,
+  type OwnerEntryReversalReview,
   loadOwnerInventory,
   loadOwnerSalesData,
   loadOwnerSaleVoidReviews,
@@ -1040,7 +1044,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
 }
 
 type InventoryReportPage = 'Expected Stock Quantity Report' | OwnerPortalMovementReport |
-  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report';
+  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report' | 'Reversal Report';
 
 function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable, batches }: {
   branch: string;
@@ -1058,6 +1062,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     'Waste and Spillage Report',
     'Physical Inventory Count and Discrepancy Report',
     'Authorized Adjustment Report',
+    'Reversal Report',
   ];
   // OW-12 c3: no report type is chosen until the owner picks one.
   const [report, setReport] = useState<InventoryReportPage | null>(null);
@@ -1078,6 +1083,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   // OW-12 c4: when the expected-stock snapshot shown was read.
   const inventoryAsOf = useMemo(() => new Date(), [inventoryRows]);
   const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
+  const [reversals, setReversals] = useState<{ supported: boolean; requests: OwnerEntryReversalReview[]; entries: Map<string, ReversingEntry[]> } | null>(null);
   const usesPeriod = report !== 'Expected Stock Quantity Report';
   const setupMessage = reportSetupMessage({ report, period, startDate, endDate, usesPeriod });
   const canGenerate = !setupMessage && (Boolean(range) || !usesPeriod) && !loading;
@@ -1096,6 +1102,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     setActivity(null);
     setReviews(null);
     setStockIns(null);
+    setReversals(null);
     setError('');
     if (!generated || generated.report === 'Expected Stock Quantity Report' || !generated.range) {
       setLoading(false);
@@ -1104,6 +1111,18 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     const range = generated.range;
     const branchId = generated.branchId;
     setLoading(true);
+    if (generated.report === 'Reversal Report') {
+      // OW-20: approved reversals with the Entry Reversal entries that were posted.
+      loadOwnerEntryReversalReviews()
+        .then(async (result) => {
+          const approved = result.requests.filter((request) => request.status === 'approved').map((request) => request.reference);
+          const entries = await loadEntryReversalMovementsByRequest(approved);
+          if (active) setReversals({ ...result, entries });
+        })
+        .catch((reason: unknown) => { if (active) setError(reportLoadError(reason)); })
+        .finally(() => { if (active) setLoading(false); });
+      return () => { active = false; };
+    }
     if (generated.report === 'Stock-In Report') {
       // OW-15: the same Stock-In records as the owner mobile report (receipts, reversals).
       loadStockInRecords(branchId ? branches.filter((item) => item.id === branchId) : branches, batches)
@@ -1254,6 +1273,22 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
         return [reviews === null
           ? { notes: ['Authorized adjustment data is unavailable.'] }
           : table(['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)'], adjustmentRows)];
+      case 'Reversal Report': {
+        if (!reversals || !reportRange) return [];
+        if (!reversals.supported) return [{ notes: ['Entry reversals are not available on this server yet.'] }];
+        const reversalReport = buildWebReversalReport({
+          requests: reversals.requests,
+          reversingEntries: reversals.entries,
+          range: reportRange,
+          branchId,
+          formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+        });
+        return [
+          { summary: reversalReport.summary },
+          table(REVERSAL_REPORT_HEADERS, reversalReport.rows, 'No entries were reversed in this period.'),
+          ...(reversalReport.rows.length ? [{ notes: ['Each original entry stays in the Inventory Audit History; the reversing Entry Reversal entry offsets it. Rejected requests are not listed.'] }] : []),
+        ];
+      }
       default:
         return [table(['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)'], movementRows)];
     }
