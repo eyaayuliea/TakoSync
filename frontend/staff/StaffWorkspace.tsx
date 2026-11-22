@@ -1268,6 +1268,8 @@ export default function StaffWorkspace({
   const [batterPreparationError, setBatterPreparationError] = useState('');
   const [batterPreparationSubmitting, setBatterPreparationSubmitting] = useState(false);
   const [batterConfirmationVisible, setBatterConfirmationVisible] = useState(false);
+  // Shown on the batch screen after a batch is recorded (the POS banner is not visible there).
+  const [batterPreparationNotice, setBatterPreparationNotice] = useState('');
   const batterPreparationSubmissionLock = useRef(false);
   const [historySearch, setHistorySearch] = useState('');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('All types');
@@ -2806,9 +2808,9 @@ export default function StaffWorkspace({
       setBatterPreparationVisible(false);
       setBatterConfirmationVisible(false);
       setBatterBatchReference('');
-      setDashboardMessage(
-        `Batter batch ${batch.batch_reference} is recorded: ${PREPARED_BATTER_BATCH_BOTTLES} ${batch.prepared_unit}.`,
-      );
+      const recordedMessage = `Batter batch ${batch.batch_reference} is recorded: ${PREPARED_BATTER_BATCH_BOTTLES} prepared batter bottles added.`;
+      setDashboardMessage(recordedMessage);
+      setBatterPreparationNotice(recordedMessage);
       await refreshDashboardData();
     } catch (error) {
       setBatterPreparationError(error instanceof Error ? error.message : 'Unable to prepare the batter batch.');
@@ -2824,6 +2826,7 @@ export default function StaffWorkspace({
       return;
     }
     setBatterPreparationError('');
+    setBatterPreparationNotice('');
     const recipe = sharedRecipes.find((entry) =>
       entry.recipe_code === 'shared-batter' || entry.name.toLowerCase().includes('batter'),
     );
@@ -4681,12 +4684,16 @@ export default function StaffWorkspace({
           {batterPreparationError ? (
             <Text style={styles.fieldError} accessibilityRole="alert">{batterPreparationError}</Text>
           ) : null}
+          {batterPreparationNotice && !batterPreparationError ? (
+            <Text style={styles.batterOutputMeta} accessibilityRole="text" accessibilityLiveRegion="polite">✓ {batterPreparationNotice}</Text>
+          ) : null}
 
           <View style={styles.wasteFormActions}>
             <Pressable
               accessibilityRole="button"
               disabled={batterPreparationSubmitting}
-              onPress={() => void submitBatterPreparation()}
+              // ST-08 c4, c5: check the raw ingredients, then ask for confirmation before recording.
+              onPress={requestBatterPreparation}
               style={[styles.saveButton, styles.wasteFormActionButton, batterPreparationSubmitting && styles.buttonDisabled]}
             >
               {batterPreparationSubmitting
