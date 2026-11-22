@@ -5,6 +5,8 @@ import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortal
 import { buildWebReversalReport, REVERSAL_REPORT_HEADERS, type ReversingEntry } from './ownerPortalReversalReport';
 import { buildWebSalesConsumptionReport, buildWebWasteReport, SALES_CONSUMPTION_HEADERS, WASTE_SPILLAGE_HEADERS } from './ownerPortalMovementReports';
 import { buildSalesConsumptionRecords, type SalesConsumptionRecord } from './salesConsumptionRepository';
+import { ADJUSTMENT_REPORT_HEADERS, buildWebAdjustmentReport, buildWebCountReport, COUNT_REPORT_HEADERS } from './ownerPortalCountReports';
+import { loadPhysicalCountRecords, type PhysicalCountRecord } from './physicalCountRepository';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
@@ -72,9 +74,7 @@ import {
 import { buildOwnerPortalInventoryRows, type OwnerPortalInventoryRow } from './ownerPortalInventory';
 import { buildOwnerPortalVariantPrices } from './ownerPortalProducts';
 import {
-  buildOwnerPortalCountReportRows,
   filterOwnerPortalConfirmedSales,
-  filterOwnerPortalReportMovements,
   summarizeOwnerPortalSalesByBranch,
   summarizeOwnerPortalSalesByProduct,
   totalOwnerPortalSales,
@@ -1088,6 +1088,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   const inventoryAsOf = useMemo(() => new Date(), [inventoryRows]);
   const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
   const [consumption, setConsumption] = useState<SalesConsumptionRecord[] | null>(null);
+  const [countRecords, setCountRecords] = useState<PhysicalCountRecord[] | null>(null);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string> | null>(null);
   const [reversals, setReversals] = useState<{ supported: boolean; requests: OwnerEntryReversalReview[]; entries: Map<string, ReversingEntry[]> } | null>(null);
   const usesPeriod = report !== 'Expected Stock Quantity Report';
@@ -1110,6 +1111,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     setStockIns(null);
     setReversals(null);
     setConsumption(null);
+    setCountRecords(null);
     setReversedEntryIds(null);
     setError('');
     if (!generated || generated.report === 'Expected Stock Quantity Report' || !generated.range) {
@@ -1119,6 +1121,21 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     const range = generated.range;
     const branchId = generated.branchId;
     setLoading(true);
+    if (generated.report === 'Physical Inventory Count and Discrepancy Report') {
+      // OW-18: the same count records as the owner mobile report, with the reviews.
+      Promise.all([
+        loadPhysicalCountRecords(branchId ? branches.filter((item) => item.id === branchId) : branches),
+        loadOwnerDiscrepancyReviews(branchId),
+      ])
+        .then(([records, loadedReviews]) => {
+          if (!active) return;
+          setCountRecords(records);
+          setReviews(loadedReviews);
+        })
+        .catch((reason: unknown) => { if (active) setError(reportLoadError(reason)); })
+        .finally(() => { if (active) setLoading(false); });
+      return () => { active = false; };
+    }
     if (generated.report === 'Sales Consumption Report') {
       // OW-16: consumption rows with their sale and any Void Reversal, 200 per request.
       (async () => {
@@ -1188,55 +1205,6 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     timeStyle: 'short',
   });
   const filteredInventory = filterOwnerPortalInventory(inventoryRows, generated?.branchName ?? branch);
-  const countRows = activity && reportRange && shownReport === 'Physical Inventory Count and Discrepancy Report'
-    ? buildOwnerPortalCountReportRows({
-      checks: activity.dailyChecks,
-      lines: activity.countLines,
-      correctionHistory: reviews?.map((review) => ({
-        countLineId: review.countLineId,
-        status: review.status,
-        correctedActual: review.correctedActual,
-        unit: review.unit,
-        correctionReason: review.correctionReason,
-        decisionReason: review.decisionReason,
-        validationReason: review.validationReason,
-      })),
-      branchId,
-      start: reportRange.start,
-      end: reportRange.end,
-      branchNames: branchNameById,
-      itemNames: itemNameById,
-    }).map((row) => [
-      row.reference,
-      row.branch,
-      row.ingredient,
-      row.expected,
-      row.physical,
-      row.difference,
-      row.status,
-      row.inventoryRevision,
-      row.submittedBy,
-      dateFormatter.format(new Date(row.timestamp)),
-      row.revisionHistory,
-    ])
-    : [];
-  const adjustmentRows = shownReport === 'Authorized Adjustment Report' && reportRange
-    ? (reviews ?? []).flatMap((review) => {
-      if (!review.adjustment || (branchId && review.branchId !== branchId)) return [];
-      const approvedAt = new Date(review.adjustment.approvedAt).getTime();
-      if (!Number.isFinite(approvedAt) || approvedAt < reportRange.start.getTime() || approvedAt >= reportRange.end.getTime()) return [];
-      return [[
-        review.adjustment.movementReference,
-        review.reference,
-        review.branch,
-        review.ingredient,
-        `${review.adjustment.beforeQuantity} → ${review.adjustment.afterQuantity} ${review.unit}`,
-        review.adjustment.reason,
-        review.adjustment.approvingOwner,
-        dateFormatter.format(new Date(review.adjustment.approvedAt)),
-      ]];
-    })
-    : [];
   // OW-15: Stock-In rows with receipt dates, expiry, supplier, recorder and reversals.
   const stockInReport = stockIns && reportRange ? buildWebStockInReport(stockIns, reportRange) : null;
   const stockInRows = (stockInReport?.rows ?? []).map((record) => [
@@ -1274,14 +1242,34 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           },
           table(['Ingredient', 'Quantity received', 'Branch', 'Date purchased', 'Date received', 'Expiration', 'Supplier / reference', 'Recorded by · date & time', 'Status'], stockInRows),
         ];
-      case 'Physical Inventory Count and Discrepancy Report':
-        return [activity === null
-          ? { notes: ['Physical count data is unavailable.'] }
-          : table(['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History'], countRows)];
-      case 'Authorized Adjustment Report':
-        return [reviews === null
-          ? { notes: ['Authorized adjustment data is unavailable.'] }
-          : table(['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)'], adjustmentRows)];
+      case 'Physical Inventory Count and Discrepancy Report': {
+        if (!countRecords || !reportRange) return [{ notes: ['Physical count data is unavailable.'] }];
+        const report = buildWebCountReport({
+          records: countRecords,
+          reviews: reviews ?? [],
+          range: reportRange,
+          branchId,
+          formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+        });
+        return [
+          { summary: report.summary },
+          table(COUNT_REPORT_HEADERS, report.rows, 'No physical counts were submitted for the selected branch and reporting period.'),
+        ];
+      }
+      case 'Authorized Adjustment Report': {
+        if (reviews === null || !reportRange) return [{ notes: ['Authorized adjustment data is unavailable.'] }];
+        const report = buildWebAdjustmentReport({
+          reviews,
+          range: reportRange,
+          branchId,
+          formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+        });
+        return [
+          { summary: report.summary },
+          table(ADJUSTMENT_REPORT_HEADERS, report.rows, 'No adjustments were authorized for the selected branch and reporting period.'),
+          { notes: ['Adjustment = the counted quantity minus the expected quantity saved with the count. Only adjustments the owner authorized are listed.'] },
+        ];
+      }
       case 'Reversal Report': {
         if (!reversals || !reportRange) return [];
         if (!reversals.supported) return [{ notes: ['Entry reversals are not available on this server yet.'] }];
