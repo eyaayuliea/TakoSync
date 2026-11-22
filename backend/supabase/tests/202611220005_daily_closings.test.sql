@@ -6,6 +6,9 @@ set local search_path = public, extensions;
 
 select plan(12);
 
+-- Independent of data already in the database (rolled back with the test).
+delete from public.daily_closings where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
+
 create temporary table close_fixture on commit drop as
 select
   '71000000-0000-4000-8000-000000000001'::uuid as owner_id,

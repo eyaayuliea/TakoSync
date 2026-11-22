@@ -5,7 +5,8 @@ import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { OwnerDetailRow, OwnerErrorState, OwnerHeader, OwnerLoadingState, OwnerReadOnlyPill } from './shared/ownerComponents';
 import OwnerRecordFilterBar, { OwnerFilteredEmptyState, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
 import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
-import { approvedOnly, newestFirst, summarizeVoidReport } from './voidReversalReports';
+import { newestFirst, summarizeVoidReport } from './voidReversalReports';
+import { saleVoidRequestStatusLabel } from '../services/saleVoids';
 import { loadOwnerSaleVoidReviews, type OwnerSaleVoidReview } from '../services/takosync';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
@@ -23,8 +24,9 @@ function dateTime(value: string | null | undefined): string {
 }
 
 /**
- * OM-10 Void Report: every voided sale with its reason, the requesting
- * employee, and the approving owner, for the selected period and branch.
+ * OM-10 Void Report: every voided sale with its reason, the employee who voided
+ * it, and the owner review status (Pending Review, Reviewed, or Flagged) with the
+ * reviewing owner and time, for the selected period and branch. Flagged voids stay listed.
  */
 export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
   const styles = useStyles();
@@ -45,7 +47,7 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
       .then((result) => {
         if (current !== generation.current) return;
         setSupported(result.supported);
-        setVoids(approvedOnly(result.requests));
+        setVoids(result.requests);
       })
       .catch((reason: unknown) => {
         if (current !== generation.current) return;
@@ -85,18 +87,22 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
       ['Sale total', row.sale ? money(row.sale.totalAmount) : '—'],
       ['Sale recorded', dateTime(row.sale?.createdAt)],
       ['Reason', row.reason],
-      ['Requested by', row.requestedByName ?? 'Staff account'],
-      ['Requested', dateTime(row.requestedAt)],
-      ['Approved by', row.decidedByName ?? 'Owner'],
-      ['Approved', dateTime(row.decidedAt)],
-      ['Void request', row.reference],
+      ['Voided by', row.requestedByName ?? 'Staff account'],
+      ['Voided', dateTime(row.requestedAt)],
+      ['Review status', saleVoidRequestStatusLabel(row.status)],
+      ...(row.status === 'pending_review' ? [] : [
+        ['Reviewed by', row.decidedByName ?? 'Owner'],
+        ['Reviewed', dateTime(row.decidedAt)],
+      ] as Array<[string, string]>),
+      ...(row.decisionReason ? [['Flag reason', row.decisionReason]] as Array<[string, string]> : []),
+      ['Void reference', row.reference],
     ];
     return (
       <View style={styles.flex}>
         <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.card}>
             {details.map(([label, value], index) => (
-              <OwnerDetailRow key={label} label={label} value={value} multiline={label === 'Reason'} first={index === 0} last={index === details.length - 1} />
+              <OwnerDetailRow key={label} label={label} value={value} multiline={label === 'Reason' || label === 'Flag reason'} first={index === 0} last={index === details.length - 1} />
             ))}
           </View>
           {row.sale?.lines.length ? (
@@ -151,7 +157,10 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
                 </View>
                 <Text style={styles.meta}>{row.branchName} · {dateTime(row.sale?.createdAt)}</Text>
                 <Text style={styles.reason} numberOfLines={2}>“{row.reason}” · {row.requestedByName ?? 'Staff'}</Text>
-                <Text style={styles.meta}>Approved by {row.decidedByName ?? 'Owner'} · {dateTime(row.decidedAt)}</Text>
+                <Text style={styles.meta}>
+                  Voided {dateTime(row.requestedAt)} · {saleVoidRequestStatusLabel(row.status)}
+                  {row.status === 'pending_review' ? '' : ` by ${row.decidedByName ?? 'Owner'} · ${dateTime(row.decidedAt)}`}
+                </Text>
               </Pressable>
             ))}
           </ScrollView>
