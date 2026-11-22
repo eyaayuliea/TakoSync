@@ -662,7 +662,8 @@ function AppContent() {
       clearSignedInState();
       setStaffLocked(false);
       setLoginError(message);
-      setScreen('welcome');
+      // The Staff Login screen shows the reason (Welcome has no message area).
+      setScreen('login');
       logoutLock.current = false;
     }
   }, [clearSignedInState]);

@@ -76,6 +76,7 @@ import {
   type DailyClosing,
 } from './dailyClosing';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
+import { isInactiveAccountDenial } from './permissions.ts';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
   buildInventoryReportData,
@@ -816,6 +817,10 @@ async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<App
     .select('id, employee_id, email, full_name, role, branch_id, active, must_change_password')
     .eq('id', session.user.id)
     .maybeSingle();
+  if (isInactiveAccountDenial(error)) {
+    await clearRejectedSession();
+    throw new Error('This account is inactive. Ask the owner to reactivate it.');
+  }
   assertNoError(error);
   if (!profile) {
     await clearRejectedSession();
@@ -1195,6 +1200,11 @@ export async function loadStaffDailySessionStatus(): Promise<{
       ? client.from('profiles').select('active').eq('id', userId).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);
+  // ST-01 c10: the API gate refuses every request from a deactivated account,
+  // so its denial means "deactivated", not "no connection".
+  if (isInactiveAccountDenial(statusResult.error) || isInactiveAccountDenial(profileResult.error)) {
+    return { signedInAt, serverBusinessDate: null, accountActive: false };
+  }
   assertNoError(statusResult.error);
   const status = statusResult.data as { active?: unknown; business_date?: unknown } | null;
   const serverBusinessDate = status?.active === true && typeof status.business_date === 'string'

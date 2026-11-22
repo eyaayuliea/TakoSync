@@ -108,6 +108,16 @@ export function parseGateDenial(status: number, body: unknown): GateDenial | nul
 }
 
 /**
+ * True when the gate refused a request because the account is deactivated
+ * (DENY_INACTIVE). The gate refuses every request from such an account, so
+ * callers must treat this as "deactivated", not as a connection problem
+ * (ST-01 c10).
+ */
+export function isInactiveAccountDenial(error: unknown): boolean {
+  return parseGateDenial(403, error)?.reason === 'DENY_INACTIVE';
+}
+
+/**
  * Wraps fetch so every gate denial is written to the audit log through
  * rpc/log_access_denial (AC-RBAC-04-05). Logging is best effort and never
  * changes the response the caller sees.
