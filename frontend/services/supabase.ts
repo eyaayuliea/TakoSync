@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '../../backend/types/database';
+import { withDenialAudit } from './permissions';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
@@ -33,6 +34,8 @@ export const supabase = isSupabaseConfigured
         persistSession: true,
         detectSessionInUrl: false,
       },
+      // S2: report every permission-gate 403 to the audit log.
+      global: { fetch: withDenialAudit((...args) => fetch(...args), supabaseUrl!) },
     })
   : null;
 
