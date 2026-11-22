@@ -1,6 +1,9 @@
-// ST-06 c7–c10 Daily Closing and OW-11 / OM-11 Daily Closing Report (Charter
-// Rev 8 BR-S8). The server (record_daily_closing) computes and stores the
-// cash comparison; these helpers parse input and build the report.
+// ST-06 c7–c10 Opening Float and Daily Closing, and the OW-11 / OM-11 Daily
+// Closing Report (Requirements Engineering v6 ST-06 c3). Staff record the
+// opening float once at the start of the business day, before the first sale,
+// and the closing cash count at the end. The server (record_opening_float,
+// record_daily_closing) stores both and computes the cash comparison; these
+// helpers parse input and build the report.
 
 import { manilaBusinessDate } from './staffDailySession.ts';
 
@@ -57,6 +60,41 @@ export function mapDailyClosingRow(
   };
 }
 
+export type OpeningFloat = {
+  id: string;
+  reference: string;
+  branchId: string;
+  businessDate: string;
+  amount: number;
+  recordedBy: string;
+  recordedByName: string | null;
+  recordedAt: string;
+};
+
+export function mapOpeningFloatRow(
+  row: {
+    id: string;
+    reference: string;
+    branch_id: string;
+    business_date: string;
+    amount: number | string;
+    recorded_by: string;
+    recorded_at: string;
+  },
+  names: Map<string, string> = new Map(),
+): OpeningFloat {
+  return {
+    id: row.id,
+    reference: row.reference,
+    branchId: row.branch_id,
+    businessDate: row.business_date,
+    amount: Number(row.amount),
+    recordedBy: row.recorded_by,
+    recordedByName: names.get(row.recorded_by) ?? null,
+    recordedAt: row.recorded_at,
+  };
+}
+
 /** Reads a peso amount typed by staff ("1,500", "1500.50"). Returns null when invalid. */
 export function parseCashAmount(text: string): number | null {
   const cleaned = text.replace(/[₱,\s]/g, '');
@@ -65,23 +103,22 @@ export function parseCashAmount(text: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-export type DailyClosingInput =
-  | { valid: true; openingFloat: number; closingCashCount: number }
-  | { valid: false; errors: { openingFloat?: string; closingCashCount?: string } };
+export type CashAmountInput = { valid: true; amount: number } | { valid: false; error: string };
 
-/** ST-06 c7: both amounts are required, in pesos, with at most two decimals. */
-export function validateDailyClosingInput(openingFloatText: string, closingCashCountText: string): DailyClosingInput {
-  const errors: { openingFloat?: string; closingCashCount?: string } = {};
-  const openingFloat = parseCashAmount(openingFloatText);
-  const closingCashCount = parseCashAmount(closingCashCountText);
-  if (!openingFloatText.trim()) errors.openingFloat = 'Enter the opening float.';
-  else if (openingFloat === null) errors.openingFloat = 'Enter the opening float in pesos, for example 1000 or 1000.50.';
-  if (!closingCashCountText.trim()) errors.closingCashCount = 'Enter the closing cash count.';
-  else if (closingCashCount === null) errors.closingCashCount = 'Enter the cash count in pesos, for example 4250 or 4250.75.';
-  if (openingFloat === null || closingCashCount === null || errors.openingFloat || errors.closingCashCount) {
-    return { valid: false, errors };
-  }
-  return { valid: true, openingFloat, closingCashCount };
+/** ST-06 c7: the opening float is required, in pesos, with at most two decimals. */
+export function validateOpeningFloatInput(text: string): CashAmountInput {
+  if (!text.trim()) return { valid: false, error: 'Enter the opening float.' };
+  const amount = parseCashAmount(text);
+  if (amount === null) return { valid: false, error: 'Enter the opening float in pesos, for example 1000 or 1000.50.' };
+  return { valid: true, amount };
+}
+
+/** ST-06 c8: the closing cash count is required, in pesos, with at most two decimals. */
+export function validateClosingCashCountInput(text: string): CashAmountInput {
+  if (!text.trim()) return { valid: false, error: 'Enter the closing cash count.' };
+  const amount = parseCashAmount(text);
+  if (amount === null) return { valid: false, error: 'Enter the cash count in pesos, for example 4250 or 4250.75.' };
+  return { valid: true, amount };
 }
 
 export function formatPeso(value: number): string {
@@ -179,9 +216,14 @@ export function summarizeDailyClosingRows(rows: DailyClosingReportRow[]): {
   return { closed, missing, totalOver: over / 100, totalShort: short / 100 };
 }
 
+export const OPENING_FLOAT_REQUIRED_MESSAGE = 'Record the opening float for this business day before the closing.';
+
 const KNOWN_DAILY_CLOSING_MESSAGES = [
   'The closing for this business day has already been recorded.',
-  'Enter the opening float and the closing cash count.',
+  'The opening float for this business day has already been recorded.',
+  OPENING_FLOAT_REQUIRED_MESSAGE,
+  'Enter the opening float.',
+  'Enter the closing cash count.',
   'Cash amounts cannot be negative.',
   'Cash amounts can have at most two decimal places.',
   'Cash amounts are too large.',
@@ -190,12 +232,16 @@ const KNOWN_DAILY_CLOSING_MESSAGES = [
 
 export function dailyClosingErrorMessage(error: { message?: string; code?: string } | null | undefined): string {
   const message = error?.message ?? '';
-  if (error?.code === '23505') return 'The closing for this business day has already been recorded.';
+  if (error?.code === '23505') {
+    return /opening_float/.test(message)
+      ? 'The opening float for this business day has already been recorded.'
+      : 'The closing for this business day has already been recorded.';
+  }
   const known = KNOWN_DAILY_CLOSING_MESSAGES.find((text) => message.includes(text));
   if (known) return known;
   if (/fetch|network|timeout/i.test(message)) return 'No connection. Check the internet connection and try again.';
   if (isMissingDailyClosingSupport(error)) return 'Daily closing is not available yet. Ask the owner to update the system.';
-  return 'Unable to record the closing. Please try again.';
+  return 'Unable to save. Please try again.';
 }
 
 export function isMissingDailyClosingSupport(error: { code?: string; message?: string } | null | undefined): boolean {
@@ -204,6 +250,6 @@ export function isMissingDailyClosingSupport(error: { code?: string; message?: s
     || error.code === 'PGRST205'
     || error.code === 'PGRST202'
     || error.code === '42883'
-    || /daily_closings|record_daily_closing/.test(error.message ?? '')
+    || /daily_closings|daily_opening_floats|record_daily_closing|record_opening_float/.test(error.message ?? '')
       && /does not exist|could not find|schema cache/i.test(error.message ?? '');
 }

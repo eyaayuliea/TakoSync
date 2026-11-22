@@ -4,10 +4,11 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(12);
+select plan(19);
 
 -- Independent of data already in the database (rolled back with the test).
 delete from public.daily_closings where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
+delete from public.daily_opening_floats where business_date = (clock_timestamp() at time zone 'Asia/Manila')::date;
 
 create temporary table close_fixture on commit drop as
 select
@@ -60,34 +61,61 @@ select set_config('request.jwt.claims', json_build_object(
   'sub', (select staff_id from close_fixture), 'role', 'authenticated',
   'session_id', (select staff_session_id from close_fixture))::text, true);
 
+-- Opening float (ST-06 c7, c10) ------------------------------------------------------
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, -1, 100, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, 1440, gen_random_uuid()),
+  'P0001', 'Record the opening float for this business day before the closing.', 'a day cannot be closed before its opening float is recorded');
+select throws_ok(
+  format('select public.record_opening_float(%L, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, -1, gen_random_uuid()),
+  'P0001', 'Cash amounts cannot be negative.', 'a negative float is refused');
+select throws_ok(
+  format('select public.record_opening_float(%L, %s, %L)', '00000000-0000-4000-8000-000000000002'::uuid, 1000, gen_random_uuid()),
+  '42501', 'This branch is not your assigned branch.', 'staff record the float of their own branch only');
+
+create temporary table float_result on commit drop as
+select (public.record_opening_float('00000000-0000-4000-8000-000000000001'::uuid, 1000, client_request_id)).* from close_fixture;
+select results_eq(
+  $$select amount, recorded_by, business_date, recorded_at is not null from float_result$$,
+  format($$values (1000.00::numeric(12, 2), %L::uuid, %L::date, true)$$,
+    (select staff_id from close_fixture), (clock_timestamp() at time zone 'Asia/Manila')::date),
+  'ST-06 c7: the float is saved once with the employee account and server time');
+select is(
+  (select (public.record_opening_float('00000000-0000-4000-8000-000000000001'::uuid, 1000, client_request_id)).id from close_fixture),
+  (select id from float_result), 'a retried submission returns the same float');
+select throws_ok(
+  format('select public.record_opening_float(%L, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, 500, gen_random_uuid()),
+  'P0001', 'The opening float for this business day has already been recorded.', 'ST-06 c10: the float cannot be recorded twice');
+select ok(not has_table_privilege('authenticated', 'public.daily_opening_floats', 'insert'), 'floats are written only by RPC');
+
+-- Closing ------------------------------------------------------------------------------
+select throws_ok(
+  format('select public.record_daily_closing(%L, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, -1, gen_random_uuid()),
   'P0001', 'Cash amounts cannot be negative.', 'negative amounts are refused');
 
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000002'::uuid, 1000, 100, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %L)', '00000000-0000-4000-8000-000000000002'::uuid, 100, gen_random_uuid()),
   '42501', 'This branch is not your assigned branch.', 'staff close only their own branch');
 
 create temporary table close_result on commit drop as
-select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1000, 1440, client_request_id)).*
+select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1440, client_request_id)).*
 from close_fixture;
 
 select is((select recorded_cash_sales from close_result), 550.00::numeric(12, 2),
   'recorded cash sales are today''s cash sales, voided included, other days and QR excluded');
 select is((select voided_cash_sales from close_result), 50.00::numeric(12, 2), 'voided cash sales are counted separately');
 select is((select expected_cash from close_result), 1500.00::numeric(12, 2),
-  'ST-06 c8: expected = opening float + recorded cash sales − voided cash sales');
+  'ST-06 c9: expected = the recorded opening float + recorded cash sales − voided cash sales');
 select is((select over_short from close_result), -60.00::numeric(12, 2), 'over/short = closing count − expected (short by ₱60)');
 select is((select cash_transaction_count from close_result), 2, 'two completed cash transactions');
 select is((select business_date from close_result), (clock_timestamp() at time zone 'Asia/Manila')::date,
   'the closing is for the current business day');
 
 select is(
-  (select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1000, 1440, client_request_id)).id from close_fixture),
+  (select (public.record_daily_closing('00000000-0000-4000-8000-000000000001'::uuid, 1440, client_request_id)).id from close_fixture),
   (select id from close_result), 'a retried submission returns the same closing');
 
 select throws_ok(
-  format('select public.record_daily_closing(%L, %s, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, 1000, 1500, gen_random_uuid()),
+  format('select public.record_daily_closing(%L, %s, %L)', '00000000-0000-4000-8000-000000000001'::uuid, 1500, gen_random_uuid()),
   'P0001', 'The closing for this business day has already been recorded.', 'ST-06 c10: a day is closed only once');
 
 select set_config('request.jwt.claim.sub', (select other_branch_staff_id::text from close_fixture), true);

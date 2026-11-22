@@ -9,7 +9,9 @@ import {
   overShortLabel,
   parseCashAmount,
   summarizeDailyClosingRows,
-  validateDailyClosingInput,
+  validateClosingCashCountInput,
+  validateOpeningFloatInput,
+  mapOpeningFloatRow,
 } from './dailyClosing.ts';
 
 function closing(overrides = {}) {
@@ -32,15 +34,31 @@ test('peso amounts accept commas and up to two decimals', () => {
   assert.equal(parseCashAmount(''), null);
 });
 
-test('both closing amounts are required (ST-06 c7)', () => {
-  assert.deepEqual(validateDailyClosingInput('', ''), {
-    valid: false,
-    errors: { openingFloat: 'Enter the opening float.', closingCashCount: 'Enter the closing cash count.' },
-  });
-  const bad = validateDailyClosingInput('1000', '42.505');
-  assert.equal(bad.valid, false);
-  assert.match(bad.errors.closingCashCount, /in pesos/);
-  assert.deepEqual(validateDailyClosingInput('1,000', '4250.50'), { valid: true, openingFloat: 1000, closingCashCount: 4250.5 });
+test('the opening float and the closing count are each required, in pesos (ST-06 c7, c8)', () => {
+  assert.deepEqual(validateOpeningFloatInput(' '), { valid: false, error: 'Enter the opening float.' });
+  assert.match(validateOpeningFloatInput('12.345').error, /in pesos/);
+  assert.deepEqual(validateOpeningFloatInput('1,000'), { valid: true, amount: 1000 });
+  assert.deepEqual(validateOpeningFloatInput('0'), { valid: true, amount: 0 });
+  assert.deepEqual(validateClosingCashCountInput(''), { valid: false, error: 'Enter the closing cash count.' });
+  assert.match(validateClosingCashCountInput('42.505').error, /in pesos/);
+  assert.deepEqual(validateClosingCashCountInput('4250.50'), { valid: true, amount: 4250.5 });
+});
+
+test('opening float rows map to the screen model and its server messages are kept', () => {
+  const mapped = mapOpeningFloatRow({
+    id: 'f1', reference: 'FLOAT-20261122-0001', branch_id: 'b1', business_date: '2026-11-22', amount: '1000.00',
+    recorded_by: 'staff-1', recorded_at: '2026-11-22T01:00:00Z',
+  }, new Map([['staff-1', 'Ana']]));
+  assert.equal(mapped.amount, 1000);
+  assert.equal(mapped.recordedByName, 'Ana');
+  assert.equal(
+    dailyClosingErrorMessage({ message: 'Record the opening float for this business day before the closing.' }),
+    'Record the opening float for this business day before the closing.',
+  );
+  assert.equal(
+    dailyClosingErrorMessage({ code: '23505', message: 'duplicate key value violates unique constraint "daily_opening_floats_branch_id_business_date_key"' }),
+    'The opening float for this business day has already been recorded.',
+  );
 });
 
 test('over and short are labelled with text; balanced shows zero (OW-11 c6, OM-11 c4)', () => {
@@ -117,7 +135,7 @@ test('server errors become specific messages; a second closing is refused (ST-06
     'The closing for this business day has already been recorded.',
   );
   assert.equal(dailyClosingErrorMessage({ message: 'Failed to fetch' }), 'No connection. Check the internet connection and try again.');
-  assert.equal(dailyClosingErrorMessage({ message: 'odd' }), 'Unable to record the closing. Please try again.');
+  assert.equal(dailyClosingErrorMessage({ message: 'odd' }), 'Unable to save. Please try again.');
   assert.equal(isMissingDailyClosingSupport({ code: 'PGRST205' }), true);
   assert.equal(isMissingDailyClosingSupport({ code: '42501', message: 'permission denied' }), false);
 });
