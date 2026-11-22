@@ -1711,9 +1711,13 @@ export async function loadOwnerSalesConsumptionBundle(input: {
   offset?: number;
   limit?: number;
   recordId?: string;
+  /** OW-16: only consumption in [start, end) of this branch. */
+  start?: Date;
+  end?: Date;
+  branchId?: string | null;
 }): Promise<OwnerSalesConsumptionBundle> {
   const client = requireSupabase();
-  const limit = Math.max(1, Math.min(100, input.limit ?? 20));
+  const limit = Math.max(1, Math.min(200, input.limit ?? 20));
   const offset = Math.max(0, input.offset ?? 0);
 
   let query = client.from('inventory_movements')
@@ -1723,6 +1727,9 @@ export async function loadOwnerSalesConsumptionBundle(input: {
     .order('transaction_date', { ascending: false })
     .order('id', { ascending: false });
   if (input.recordId) query = query.eq('id', input.recordId);
+  if (input.start) query = query.gte('transaction_date', input.start.toISOString());
+  if (input.end) query = query.lt('transaction_date', input.end.toISOString());
+  if (input.branchId) query = query.eq('branch_id', input.branchId);
   const { data: rows, error } = await query.range(offset, offset + limit);
   assertNoError(error);
   const fetched = rows ?? [];
