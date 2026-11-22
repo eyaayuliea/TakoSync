@@ -1269,7 +1269,7 @@ export default function OwnerMobileWorkspace({
                 <Text style={styles.listMeta}>Expected {item.expected} {item.unit} · Counted {item.actual} {item.unit}</Text>
                 {/* The difference of the count shown on this card; a requested correction is listed separately until decided. */}
                 <Text style={styles.listMeta}>Difference {countDifferenceText(item.expected, item.actual)} {item.unit} · {item.reference}</Text>
-                {item.correctedActual !== null && item.correctedActual !== undefined && item.correctedActual !== item.actual ? (
+                {item.correctionStatus === 'pending' ? (
                   <Text style={styles.listMeta}>Correction requested: {item.correctedActual} {item.unit}</Text>
                 ) : null}
               </View>
@@ -1922,11 +1922,24 @@ export default function OwnerMobileWorkspace({
               ['Count reference', selected.reference],
               ['Expected quantity', formatQuantity(selected.expected, selected.unit)],
               ['Actual quantity', formatQuantity(selected.actual, selected.unit)],
-              ['Corrected actual quantity', formatQuantity(selected.correctedActual, selected.unit)],
+              // OM-14 c3, c5: the original count stays; a correction replaces it only once approved.
+              ...(selected.correctionStatus ? [[
+                selected.correctionStatus === 'approved' ? 'Revised quantity (approved correction)'
+                  : selected.correctionStatus === 'rejected' ? 'Requested correction (rejected)'
+                    : 'Requested correction (pending)',
+                formatQuantity(selected.correctedActual, selected.unit),
+              ]] : []),
               ['Difference', formatDifference(selected.difference, selected.unit)],
               ['Date & time', compactDate(selected.submittedAt)],
               ['Submitted by', selected.staff],
-              ['Correction request reason', selected.correctionReason],
+              ...(selected.correctionStatus ? [
+                ['Correction requested by', selected.staff],
+                ['Correction request reason', selected.correctionReason],
+              ] : []),
+              ...(selected.correctionStatus && selected.correctionStatus !== 'pending' ? [[
+                selected.correctionStatus === 'approved' ? 'Correction approved by' : 'Correction rejected by',
+                `${selected.decisionOwner ?? 'Owner'}${selected.decisionAt ? ` · ${compactDate(selected.decisionAt)}` : ''}`,
+              ]] : []),
               ['Staff remarks', selected.remarks],
             ].map(([label, value]) => (
               <View key={label} style={styles.omDiscrepancyDetailRow}>
@@ -2562,7 +2575,9 @@ export default function OwnerMobileWorkspace({
                   ? 'Approve correction request'
                   : discrepancyAction === 'reject'
                     ? 'Reject correction request'
-                    : 'Validate Count'}
+                    : discrepancyAction === 'recount'
+                      ? 'Reject Count (request recount)'
+                      : 'Validate Count'}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -2581,9 +2596,15 @@ export default function OwnerMobileWorkspace({
                 </Text>
                 <Text style={styles.modalSummary}>
                   Expected {selectedDiscrepancy.expected} {selectedDiscrepancy.unit}; original actual {selectedDiscrepancy.actual} {selectedDiscrepancy.unit}.
-                  {'\n'}Adjusted quantity {selectedDiscrepancy.correctedActual} {selectedDiscrepancy.unit}.
+                  {discrepancyAction === 'approve' || discrepancyAction === 'reject'
+                    ? `\nRequested correction: ${selectedDiscrepancy.correctedActual} ${selectedDiscrepancy.unit}.`
+                    : selectedDiscrepancy.correctionStatus === 'approved'
+                      ? `\nRevised quantity (approved correction): ${selectedDiscrepancy.correctedActual} ${selectedDiscrepancy.unit}.`
+                      : selectedDiscrepancy.correctionStatus === 'rejected'
+                        ? `\nThe requested correction (${selectedDiscrepancy.correctedActual} ${selectedDiscrepancy.unit}) was rejected; the original count applies.`
+                        : ''}
                   {discrepancyAction === 'validate'
-                    ? `\nAdjustment: ${selectedDiscrepancy.correctedActual - selectedDiscrepancy.expected > 0 ? '+' : ''}${Math.round((selectedDiscrepancy.correctedActual - selectedDiscrepancy.expected) * 1000) / 1000} ${selectedDiscrepancy.unit} added to the current balance.`
+                    ? `\nAdjustment: ${selectedDiscrepancy.difference > 0 ? '+' : ''}${selectedDiscrepancy.difference} ${selectedDiscrepancy.unit} added to the current balance.`
                     : ''}
                 </Text>
                 <Text style={styles.modalWarning}>
