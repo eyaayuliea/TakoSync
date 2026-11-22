@@ -7,6 +7,7 @@ import {
   summarizeAddons,
   summarizeProductVariants,
   totalOfSales,
+  orderBranchesForSales,
 } from './ownerSalesBreakdowns.ts';
 
 const sale = (branch, amount, at) => ({ branch_id: branch, total_amount: amount, created_at: at });
@@ -80,4 +81,18 @@ test('add-ons are listed with their quantities (OM-08 c3)', () => {
     { id: 'cheese', name: 'Cheese', quantity: 5, total: 75 },
     { id: 'mayo', name: 'Extra mayo', quantity: 3, total: 30 },
   ]);
+});
+
+test('OM-07 c2, c6: real branch names are matched and sales are counted for them', () => {
+  const branches = orderBranchesForSales([
+    { id: 'b3', name: "Gelo's Takoyaki · Branch 3" },
+    { id: 'b1', name: "Gelo's Takoyaki · Branch 1" },
+    { id: 'b2', name: "Gelo's Takoyaki · Branch 2" },
+  ]);
+  assert.deepEqual(branches.map((branch) => [branch.id, branch.name]), [['b1', 'Branch 1'], ['b2', 'Branch 2'], ['b3', 'Branch 3']]);
+  const rows = salesPerBranch([
+    { branch_id: 'b1', total_amount: 260 }, { branch_id: 'b1', total_amount: 89 }, { branch_id: 'b1', total_amount: 49 },
+  ], branches);
+  assert.deepEqual(rows.map((row) => [row.name, row.count, row.total]), [['Branch 1', 3, 398], ['Branch 2', 0, 0], ['Branch 3', 0, 0]]);
+  assert.deepEqual(orderBranchesForSales([{ id: 'x', name: 'Main Store' }]).map((branch) => branch.name), ['Main Store']);
 });

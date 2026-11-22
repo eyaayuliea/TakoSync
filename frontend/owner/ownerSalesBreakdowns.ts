@@ -96,6 +96,17 @@ export function salesPerBranch(sales: readonly SaleLike[], branches: Array<{ id:
   });
 }
 
+/**
+ * OM-07 c2: the branches for the Branch Sales view, in branch-number order, each
+ * with its short "Branch N" label and its real id (so sales can be matched to it).
+ */
+export function orderBranchesForSales<T extends { id: string; name: string }>(branches: readonly T[]): T[] {
+  const number = (name: string) => Number(/Branch (\d+)\s*$/.exec(name)?.[1] ?? Number.POSITIVE_INFINITY);
+  return [...branches]
+    .sort((left, right) => number(left.name) - number(right.name) || left.name.localeCompare(right.name))
+    .map((branch) => ({ ...branch, name: /Branch \d+\s*$/.exec(branch.name)?.[0].trim() ?? branch.name }));
+}
+
 /** OM-04 c3 / c7: the total of the sales in centavo-exact pesos. */
 export function totalOfSales(sales: readonly SaleLike[]): number {
   return sales.reduce((sum, sale) => sum + cents(sale.total_amount), 0) / 100;

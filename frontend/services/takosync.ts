@@ -469,6 +469,9 @@ export type OwnerSale = {
   inventory_processing_status?: 'pending' | 'processing' | 'completed' | 'failed';
   inventory_processing_error?: string | null;
   created_at: string;
+  /** OM-09 c3: saved with cash sales; null or absent for other methods and older sales. */
+  cash_received?: number | string | null;
+  change_amount?: number | string | null;
 };
 
 export type OwnerSaleItem = {
@@ -1351,18 +1354,28 @@ export async function loadOwnerSalesData(input: {
   const pageSize = 500;
   const fetchSales = async (start: Date, end: Date): Promise<OwnerSale[]> => {
     const sales: OwnerSale[] = [];
+    const baseColumns = 'id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at';
+    // OM-09 c3: cash received and change, when the database has those columns.
+    let columns = `${baseColumns}, cash_received, change_amount`;
     for (let offset = 0; ; offset += pageSize) {
-      let query = client.from('sales')
-        .select('id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at')
-        .eq('status', 'completed')
-        .gte('created_at', start.toISOString())
-        .lt('created_at', end.toISOString())
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false });
-      if (input.branchId) query = query.eq('branch_id', input.branchId);
-      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      const run = (selected: string) => {
+        let query = client.from('sales')
+          .select(selected)
+          .eq('status', 'completed')
+          .gte('created_at', start.toISOString())
+          .lt('created_at', end.toISOString())
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+        if (input.branchId) query = query.eq('branch_id', input.branchId);
+        return query.range(offset, offset + pageSize - 1);
+      };
+      let { data, error } = await run(columns);
+      if (error && columns !== baseColumns && isMissingSchemaColumn(error)) {
+        columns = baseColumns;
+        ({ data, error } = await run(columns));
+      }
       assertNoError(error);
-      sales.push(...(data ?? []));
+      sales.push(...((data ?? []) as unknown as OwnerSale[]));
       if ((data?.length ?? 0) < pageSize) break;
     }
     return sales;

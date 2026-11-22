@@ -146,7 +146,7 @@ export function RecordsMenuScreen({
         {
           icon: 'receipt',
           title: 'Void Report',
-          subtitle: 'Voided sales, reasons, and approvals',
+          subtitle: 'Voided sales, reasons, and review status',
           onTap: () => onSelectRecord('VoidReport'),
         },
         {
