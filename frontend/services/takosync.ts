@@ -536,6 +536,12 @@ export type OwnerDiscrepancyReview = {
   expected: number;
   actual: number;
   correctedActual: number;
+  /**
+   * The staff correction request for this count, if any. Only an approved
+   * correction replaces the counted quantity; a pending or rejected one does not.
+   */
+  correctionStatus: 'pending' | 'approved' | 'rejected' | null;
+  /** The difference that currently applies: (approved correction or the count) − expected. */
   difference: number;
   correctionReason: string;
   remarks: string;
@@ -4421,7 +4427,11 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       expected: Number(line.recorded_quantity),
       actual: Number(line.physical_quantity),
       correctedActual: Number(request.corrected_actual_quantity),
-      difference: Number(request.corrected_actual_quantity) - Number(line.recorded_quantity),
+      correctionStatus: request.status,
+      // A pending or rejected correction does not change the count's difference.
+      difference: Math.round(((request.status === 'approved'
+        ? Number(request.corrected_actual_quantity)
+        : Number(line.physical_quantity)) - Number(line.recorded_quantity)) * 1000) / 1000,
       correctionReason: request.reason,
       remarks: check.remarks,
       submittedAt: check.created_at,
@@ -4479,6 +4489,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       expected: Number(line.recorded_quantity),
       actual: Number(line.physical_quantity),
       correctedActual: Number(adjustment.physical_quantity),
+      correctionStatus: null,
       difference: Number(adjustment.difference),
       correctionReason: adjustment.reason,
       remarks: check.remarks,
@@ -4538,6 +4549,7 @@ export async function loadOwnerDiscrepancyReviews(branchId: string | null) {
       expected: Number(line.recorded_quantity),
       actual: Number(line.physical_quantity),
       correctedActual: Number(line.physical_quantity),
+      correctionStatus: null,
       difference: Number(line.difference),
       correctionReason: 'No correction request submitted.',
       remarks: check.remarks,
