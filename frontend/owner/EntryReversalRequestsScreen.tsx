@@ -30,11 +30,11 @@ import { validateSaleVoidRejectionReason } from '../services/saleVoids';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
-const STATUS_FILTERS = ['All', 'Pending', 'Reversed', 'Rejected'] as const;
+const STATUS_FILTERS = ['All', 'Pending', 'Approved', 'Rejected'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 const STATUS_BY_FILTER: Record<Exclude<StatusFilter, 'All'>, EntryReversalStatus> = {
   Pending: 'pending',
-  Reversed: 'approved',
+  Approved: 'approved',
   Rejected: 'rejected',
 };
 const ALL_BRANCHES = 'All branches';

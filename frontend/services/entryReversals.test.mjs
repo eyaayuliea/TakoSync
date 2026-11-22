@@ -5,6 +5,7 @@ import {
   entryReversalErrorMessage,
   entryReversalState,
   entryReversalStatusLabel,
+  entryReversalRequestStatusLabel,
   isMissingEntryReversalSupport,
   latestEntryReversalRequest,
   mapEntryReversalRequestRow,
@@ -143,4 +144,11 @@ test('request rows map to the screen model', () => {
   assert.equal(mapped.quantity, 5);
   assert.equal(mapped.entryKind, 'batter_batch');
   assert.equal(mapped.decidedByName, 'Gelo');
+});
+
+test('OM-15 / OW-26 c10: the owner sees a reversal request as Pending, Approved or Rejected', () => {
+  assert.deepEqual(
+    ['pending', 'approved', 'rejected'].map(entryReversalRequestStatusLabel),
+    ['Pending', 'Approved', 'Rejected'],
+  );
 });

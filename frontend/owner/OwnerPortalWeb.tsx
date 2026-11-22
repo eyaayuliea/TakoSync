@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
+import OwnerRequestsScreen from './OwnerRequestsScreen';
+import { ThemeProvider } from '../theme/ThemeProvider';
+import { useFonts } from 'expo-font';
+import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
+import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
+import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
+import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   createIngredient,
@@ -57,14 +64,14 @@ import {
 } from './ownerPortalReports';
 import { reviewStyles } from './ownerPortalReviewStyles';
 
-type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Reports' | 'Inventory Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
+type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Void & Reversal Review' | 'Reports' | 'Inventory Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
 type Branch = string;
 type InventoryRow = OwnerPortalInventoryRow;
-const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Reports', '▤'], ['Inventory Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
+const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Void & Reversal Review', '↺'], ['Reports', '▤'], ['Inventory Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function OwnerPortalWeb() {
-  const { width } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
+  const { width, height } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
   const [page, setPage] = useState<Page>('Dashboard'); const [branch, setBranch] = useState<Branch>('All Branches');
   const [dark, setDark] = useState(false); const [username, setUsername] = useState(''); const [password, setPassword] = useState('');
   // OW-01 c3, c9: a message per empty field, and a Retry when the connection failed.
@@ -308,6 +315,7 @@ export default function OwnerPortalWeb() {
           {page === 'Inventory' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
           {page === 'Stock Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
           {page === 'Daily Checks' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
+          {page === 'Void & Reversal Review' && <VoidReversalReview height={Math.max(560, height - 200)} onBack={() => setPage('Dashboard')} />}
           {page === 'Reports' && <Reports sales={salesData} />}
           {page === 'Inventory Reports' && (
             <InventoryReports
@@ -370,6 +378,28 @@ function Login({ username, password, error, fieldErrors = {}, connectionFailed =
       </View>
       {!narrow && <View style={styles.loginArt}><Text style={styles.artEmoji}>🐙</Text><Text style={styles.artTitle}>Make every count count.</Text><Text style={styles.artCopy}>One secure view across all three Gelo's Takoyaki branches.</Text></View>}
     </View>
+  );
+}
+/**
+ * OW-26: the owner reviews voids and entry reversal requests on the web with the
+ * same screens and server rules as the owner mobile app (OM-15): voids are marked
+ * Reviewed or Flagged without being undone; entry reversals are approved (posting
+ * an Entry Reversal movement) or rejected with a reason.
+ */
+function VoidReversalReview({ height, onBack }: { height: number; onBack: () => void }) {
+  // The shared owner screens use Poppins, which the mobile app loads at startup.
+  useFonts({ Poppins_400Regular, Poppins_500Medium, Poppins_600SemiBold, Poppins_700Bold });
+  return (
+    <>
+      <Text style={styles.section}>Void & Reversal Review</Text>
+      <Text style={styles.muted}>Sales voided by staff and entry reversal requests from the branches.</Text>
+      <View style={{ height, maxWidth: 760, width: '100%', marginTop: 16, borderRadius: 13, borderWidth: 1, borderColor: C.border, overflow: 'hidden', backgroundColor: C.surface }}>
+        {/* The portal has no app-wide ThemeProvider; the shared owner screens need one. */}
+        <ThemeProvider>
+          <OwnerRequestsScreen onBack={onBack} />
+        </ThemeProvider>
+      </View>
+    </>
   );
 }
 function Toolbar({ branch, setBranch, branches }: { branch: string; setBranch: (value: string) => void; branches: OwnerPortalBranch[] }) {
