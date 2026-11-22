@@ -89,6 +89,7 @@ import {
   loadStaffSaleReceipt,
   voidSale,
   loadStaffDailyClosing,
+  loadStaffOpeningFloat,
   loadUnresolvedSales,
   loadStaffMenuCatalog,
   loadSharedRecipes,
@@ -170,6 +171,7 @@ import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
 import DailyClosingSection from './DailyClosingSection';
+import OpeningFloatForm from './OpeningFloatForm';
 import {
   entryReversalAvailability,
   entryReversalState,
@@ -1168,6 +1170,9 @@ export default function StaffWorkspace({
   const [saleVoidModalVisible, setSaleVoidModalVisible] = useState(false);
   // ST-07 c1: Void Sale is offered only before today's closing is recorded.
   const [todayClosingRecorded, setTodayClosingRecorded] = useState(false);
+  // ST-06 c7: the POS asks for the opening float before the first sale of the day.
+  const [openingFloatStatus, setOpeningFloatStatus] = useState<'unknown' | 'missing' | 'recorded'>('unknown');
+  const [openingFloatCheckKey, setOpeningFloatCheckKey] = useState(0);
   // ST-13: the branch's entry reversal requests. Hidden until the database has them.
   const [entryReversalRequests, setEntryReversalRequests] = useState<EntryReversalRequest[]>([]);
   const [entryReversalSupported, setEntryReversalSupported] = useState(false);
@@ -2780,6 +2785,26 @@ export default function StaffWorkspace({
       active = false;
     };
   }, [route, user?.branchId, selectedSaleReceiptId]);
+
+  const posRouteActive = route === 'menu' || route === 'cart' || route === 'checkout';
+  useEffect(() => {
+    if (!posRouteActive || openingFloatStatus === 'recorded' || !user?.branchId) return;
+    let active = true;
+    const today = formatLocalIsoDate(new Date());
+    Promise.all([loadStaffOpeningFloat(user.branchId, today), loadStaffDailyClosing(user.branchId, today)])
+      .then(([floatResult, closingResult]) => {
+        if (!active) return;
+        // Not asked before the database supports it, or once the day is already closed.
+        const needed = floatResult.supported && !floatResult.openingFloat && !closingResult.closing;
+        setOpeningFloatStatus(needed ? 'missing' : floatResult.openingFloat ? 'recorded' : 'unknown');
+      })
+      .catch(() => {
+        // Offline or failed: do not block the POS; the closing still requires the float.
+      });
+    return () => {
+      active = false;
+    };
+  }, [posRouteActive, user?.branchId, openingFloatStatus, openingFloatCheckKey]);
 
   const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
     if (!saleReceipt) return;
@@ -6905,6 +6930,7 @@ export default function StaffWorkspace({
             businessDate={formatLocalIsoDate(dailySalesDate)}
             isToday={formatLocalIsoDate(dailySalesDate) === formatLocalIsoDate(today)}
             refreshKey={dailySalesRefreshKey}
+            onOpeningFloatRecorded={() => setOpeningFloatStatus('recorded')}
           />
         ) : null}
         <View style={styles.dailySalesBottomActions}>
@@ -8851,6 +8877,32 @@ export default function StaffWorkspace({
         staffOnly
         staffAlertCount={activeAlertCount}
       />
+      <Modal
+        visible={posRouteActive && openingFloatStatus === 'missing' && Boolean(user?.branchId)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => undefined}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Record the opening float</Text>
+            <Text style={styles.confirmSubtitle}>
+              Before the first sale of the business day, count the cash in the drawer and record it for {assignedBranch}. It is
+              recorded once per day and is compared with the closing cash count at the end of service.
+            </Text>
+            {user?.branchId ? (
+              <OpeningFloatForm
+                branchId={user.branchId}
+                onRecorded={() => setOpeningFloatStatus('recorded')}
+                onAlreadyRecorded={() => {
+                  setOpeningFloatStatus('unknown');
+                  setOpeningFloatCheckKey((key) => key + 1);
+                }}
+              />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
       <Modal
         visible={batterConfirmationVisible}
         transparent
