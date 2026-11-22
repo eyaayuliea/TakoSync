@@ -80,9 +80,12 @@ export function MoreMenuScreen({
   onOpenRecords,
   onOpenProfile,
   onOpenVoidRequests,
+  onOpenAuditIntegrity,
 }: {
   onOpenRecords: () => void;
   onOpenProfile: () => void;
+  /** S3: verify the hash-chained audit log and export a checkpoint. */
+  onOpenAuditIntegrity?: () => void;
   /** OM-15: void and entry reversal review. The screen explains when the database is not updated yet. */
   onOpenVoidRequests?: () => void;
 }) {
@@ -102,6 +105,12 @@ export function MoreMenuScreen({
           subtitle: 'Sales and inventory history',
           onTap: onOpenRecords,
         },
+        ...(onOpenAuditIntegrity ? [{
+          icon: 'clipboardCheck' as const,
+          title: 'Audit integrity',
+          subtitle: 'Check that no audit history was changed',
+          onTap: onOpenAuditIntegrity,
+        }] : []),
         {
           icon: 'profile',
           title: 'Profile',

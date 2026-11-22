@@ -439,6 +439,18 @@ export type Database = {
         action: string;
         description: string;
         created_at: string;
+        chain_scope: string;
+        sequence_number: number;
+        previous_hash: string;
+        event_hash: string;
+      }>;
+      audit_chain_checkpoints: Table<{
+        id: string;
+        chain_scope: string;
+        sequence_number: number;
+        event_hash: string;
+        created_at: string;
+        created_by: string | null;
       }>;
       owner_inventory_settings: Table<{
         id: boolean;
@@ -521,6 +533,20 @@ export type Database = {
     };
     Functions: {
       can_access_branch: { Args: { target_branch: string }; Returns: boolean };
+      verify_audit_chain: {
+        Args: {
+          p_chain_scope?: string | null;
+          p_from_sequence?: number;
+          p_from_hash?: string | null;
+          p_to_sequence?: number | null;
+          p_from_last_checkpoint?: boolean;
+        };
+        Returns: Json;
+      };
+      create_audit_checkpoint: {
+        Args: Record<PropertyKey, never>;
+        Returns: Database['public']['Tables']['audit_chain_checkpoints']['Row'][];
+      };
       refresh_reorder_points: {
         Args: { p_branch_id?: string | null };
         Returns: Database['public']['Tables']['inventory_reorder_points']['Row'][];

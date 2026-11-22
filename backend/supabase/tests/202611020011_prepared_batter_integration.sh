@@ -38,7 +38,6 @@ cleanup() {
   if [[ -n "${branch_id:-}" ]]; then
     "${psql_test[@]}" <<SQL
 delete from public.inventory_movements where branch_id = '${branch_id}';
-delete from public.audit_logs where branch_id = '${branch_id}';
 delete from public.ingredient_batches where branch_id = '${branch_id}';
 delete from public.sale_consumption_snapshots
 where sale_id in (select id from public.sales where branch_id = '${branch_id}');

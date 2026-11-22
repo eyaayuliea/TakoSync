@@ -75,7 +75,6 @@ delete from public.inventory_count_validations where daily_stock_count_line_id =
 delete from public.inventory_discrepancy_adjustments where daily_stock_count_line_id = '${line_id}';
 delete from public.inventory_count_correction_requests where daily_stock_count_line_id = '${line_id}';
 delete from public.inventory_movements where notes = '${movement_note}';
-delete from public.audit_logs where user_id in ('${owner_id}', '${staff_id}');
 delete from public.daily_stock_count_lines where id = '${line_id}';
 delete from public.daily_stock_checks where id = '${check_id}';
 delete from public.branch_inventory where branch_id = '${branch_id}';

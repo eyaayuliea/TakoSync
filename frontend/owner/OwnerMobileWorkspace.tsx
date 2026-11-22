@@ -29,6 +29,7 @@ import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScre
 import OwnerRequestsScreen from './OwnerRequestsScreen';
 import DailyClosingReportScreen from './DailyClosingReportScreen';
 import VoidReportScreen from './VoidReportScreen';
+import AuditIntegrityScreen from './AuditIntegrityScreen';
 import ReversalReportScreen from './ReversalReportScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
 import { OWNER_NAVIGATION_HEIGHT, OwnerBottomNav, type OwnerTab } from '../navigation/BottomNavigation';
@@ -91,7 +92,7 @@ import {
 } from './ownerInventoryStatus';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
-type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport';
+type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport' | 'AuditIntegrity';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -791,6 +792,7 @@ export default function OwnerMobileWorkspace({
         || page === 'SalesConsumptionRecords' || page === 'StockInRecords' || page === 'WasteSpillageRecords'
         || page === 'PhysicalCountRecords' || page === 'AuthorizedAdjustmentRecords' || page === 'Profile'
         || page === 'VoidRequests' || page === 'DailyClosingReport' || page === 'VoidReport' || page === 'ReversalReport'
+        || page === 'AuditIntegrity'
         || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' || page === 'BusinessHours'
         ? 'More' : page;
   const isOwnerMenuPage = page === 'More'
@@ -803,7 +805,8 @@ export default function OwnerMobileWorkspace({
     || page === 'VoidRequests'
     || page === 'DailyClosingReport'
     || page === 'VoidReport'
-    || page === 'ReversalReport';
+    || page === 'ReversalReport'
+    || page === 'AuditIntegrity';
   const isMenuFlowPage = isOwnerMenuPage || page === 'SalesTransactions';
 
   const calendarYear = calendarCursor.getFullYear();
@@ -2130,6 +2133,7 @@ export default function OwnerMobileWorkspace({
       onOpenRecords={() => pushMenuPage('More', 'RecordCategories')}
       onOpenProfile={() => pushMenuPage('More', 'Profile')}
       onOpenVoidRequests={() => pushMenuPage('More', 'VoidRequests')}
+      onOpenAuditIntegrity={() => pushMenuPage('More', 'AuditIntegrity')}
     />
   );
 
@@ -2158,6 +2162,7 @@ export default function OwnerMobileWorkspace({
     DailyClosingReport: 'Daily Closing Report',
     VoidReport: 'Void Report',
     ReversalReport: 'Reversal Report',
+    AuditIntegrity: 'Audit integrity',
     ActivityDetail: 'Activity details',
     Profile: 'Owner profile',
     StaffAccounts: 'Staff accounts',
@@ -2315,6 +2320,7 @@ export default function OwnerMobileWorkspace({
         {page === 'DailyClosingReport' && <DailyClosingReportScreen onBack={goBackFromMenu} />}
         {page === 'VoidReport' && <VoidReportScreen onBack={goBackFromMenu} />}
         {page === 'ReversalReport' && <ReversalReportScreen onBack={goBackFromMenu} />}
+        {page === 'AuditIntegrity' && <AuditIntegrityScreen onBack={goBackFromMenu} />}
         {page === 'ActivityDetail' && renderActivityDetail()}
         {page === 'Profile' && (
           <OwnerProfileScreen

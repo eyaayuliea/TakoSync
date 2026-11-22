@@ -300,6 +300,71 @@ export async function saveReplenishmentSettings(
   if (!data) throw new Error('The reorder settings could not be saved.');
 }
 
+/** S3: result for one audit chain (a branch, or `global` for accounts and settings). */
+export type AuditChainResult = {
+  chainScope: string;
+  status: 'VALID' | 'INVALID';
+  reason: string | null;
+  firstInvalidSequence: number | null;
+  verifiedEventCount: number;
+  finalHash: string;
+  fromSequence: number;
+  executionTimeMs: number;
+};
+
+export type AuditVerificationResult = {
+  supported: boolean;
+  status: 'VALID' | 'INVALID';
+  chains: AuditChainResult[];
+  verifiedEventCount: number;
+  verifiedAt: string;
+};
+
+/** Owner: recompute every audit chain (AC-AUDIT-02-06/07). */
+export async function verifyAuditChains(fromLastCheckpoint = false): Promise<AuditVerificationResult> {
+  const { data, error } = await requireSupabase().rpc('verify_audit_chain', { p_from_last_checkpoint: fromLastCheckpoint });
+  if (isMissingSchemaFunction(error)) {
+    return { supported: false, status: 'VALID', chains: [], verifiedEventCount: 0, verifiedAt: new Date().toISOString() };
+  }
+  assertNoError(error);
+  const result = (data ?? {}) as {
+    status?: string;
+    verified_event_count?: number;
+    verified_at?: string;
+    chains?: Record<string, unknown>[];
+  };
+  return {
+    supported: true,
+    status: result.status === 'INVALID' ? 'INVALID' : 'VALID',
+    verifiedEventCount: Number(result.verified_event_count ?? 0),
+    verifiedAt: String(result.verified_at ?? new Date().toISOString()),
+    chains: (result.chains ?? []).map((chain) => ({
+      chainScope: String(chain.chain_scope),
+      status: chain.status === 'INVALID' ? 'INVALID' : 'VALID',
+      reason: chain.reason == null ? null : String(chain.reason),
+      firstInvalidSequence: chain.first_invalid_sequence == null ? null : Number(chain.first_invalid_sequence),
+      verifiedEventCount: Number(chain.verified_event_count ?? 0),
+      finalHash: String(chain.final_hash ?? ''),
+      fromSequence: Number(chain.from_sequence ?? 0),
+      executionTimeMs: Number(chain.execution_time_ms ?? 0),
+    })),
+  };
+}
+
+/** Owner: record the head of every chain so it can be exported (AC-AUDIT-02-11). */
+export async function createAuditCheckpoint(): Promise<{ chainScope: string; sequenceNumber: number; eventHash: string; createdAt: string }[]> {
+  const { data, error } = await requireSupabase().rpc('create_audit_checkpoint');
+  if (isMissingSchemaFunction(error)) throw new Error('Audit checkpoints are not available on this database yet.');
+  assertNoError(error);
+  const rows = (data ?? []) as Database['public']['Tables']['audit_chain_checkpoints']['Row'][];
+  return rows.map((row) => ({
+    chainScope: row.chain_scope,
+    sequenceNumber: Number(row.sequence_number),
+    eventHash: row.event_hash,
+    createdAt: row.created_at,
+  }));
+}
+
 export async function updateLotExpiryWindow(warningHours: number, criticalHours: number): Promise<void> {
   if (!Number.isInteger(warningHours) || warningHours < 1 || warningHours > 720) {
     throw new Error('The yellow window must be from 1 to 720 hours.');
@@ -3906,7 +3971,7 @@ export async function loadOwnerActivityData(input: {
     if ((data?.length ?? 0) < pageSize) break;
   }
 
-  const auditLogs: Database['public']['Tables']['audit_logs']['Row'][] = [];
+  const auditLogs: Pick<Database['public']['Tables']['audit_logs']['Row'], 'id' | 'user_id' | 'branch_id' | 'action' | 'description' | 'created_at'>[] = [];
   for (let offset = 0; ; offset += pageSize) {
     let query = client.from('audit_logs')
       .select('id, user_id, branch_id, action, description, created_at')
