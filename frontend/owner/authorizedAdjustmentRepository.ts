@@ -28,11 +28,14 @@ export function buildAuthorizedAdjustmentRecords(reviews: OwnerDiscrepancyReview
   return reviews.filter((review) => review.status === 'Validated' && review.adjustment).map((review) => ({
     id: review.adjustment?.movementReference ?? review.correctionRequestId,
     ingredientName: review.ingredient, branchName: review.branch, previousExpectedQuantity: review.expected,
-    actualQuantity: review.actual, adjustedQuantity: review.correctedActual, unit: review.unit,
+    actualQuantity: review.actual,
+    // The quantity the adjustment was based on: an approved correction, otherwise the count itself.
+    adjustedQuantity: review.correctionStatus === 'approved' ? review.correctedActual : review.actual, unit: review.unit,
     reason: review.adjustment?.reason ?? review.validationReason ?? 'Validated',
     approvingOwner: review.adjustment?.approvingOwner ?? review.decisionOwner ?? 'Owner',
     approvedAt: review.adjustment?.approvedAt ?? review.validatedAt ?? review.submittedAt,
-    relatedDiscrepancy: review.correctionRequestId,
+    // The count's reference and item, which the owner can look up; not an internal id.
+    relatedDiscrepancy: `${review.reference} · ${review.ingredient}`,
   })).sort((left, right) => new Date(right.approvedAt).getTime() - new Date(left.approvedAt).getTime());
 }
 

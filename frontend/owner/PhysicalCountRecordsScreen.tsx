@@ -134,7 +134,7 @@ export default function PhysicalCountRecordsScreen({
       onPeriodChange={setRecordPeriod}
       extra={{
         label: 'Status',
-        options: ['All statuses', 'Submitted', 'Validated'],
+        options: ['All statuses', 'Submitted', 'Validated', 'Rejected for Recount'],
         selected: recordStatus,
         onChange: setRecordStatus,
       }}
@@ -181,7 +181,8 @@ export default function PhysicalCountRecordsScreen({
                   tone: selected.result === 'Matches' ? 'success' as const
                     : selected.result === 'Higher than Expected' ? 'warning' as const : 'critical' as const,
                 },
-                { label: 'Count status', value: selected.countStatus },
+                // OM-20 c4: a validated count is locked.
+                { label: 'Count status', value: selected.countStatus === 'Validated' ? 'Validated · Locked' : selected.countStatus },
                 { label: 'Date & time', value: formatPhysicalCountDateTime(selected.submittedAt) },
               ].map(({ label, value, tone }, index) => (
                 <OwnerRecordDetailRow
@@ -327,7 +328,7 @@ function QuantityColumn({
   );
 }
 
-function StatusChip({ label }: { label: 'Submitted' | 'Validated' | 'Corrected' }) {
+function StatusChip({ label }: { label: 'Submitted' | 'Validated' | 'Corrected' | 'Rejected for Recount' }) {
   const { colors } = useTheme();
   const styles = useStyles();
   return (

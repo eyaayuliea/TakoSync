@@ -260,7 +260,7 @@ export default function WasteSpillageRecordsScreen({
                   <Text style={styles.pinIcon}>⌖</Text>
                   <Text style={styles.tileBranch}>{record.branchName}</Text>
                 </View>
-                <WasteCategoryTag category={WASTE_SPILLAGE_CATEGORY_LABELS[record.category]} />
+                <WasteCategoryTag category={`${WASTE_SPILLAGE_CATEGORY_LABELS[record.category]}${record.isReversed ? ' · Reversed' : ''}`} />
               </View>
             </Pressable>
           ))}

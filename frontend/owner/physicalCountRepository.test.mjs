@@ -175,3 +175,17 @@ test('Owner physical-count records keep prepared batter in stored bottles, never
   assert.equal(formatPhysicalCountDifference(mapped.difference, mapped.unit), '−1 bottle');
   assert.equal(formatPhysicalCountQuantity(mapped.expectedQuantity, mapped.unit), '3 bottle');
 });
+
+test('OM-20 c1, c4: a settled count stays listed (check status "validated")', () => {
+  const settled = (physicalCount) => countHistoryRecord({ physicalCount: { ...countHistoryRecord().physicalCount, status: 'validated', ...physicalCount } });
+  const [validated] = buildPhysicalCountRecords([settled({})], [review({ status: 'Validated' })]);
+  assert.equal(validated.countStatus, 'Validated');
+  assert.equal(validated.discrepancyStatus, 'Adjusted');
+
+  const [rejected] = buildPhysicalCountRecords([settled({})], [review({ status: 'Rejected for Recount', rejection: { reason: 'Recount', rejectedBy: 'Owner', rejectedAt: '2026-11-12T11:00:00+08:00' } })]);
+  assert.equal(rejected.countStatus, 'Rejected for Recount');
+  assert.equal(rejected.discrepancyStatus, null, 'a rejected count is no longer pending review and was not adjusted');
+
+  const [matching] = buildPhysicalCountRecords([settled({ originalActualQuantity: 12, difference: 0 })], []);
+  assert.equal(matching.countStatus, 'Validated');
+});

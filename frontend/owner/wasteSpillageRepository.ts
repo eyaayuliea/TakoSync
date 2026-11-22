@@ -29,6 +29,8 @@ export type WasteSpillageRecord = {
   createdAt: string;
   remarks: string;
   recordedBy: string;
+  /** The entry was undone by an approved Entry Reversal; it stays listed. */
+  isReversed: boolean;
 };
 
 type WasteSpillageHistoryItem = TransactionHistoryItem & {
@@ -44,7 +46,7 @@ function categoryFromHistory(record: WasteSpillageHistoryItem): WasteSpillageCat
   return record.type === 'Spoilage' ? WasteSpillageCategory.Spoilage : WasteSpillageCategory.Waste;
 }
 
-export function buildWasteSpillageRecords(history: TransactionHistoryItem[]): WasteSpillageRecord[] {
+export function buildWasteSpillageRecords(history: TransactionHistoryItem[], reversedIds: ReadonlySet<string> = new Set()): WasteSpillageRecord[] {
   return history
     .filter((record): record is WasteSpillageHistoryItem => record.type === 'Waste' || record.type === 'Spoilage')
     .map((record) => ({
@@ -60,6 +62,7 @@ export function buildWasteSpillageRecords(history: TransactionHistoryItem[]): Wa
       createdAt: record.transactionDate.toISOString(),
       remarks: record.notes,
       recordedBy: record.staff,
+      isReversed: reversedIds.has(record.id),
     }))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
@@ -68,11 +71,12 @@ export async function loadWasteSpillageRecords(
   branches: { id: string; name: string }[],
 ): Promise<WasteSpillageRecord[]> {
   if (branches.length === 0) throw new Error('Owner branches are unavailable for Waste and Spillage records.');
-  const { loadTransactionHistory } = await import('../services/takosync.ts');
-  const historyByBranch = await Promise.all(
-    branches.map((branch) => loadTransactionHistory(branch.id)),
-  );
-  return buildWasteSpillageRecords(historyByBranch.flat());
+  const { loadReversedEntryIds, loadTransactionHistory } = await import('../services/takosync.ts');
+  const [historyByBranch, reversedIds] = await Promise.all([
+    Promise.all(branches.map((branch) => loadTransactionHistory(branch.id))),
+    loadReversedEntryIds(),
+  ]);
+  return buildWasteSpillageRecords(historyByBranch.flat(), reversedIds);
 }
 
 export function formatWasteSpillageDateTime(value: string): string {
