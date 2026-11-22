@@ -63,6 +63,7 @@ import {
 import {
   isDefinitiveInventoryRejection,
   pendingRequestIsProvablyInvalid,
+  PREPARED_BATTER_ID,
   toStoredTransactionUnit,
 } from '../services/inventoryTransactionUnits';
 import {
@@ -172,6 +173,7 @@ import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
 import DailyClosingSection from './DailyClosingSection';
 import OpeningFloatForm from './OpeningFloatForm';
+import StockInForm from './StockInForm';
 import {
   entryReversalAvailability,
   entryReversalState,
@@ -8771,7 +8773,22 @@ export default function StaffWorkspace({
       screenContent = renderBatterBatch();
       break;
     case 'stockIn':
-      screenContent = renderStockInForm();
+      // ST-09: header (supplier, date purchased, date received) with one or more lines.
+      screenContent = user?.branchId ? (
+        <StockInForm
+          branchId={user.branchId}
+          branchLabel={assignedBranch}
+          today={today}
+          // Prepared batter enters stock through Batter Batch Recording (ST-08), not Stock-In.
+          ingredients={ingredients.filter((item) => item.id !== PREPARED_BATTER_ID)}
+          DateField={DatePickerField}
+          onBack={returnFromForm}
+          onSaved={async () => {
+            setStockAlertsUpdated(true);
+            await refreshBackendData();
+          }}
+        />
+      ) : renderStockInForm();
       break;
     case 'stockOut':
       screenContent = renderMovementForm();
