@@ -81,6 +81,7 @@ import {
 } from './dailyClosing';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { isInactiveAccountDenial } from './permissions.ts';
+import { functionErrorMessage } from './functionErrors.ts';
 import { isVariantOutOfStock, parseSaleStockSnapshot, type SaleStockSnapshot } from './saleStock.ts';
 import {
   buildStockInRequest,
@@ -1119,7 +1120,7 @@ export async function signInOwnerWithEmail(email: string, password: string, clie
 
 export async function loadStaffAccounts(): Promise<StaffAccount[]> {
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', { body: { action: 'list' } });
-  if (error) throw new Error('Unable to load Staff accounts.');
+  if (error) throw new Error(await functionErrorMessage(error, 'Unable to load Staff accounts.'));
   if (!data?.ok || !Array.isArray(data.accounts)) throw new Error(data?.error ?? 'Unable to load Staff accounts.');
   return data.accounts as StaffAccount[];
 }
@@ -1128,7 +1129,7 @@ export async function provisionExistingStaffAccounts(): Promise<StaffAccount[]> 
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
     body: { action: 'provision-existing' },
   });
-  if (error) throw new Error('Unable to provision existing Staff credentials securely.');
+  if (error) throw new Error(await functionErrorMessage(error, 'Unable to provision existing Staff credentials securely.'));
   if (!data?.ok || !Array.isArray(data.accounts)) {
     throw new Error(data?.error ?? 'Unable to provision existing Staff credentials securely.');
   }
@@ -1139,7 +1140,7 @@ export async function resetStaffPasswordToEmployeeId(id: string): Promise<StaffA
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
     body: { action: 'reset-password', account: { id } },
   });
-  if (error) throw new Error('Unable to reset the Staff password securely.');
+  if (error) throw new Error(await functionErrorMessage(error, 'Unable to reset the Staff password securely.'));
   if (!data?.ok || !data.account) throw new Error(data?.error ?? 'Unable to reset the Staff password securely.');
   return data.account as StaffAccount;
 }
@@ -1150,7 +1151,7 @@ export async function changeStaffPassword(newPassword: string, currentPassword?:
     // ST-15 c5: the server checks the current password (with the ST-01 lockout).
     body: { action: 'change-password', newPassword, ...(currentPassword ? { currentPassword } : {}) },
   });
-  if (error) throw new Error('Unable to change the Staff password securely.');
+  if (error) throw new Error(await functionErrorMessage(error, 'Unable to change the Staff password securely.'));
   if (data?.code === 'incorrect_password' || data?.code === 'locked_account') {
     throw new StaffLoginError(data.code, { lockedUntil: data.lockedUntil, attemptsRemaining: data.attemptsRemaining });
   }
@@ -1170,7 +1171,7 @@ export async function saveStaffAccount(input: {
   const { data, error } = await requireSupabase().functions.invoke('staff-auth', {
     body: { action: input.id ? 'update' : 'create', account: input },
   });
-  if (error) throw new Error('Unable to save Staff account.');
+  if (error) throw new Error(await functionErrorMessage(error, 'Unable to save Staff account.'));
   if (!data?.ok || !data.account) throw new Error(data?.error ?? 'Unable to save Staff account.');
   return data.account as StaffAccount;
 }
