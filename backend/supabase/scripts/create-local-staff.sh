@@ -137,7 +137,6 @@ where id = :'user_id'::uuid
   and lower(email) = lower(:'staff_email')
   and role = 'staff'
   and active = false
-  and branch_id is null
 returning id as updated_profile_id
 \gset
 

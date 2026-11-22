@@ -147,7 +147,7 @@ fi
 created_user_id_sql="$(sql_literal "$created_user_id")"
 updated_profile_id="$(
   "${psql_args[@]}" -Atc "
-    begin;
+    -- One statement is atomic; psql < 15 prints only the last result of a -c string.
     update public.profiles
     set full_name = 'Local Test Owner',
         role = 'owner',
@@ -159,9 +159,7 @@ updated_profile_id="$(
       and lower(email) = lower($owner_email_sql)
       and role = 'staff'
       and active = false
-      and branch_id is null
     returning id;
-    commit;
   "
 )"
 if [[ ! "$updated_profile_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
