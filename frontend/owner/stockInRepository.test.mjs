@@ -53,3 +53,13 @@ test('Stock-In date and quantity formatting follows Asia/Manila and positive mov
   assert.equal(formatStockInExpirationDate('2026-11-19'), '19 Nov 2026');
   assert.equal(formatStockInQuantity({ ...record, quantity: -5 }), '+5 kg');
 });
+
+test('OM-18 c3: a reversed Stock-In stays listed and is marked reversed', () => {
+  const records = buildStockInRecords(
+    [historyRecord(), historyRecord({ id: 'transaction-2', reference: 'SI-1112-0013' })],
+    [],
+    new Set(['transaction-2']),
+  );
+  assert.equal(records.length, 2);
+  assert.deepEqual(records.map((record) => [record.reference, record.isReversed]).sort(), [['SI-1112-0012', false], ['SI-1112-0013', true]]);
+});

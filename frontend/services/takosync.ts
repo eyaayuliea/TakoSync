@@ -2327,6 +2327,21 @@ export async function loadOwnerEntryReversalReviews(
   };
 }
 
+/**
+ * OM-18 c3 / OM-19 c3: the ids of the entries that an approved reversal undid,
+ * so reports can mark them "Reversed" while keeping them listed.
+ */
+export async function loadReversedEntryIds(client?: StaffServiceClient): Promise<Set<string>> {
+  const { data, error } = await staffServiceClient(client).from('inventory_movements')
+    .select('reverses_movement_id')
+    .eq('type', 'entry_reversal')
+    .not('reverses_movement_id', 'is', null);
+  // Before the entry-reversal migration there is nothing to mark.
+  if (error && isMissingSchemaColumn(error)) return new Set();
+  assertNoError(error);
+  return new Set((data ?? []).flatMap((row) => (row.reverses_movement_id ? [row.reverses_movement_id] : [])));
+}
+
 /** OM-22 c2–c3: the Entry Reversal movements an approved request posted, with what they reversed. */
 export async function loadEntryReversalMovements(
   requestReference: string,

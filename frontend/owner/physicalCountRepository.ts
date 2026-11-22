@@ -2,7 +2,7 @@ import type { OwnerDiscrepancyReview, TransactionHistoryItem } from '../services
 import type { InventoryCountHistoryRecord } from '../staff/inventoryReports.ts';
 
 export type PhysicalCountResult = 'Matches' | 'Lower than Expected' | 'Higher than Expected';
-export type PhysicalCountStatus = 'Submitted' | 'Validated';
+export type PhysicalCountStatus = 'Submitted' | 'Validated' | 'Rejected for Recount';
 export type PhysicalCountDiscrepancyStatus = 'Pending Review' | 'Adjusted';
 
 export type PhysicalCountBranch = {
@@ -102,7 +102,9 @@ export function buildPhysicalCountRecords(
     .filter((record): record is CountHistoryItem =>
       record.type === 'Physical Inventory Count' &&
       record.physicalCount !== undefined &&
-      ['submitted', 'pending_owner_review'].includes(record.physicalCount.status),
+      // OM-20 c1, c4: a count stays listed after it is settled. Its check becomes
+      // "validated" once every discrepancy is validated or rejected for a recount.
+      ['submitted', 'pending_owner_review', 'validated'].includes(record.physicalCount.status),
     )
     .map((record) => {
       const count = record.physicalCount;
@@ -115,14 +117,17 @@ export function buildPhysicalCountRecords(
         reference !== null &&
         !reference.startsWith('pending-count:') &&
         !reference.startsWith('legacy:');
-      const discrepancyStatus: PhysicalCountDiscrepancyStatus | null = difference === 0
+      const rejectedForRecount = review?.status === 'Rejected for Recount' || Boolean(review?.rejection);
+      const discrepancyStatus: PhysicalCountDiscrepancyStatus | null = difference === 0 || rejectedForRecount
         ? null
         : review?.status === 'Validated' || count.validation
           ? 'Adjusted'
           : 'Pending Review';
-      const countStatus: PhysicalCountStatus = difference === 0 || count.validation || review?.status === 'Validated'
-        ? 'Validated'
-        : 'Submitted';
+      const countStatus: PhysicalCountStatus = rejectedForRecount
+        ? 'Rejected for Recount'
+        : difference === 0 || count.validation || review?.status === 'Validated'
+          ? 'Validated'
+          : 'Submitted';
       const revision = count.revisedActualQuantity !== null && count.revisedActualQuantity !== count.originalActualQuantity
         ? {
           originalValue: count.originalActualQuantity,

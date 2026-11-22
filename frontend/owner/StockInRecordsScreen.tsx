@@ -167,7 +167,7 @@ export default function StockInRecordsScreen({
               <View style={styles.detailCard}>
                 <View style={styles.detailHeader}>
                   <Text style={styles.recordId}>{selected.reference}</Text>
-                  <StockInStatusBadge />
+                  <StockInStatusBadge reversed={selected.isReversed} />
                 </View>
                 <View style={styles.detailHeaderDivider} />
                 {[
@@ -229,7 +229,7 @@ export default function StockInRecordsScreen({
                   <Text style={styles.pinIcon}>⌖</Text>
                   <Text style={styles.branchName}>{record.branchName}</Text>
                 </View>
-                <StockInStatusBadge />
+                <StockInStatusBadge reversed={record.isReversed} />
               </View>
             </Pressable>
           ))}
@@ -241,12 +241,13 @@ export default function StockInRecordsScreen({
   );
 }
 
-function StockInStatusBadge() {
+/** OM-18 c1, c3: the type tag; a reversed entry stays listed and is marked "Reversed". */
+function StockInStatusBadge({ reversed = false }: { reversed?: boolean }) {
   const styles = useStyles();
   return (
-    <View style={styles.statusBadge}>
-      <Text style={styles.statusCheck}>✓</Text>
-      <Text style={styles.statusText}>Stock-In</Text>
+    <View style={styles.statusBadge} accessibilityLabel={reversed ? 'Stock-In, reversed' : 'Stock-In'}>
+      <Text style={styles.statusCheck}>{reversed ? '↺' : '✓'}</Text>
+      <Text style={styles.statusText}>{reversed ? 'Stock-In · Reversed' : 'Stock-In'}</Text>
     </View>
   );
 }

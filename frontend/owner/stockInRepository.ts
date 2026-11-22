@@ -22,6 +22,8 @@ export type StockInRecord = {
   expirationDate: string | null;
   supplierReference: string;
   recordedBy: string;
+  /** The entry was undone by an approved Entry Reversal; it stays listed. */
+  isReversed: boolean;
 };
 
 type StockInHistoryItem = TransactionHistoryItem & { type: 'Stock-In' };
@@ -29,6 +31,7 @@ type StockInHistoryItem = TransactionHistoryItem & { type: 'Stock-In' };
 export function buildStockInRecords(
   history: TransactionHistoryItem[],
   batches: StockInBatch[],
+  reversedIds: ReadonlySet<string> = new Set(),
 ): StockInRecord[] {
   return history
     .filter((record): record is StockInHistoryItem => record.type === 'Stock-In')
@@ -46,6 +49,7 @@ export function buildStockInRecords(
         ?? null,
       supplierReference: record.notes.trim() || record.batchReference || '',
       recordedBy: record.staff,
+      isReversed: reversedIds.has(record.id),
     }))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
@@ -55,11 +59,12 @@ export async function loadStockInRecords(
   batches: StockInBatch[],
 ): Promise<StockInRecord[]> {
   if (branches.length === 0) throw new Error('Owner branches are unavailable for Stock-In records.');
-  const { loadTransactionHistory } = await import('../services/takosync.ts');
-  const historyByBranch = await Promise.all(
-    branches.map((branch) => loadTransactionHistory(branch.id)),
-  );
-  return buildStockInRecords(historyByBranch.flat(), batches);
+  const { loadReversedEntryIds, loadTransactionHistory } = await import('../services/takosync.ts');
+  const [historyByBranch, reversedIds] = await Promise.all([
+    Promise.all(branches.map((branch) => loadTransactionHistory(branch.id))),
+    loadReversedEntryIds(),
+  ]);
+  return buildStockInRecords(historyByBranch.flat(), batches, reversedIds);
 }
 
 export function formatStockInDateTime(value: string): string {
