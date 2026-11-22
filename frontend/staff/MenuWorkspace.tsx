@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   ActivityIndicator,
   Image,
   Modal,
@@ -535,29 +534,23 @@ export default function MenuWorkspace({
     onCancelOrder();
     onSetPage('menu');
   };
+  // ST-02 c8: confirming the sale, cancelling the order, and clearing the order each ask first.
+  // An in-app dialog is used (not the platform alert) so it looks and behaves the same everywhere.
+  const [confirmAction, setConfirmAction] = useState<'sale' | 'cancel' | 'clear' | null>(null);
   const cancelOrder = () => {
     if (saleSubmitting) return;
-    Alert.alert('Cancel order?', 'The current order will be cleared. No sale will be saved.', [
-      { text: 'Keep order', style: 'cancel' },
-      { text: 'Cancel Order', style: 'destructive', onPress: discardOrder },
-    ]);
+    setConfirmAction('cancel');
   };
   const clearCurrentOrder = () => {
     if (totals.count === 0 && selectedAddonIds.length === 0) return;
-    Alert.alert('Clear current order?', 'This will remove all items and selected add-ons.', [
-      { text: 'Keep order', style: 'cancel' },
-      {
-        text: 'Clear',
-        style: 'destructive',
-        onPress: () => {
-          onCancelOrder();
-          setSelectedAddonIds([]);
-          setCashReceived('');
-          setSaleError('');
-          setSaleRetryAvailable(false);
-        },
-      },
-    ]);
+    setConfirmAction('clear');
+  };
+  const clearOrderNow = () => {
+    onCancelOrder();
+    setSelectedAddonIds([]);
+    setCashReceived('');
+    setSaleError('');
+    setSaleRetryAvailable(false);
   };
   const branchSegments = assignedBranch.split(' · ');
   const branchName = branchSegments[0] || assignedBranch;
@@ -589,11 +582,50 @@ export default function MenuWorkspace({
     }
   };
 
+  const confirmCopy = confirmAction === 'sale'
+    ? {
+      title: 'Confirm this sale?',
+      message: `${totals.count} ${totals.count === 1 ? 'item' : 'items'} · ${money(checkoutTotal)} · ${paymentMethod}`
+        + `${paymentMethod === 'Cash' && cashValid ? ` · Change ${money(Math.max(0, parsedCash - checkoutTotal))}` : ''}.`
+        + ' The sale and its ingredient use will be recorded and cannot be edited afterwards.',
+      confirm: 'Confirm Sale',
+      keep: 'Back',
+    }
+    : confirmAction === 'cancel'
+      ? { title: 'Cancel order?', message: 'The current order will be cleared. No sale will be saved.', confirm: 'Cancel Order', keep: 'Keep order' }
+      : { title: 'Clear current order?', message: 'This will remove all items and selected add-ons.', confirm: 'Clear', keep: 'Keep order' };
+  const runConfirmedAction = () => {
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action === 'sale') void submitCheckout();
+    else if (action === 'cancel') discardOrder();
+    else if (action === 'clear') clearOrderNow();
+  };
+  const confirmDialog = (
+    <Modal visible={confirmAction !== null} transparent animationType="fade" onRequestClose={() => setConfirmAction(null)}>
+      <View style={styles.confirmBackdrop}>
+        <View style={[styles.confirmCard, isDark && { backgroundColor: '#1A1B33' }]} accessibilityRole="alert">
+          <Text style={[styles.confirmTitle, isDark && { color: '#FFFFFF' }]}>{confirmCopy.title}</Text>
+          <Text style={[styles.confirmMessage, isDark && { color: '#B2B3C4' }]}>{confirmCopy.message}</Text>
+          <View style={styles.confirmActions}>
+            <Pressable accessibilityRole="button" onPress={() => setConfirmAction(null)} style={styles.confirmKeepButton}>
+              <Text style={styles.confirmKeepText}>{confirmCopy.keep}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={confirmCopy.confirm} onPress={runConfirmedAction} style={styles.confirmGoButton}>
+              <Text style={styles.confirmGoText}>{confirmCopy.confirm}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   if (!visible) return <View style={styles.hidden} />;
 
   if (page === 'cart') {
     return (
       <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
+        {confirmDialog}
         <ScreenHeader title="Cart" onBack={() => onSetPage('menu')} />
         <ProgressSteps active={2} />
         <ScrollView
@@ -663,6 +695,7 @@ export default function MenuWorkspace({
   if (page === 'checkout') {
     return (
       <View style={[styles.screen, isDark && { backgroundColor: themeColors.background }]}>
+        {confirmDialog}
         <ScreenHeader title="Order" onBack={() => onSetPage('cart')} />
         <ProgressSteps active={3} />
           <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -775,7 +808,7 @@ export default function MenuWorkspace({
             accessibilityRole="button"
             accessibilityLabel="Confirm transaction"
             disabled={!checkoutValid || saleSubmitting}
-            onPress={() => void submitCheckout()}
+            onPress={() => setConfirmAction('sale')}
             style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
           >
             <Text style={styles.placeOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
@@ -799,6 +832,7 @@ export default function MenuWorkspace({
 
   return (
     <View style={[styles.posScreen, isDark && { backgroundColor: '#0F1025' }]}>
+      {confirmDialog}
       <View style={[styles.posHeader, { backgroundColor: colors.white }]}>
         <Text style={[styles.posHeaderTitle, { color: colors.navy }]}>POS · {branchName}</Text>
         <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{staffName} · {branchCode}</Text>
@@ -1245,6 +1279,15 @@ const styles = StyleSheet.create({
   currentOrderHeadingCopy: { flexDirection: 'row', alignItems: 'baseline', gap: 7 },
   currentOrderTitle: { color: colors.navy, fontFamily: font.bold, fontSize: 11 },
   currentOrderCount: { color: colors.secondary, fontFamily: font.medium, fontSize: 7 },
+  confirmBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 22, backgroundColor: 'rgba(16, 16, 39, 0.42)' },
+  confirmCard: { width: '100%', maxWidth: 360, padding: 18, borderRadius: 19, backgroundColor: colors.white, gap: 8 },
+  confirmTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
+  confirmMessage: { color: colors.secondary, fontFamily: font.regular, fontSize: 11, lineHeight: 16 },
+  confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 8 },
+  confirmKeepButton: { minHeight: 42, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#F0F0F4' },
+  confirmKeepText: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
+  confirmGoButton: { minHeight: 42, minWidth: 110, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
+  confirmGoText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   clearOrderButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 7 },
   clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
   clearOrderDisabled: { color: '#B8B8C0' },
