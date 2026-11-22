@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
+import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
 import { ThemeProvider } from '../theme/ThemeProvider';
@@ -815,14 +817,14 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
   );
   const branchId = branches.find((item) => item.name === branch)?.id ?? null;
   // OW-06–OW-10 c1: the selections apply when the owner selects Generate Report.
-  const [generated, setGenerated] = useState<{ report: string; range: { start: Date; end: Date }; branchId: string | null; key: number } | null>(null);
+  const [generated, setGenerated] = useState<{ report: string; range: { start: Date; end: Date }; branchId: string | null; branchName: string; periodLabel: string; key: number } | null>(null);
   const [voids, setVoids] = useState<OwnerSaleVoidReview[] | null>(null);
   const generate = () => {
     if (!range) {
       setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
       return;
     }
-    setGenerated({ report, range, branchId, key: Date.now() });
+    setGenerated({ report, range, branchId, branchName: branch, periodLabel: period, key: Date.now() });
   };
 
   useEffect(() => {
@@ -901,7 +903,44 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     ].filter(Boolean).join('\n'),
   ]);
   const shownReport = generated?.report ?? null;
-  const hasReportData = shownReport === 'Void Report' ? Boolean(voidReport?.count) : records.length > 0;
+  // OW-05 c6–c8: one description of the report for the preview, Print and Export PDF.
+  const salesSections = (): ReportSection[] => {
+    const none = { notes: ['No confirmed sales exist for this period.'] };
+    switch (shownReport) {
+      case 'Total Sales Report':
+        return [{ summary: [['Total sales', peso(total)], ['Completed sales', String(records.length)]] }, ...(records.length ? [] : [none])];
+      case 'Branch Sales Report':
+        return [records.length ? { table: { headers: ['Branch', 'Transactions', 'Total Sales'], rows: branchRows } } : none];
+      case 'Products Sold Report':
+        return [records.length ? { table: { headers: ['Product', 'Quantity Sold', 'Sales Total'], rows: productRows } } : none];
+      case 'Transaction Summary Report':
+        return [records.length ? { table: { headers: ['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total'], rows: transactionRows } } : none];
+      default:
+        return [];
+    }
+  };
+  const reportDoc: ReportDocument | null = !generated || loading
+    ? null
+    : shownReport === 'Void Report'
+      ? voidReport && {
+        title: 'Void Report',
+        period: formatReportPeriod(generated.periodLabel, generated.range),
+        branch: generated.branchName,
+        generatedAt: new Date(generated.key),
+        sections: [
+          { summary: [['Voided sales', String(voidReport.count)], ['Total amount voided', peso(voidReport.total)]] },
+          voidReport.count
+            ? { table: { headers: ['Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason', 'Voided by · date & time', 'Review status · reviewer'], rows: voidRows } }
+            : { notes: ['No sales were voided in this period.'] },
+        ],
+      }
+      : sales && {
+        title: shownReport ?? 'Sales Report',
+        period: formatReportPeriod(generated.periodLabel, generated.range),
+        branch: generated.branchName,
+        generatedAt: new Date(generated.key),
+        sections: salesSections(),
+      };
 
   return (
     <>
@@ -910,13 +949,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           <Text style={styles.section}>Reports</Text>
           <Text style={styles.muted}>Supabase sales in the selected Manila reporting period.</Text>
         </View>
-        <Pressable
-          disabled={loading || !hasReportData}
-          onPress={() => { if (typeof window !== 'undefined') window.print(); }}
-          style={[styles.outline, (loading || !hasReportData) && { opacity: 0.45 }]}
-        >
-          <Text style={styles.pinkText}>Print / Export</Text>
-        </Pressable>
+        <ReportActions doc={reportDoc} />
       </View>
       <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
         <Select
@@ -960,43 +993,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
       {!generated && !loading ? (
         <Text style={styles.muted}>Choose the report type, reporting period and branch, then select Generate Report.</Text>
       ) : null}
-      {!loading && shownReport === 'Void Report' && voidReport ? (
-        <Panel title="Void Report">
-          <View style={[styles.row, { justifyContent: 'flex-start', gap: 28, marginBottom: 14 }]}>
-            <View><Text style={styles.metricLabel}>Voided sales</Text><Text style={styles.metricValue}>{voidReport.count}</Text></View>
-            <View><Text style={styles.metricLabel}>Total amount voided</Text><Text style={styles.metricValue}>{peso(voidReport.total)}</Text></View>
-          </View>
-          {voidReport.count ? (
-            <Table
-              headers={['Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason', 'Voided by · date & time', 'Review status · reviewer']}
-              rows={voidRows}
-            />
-          ) : <Text style={styles.empty}>No sales were voided in this period.</Text>}
-        </Panel>
-      ) : null}
-      {!loading && sales && generated && shownReport !== 'Void Report' ? (
-        <Panel title={shownReport}>
-          {shownReport === 'Total Sales Report' ? (
-            <>
-              <Text style={styles.metricValue}>{peso(total)}</Text>
-              <Text style={styles.muted}>{records.length} completed sales.</Text>
-            </>
-          ) : null}
-          {shownReport === 'Branch Sales Report' ? (
-            <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchRows} />
-          ) : null}
-          {shownReport === 'Products Sold Report' ? (
-            <Table headers={['Product', 'Quantity Sold', 'Sales Total']} rows={productRows} />
-          ) : null}
-          {shownReport === 'Transaction Summary Report' ? (
-            <Table
-              headers={['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total']}
-              rows={transactionRows}
-            />
-          ) : null}
-          {!records.length ? <Text style={styles.empty}>No confirmed sales exist for this period.</Text> : null}
-        </Panel>
-      ) : null}
+      {reportDoc ? <ReportPreview doc={reportDoc} /> : null}
     </>
   );
 }
@@ -1035,14 +1032,16 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   );
   const draftBranchId = branches.find((item) => item.name === branch)?.id ?? null;
   // OW-13–OW-19 c1: the selections apply when the owner selects Generate Report.
-  const [generated, setGenerated] = useState<{ report: InventoryReportPage; range: { start: Date; end: Date } | null; branchId: string | null; branchName: string; key: number } | null>(null);
+  const [generated, setGenerated] = useState<{ report: InventoryReportPage; range: { start: Date; end: Date } | null; branchId: string | null; branchName: string; periodLabel: string; key: number } | null>(null);
+  // OW-12 c4: when the expected-stock snapshot shown was read.
+  const inventoryAsOf = useMemo(() => new Date(), [inventoryRows]);
   const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
   const generate = () => {
     if (!range && report !== 'Expected Stock Quantity Report') {
       setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
       return;
     }
-    setGenerated({ report, range, branchId: draftBranchId, branchName: branch, key: Date.now() });
+    setGenerated({ report, range, branchId: draftBranchId, branchName: branch, periodLabel: period, key: Date.now() });
   };
   const shownReport = generated?.report ?? null;
   const branchId = generated?.branchId ?? null;
@@ -1180,17 +1179,54 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     `${record.recordedBy}\n${formatStockInDateTime(record.recordedAt ?? record.createdAt)}`,
     record.isReversed ? 'Reversed' : 'Recorded',
   ]);
-  const hasReportData = !shownReport
-    ? false
-    : shownReport === 'Expected Stock Quantity Report'
-      ? inventoryAvailable && filteredInventory.length > 0
-      : shownReport === 'Stock-In Report'
-        ? stockInRows.length > 0
-        : shownReport === 'Physical Inventory Count and Discrepancy Report'
-          ? countRows.length > 0
-          : shownReport === 'Authorized Adjustment Report'
-            ? adjustmentRows.length > 0
-            : movementRows.length > 0;
+  // OW-12 c4, c6, c7: one description of the report for the preview, Print and Export PDF.
+  const table = (headers: string[], rows: string[][], empty = 'No records exist for the selected branch and reporting period.'): ReportSection =>
+    rows.length ? { table: { headers, rows } } : { notes: [empty] };
+  const inventorySections = (): ReportSection[] => {
+    switch (shownReport) {
+      case 'Expected Stock Quantity Report':
+        return [inventoryAvailable
+          ? table(['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches'],
+            filteredInventory.map((item) => [item.name, item.category, item.branch, `${item.quantityLabel} ${item.unit}`, item.status, item.expiry, item.batches]))
+          : { notes: ['Expected stock data is unavailable.'] }];
+      case 'Stock-In Report':
+        if (!stockInReport || !stockInRows.length) return [{ notes: ['No records exist for the selected branch and reporting period.'] }];
+        return [
+          {
+            heading: `Total received per ingredient${stockInReport.rows.some((row) => row.isReversed) ? ' (reversed entries not counted)' : ''}`,
+            compact: true,
+            summary: stockInReport.totals.map((total): [string, string] => [
+              total.ingredientName,
+              `${formatStockInQuantity(total).replace(/^\+/, '')} · ${total.entries} ${total.entries === 1 ? 'entry' : 'entries'}`,
+            ]),
+            notes: stockInReport.totals.length ? [] : ['Every Stock-In in this period was reversed, so nothing counts as received.'],
+          },
+          table(['Ingredient', 'Quantity received', 'Branch', 'Date purchased', 'Date received', 'Expiration', 'Supplier / reference', 'Recorded by · date & time', 'Status'], stockInRows),
+        ];
+      case 'Physical Inventory Count and Discrepancy Report':
+        return [activity === null
+          ? { notes: ['Physical count data is unavailable.'] }
+          : table(['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History'], countRows)];
+      case 'Authorized Adjustment Report':
+        return [reviews === null
+          ? { notes: ['Authorized adjustment data is unavailable.'] }
+          : table(['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)'], adjustmentRows)];
+      default:
+        return [table(['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)'], movementRows)];
+    }
+  };
+  const reportDoc: ReportDocument | null = !generated || loading || (error && generated.report !== 'Expected Stock Quantity Report')
+    ? null
+    : {
+      title: generated.report,
+      period: generated.range && generated.report !== 'Expected Stock Quantity Report'
+        ? formatReportPeriod(generated.periodLabel, generated.range)
+        : 'Current snapshot (not date-filtered)',
+      branch: generated.branchName,
+      generatedAt: new Date(generated.key),
+      figuresAsOf: generated.report === 'Expected Stock Quantity Report' ? inventoryAsOf : new Date(generated.key),
+      sections: inventorySections(),
+    };
 
   return (
     <>
@@ -1199,9 +1235,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           <Text style={styles.section}>Inventory reports</Text>
           <Text style={styles.muted}>Live Owner inventory data; movement categories remain separate.</Text>
         </View>
-        <Pressable disabled={loading || !hasReportData} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={[styles.outline, (loading || !hasReportData) && { opacity: 0.45 }]}>
-          <Text style={styles.pinkText}>Print / Export</Text>
-        </Pressable>
+        <ReportActions doc={reportDoc} />
       </View>
       <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
         <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
@@ -1220,62 +1254,9 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
         </View>
       ) : null}
-      {shownReport === 'Expected Stock Quantity Report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
       {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
-      {!loading && shownReport === 'Expected Stock Quantity Report' ? (
-        <Table
-          headers={['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches']}
-          rows={filteredInventory.map((item) => [item.name, item.category, item.branch, `${item.quantityLabel} ${item.unit}`, item.status, item.expiry, item.batches])}
-        />
-      ) : null}
-      {!loading && shownReport === 'Stock-In Report' && stockInReport && stockInRows.length ? (
-        <Panel title="Stock-In Report">
-          <Text style={styles.metricLabel}>Total received per ingredient{stockInReport.rows.some((row) => row.isReversed) ? ' (reversed entries not counted)' : ''}</Text>
-          <View style={[styles.row, { justifyContent: 'flex-start', flexWrap: 'wrap', gap: 24, marginTop: 8, marginBottom: 16 }]}>
-            {stockInReport.totals.map((total) => (
-              <View key={`${total.ingredientName}-${total.unit}`}>
-                <Text style={styles.strong}>{total.ingredientName}</Text>
-                <Text style={styles.body}>{formatStockInQuantity(total).replace(/^\+/, '')} · {total.entries} {total.entries === 1 ? 'entry' : 'entries'}</Text>
-              </View>
-            ))}
-            {!stockInReport.totals.length ? <Text style={styles.body}>Every Stock-In in this period was reversed, so nothing counts as received.</Text> : null}
-          </View>
-          <Table
-            headers={['Ingredient', 'Quantity received', 'Branch', 'Date purchased', 'Date received', 'Expiration', 'Supplier / reference', 'Recorded by · date & time', 'Status']}
-            rows={stockInRows}
-          />
-        </Panel>
-      ) : null}
-      {!loading && isMovementReport ? (
-        <Table
-          headers={['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)']}
-          rows={movementRows}
-        />
-      ) : null}
-      {!loading && shownReport === 'Physical Inventory Count and Discrepancy Report' ? (
-        <Table
-          headers={['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History']}
-          rows={countRows}
-        />
-      ) : null}
-      {!loading && shownReport === 'Authorized Adjustment Report' ? (
-        <Table
-          headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)']}
-          rows={adjustmentRows}
-        />
-      ) : null}
-      {!loading && !error && generated && !hasReportData ? (
-        <Text style={styles.empty}>
-          {shownReport === 'Expected Stock Quantity Report' && !inventoryAvailable
-            ? 'Expected stock data is unavailable.'
-            : shownReport === 'Authorized Adjustment Report' && reviews === null
-              ? 'Authorized adjustment data is unavailable.'
-              : shownReport === 'Physical Inventory Count and Discrepancy Report' && activity === null
-                ? 'Physical count data is unavailable.'
-                : 'No records exist for the selected branch and reporting period.'}
-        </Text>
-      ) : null}
+      {reportDoc ? <ReportPreview doc={reportDoc} /> : null}
     </>
   );
 }
@@ -1413,6 +1394,79 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
         </>
       ) : null}
     </>
+  );
+}
+/** OW-05 c5–c6 / OW-12 c4: the preview of a generated report, drawn from the same description as Print and Export PDF. */
+function ReportPreview({ doc }: { doc: ReportDocument }) {
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.kicker}>REPORT PREVIEW</Text>
+      <Text style={[styles.section, { marginTop: 4 }]}>{doc.title}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 24, paddingBottom: 12, marginBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border }}>
+        {reportMetaLines(doc).map(([label, value]) => (
+          <View key={label}>
+            <Text style={styles.metricLabel}>{label}</Text>
+            <Text style={[styles.body, { marginTop: 3 }]}>{value}</Text>
+          </View>
+        ))}
+      </View>
+      {doc.sections.map((section, index) => (
+        <View key={`${section.heading ?? 'section'}-${index}`} style={{ marginBottom: 14 }}>
+          {section.heading ? <Text style={styles.panelTitle}>{section.heading}</Text> : null}
+          {section.summary?.length ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: section.compact ? 24 : 32, marginBottom: 14 }}>
+              {section.summary.map(([label, value]) => (
+                <View key={label}>
+                  <Text style={section.compact ? styles.strong : styles.metricLabel}>{label}</Text>
+                  <Text style={section.compact ? styles.body : styles.metricValue}>{value}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {(section.notes ?? []).map((note) => <Text key={note} style={styles.empty}>{note}</Text>)}
+          {section.table ? <Table headers={section.table.headers} rows={section.table.rows} /> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+/** OW-05 c7–c8 / OW-12 c6–c7: Print opens a print-friendly view; Export PDF downloads the report. */
+function ReportActions({ doc }: { doc: ReportDocument | null }) {
+  const [message, setMessage] = useState('');
+  const onError = (text: string) => setMessage(text);
+  const disabled = !doc;
+  return (
+    <View style={{ alignItems: 'flex-end', gap: 6 }}>
+    <View style={{ flexDirection: 'row', gap: 8 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={() => { setMessage(''); if (doc && !openReportPrintView(doc)) onError('The print view was blocked. Allow pop-ups for this site, then select Print again.'); }}
+        style={[styles.outline, { marginTop: 0 }, disabled && { opacity: 0.45 }]}
+      >
+        <Text style={styles.pinkText}>Print</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={() => {
+          if (!doc) return;
+          setMessage('');
+          try {
+            downloadReportPdf(doc);
+          } catch (reason: unknown) {
+            onError(reason instanceof Error ? `The PDF could not be created: ${reason.message}` : 'The PDF could not be created.');
+          }
+        }}
+        style={[styles.outline, { marginTop: 0 }, disabled && { opacity: 0.45 }]}
+      >
+        <Text style={styles.pinkText}>Export PDF</Text>
+      </Pressable>
+    </View>
+    {message ? <Text style={[styles.errorText, { maxWidth: 320, textAlign: 'right' }]}>{message}</Text> : null}
+    </View>
   );
 }
 function Panel({ title, action, children }: any) { return <View style={styles.panel}><View style={styles.row}><Text style={styles.panelTitle}>{title}</Text>{action && <Pressable onPress={action}><Text style={styles.pinkText}>Refresh</Text></Pressable>}</View>{children}</View>; }
