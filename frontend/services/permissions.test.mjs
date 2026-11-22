@@ -6,6 +6,7 @@ import {
   ROLE_PERMISSIONS,
   authorize,
   can,
+  isInactiveAccountDenial,
   parseGateDenial,
   permissionMask,
   withDenialAudit,
@@ -105,4 +106,13 @@ test('other responses pass through without extra calls', async () => {
   const authDenied = withDenialAudit(async () => { count += 1; return new Response('{}', { status: 403 }); }, 'http://x');
   assert.equal((await authDenied('http://x/auth/v1/user')).status, 403);
   assert.equal(count, 2);
+});
+
+test('ST-01 c10: a DENY_INACTIVE gate refusal is recognised as a deactivated account', () => {
+  const denial = (reason) => ({ code: 'PT403', hint: 'PERMISSION_DENIED', message: 'Permission denied',
+    details: JSON.stringify({ reason, endpoint: 'table/profiles', method: 'GET' }) });
+  assert.equal(isInactiveAccountDenial(denial('DENY_INACTIVE')), true);
+  assert.equal(isInactiveAccountDenial(denial('DENY_PERMISSION')), false);
+  assert.equal(isInactiveAccountDenial({ code: 'PGRST301', message: 'JWT expired' }), false);
+  assert.equal(isInactiveAccountDenial(null), false);
 });
