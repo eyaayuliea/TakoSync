@@ -8,6 +8,8 @@ import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import { buildWebVoidReport } from './ownerPortalVoidReport';
+import { buildWebStockInReport } from './ownerPortalStockInReport';
+import { formatStockInDate, formatStockInDateTime, formatStockInExpirationDate, formatStockInQuantity, loadStockInRecords, stockInEnteredQuantity, type StockInRecord } from './stockInRepository';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   createIngredient,
@@ -327,6 +329,7 @@ export default function OwnerPortalWeb() {
               branches={inventoryData?.branches ?? []}
               inventoryRows={rows}
               inventoryAvailable={inventoryData !== null}
+              batches={inventoryData?.batches ?? []}
             />
           )}
           {page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
@@ -1001,12 +1004,13 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
 type InventoryReportPage = 'Expected Stock Quantity Report' | OwnerPortalMovementReport |
   'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report';
 
-function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable }: {
+function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable, batches }: {
   branch: string;
   setBranch: (value: string) => void;
   branches: OwnerPortalBranch[];
   inventoryRows: InventoryRow[];
   inventoryAvailable: boolean;
+  batches: Array<{ batch_reference: string; expiration_date: string | null }>;
 }) {
   const narrow = useWindowDimensions().width < 720;
   const reportOptions: InventoryReportPage[] = [
@@ -1029,29 +1033,41 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     () => getManilaReportingRange(period, new Date(), startDate, endDate),
     [period, startDate, endDate],
   );
-  const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+  const draftBranchId = branches.find((item) => item.name === branch)?.id ?? null;
+  // OW-13–OW-19 c1: the selections apply when the owner selects Generate Report.
+  const [generated, setGenerated] = useState<{ report: InventoryReportPage; range: { start: Date; end: Date } | null; branchId: string | null; branchName: string; key: number } | null>(null);
+  const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
+  const generate = () => {
+    if (!range && report !== 'Expected Stock Quantity Report') {
+      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
+      return;
+    }
+    setGenerated({ report, range, branchId: draftBranchId, branchName: branch, key: Date.now() });
+  };
+  const shownReport = generated?.report ?? null;
+  const branchId = generated?.branchId ?? null;
 
   useEffect(() => {
     let active = true;
-    if (report === 'Expected Stock Quantity Report') {
-      setActivity(null);
-      setReviews(null);
-      setError('');
-      setLoading(false);
-      return () => { active = false; };
-    }
-    if (!range) {
-      setActivity(null);
-      setReviews(null);
-      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
-      setLoading(false);
-      return () => { active = false; };
-    }
-
-    setLoading(true);
-    setError('');
     setActivity(null);
     setReviews(null);
+    setStockIns(null);
+    setError('');
+    if (!generated || generated.report === 'Expected Stock Quantity Report' || !generated.range) {
+      setLoading(false);
+      return () => { active = false; };
+    }
+    const range = generated.range;
+    const branchId = generated.branchId;
+    setLoading(true);
+    if (generated.report === 'Stock-In Report') {
+      // OW-15: the same Stock-In records as the owner mobile report (receipts, reversals).
+      loadStockInRecords(branchId ? branches.filter((item) => item.id === branchId) : branches, batches)
+        .then((records) => { if (active) setStockIns(records); })
+        .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the Stock-In report.'); })
+        .finally(() => { if (active) setLoading(false); });
+      return () => { active = false; };
+    }
     Promise.allSettled([
       loadOwnerActivityData({ start: range.start, end: range.end, branchId }),
       loadOwnerDiscrepancyReviews(branchId),
@@ -1068,7 +1084,10 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [range, branchId, report]);
+    // branches and batches are read when the owner generates the report.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generated]);
+  const reportRange = generated?.range ?? null;
 
   const branchNameById = new Map(branches.map((item) => [item.id, item.name]));
   const itemNameById = new Map(inventoryRows.map((item) => [
@@ -1080,15 +1099,14 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     dateStyle: 'medium',
     timeStyle: 'short',
   });
-  const filteredInventory = filterOwnerPortalInventory(inventoryRows, branch);
-  const isMovementReport = report === 'Stock-In Report'
-    || report === 'Sales Consumption Report'
-    || report === 'Waste and Spillage Report';
-  const movementRows = activity && range && isMovementReport
-    ? filterOwnerPortalReportMovements(activity.transactions, report as OwnerPortalMovementReport, {
+  const filteredInventory = filterOwnerPortalInventory(inventoryRows, generated?.branchName ?? branch);
+  const isMovementReport = shownReport === 'Sales Consumption Report'
+    || shownReport === 'Waste and Spillage Report';
+  const movementRows = activity && reportRange && isMovementReport
+    ? filterOwnerPortalReportMovements(activity.transactions, shownReport as OwnerPortalMovementReport, {
       branchId,
-      start: range.start,
-      end: range.end,
+      start: reportRange.start,
+      end: reportRange.end,
     }).map((item) => [
       item.reference,
       branchNameById.get(item.branch_id) ?? item.branch_id,
@@ -1100,7 +1118,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       dateFormatter.format(new Date(item.transaction_date)),
     ])
     : [];
-  const countRows = activity && range && report === 'Physical Inventory Count and Discrepancy Report'
+  const countRows = activity && reportRange && shownReport === 'Physical Inventory Count and Discrepancy Report'
     ? buildOwnerPortalCountReportRows({
       checks: activity.dailyChecks,
       lines: activity.countLines,
@@ -1114,8 +1132,8 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
         validationReason: review.validationReason,
       })),
       branchId,
-      start: range.start,
-      end: range.end,
+      start: reportRange.start,
+      end: reportRange.end,
       branchNames: branchNameById,
       itemNames: itemNameById,
     }).map((row) => [
@@ -1132,11 +1150,11 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       row.revisionHistory,
     ])
     : [];
-  const adjustmentRows = report === 'Authorized Adjustment Report' && range
+  const adjustmentRows = shownReport === 'Authorized Adjustment Report' && reportRange
     ? (reviews ?? []).flatMap((review) => {
       if (!review.adjustment || (branchId && review.branchId !== branchId)) return [];
       const approvedAt = new Date(review.adjustment.approvedAt).getTime();
-      if (!Number.isFinite(approvedAt) || approvedAt < range.start.getTime() || approvedAt >= range.end.getTime()) return [];
+      if (!Number.isFinite(approvedAt) || approvedAt < reportRange.start.getTime() || approvedAt >= reportRange.end.getTime()) return [];
       return [[
         review.adjustment.movementReference,
         review.reference,
@@ -1149,13 +1167,30 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       ]];
     })
     : [];
-  const hasReportData = report === 'Expected Stock Quantity Report'
-    ? inventoryAvailable && filteredInventory.length > 0
-    : report === 'Physical Inventory Count and Discrepancy Report'
-      ? countRows.length > 0
-      : report === 'Authorized Adjustment Report'
-        ? adjustmentRows.length > 0
-        : movementRows.length > 0;
+  // OW-15: Stock-In rows with receipt dates, expiry, supplier, recorder and reversals.
+  const stockInReport = stockIns && reportRange ? buildWebStockInReport(stockIns, reportRange) : null;
+  const stockInRows = (stockInReport?.rows ?? []).map((record) => [
+    record.ingredientName,
+    `${formatStockInQuantity(record).replace(/^\+/, '')}${stockInEnteredQuantity(record) ? `\n(${stockInEnteredQuantity(record)})` : ''}`,
+    record.branchName,
+    record.datePurchased ? formatStockInDate(record.datePurchased) : '—',
+    record.dateReceived ? formatStockInDate(record.dateReceived) : '—',
+    record.expirationDate ? formatStockInExpirationDate(record.expirationDate) : '—',
+    [record.supplierReference, record.receiptReference].filter(Boolean).join('\n') || '—',
+    `${record.recordedBy}\n${formatStockInDateTime(record.recordedAt ?? record.createdAt)}`,
+    record.isReversed ? 'Reversed' : 'Recorded',
+  ]);
+  const hasReportData = !shownReport
+    ? false
+    : shownReport === 'Expected Stock Quantity Report'
+      ? inventoryAvailable && filteredInventory.length > 0
+      : shownReport === 'Stock-In Report'
+        ? stockInRows.length > 0
+        : shownReport === 'Physical Inventory Count and Discrepancy Report'
+          ? countRows.length > 0
+          : shownReport === 'Authorized Adjustment Report'
+            ? adjustmentRows.length > 0
+            : movementRows.length > 0;
 
   return (
     <>
@@ -1164,7 +1199,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           <Text style={styles.section}>Inventory reports</Text>
           <Text style={styles.muted}>Live Owner inventory data; movement categories remain separate.</Text>
         </View>
-        <Pressable disabled={loading || !hasReportData} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={styles.outline}>
+        <Pressable disabled={loading || !hasReportData} onPress={() => { if (typeof window !== 'undefined') window.print(); }} style={[styles.outline, (loading || !hasReportData) && { opacity: 0.45 }]}>
           <Text style={styles.pinkText}>Print / Export</Text>
         </Pressable>
       </View>
@@ -1172,21 +1207,45 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
         <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
         <Select value={report} options={reportOptions} onChange={(value) => setReport(value as InventoryReportPage)} />
         <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
+        <Pressable accessibilityRole="button" onPress={generate} disabled={loading} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }]}>
+          <Text style={styles.loginButtonText}>Generate Report</Text>
+        </Pressable>
       </View>
+      {!generated && !loading ? (
+        <Text style={styles.muted}>Choose the report type, reporting period and branch, then select Generate Report.</Text>
+      ) : null}
       {period === 'Custom' && report !== 'Expected Stock Quantity Report' ? (
         <View style={[styles.row, { flexWrap: 'wrap' }]}>
           <TextInput value={startDate} onChangeText={setStartDate} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
         </View>
       ) : null}
-      {report === 'Expected Stock Quantity Report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
+      {shownReport === 'Expected Stock Quantity Report' ? <Text style={styles.muted}>Current expected quantities and status; this snapshot is not date-filtered.</Text> : null}
       {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
-      {!loading && report === 'Expected Stock Quantity Report' ? (
+      {!loading && shownReport === 'Expected Stock Quantity Report' ? (
         <Table
           headers={['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches']}
           rows={filteredInventory.map((item) => [item.name, item.category, item.branch, `${item.quantityLabel} ${item.unit}`, item.status, item.expiry, item.batches])}
         />
+      ) : null}
+      {!loading && shownReport === 'Stock-In Report' && stockInReport && stockInRows.length ? (
+        <Panel title="Stock-In Report">
+          <Text style={styles.metricLabel}>Total received per ingredient{stockInReport.rows.some((row) => row.isReversed) ? ' (reversed entries not counted)' : ''}</Text>
+          <View style={[styles.row, { justifyContent: 'flex-start', flexWrap: 'wrap', gap: 24, marginTop: 8, marginBottom: 16 }]}>
+            {stockInReport.totals.map((total) => (
+              <View key={`${total.ingredientName}-${total.unit}`}>
+                <Text style={styles.strong}>{total.ingredientName}</Text>
+                <Text style={styles.body}>{formatStockInQuantity(total).replace(/^\+/, '')} · {total.entries} {total.entries === 1 ? 'entry' : 'entries'}</Text>
+              </View>
+            ))}
+            {!stockInReport.totals.length ? <Text style={styles.body}>Every Stock-In in this period was reversed, so nothing counts as received.</Text> : null}
+          </View>
+          <Table
+            headers={['Ingredient', 'Quantity received', 'Branch', 'Date purchased', 'Date received', 'Expiration', 'Supplier / reference', 'Recorded by · date & time', 'Status']}
+            rows={stockInRows}
+          />
+        </Panel>
       ) : null}
       {!loading && isMovementReport ? (
         <Table
@@ -1194,25 +1253,25 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           rows={movementRows}
         />
       ) : null}
-      {!loading && report === 'Physical Inventory Count and Discrepancy Report' ? (
+      {!loading && shownReport === 'Physical Inventory Count and Discrepancy Report' ? (
         <Table
           headers={['Count Reference', 'Branch', 'Ingredient / Supply', 'Expected', 'Physical', 'Difference', 'Count Status', 'Inventory Revision', 'Submitted By', 'Timestamp (Manila)', 'Revision History']}
           rows={countRows}
         />
       ) : null}
-      {!loading && report === 'Authorized Adjustment Report' ? (
+      {!loading && shownReport === 'Authorized Adjustment Report' ? (
         <Table
           headers={['Movement Reference', 'Count Reference', 'Branch', 'Ingredient', 'Adjusted Quantity', 'Reason', 'Approving Owner', 'Authorized At (Manila)']}
           rows={adjustmentRows}
         />
       ) : null}
-      {!loading && !error && !hasReportData ? (
+      {!loading && !error && generated && !hasReportData ? (
         <Text style={styles.empty}>
-          {report === 'Expected Stock Quantity Report' && !inventoryAvailable
+          {shownReport === 'Expected Stock Quantity Report' && !inventoryAvailable
             ? 'Expected stock data is unavailable.'
-            : report === 'Authorized Adjustment Report' && reviews === null
+            : shownReport === 'Authorized Adjustment Report' && reviews === null
               ? 'Authorized adjustment data is unavailable.'
-              : report === 'Physical Inventory Count and Discrepancy Report' && activity === null
+              : shownReport === 'Physical Inventory Count and Discrepancy Report' && activity === null
                 ? 'Physical count data is unavailable.'
                 : 'No records exist for the selected branch and reporting period.'}
         </Text>
