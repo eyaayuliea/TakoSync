@@ -58,7 +58,9 @@ import {
   saleVoidErrorMessage,
   sortSaleVoidRequestsForReview,
   validateSaleVoidReason,
+  validateSaleVoidFlagReason,
   validateSaleVoidRejectionReason,
+  SALE_VOID_STATUSES,
   type SaleVoidRequest,
 } from './saleVoids';
 import {
@@ -1927,8 +1929,8 @@ export async function loadStaffSaleReceipt(saleId: string, branchId: string): Pr
   });
 }
 
-// ST-07 / OW-26 / OM-15: void requests. Until the database has the void
-// tables (migration 202611220002), loads report `supported: false` and the
+// ST-07 / OW-26 / OM-15: voided sales and their owner review. Until the database
+// has the void tables and functions (migrations 202611220002 and 202611220015), loads report `supported: false` and the
 // screens hide the feature instead of failing.
 
 const SALE_VOID_REQUEST_COLUMNS =
@@ -1953,6 +1955,7 @@ export async function loadSaleVoidRequests(
   const { data, error } = await resolved.from('sale_void_requests')
     .select(SALE_VOID_REQUEST_COLUMNS)
     .in('sale_id', ids)
+    .in('status', [...SALE_VOID_STATUSES])
     .order('requested_at', { ascending: false });
   if (isMissingSaleVoidSupport(error)) return { supported: false, requests: [] };
   assertNoError(error);
@@ -1963,22 +1966,25 @@ export async function loadSaleVoidRequests(
 
 export class SaleVoidRequestError extends Error {}
 
-/** ST-07 c2–c4: saves a void request. A retry with the same request id is safe. */
-export async function requestSaleVoid(input: {
+/**
+ * ST-07 c2–c6: voids a sale. The void applies at once (sale Voided, consumption
+ * reversed) and waits for the owner's review. A retry with the same request id is safe.
+ */
+export async function voidSale(input: {
   saleId: string;
   reason: string;
   clientRequestId: string;
 }, client?: StaffServiceClient): Promise<SaleVoidRequest> {
   const reasonError = validateSaleVoidReason(input.reason);
   if (reasonError) throw new SaleVoidRequestError(reasonError);
-  const { data, error } = await staffServiceClient(client).rpc('request_sale_void', {
+  const { data, error } = await staffServiceClient(client).rpc('void_sale', {
     p_sale_id: input.saleId,
     p_reason: input.reason.trim(),
     p_client_request_id: input.clientRequestId,
   });
   if (error) throw new SaleVoidRequestError(saleVoidErrorMessage(error));
   if (!data || data.sale_id !== input.saleId) {
-    throw new SaleVoidRequestError('The void request could not be confirmed. Please try again.');
+    throw new SaleVoidRequestError('The void could not be confirmed. Refresh and check the sale before trying again.');
   }
   return mapSaleVoidRequestRow(data);
 }
@@ -1994,13 +2000,14 @@ export type OwnerSaleVoidReview = SaleVoidRequest & {
   } | null;
 };
 
-/** OM-15 c1–c3: every void request with its sale, Pending first. */
+/** OM-15 c1–c3: every voided sale with its sale details, Pending Review first. */
 export async function loadOwnerSaleVoidReviews(
   client?: StaffServiceClient,
 ): Promise<{ supported: boolean; requests: OwnerSaleVoidReview[] }> {
   const resolved = staffServiceClient(client);
   const { data, error } = await resolved.from('sale_void_requests')
     .select(SALE_VOID_REQUEST_COLUMNS)
+    .in('status', [...SALE_VOID_STATUSES])
     .order('requested_at', { ascending: false })
     .limit(500);
   if (isMissingSaleVoidSupport(error)) return { supported: false, requests: [] };
@@ -2289,26 +2296,28 @@ export async function decideEntryReversal(input: {
   return mapEntryReversalRequestRow(data);
 }
 
-/** OW-26 c5–c9 / OM-15 c5–c9: approve (posts Void Reversal entries) or reject with a reason. */
-export async function decideSaleVoid(input: {
-  requestId: string;
-  decision: 'approve' | 'reject';
+/**
+ * OW-26 c6, c8, c9 / OM-15: the owner marks a void Reviewed or Flagged (a reason
+ * is required to flag). The review records the owner's view; it never undoes the void.
+ */
+export async function reviewSaleVoid(input: {
+  voidId: string;
+  decision: 'reviewed' | 'flagged';
   reason?: string;
 }, client?: StaffServiceClient): Promise<SaleVoidRequest> {
   const reason = input.reason?.trim() ?? '';
-  if (input.decision === 'reject') {
-    const reasonError = validateSaleVoidRejectionReason(reason);
+  if (input.decision === 'flagged') {
+    const reasonError = validateSaleVoidFlagReason(reason);
     if (reasonError) throw new SaleVoidRequestError(reasonError);
   }
-  const { data, error } = await staffServiceClient(client).rpc('decide_sale_void', {
-    p_request_id: input.requestId,
+  const { data, error } = await staffServiceClient(client).rpc('review_sale_void', {
+    p_void_id: input.voidId,
     p_decision: input.decision,
     p_reason: reason || null,
   });
   if (error) throw new SaleVoidRequestError(saleVoidErrorMessage(error));
-  const expected = input.decision === 'approve' ? 'approved' : 'rejected';
-  if (!data || data.id !== input.requestId || data.status !== expected) {
-    throw new SaleVoidRequestError('The decision could not be confirmed. Refresh and check the request.');
+  if (!data || data.id !== input.voidId || data.status !== input.decision) {
+    throw new SaleVoidRequestError('The review could not be confirmed. Refresh and check the void.');
   }
   return mapSaleVoidRequestRow(data);
 }

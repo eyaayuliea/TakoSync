@@ -87,7 +87,8 @@ import {
   requestEntryReversal,
   loadStaffSalesForBusinessDay,
   loadStaffSaleReceipt,
-  requestSaleVoid,
+  voidSale,
+  loadStaffDailyClosing,
   loadUnresolvedSales,
   loadStaffMenuCatalog,
   loadSharedRecipes,
@@ -1160,11 +1161,13 @@ export default function StaffWorkspace({
   const [saleReceiptShareError, setSaleReceiptShareError] = useState('');
   const [saleReceiptOutputBusy, setSaleReceiptOutputBusy] = useState<'print' | 'pdf' | null>(null);
   const [saleReceiptOutputNotice, setSaleReceiptOutputNotice] = useState('');
-  // ST-07: void requests for the recent sales and the open receipt. Hidden
+  // ST-07: voids of the recent sales and the open receipt. Hidden
   // until the database has the void tables.
   const [saleVoidRequests, setSaleVoidRequests] = useState<SaleVoidRequest[]>([]);
   const [saleVoidSupported, setSaleVoidSupported] = useState(false);
   const [saleVoidModalVisible, setSaleVoidModalVisible] = useState(false);
+  // ST-07 c1: Void Sale is offered only before today's closing is recorded.
+  const [todayClosingRecorded, setTodayClosingRecorded] = useState(false);
   // ST-13: the branch's entry reversal requests. Hidden until the database has them.
   const [entryReversalRequests, setEntryReversalRequests] = useState<EntryReversalRequest[]>([]);
   const [entryReversalSupported, setEntryReversalSupported] = useState(false);
@@ -2722,7 +2725,7 @@ export default function StaffWorkspace({
     saleReceipt?.id ?? '',
   ].join(',');
   useEffect(() => {
-    // Reload whenever the receipt or Daily Sales opens, so an owner decision shows up.
+    // Reload whenever the receipt or Daily Sales opens, so the owner's review status shows up.
     if (route !== 'saleReceipt' && route !== 'dailySales') return;
     const saleIds = saleVoidLookupKey.split(',').filter(Boolean);
     if (!saleIds.length) return;
@@ -2763,11 +2766,32 @@ export default function StaffWorkspace({
     };
   }, [route, user?.branchId]);
 
+  useEffect(() => {
+    if (route !== 'saleReceipt' || !user?.branchId) return;
+    let active = true;
+    loadStaffDailyClosing(user.branchId, formatLocalIsoDate(new Date()))
+      .then((result) => {
+        if (active) setTodayClosingRecorded(result.closing !== null);
+      })
+      .catch(() => {
+        // The server still refuses a void after the closing.
+      });
+    return () => {
+      active = false;
+    };
+  }, [route, user?.branchId, selectedSaleReceiptId]);
+
   const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
     if (!saleReceipt) return;
-    const saved = await requestSaleVoid({ saleId: saleReceipt.id, reason, clientRequestId });
+    const saved = await voidSale({ saleId: saleReceipt.id, reason, clientRequestId });
     setSaleVoidRequests((current) => [saved, ...current.filter((request) => request.id !== saved.id)]);
+    // ST-07 c5–c6: the sale is Voided at once: mark the receipt VOID and refresh totals and stock.
+    setSaleReceipt((current) => current && current.id === saved.saleId
+      ? { ...current, saleStatus: 'voided', isVoided: true }
+      : current);
     setSaleVoidModalVisible(false);
+    setDailySalesRefreshKey((key) => key + 1);
+    void refreshDashboardData();
   };
 
   // ST-05 c7: print or download the receipt as a PDF, rendered from the saved sale.
@@ -8618,7 +8642,7 @@ export default function StaffWorkspace({
             <>
               <SaleVoidStatusPanel
                 state={saleVoidState(receiptSale, latest)}
-                availability={saleVoidAvailability(receiptSale, latest)}
+                availability={saleVoidAvailability(receiptSale, latest, new Date(), todayClosingRecorded)}
                 onRequestVoid={() => setSaleVoidModalVisible(true)}
               />
               <SaleVoidRequestModal
