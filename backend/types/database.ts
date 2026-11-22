@@ -67,7 +67,21 @@ export type Database = {
         expiration_date: string | null;
         quantity_received: number;
         quantity_remaining: number;
+        status: 'active' | 'quarantined' | 'damaged' | 'reserved';
         created_at: string;
+      }>;
+      inventory_fefo_certificates: Table<{
+        movement_id: string;
+        branch_id: string;
+        ingredient_id: string;
+        requested_quantity: number;
+        allocated_quantity: number;
+        shortfall_quantity: number;
+        status: 'COMPLETED' | 'PARTIAL' | 'INSUFFICIENT_STOCK';
+        included_expired: boolean;
+        allocations: Json;
+        allocated_at: string;
+        algorithm_version: string;
       }>;
       inventory_movements: Table<{
         id: string;
@@ -382,6 +396,8 @@ export type Database = {
       owner_inventory_settings: Table<{
         id: boolean;
         near_expiration_days: number;
+        lot_warning_hours: number;
+        lot_critical_hours: number;
         updated_at: string;
       }>;
       inventory_discrepancy_adjustments: Table<{

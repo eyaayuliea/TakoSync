@@ -6,6 +6,7 @@ import {
   manilaCalendarDate,
   resolveNearExpirationDays,
 } from '../services/inventoryStatusRules.ts';
+import { describeLotsForDisplay, lotExpiryTone, type LotDisplay } from '../services/fefoAllocation.ts';
 import {
   ActivityIndicator,
   Pressable,
@@ -17,8 +18,10 @@ import {
 import {
   loadStockExpirationSettings,
   updateBatchExpirationDate,
+  updateBatchHold,
   updateIngredientExpirationTracking,
   updateMinimumStock,
+  updateLotExpiryWindow,
   updateNearExpirationDays,
   type ExpirationBatchRecord,
   type StockExpirationSettingsData,
@@ -104,6 +107,10 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
   const [savingTracking, setSavingTracking] = useState<string | null>(null);
   const [alertDaysDraft, setAlertDaysDraft] = useState('7');
   const [savingAlertDays, setSavingAlertDays] = useState(false);
+  const [warningHoursDraft, setWarningHoursDraft] = useState('48');
+  const [criticalHoursDraft, setCriticalHoursDraft] = useState('24');
+  const [savingLotWindow, setSavingLotWindow] = useState(false);
+  const [savingHold, setSavingHold] = useState<string | null>(null);
   const previousRefreshing = useRef(refreshing);
 
   const refresh = async () => {
@@ -113,6 +120,8 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
       const next = await loadStockExpirationSettings();
       setData(next);
       setAlertDaysDraft(String(next.nearExpirationDays));
+      setWarningHoursDraft(String(next.lotExpiryWindow.warningHours));
+      setCriticalHoursDraft(String(next.lotExpiryWindow.criticalHours));
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Unable to load stock and expiration settings.');
     } finally {
@@ -166,6 +175,30 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
       return [{ ...batch, ingredientName: ingredient.name, unit: ingredient.unit, branchName }];
     });
   }, [branchId, data]);
+
+  // A1 FEFO: per branch and ingredient, the lot sales take from next and each lot's 48 h / 24 h colour.
+  const lotDisplays = useMemo(() => {
+    const result = new Map<string, LotDisplay<{ id: string; expirationDate: string | null; receivedDate: string; quantityRemaining: number; usable: boolean }>>();
+    if (!data) return result;
+    const groups = new Map<string, ExpirationBatchRecord[]>();
+    for (const batch of data.batches) {
+      const key = `${batch.branch_id}:${batch.ingredient_id}`;
+      groups.set(key, [...(groups.get(key) ?? []), batch]);
+    }
+    const now = new Date();
+    for (const group of groups.values()) {
+      for (const lot of describeLotsForDisplay(group.map((batch) => ({
+        id: batch.id,
+        expirationDate: batch.expiration_date,
+        receivedDate: batch.received_date,
+        quantityRemaining: batch.quantity_remaining,
+        usable: !data.heldLotIds.has(batch.id),
+      })), now, data.lotExpiryWindow)) {
+        result.set(lot.id, lot);
+      }
+    }
+    return result;
+  }, [data]);
 
   const lowRows = rows.filter((item) => classifyStockLevel(item.quantity, item.minimumStock) !== 'In Stock');
   const thresholdKeys = useMemo(() => new Set(lowRows.map((item) => item.key)), [lowRows]);
@@ -308,6 +341,47 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
     }
   };
 
+  const saveLotWindow = async () => {
+    const warningHours = Number(warningHoursDraft);
+    const criticalHours = Number(criticalHoursDraft);
+    setSavingLotWindow(true);
+    setFeedback(null);
+    try {
+      await updateLotExpiryWindow(warningHours, criticalHours);
+      setData((current) => current && ({ ...current, lotExpiryWindow: { warningHours, criticalHours } }));
+      setFeedback({ type: 'success', message: `Batch colours saved: yellow within ${warningHours} hours, red within ${criticalHours} hours.` });
+      onRefresh();
+    } catch (error) {
+      setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Unable to save the batch colour windows.' });
+    } finally {
+      setSavingLotWindow(false);
+    }
+  };
+
+  const toggleHold = async (batch: BatchRow, held: boolean) => {
+    setSavingHold(batch.id);
+    setFeedback(null);
+    try {
+      await updateBatchHold(batch.id, held);
+      setData((current) => {
+        if (!current) return current;
+        const heldLotIds = new Set(current.heldLotIds);
+        if (held) heldLotIds.add(batch.id); else heldLotIds.delete(batch.id);
+        return { ...current, heldLotIds };
+      });
+      setFeedback({
+        type: 'success',
+        message: held
+          ? `Batch ${batch.batch_reference} is on hold. Sales will not use it.`
+          : `Batch ${batch.batch_reference} is released and can be used again.`,
+      });
+    } catch (error) {
+      setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Unable to update the batch.' });
+    } finally {
+      setSavingHold(null);
+    }
+  };
+
   const startThresholdEdit = (item: StockRow) => {
     setFeedback(null);
     setThresholdDraft(String(item.minimumStock));
@@ -406,6 +480,39 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
               </Pressable>
             </View>
             <Text style={styles.currentSetting}>Current alert window: <Text style={styles.currentSettingStrong}>{data.nearExpirationDays} days</Text></Text>
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Batch colours (FEFO)</Text>
+            <Text style={styles.helperText}>Sales use the batch that expires first. A batch turns yellow when it expires within the first window and red within the second, and staff are told to use red batches first. Expired batches are not used for sales.</Text>
+            <View style={styles.settingRow}>
+              <View style={styles.settingInputWrap}>
+                <Text style={styles.fieldLabel}>Yellow within (hours)</Text>
+                <TextInput
+                  accessibilityLabel="Yellow batch window in hours"
+                  value={warningHoursDraft}
+                  onChangeText={setWarningHoursDraft}
+                  keyboardType="number-pad"
+                  placeholder="48"
+                  style={styles.input}
+                />
+              </View>
+              <View style={styles.settingInputWrap}>
+                <Text style={styles.fieldLabel}>Red within (hours)</Text>
+                <TextInput
+                  accessibilityLabel="Red batch window in hours"
+                  value={criticalHoursDraft}
+                  onChangeText={setCriticalHoursDraft}
+                  keyboardType="number-pad"
+                  placeholder="24"
+                  style={styles.input}
+                />
+              </View>
+              <Pressable accessibilityRole="button" disabled={savingLotWindow} onPress={() => void saveLotWindow()} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>{savingLotWindow ? 'Saving…' : 'Save colours'}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.currentSetting}>Current: <Text style={styles.currentSettingStrong}>yellow within {data.lotExpiryWindow.warningHours} h, red within {data.lotExpiryWindow.criticalHours} h</Text></Text>
           </View>
 
           <View style={styles.sectionHeader}>
@@ -551,6 +658,23 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
                 </View>
                 <View style={styles.batchDetails}>
                   <Text style={styles.rowMeta}>Received {localDate(batch.received_date)} · {formatAmount(batch.quantity_remaining, 3)} {batch.unit} remaining of {formatAmount(batch.quantity_received, 3)} {batch.unit}</Text>
+                  {(() => {
+                    const lot = lotDisplays.get(batch.id);
+                    if (!lot || (!lot.useFirst && !lot.held && lot.expiry === 'NO_EXPIRY')) return null;
+                    const tone = lot.held ? 'warning' : lotExpiryTone(lot.expiry);
+                    const badgeStyle = tone === 'low' ? styles.lowBadge : tone === 'warning' ? styles.warningBadge : tone === 'good' ? styles.goodBadge : styles.neutralBadge;
+                    const textStyle = tone === 'low' ? styles.lowText : tone === 'warning' ? styles.warningText : tone === 'good' ? styles.goodText : styles.neutralText;
+                    return (
+                      <View style={styles.lotBadgeRow}>
+                        {lot.useFirst ? (
+                          <View style={[styles.statusBadge, styles.goodBadge]}><Text style={[styles.statusText, styles.goodText]}>Use first</Text></View>
+                        ) : null}
+                        {lot.held || lot.expiry !== 'NO_EXPIRY' ? (
+                          <View style={[styles.statusBadge, badgeStyle]}><Text style={[styles.statusText, textStyle]}>{lot.expiryLabel}</Text></View>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
                   {editingBatch === batch.id ? (
                     <View style={styles.expirationEditor}>
                       <View style={styles.expirationInputWrap}>
@@ -575,6 +699,17 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
                   ) : (
                     <View style={styles.batchFooter}>
                       <Text style={styles.expirationDate}>{batch.expiration_date ? `Expires ${localDate(batch.expiration_date)}` : 'No expiration date recorded'}</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${data.heldLotIds.has(batch.id) ? 'Release' : 'Hold'} batch ${batch.batch_reference}`}
+                        disabled={savingHold === batch.id}
+                        onPress={() => void toggleHold(batch, !data.heldLotIds.has(batch.id))}
+                        style={styles.editButton}
+                      >
+                        <Text style={styles.editButtonText}>
+                          {savingHold === batch.id ? 'Saving…' : data.heldLotIds.has(batch.id) ? 'Release' : 'Hold'}
+                        </Text>
+                      </Pressable>
                       <Pressable accessibilityRole="button" onPress={() => startExpirationEdit(batch)} style={styles.editButton}>
                         <Text style={styles.editButtonText}>{batch.expiration_date ? 'Edit date' : 'Add date'}</Text>
                       </Pressable>
@@ -657,6 +792,7 @@ function useStyles() {
     rowTitle: { color: colors.ink, fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
     rowMeta: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 7, lineHeight: 11, marginTop: 2 },
     statusBadge: { flexShrink: 0, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10 },
+    lotBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
     statusText: { fontFamily: 'Poppins_600SemiBold', fontSize: 6 },
     lowBadge: { backgroundColor: colors.paleRed },
     lowText: { color: colors.red },
