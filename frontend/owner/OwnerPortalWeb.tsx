@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
-import { formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
+import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
+import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortalDailyClosingReport';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
@@ -29,6 +30,7 @@ import {
   loadOwnerInventory,
   loadOwnerSalesData,
   loadOwnerSaleVoidReviews,
+  loadOwnerDailyClosings,
   type OwnerSaleVoidReview,
   loadProductManagement,
   loadSharedRecipes,
@@ -802,6 +804,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     'Products Sold Report',
     'Transaction Summary Report',
     'Void Report',
+    'Daily Closing Report',
   ];
   // OW-05 c3: no report type is chosen until the owner picks one.
   const [report, setReport] = useState<string | null>(null);
@@ -821,6 +824,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
   // OW-06–OW-10 c1: the selections apply when the owner selects Generate Report.
   const [generated, setGenerated] = useState<{ report: string; range: { start: Date; end: Date }; branchId: string | null; branchName: string; periodLabel: string; key: number } | null>(null);
   const [voids, setVoids] = useState<OwnerSaleVoidReview[] | null>(null);
+  const [closings, setClosings] = useState<Awaited<ReturnType<typeof loadOwnerDailyClosings>> | null>(null);
   const setupMessage = reportSetupMessage({ report, period, startDate, endDate });
   const canGenerate = !setupMessage && Boolean(range) && !loading;
   const generate = () => {
@@ -848,9 +852,16 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     setError('');
     setSales(null);
     setVoids(null);
+    setClosings(null);
     const request = generated.report === 'Void Report'
       ? loadOwnerSaleVoidReviews().then((result) => { if (active) setVoids(result.requests); })
-      : loadOwnerSalesData({ start: generated.range.start, end: generated.range.end, branchId: generated.branchId })
+      : generated.report === 'Daily Closing Report'
+        // OW-11: closings of the period's business days (Manila dates).
+        ? loadOwnerDailyClosings({
+          startDate: manilaDateKey(generated.range.start),
+          endDate: manilaDateKey(new Date(generated.range.end.getTime() - 1)),
+        }).then((result) => { if (active) setClosings(result); })
+        : loadOwnerSalesData({ start: generated.range.start, end: generated.range.end, branchId: generated.branchId })
         .then((result) => { if (active) setSales(result); });
     request
       .catch((reason: unknown) => {
@@ -923,8 +934,33 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
         return [];
     }
   };
+  const closingReport = closings && generated && shownReport === 'Daily Closing Report'
+    ? buildWebDailyClosingReport({
+      closings: closings.closings,
+      branches: closings.branches,
+      range: generated.range,
+      branchId: generated.branchId,
+      formatDate: (businessDate) => formatReportDate(new Date(`${businessDate}T12:00:00+08:00`)),
+      formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+    })
+    : null;
   const reportDoc: ReportDocument | null = !generated || loading
     ? null
+    : shownReport === 'Daily Closing Report'
+      ? closings && closingReport && {
+        title: 'Daily Closing Report',
+        period: formatReportPeriod(generated.periodLabel, generated.range),
+        branch: generated.branchName,
+        generatedAt: new Date(generated.key),
+        sections: !closings.supported
+          ? [{ notes: ['Daily closing records are not available on this server yet.'] }]
+          : [
+            { summary: closingReport.summary },
+            closingReport.rows.length
+              ? { table: { headers: DAILY_CLOSING_HEADERS, rows: closingReport.rows } }
+              : { notes: ['There are no business days in this period yet.'] },
+          ],
+      }
     : shownReport === 'Void Report'
       ? voidReport && {
         title: 'Void Report',
