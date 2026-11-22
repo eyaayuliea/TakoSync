@@ -630,7 +630,8 @@ function AppContent() {
       await signOut();
       clearSignedInState();
       setLoginError('');
-      setScreen(authenticatedUser?.role === 'Owner' ? 'ownerLogin' : 'welcome');
+      // ST-15 c8 / OM-23: logging out shows the Login screen of the role that was signed in.
+      setScreen(authenticatedUser?.role === 'Owner' ? 'ownerLogin' : 'login');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to end the session. Please try again.';
       setDashboardMessage(message);
@@ -968,6 +969,21 @@ function AppContent() {
                             {authenticating && <ActivityIndicator size="small" color="#FFFFFF" />}
                             <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log In'}</Text>
                           </View>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Back to the Welcome screen"
+                          disabled={authenticating}
+                          onPress={() => {
+                            setLoginError('');
+                            setUsernameError('');
+                            setPasswordError('');
+                            setPassword('');
+                            setScreen('welcome');
+                          }}
+                          style={({ pressed }) => [{ minHeight: 40, alignItems: 'center', justifyContent: 'center', marginTop: 6 }, pressed && styles.buttonPressed]}
+                        >
+                          <Text style={[styles.loginHelper, { marginTop: 0, textDecorationLine: 'underline' }]}>Back to Welcome · Owner Login</Text>
                         </Pressable>
                       </View>
                     </ScrollView>
