@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { classifyStockLevel, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
+import {
+  describeLotsForDisplay,
+  lotExpiryTone,
+  resolveLotExpiryWindow,
+  type LotExpiryClass,
+} from '../services/fefoAllocation.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator,
@@ -223,8 +229,11 @@ const font = {
 } as const;
 
 type IngredientBatch = {
+  id?: string;
   reference: string;
   receivedDate: string;
+  receivedDateIso?: string;
+  usable?: boolean;
   expirationDate: string | null;
   expirationDateIso: string | null;
   quantityReceived: number;
@@ -602,6 +611,25 @@ function StatusBadge({
   return (
     <View style={[styles.statusBadge, toneStyle, alignRight && styles.statusBadgeRight]}>
       <Text style={[styles.statusBadgeText, textStyle, textColor ? { color: textColor } : undefined]}>{label}</Text>
+    </View>
+  );
+}
+
+function LotExpiryBadges({
+  lot,
+}: {
+  lot: { expiry: LotExpiryClass; expiryLabel: string; useFirst: boolean; held: boolean };
+}) {
+  const styles = useStaffStyles();
+  const tone = lotExpiryTone(lot.expiry);
+  const showExpiry = lot.held || lot.expiry !== 'NO_EXPIRY';
+  if (!lot.useFirst && !showExpiry) return null;
+  return (
+    <View style={styles.lotBadgeRow}>
+      {lot.useFirst ? <StatusBadge label="Use first" tone="good" /> : null}
+      {showExpiry ? (
+        <StatusBadge label={lot.expiryLabel} tone={lot.held ? 'warning' : tone === 'neutral' ? 'good' : tone} />
+      ) : null}
     </View>
   );
 }
@@ -1078,6 +1106,7 @@ export default function StaffWorkspace({
   const [menuCatalogBranchId, setMenuCatalogBranchId] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [nearExpirationDays, setNearExpirationDays] = useState<number | null>(null);
+  const [lotExpiryWindow, setLotExpiryWindow] = useState(resolveLotExpiryWindow());
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
   const [recentSales, setRecentSales] = useState<StaffSaleRecord[]>([]);
   const [dailySalesDate, setDailySalesDate] = useState(() => manilaBusinessDate());
@@ -1253,6 +1282,7 @@ export default function StaffWorkspace({
   ) => {
     setIngredients(inventory.items);
     setNearExpirationDays(inventory.nearExpirationDays);
+    setLotExpiryWindow(inventory.lotExpiryWindow ?? resolveLotExpiryWindow());
     setAlertSnapshotBranchId(branchId);
     setAlertDataError('');
     setAlertErrorBranchId(null);
@@ -4170,16 +4200,31 @@ export default function StaffWorkspace({
     </ScrollView>
   );
 
+  const describeIngredientLots = (batches: IngredientBatch[]) => {
+    const byId = new Map(batches.map((batch) => [batch.id ?? batch.reference, batch]));
+    return describeLotsForDisplay(
+      batches.map((batch) => ({
+        id: batch.id ?? batch.reference,
+        expirationDate: batch.expirationDateIso,
+        receivedDate: batch.receivedDateIso ?? '',
+        quantityRemaining: batch.quantityRemaining,
+        usable: batch.usable,
+      })),
+      new Date(),
+      lotExpiryWindow,
+    ).map((lot) => ({
+      ...(byId.get(lot.id) as IngredientBatch),
+      expiry: lot.expiry,
+      expiryLabel: lot.expiryLabel,
+      useFirst: lot.useFirst,
+      held: lot.held,
+    }));
+  };
+
   const renderExpirationInfo = () => {
     const item = selectedIngredient;
-    const sortedBatches = item
-      ? [...item.batches].sort((left, right) => {
-          if (!left.expirationDateIso && !right.expirationDateIso) return left.reference.localeCompare(right.reference);
-          if (!left.expirationDateIso) return 1;
-          if (!right.expirationDateIso) return -1;
-          return left.expirationDateIso.localeCompare(right.expirationDateIso);
-        })
-      : [];
+    // A1 FEFO: lots in the order sales use them, with the 48 h / 24 h colours.
+    const sortedBatches = item ? describeIngredientLots(item.batches) : [];
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.detailPage} showsVerticalScrollIndicator={false}>
         <View style={styles.detailHeader}>
@@ -4215,18 +4260,7 @@ export default function StaffWorkspace({
                   )}
                 />
                 <DetailRow label="Expiration date" value={batch.expirationDate ?? 'Not recorded'} />
-                {batch.expirationDateIso ? (
-                  <StatusBadge
-                    label={inventoryExpirationStatus(
-                      batch.expirationDateIso,
-                      resolveNearExpirationDays(nearExpirationDays),
-                      manilaBusinessDate(),
-                    ) ?? 'Normal'}
-                    tone={inventoryExpirationStatus(batch.expirationDateIso, resolveNearExpirationDays(nearExpirationDays), manilaBusinessDate()) === 'Expired'
-                      ? 'low'
-                      : 'warning'}
-                  />
-                ) : null}
+                <LotExpiryBadges lot={batch} />
               </View>
             )) : (
               <Text style={styles.inventoryEmptyMessage}>No received batches recorded.</Text>
@@ -4236,8 +4270,11 @@ export default function StaffWorkspace({
         <View style={styles.inventoryDetailSection}>
           <Text style={styles.historyPlaceholderText}>How expiration is highlighted</Text>
           <Text style={styles.inventoryEmptyMessage}>
-            Expired: expiration date is before today.{'\n'}
-            Near expiry: expires today or within the owner’s alert period.{'\n'}
+            Batches are listed in the order sales use them: the earliest expiration first (FEFO).{'\n'}
+            Use first: the batch the next sale takes from.{'\n'}
+            Red: expires within {lotExpiryWindow.criticalHours} hours — use it first.{'\n'}
+            Yellow: expires within {lotExpiryWindow.warningHours} hours.{'\n'}
+            Expired: past the end of its expiration date. It is not used for sales; record it as waste.{'\n'}
             No recorded date: show “Not recorded”.
           </Text>
         </View>
@@ -4356,13 +4393,7 @@ export default function StaffWorkspace({
 
         <View style={styles.inventoryDetailSection}>
           <Text style={styles.historyPlaceholderText}>Received batches</Text>
-          {shownIngredient.batches.length > 0 ? shownIngredient.batches.map((batch) => {
-            const expirationDate = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
-            const daysRemaining = expirationDate ? daysBetweenDates(manilaBusinessDate(), expirationDate) : null;
-            const alert = shownIngredient.expirationTracking && daysRemaining !== null && nearExpirationDays !== null
-              ? classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays))
-              : null;
-            const batchStatus = alert === 'expired' ? 'Expired' : alert === 'nearExpiration' ? 'Near Expiry' : null;
+          {shownIngredient.batches.length > 0 ? describeIngredientLots(shownIngredient.batches).map((batch) => {
             return (
               <View key={batch.reference} style={styles.inventoryBatchCard}>
                 <Text style={styles.inventoryBatchTitle}>Batch {batch.reference}</Text>
@@ -4384,9 +4415,7 @@ export default function StaffWorkspace({
                     shownIngredient.quantityPrecision,
                   )}
                 />
-                {batchStatus ? (
-                  <StatusBadge label={batchStatus} tone={batchStatus === 'Expired' ? 'low' : 'warning'} />
-                ) : null}
+                {shownIngredient.expirationTracking || batch.held || batch.useFirst ? <LotExpiryBadges lot={batch} /> : null}
               </View>
             );
           }) : (
@@ -9679,6 +9708,7 @@ function createStaffStyles(theme: AppTheme) {
   largeThumbnailEmoji: { fontSize: 34 },
   ingredientCopy: { flex: 1, minWidth: 0, justifyContent: 'center', marginLeft: 9 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 9, paddingHorizontal: 6, paddingVertical: 3, marginTop: 4 },
+  lotBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   statusBadgeRight: { alignSelf: 'flex-end' },
   statusBadgeText: { fontFamily: font.medium, fontSize: 7 },
   lowBadge: { backgroundColor: colors.yellow },

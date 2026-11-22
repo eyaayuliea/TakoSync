@@ -1,5 +1,6 @@
 import { createIsolatedAuthClient, requireSupabase } from './supabase';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
+import { resolveLotExpiryWindow } from './fefoAllocation.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../../backend/types/database';
 import { filterBranchVisibleMenuVariants } from './menuCatalog';
@@ -140,22 +141,73 @@ export type InventoryItem = {
   packageUnit: string | null;
   packageLabel: string | null;
   batches: {
+    id: string;
     reference: string;
     receivedDate: string;
+    receivedDateIso: string;
     expirationDate: string | null;
     expirationDateIso: string | null;
     quantityReceived: number;
     quantityRemaining: number;
+    /** False when the owner has held the lot back (quarantined, damaged or reserved). */
+    usable: boolean;
   }[];
   lastUpdated: string;
   emoji: string;
   tint: string;
 };
 
+/** Owner-configured lot colour windows (A1 §2.4): yellow within `warningHours`, red within `criticalHours`. */
+export type LotExpiryWindow = { warningHours: number; criticalHours: number };
+
 export type StaffInventoryData = {
   items: InventoryItem[];
   nearExpirationDays: number;
+  lotExpiryWindow: LotExpiryWindow;
 };
+
+const isMissingSchemaColumn = (error: { code?: string } | null) =>
+  error?.code === '42703' || error?.code === 'PGRST204';
+
+/** The owner's lot colour windows, or the 48 h / 24 h defaults before the A1 migration. */
+async function loadLotExpiryWindow(client: SupabaseClient<Database>): Promise<LotExpiryWindow> {
+  const { data, error } = await client
+    .from('owner_inventory_settings')
+    .select('lot_warning_hours, lot_critical_hours')
+    .eq('id', true)
+    .maybeSingle();
+  if (isMissingSchemaColumn(error)) return resolveLotExpiryWindow();
+  assertNoError(error);
+  return resolveLotExpiryWindow({ warningHours: data?.lot_warning_hours, criticalHours: data?.lot_critical_hours });
+}
+
+/** Ids of lots with stock that the owner has held back; FEFO never allocates them. */
+async function loadHeldLotIds(client: SupabaseClient<Database>, branchId?: string): Promise<Set<string>> {
+  let query = client.from('ingredient_batches').select('id').neq('status', 'active').gt('quantity_remaining', 0);
+  if (branchId) query = query.eq('branch_id', branchId);
+  const { data, error } = await query;
+  if (isMissingSchemaColumn(error)) return new Set();
+  assertNoError(error);
+  return new Set((data ?? []).map((row) => row.id));
+}
+
+export async function updateLotExpiryWindow(warningHours: number, criticalHours: number): Promise<void> {
+  if (!Number.isInteger(warningHours) || warningHours < 1 || warningHours > 720) {
+    throw new Error('The yellow window must be from 1 to 720 hours.');
+  }
+  if (!Number.isInteger(criticalHours) || criticalHours < 1 || criticalHours > warningHours) {
+    throw new Error('The red window must be at least 1 hour and no longer than the yellow window.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('owner_inventory_settings')
+    .update({ lot_warning_hours: warningHours, lot_critical_hours: criticalHours })
+    .eq('id', true)
+    .select('lot_warning_hours, lot_critical_hours')
+    .maybeSingle();
+  if (isMissingSchemaColumn(error)) throw new Error('Lot expiry windows are not available on this database yet.');
+  assertNoError(error);
+  if (!data) throw new Error('The lot expiry windows could not be saved.');
+}
 
 export type InventoryTransactionInput = {
   ingredientId: string;
@@ -518,6 +570,8 @@ export type StockExpirationSettingsData = {
   categories: { id: string; name: string }[];
   batches: ExpirationBatchRecord[];
   nearExpirationDays: number;
+  lotExpiryWindow: LotExpiryWindow;
+  heldLotIds: Set<string>;
 };
 
 const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
@@ -2076,7 +2130,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       .order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
-      .select('ingredient_id, batch_reference, received_date, expiration_date, quantity_received, quantity_remaining')
+      .select('id, ingredient_id, batch_reference, received_date, expiration_date, quantity_received, quantity_remaining, created_at')
       .eq('branch_id', branchId)
       .order('expiration_date', { ascending: true, nullsFirst: false })
       .order('received_date', { ascending: true })
@@ -2096,6 +2150,10 @@ export async function loadInventory(branchId: string, businessDate = new Date())
   assertNoError(settingsResult.error);
   if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
   const nearExpirationDays = settingsResult.data.near_expiration_days;
+  const [lotExpiryWindow, heldLotIds] = await Promise.all([
+    loadLotExpiryWindow(client),
+    loadHeldLotIds(client, branchId),
+  ]);
 
   const inventory = indexBranchInventorySnapshot(inventoryResult.data ?? []);
   const categories = new Map((categoriesResult.data ?? []).map((row) => [row.id, row.name]));
@@ -2158,12 +2216,15 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       packageUnit: packageSize?.package_unit ?? null,
       packageLabel: packageSize?.package_label ?? null,
       batches: itemBatches.map((batch) => ({
+        id: batch.id,
         reference: batch.batch_reference,
         receivedDate: formatDate(batch.received_date) ?? '',
+        receivedDateIso: batch.received_date,
         expirationDate: formatDate(batch.expiration_date),
         expirationDateIso: batch.expiration_date,
         quantityReceived: isPreparedBatter ? Number(batch.quantity_received) * 680 : Number(batch.quantity_received),
         quantityRemaining: isPreparedBatter ? Number(batch.quantity_remaining) * 680 : Number(batch.quantity_remaining),
+        usable: !heldLotIds.has(batch.id),
       })),
       lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
       emoji: visual.emoji,
@@ -2173,6 +2234,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
   return {
     items,
     nearExpirationDays,
+    lotExpiryWindow,
   };
 }
 
@@ -3521,6 +3583,7 @@ export async function loadStockExpirationSettings(): Promise<StockExpirationSett
   assertNoError(categoriesResult.error);
   assertNoError(settingsResult.error);
   if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
+  const [lotExpiryWindow, heldLotIds] = await Promise.all([loadLotExpiryWindow(client), loadHeldLotIds(client)]);
 
   const batches: ExpirationBatchRecord[] = [];
   const pageSize = 500;
@@ -3551,6 +3614,8 @@ export async function loadStockExpirationSettings(): Promise<StockExpirationSett
     categories: categoriesResult.data ?? [],
     batches,
     nearExpirationDays: settingsResult.data.near_expiration_days,
+    lotExpiryWindow,
+    heldLotIds,
   };
 }
 
@@ -3583,6 +3648,20 @@ export async function updateMinimumStock(
 function maximumDecimalPlaces(value: number): number {
   const decimalPart = String(value).split('.')[1] ?? '';
   return decimalPart.length;
+}
+
+/** Owner holds a lot back from FEFO allocation, or releases it (A1, AC-FEFO-01-03). */
+export async function updateBatchHold(batchId: string, held: boolean): Promise<void> {
+  if (!batchId) throw new Error('Choose a batch to update.');
+  const { data, error } = await requireSupabase()
+    .from('ingredient_batches')
+    .update({ status: held ? 'quarantined' : 'active' })
+    .eq('id', batchId)
+    .select('id')
+    .maybeSingle();
+  if (isMissingSchemaColumn(error)) throw new Error('Holding batches is not available on this database yet.');
+  assertNoError(error);
+  if (!data) throw new Error('The batch could not be updated.');
 }
 
 export async function updateBatchExpirationDate(
