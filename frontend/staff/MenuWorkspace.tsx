@@ -213,8 +213,11 @@ function SizeOptionCard({
   onViewInfo: () => void;
 }) {
   const { isDark } = useTheme();
+  // ST-02 c6: Out of Stock (the branch cannot make one) is shown like Unavailable, with its own tag.
+  const canAdd = variant.isAvailable && !variant.outOfStock;
+  const status = !variant.isAvailable ? 'Unavailable' : variant.outOfStock ? 'Out of Stock' : 'Available';
   return (
-    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#0F1025' }, !variant.isAvailable && styles.sizeOptionCardUnavailable]}>
+    <View style={[styles.sizeOptionCard, isDark && { backgroundColor: '#0F1025' }, !canAdd && styles.sizeOptionCardUnavailable]}>
       <View style={styles.sizeOptionHeader}>
         <Text style={[styles.sizeOptionLabel, isDark && { color: '#FFFFFF' }]}>{variant.sizeLabel}</Text>
         <Pressable
@@ -228,16 +231,16 @@ function SizeOptionCard({
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${variant.isAvailable ? 'Add' : 'Unavailable'} ${productName}, ${variant.sizeLabel}, ${money(variant.price)}`}
-        accessibilityHint={variant.isAvailable ? undefined : 'Shows that this item is currently unavailable'}
+        accessibilityLabel={`${canAdd ? 'Add' : status} ${productName}, ${variant.sizeLabel}, ${money(variant.price)}`}
+        accessibilityHint={canAdd ? undefined : `Shows that this item is currently ${status.toLowerCase()}`}
         onPress={onAdd}
         style={({ pressed }) => [styles.sizeOptionAction, pressed && styles.pressed]}
       >
         <Text style={[styles.sizeOptionPrice, isDark && { color: '#FFFFFF' }]}>{money(variant.price)}</Text>
         <View style={styles.availabilityLine}>
-          <View style={[styles.availabilityDot, !variant.isAvailable && styles.availabilityDotOff]} />
-          <Text style={[styles.availabilityLabel, !variant.isAvailable && styles.unavailableText]}>
-            {variant.isAvailable ? 'Available' : 'Unavailable'}
+          <View style={[styles.availabilityDot, !canAdd && styles.availabilityDotOff]} />
+          <Text style={[styles.availabilityLabel, !canAdd && styles.unavailableText]}>
+            {status}
           </Text>
         </View>
       </Pressable>
@@ -481,6 +484,7 @@ export default function MenuWorkspace({
       price: product.price,
       maxQuantity: product.maxQuantity,
       isAvailable: product.isAvailable,
+      outOfStock: product.outOfStock === true,
     })),
     [catalog],
   );
@@ -520,7 +524,7 @@ export default function MenuWorkspace({
   }), [cart, products]);
   const parsedCash = Number(cashReceived);
   const cashValid = paymentMethod !== 'Cash' || (cashReceived.trim() !== '' && Number.isFinite(parsedCash) && parsedCash >= checkoutTotal);
-  const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && Number.isInteger(quantity) && quantity > 0) && cashValid;
+  const checkoutValid = cartProducts.length > 0 && cartProducts.every(({ product, quantity }) => product.isAvailable && !product.outOfStock && Number.isInteger(quantity) && quantity > 0) && cashValid;
   const emptyOrderMessage = menuOrderValidationMessage(cartProducts.length);
   const discardOrder = () => {
     setCashReceived('');

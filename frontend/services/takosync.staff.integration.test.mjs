@@ -289,9 +289,24 @@ test('Staff sale service classifies known inventory rejection as non-retryable',
     }, clientForTests(client)),
     (error) => error instanceof SaleSubmissionRejectedError
       && !isRetryableSaleSubmissionError(error)
-      && /Insufficient inventory/.test(error.message),
+      && /^Order changed: there is no longer enough stock/.test(error.message),
   );
   assert.equal(client.calls.filter((call) => call.name === 'submit_sale').length, 1);
+});
+
+test('Staff sale service names the missing ingredient when the server refuses for stock (decision #11)', async () => {
+  const client = new RecordingSupabase();
+  client.failures.set('submit_sale',
+    'Order changed: Insufficient stock for Prepared Takoyaki Batter: required 0.16 bottle, available 0 bottle, shortage 0.16 bottle');
+  await assert.rejects(
+    submitSale({
+      branchId: 'branch-a', transactionReference: 'SALE-ORDER-CHANGED', paymentMethod: 'Cash', totalAmount: 10,
+      items: [{ variantId: 'variant-1', quantity: 1, unitPrice: 10 }], addons: [],
+    }, clientForTests(client)),
+    (error) => error instanceof SaleSubmissionRejectedError
+      && !isRetryableSaleSubmissionError(error)
+      && error.message === 'Order changed: there is no longer enough Prepared Takoyaki Batter in stock. Adjust the order and try again.',
+  );
 });
 
 test('Staff sale service treats a server maximum-quantity rejection as non-retryable (ST-02 c5)', async () => {
