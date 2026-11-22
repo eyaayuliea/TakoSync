@@ -62,7 +62,6 @@ cleanup() {
 drop trigger if exists ${delay_trigger} on public.branch_inventory;
 drop function if exists ${delay_function}();
 delete from public.inventory_movements where branch_id = '${branch_id}';
-delete from public.audit_logs where branch_id = '${branch_id}';
 delete from public.ingredient_batches where branch_id = '${branch_id}';
 delete from public.branch_inventory where branch_id = '${branch_id}';
 delete from auth.users where id = '${staff_id}';
