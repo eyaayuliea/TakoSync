@@ -70,6 +70,53 @@ export type Database = {
         status: 'active' | 'quarantined' | 'damaged' | 'reserved';
         created_at: string;
       }>;
+      ingredient_replenishment_settings: Table<{
+        ingredient_id: string;
+        lead_time_days: number;
+        service_level_z: number;
+        window_days: number;
+        min_history_days: number;
+        shelf_life_days: number | null;
+        updated_at: string;
+        updated_by: string | null;
+      }>;
+      inventory_reorder_points: Table<{
+        branch_id: string;
+        ingredient_id: string;
+        method: 'DYNAMIC_ROP' | 'OWNER_MINIMUM';
+        method_reason: 'COLD_START' | 'IN_HOUSE_ITEM' | 'NOT_CONFIGURED' | null;
+        threshold_source: 'DYNAMIC_ROP' | 'OWNER_MINIMUM';
+        window_days: number | null;
+        operating_days_used: number;
+        average_daily_usage: number | null;
+        usage_stddev: number | null;
+        lead_time_days: number | null;
+        service_level_z: number | null;
+        shelf_life_days: number | null;
+        safety_stock: number;
+        reorder_point: number | null;
+        owner_minimum: number;
+        effective_rop: number;
+        config_inconsistent: boolean;
+        business_date: string;
+        computed_at: string;
+        algorithm_version: string;
+      }>;
+      inventory_stock_alerts: Table<{
+        id: string;
+        branch_id: string;
+        ingredient_id: string;
+        severity: 'LOW_STOCK' | 'CRITICAL';
+        status: 'open' | 'resolved';
+        expected_stock: number;
+        effective_rop: number;
+        safety_stock: number;
+        threshold_source: 'DYNAMIC_ROP' | 'OWNER_MINIMUM';
+        method_reason: string | null;
+        opened_at: string;
+        updated_at: string;
+        resolved_at: string | null;
+      }>;
       inventory_fefo_certificates: Table<{
         movement_id: string;
         branch_id: string;
@@ -474,6 +521,10 @@ export type Database = {
     };
     Functions: {
       can_access_branch: { Args: { target_branch: string }; Returns: boolean };
+      refresh_reorder_points: {
+        Args: { p_branch_id?: string | null };
+        Returns: Database['public']['Tables']['inventory_reorder_points']['Row'][];
+      };
       is_active_owner: { Args: Record<PropertyKey, never>; Returns: boolean };
       authorize_business_session: { Args: Record<PropertyKey, never>; Returns: Json };
       business_session_status: { Args: Record<PropertyKey, never>; Returns: Json };

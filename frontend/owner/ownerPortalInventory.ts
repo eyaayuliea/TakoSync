@@ -1,4 +1,5 @@
 import { formatInventoryQuantity, getInventoryStockStatus } from './ownerInventoryStatus';
+import { lowStockThreshold } from '../services/reorderPoint.ts';
 import { manilaDateKey } from '../services/businessDaySettings';
 
 export type OwnerPortalInventoryRow = {
@@ -22,6 +23,7 @@ type OwnerInventorySnapshot = {
     ingredient_id: string;
     quantity: number | string | null;
     minimum_stock: number | string;
+    low_stock_threshold?: number | string | null;
   }>;
   ingredients: Array<{
     id: string;
@@ -89,7 +91,7 @@ export function buildOwnerPortalInventoryRows(
       branchId: record.branch_id,
       status: getInventoryStockStatus(
         quantity,
-        Number(record.minimum_stock),
+        lowStockThreshold(record),
         trackedExpiry,
         referenceDate,
         snapshot.nearExpirationDays,

@@ -1,6 +1,13 @@
 import { createIsolatedAuthClient, requireSupabase } from './supabase';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
+import {
+  DEFAULT_REPLENISHMENT_SETTINGS,
+  validateReplenishmentSettings,
+  type ReorderMethod,
+  type ReorderMethodReason,
+  type ReplenishmentSettings,
+} from './reorderPoint.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../../backend/types/database';
 import { filterBranchVisibleMenuVariants } from './menuCatalog';
@@ -140,6 +147,11 @@ export type InventoryItem = {
   packageQuantity: number | null;
   packageUnit: string | null;
   packageLabel: string | null;
+  /** A2: quantity (display units) at or below which the item is low: the reorder point or the owner minimum. */
+  stockThreshold: number;
+  /** A2: at or below safety stock, or out of stock. */
+  criticalStock: boolean;
+  reorderPoint: InventoryReorderPoint | null;
   batches: {
     id: string;
     reference: string;
@@ -189,6 +201,103 @@ async function loadHeldLotIds(client: SupabaseClient<Database>, branchId?: strin
   if (isMissingSchemaColumn(error)) return new Set();
   assertNoError(error);
   return new Set((data ?? []).map((row) => row.id));
+}
+
+/** A2 reorder point for one branch and ingredient, as the database computed it today. */
+export type InventoryReorderPoint = {
+  branchId: string;
+  ingredientId: string;
+  method: ReorderMethod;
+  methodReason: ReorderMethodReason;
+  thresholdSource: ReorderMethod;
+  operatingDaysUsed: number;
+  windowDays: number | null;
+  averageDailyUsage: number | null;
+  leadTimeDays: number | null;
+  safetyStock: number;
+  reorderPoint: number | null;
+  ownerMinimum: number;
+  effectiveRop: number;
+  configInconsistent: boolean;
+};
+
+const isMissingSchemaFunction = (error: { code?: string } | null) =>
+  error?.code === 'PGRST202' || error?.code === '42883';
+
+/**
+ * Today's reorder points, keyed `${branchId}:${ingredientId}`. The database
+ * recomputes any that are from an earlier day first. Before the A2 migration
+ * this returns an empty map, and the owner minimum is used as before.
+ */
+async function loadReorderPointMap(
+  client: SupabaseClient<Database>,
+  branchId?: string,
+): Promise<Map<string, InventoryReorderPoint>> {
+  const { data, error } = await client.rpc('refresh_reorder_points', branchId ? { p_branch_id: branchId } : {});
+  if (isMissingSchemaFunction(error)) return new Map();
+  assertNoError(error);
+  const rows = (data ?? []) as Database['public']['Tables']['inventory_reorder_points']['Row'][];
+  return new Map(rows.map((row) => [`${row.branch_id}:${row.ingredient_id}`, {
+    branchId: row.branch_id,
+    ingredientId: row.ingredient_id,
+    method: row.method,
+    methodReason: row.method_reason,
+    thresholdSource: row.threshold_source,
+    operatingDaysUsed: Number(row.operating_days_used),
+    windowDays: row.window_days == null ? null : Number(row.window_days),
+    averageDailyUsage: row.average_daily_usage == null ? null : Number(row.average_daily_usage),
+    leadTimeDays: row.lead_time_days == null ? null : Number(row.lead_time_days),
+    safetyStock: Number(row.safety_stock),
+    reorderPoint: row.reorder_point == null ? null : Number(row.reorder_point),
+    ownerMinimum: Number(row.owner_minimum),
+    effectiveRop: Number(row.effective_rop),
+    configInconsistent: row.config_inconsistent,
+  }]));
+}
+
+export type IngredientReplenishmentSettings = ReplenishmentSettings & { ingredientId: string };
+
+/** Owner reorder inputs per ingredient (AC-ROP-05-02); empty before the A2 migration. */
+export async function loadReplenishmentSettings(): Promise<IngredientReplenishmentSettings[] | null> {
+  const { data, error } = await requireSupabase()
+    .from('ingredient_replenishment_settings')
+    .select('ingredient_id, lead_time_days, service_level_z, window_days, min_history_days, shelf_life_days')
+    .order('ingredient_id');
+  if (error?.code === '42P01' || error?.code === 'PGRST205') return null;
+  assertNoError(error);
+  return (data ?? []).map((row) => ({
+    ingredientId: row.ingredient_id,
+    leadTimeDays: Number(row.lead_time_days),
+    serviceLevelZ: Number(row.service_level_z),
+    windowDays: Number(row.window_days),
+    minHistoryDays: Number(row.min_history_days),
+    shelfLifeDays: row.shelf_life_days == null ? null : Number(row.shelf_life_days),
+  }));
+}
+
+export async function saveReplenishmentSettings(
+  ingredientId: string,
+  settings: ReplenishmentSettings,
+): Promise<void> {
+  if (ingredientId === 'prepared-batter') {
+    throw new Error('Prepared batter is made in-house, so it keeps the owner minimum.');
+  }
+  const problem = validateReplenishmentSettings({ ...DEFAULT_REPLENISHMENT_SETTINGS, ...settings });
+  if (problem) throw new Error(problem);
+  const { data, error } = await requireSupabase()
+    .from('ingredient_replenishment_settings')
+    .upsert({
+      ingredient_id: ingredientId,
+      lead_time_days: settings.leadTimeDays,
+      service_level_z: settings.serviceLevelZ,
+      window_days: settings.windowDays,
+      min_history_days: settings.minHistoryDays,
+      shelf_life_days: settings.shelfLifeDays,
+    }, { onConflict: 'ingredient_id' })
+    .select('ingredient_id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The reorder settings could not be saved.');
 }
 
 export async function updateLotExpiryWindow(warningHours: number, criticalHours: number): Promise<void> {
@@ -572,6 +681,10 @@ export type StockExpirationSettingsData = {
   nearExpirationDays: number;
   lotExpiryWindow: LotExpiryWindow;
   heldLotIds: Set<string>;
+  /** A2, keyed `${branchId}:${ingredientId}`; empty before the A2 migration. */
+  reorderPoints: Map<string, InventoryReorderPoint>;
+  /** A2 owner inputs; null before the A2 migration. */
+  replenishmentSettings: IngredientReplenishmentSettings[] | null;
 };
 
 const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
@@ -2150,9 +2263,10 @@ export async function loadInventory(branchId: string, businessDate = new Date())
   assertNoError(settingsResult.error);
   if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
   const nearExpirationDays = settingsResult.data.near_expiration_days;
-  const [lotExpiryWindow, heldLotIds] = await Promise.all([
+  const [lotExpiryWindow, heldLotIds, reorderPoints] = await Promise.all([
     loadLotExpiryWindow(client),
     loadHeldLotIds(client, branchId),
+    loadReorderPointMap(client, branchId),
   ]);
 
   const inventory = indexBranchInventorySnapshot(inventoryResult.data ?? []);
@@ -2189,6 +2303,11 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const approvedUnit = isPreparedBatter ? 'ml' : ingredient.unit;
     const displayQuantity = isPreparedBatter ? quantity * 680 : quantity;
     const displayMinimumStock = isPreparedBatter ? minimumStock * 680 : minimumStock;
+    // A2: low when stock <= the reorder point (never below the owner minimum).
+    const reorderPoint = reorderPoints.get(`${branchId}:${ingredient.id}`) ?? null;
+    const threshold = Math.max(minimumStock, reorderPoint?.effectiveRop ?? minimumStock);
+    const displayThreshold = isPreparedBatter ? threshold * 680 : threshold;
+    const displaySafetyStock = (isPreparedBatter ? 680 : 1) * (reorderPoint?.safetyStock ?? 0);
     const displayQuantityPrecision = isPreparedBatter ? 0 : ingredient.quantity_precision;
     return [{
       id: ingredient.id,
@@ -2201,7 +2320,10 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       quantityPrecision: displayQuantityPrecision,
       expirationTracking: ingredient.expiration_tracking,
       threshold: displayMinimumStock,
-      lowStock: displayQuantity <= 0 || (displayMinimumStock > 0 && displayQuantity <= displayMinimumStock),
+      lowStock: displayQuantity <= 0 || (displayThreshold > 0 && displayQuantity <= displayThreshold),
+      stockThreshold: displayThreshold,
+      criticalStock: displayQuantity <= 0 || (displayQuantity <= displayThreshold && displayQuantity <= displaySafetyStock),
+      reorderPoint,
       expiration: formattedExpiration,
       nearExpiry: expirationStatus === 'Near Expiry',
       expirationStatus,
@@ -3548,9 +3670,19 @@ export async function loadOwnerInventory() {
     if ((data?.length ?? 0) < pageSize) break;
   }
 
+  const reorderPoints = await loadReorderPointMap(client);
   return {
     branches,
-    inventory: inventoryResult.data ?? [],
+    // A2: low_stock_threshold is the effective reorder point (never below minimum_stock).
+    inventory: (inventoryResult.data ?? []).map((record) => {
+      const point = reorderPoints.get(`${record.branch_id}:${record.ingredient_id}`) ?? null;
+      return {
+        ...record,
+        low_stock_threshold: point ? Math.max(point.effectiveRop, Number(record.minimum_stock)) : null,
+        safety_stock: point?.safetyStock ?? 0,
+        reorder_point: point,
+      };
+    }),
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     batches,
@@ -3583,7 +3715,12 @@ export async function loadStockExpirationSettings(): Promise<StockExpirationSett
   assertNoError(categoriesResult.error);
   assertNoError(settingsResult.error);
   if (!settingsResult.data) throw new Error('Owner-configured expiration alert settings are unavailable.');
-  const [lotExpiryWindow, heldLotIds] = await Promise.all([loadLotExpiryWindow(client), loadHeldLotIds(client)]);
+  const [lotExpiryWindow, heldLotIds, reorderPoints, replenishmentSettings] = await Promise.all([
+    loadLotExpiryWindow(client),
+    loadHeldLotIds(client),
+    loadReorderPointMap(client),
+    loadReplenishmentSettings(),
+  ]);
 
   const batches: ExpirationBatchRecord[] = [];
   const pageSize = 500;
@@ -3616,6 +3753,8 @@ export async function loadStockExpirationSettings(): Promise<StockExpirationSett
     nearExpirationDays: settingsResult.data.near_expiration_days,
     lotExpiryWindow,
     heldLotIds,
+    reorderPoints,
+    replenishmentSettings,
   };
 }
 

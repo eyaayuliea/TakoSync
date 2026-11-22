@@ -1,4 +1,5 @@
 import { classifyStockLevel } from '../services/inventoryStatusRules.ts';
+import { lowStockThreshold } from '../services/reorderPoint.ts';
 export type DashboardSale = {
   branch_id: string;
   total_amount: number | string;
@@ -18,13 +19,14 @@ export type DashboardBranchMetric = DashboardBranch & {
 export type DashboardInventoryRecord = {
   quantity: number | string | null;
   minimum_stock: number | string;
+  low_stock_threshold?: number | string | null;
 };
 
 export function summarizeOwnerInventoryStatus(records: DashboardInventoryRecord[]) {
   return records.reduce((summary, record) => {
     if (record.quantity === null) return summary;
     const quantity = Number(record.quantity);
-    const minimumStock = Number(record.minimum_stock);
+    const minimumStock = lowStockThreshold(record);
     if (!Number.isFinite(quantity) || !Number.isFinite(minimumStock)) return summary;
     const level = classifyStockLevel(quantity, minimumStock);
     if (level === 'Out of Stock') summary.outOfStock += 1;

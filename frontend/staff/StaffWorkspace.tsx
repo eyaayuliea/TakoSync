@@ -255,6 +255,9 @@ type Ingredient = {
   nearExpiry: boolean;
   expirationStatus: 'Near Expiry' | 'Expired' | null;
   minimumStock: number;
+  /** A2: low at or below this (reorder point, never below the minimum). */
+  stockThreshold?: number;
+  criticalStock?: boolean;
   type: string;
   unitName: string;
   receivedBatch: string;
@@ -615,6 +618,19 @@ function StatusBadge({
   );
 }
 
+/** A2: the quantity at or below which an item is low (reorder point, or the owner minimum). */
+function stockThresholdOf(item: { minimumStock: number; stockThreshold?: number }): number {
+  return Math.max(item.minimumStock, item.stockThreshold ?? item.minimumStock);
+}
+
+/** Alert/detail text for the low-stock threshold: the reorder point when it is above the minimum. */
+function stockThresholdLines(item: { minimumStock: number; stockThreshold?: number; unit: string; criticalStock?: boolean }) {
+  const threshold = stockThresholdOf(item);
+  const lines = [`Minimum stock level: ${formatUnitQuantity(item.minimumStock, item.unit)}`];
+  if (threshold > item.minimumStock) lines.push(`Reorder point: ${formatUnitQuantity(threshold, item.unit)}`);
+  return lines.join('\n');
+}
+
 function LotExpiryBadges({
   lot,
 }: {
@@ -653,7 +669,7 @@ function InventoryIngredientCard({
   const { isDark } = useTheme();
   // ST-04 c6: prepared batter in bottles; ST-04 c4: Normal / Low Stock / Out of Stock.
   const item = inventoryDisplayItem(storedItem);
-  const stockStatus = inventoryStockStatus(item.quantity, item.minimumStock);
+  const stockStatus = inventoryStockStatus(item.quantity, stockThresholdOf(item));
   const statusLabel = statusOverride?.label ?? (item.quantity <= 0 ? 'Out of Stock' : item.lowStock ? 'Low Stock' : item.nearExpiry ? 'Near Expiry' : 'Normal');
   const statusTone = statusOverride?.tone ?? (item.lowStock ? 'low' : item.nearExpiry ? 'warning' : 'good');
   const stockStatusTone = stockStatus === 'Normal' ? 'good' : 'low';
@@ -2257,10 +2273,10 @@ export default function StaffWorkspace({
   const alertDate = manilaBusinessDate();
   const branchInventoryItems = filterBranchInventoryAlertItems(ingredients);
   const lowStockItems = branchInventoryItems.filter(
-    (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'lowStock',
+    (item) => classifyStockAlert(item.quantity, stockThresholdOf(item)) === 'lowStock',
   );
   const outOfStockItems = branchInventoryItems.filter(
-    (item) => classifyStockAlert(item.quantity, item.minimumStock) === 'outOfStock',
+    (item) => classifyStockAlert(item.quantity, stockThresholdOf(item)) === 'outOfStock',
   );
   const nearExpirationBatches = branchInventoryItems.flatMap((item) => {
     if (!item.expirationTracking) return [];
@@ -2295,7 +2311,7 @@ export default function StaffWorkspace({
       minimumStock: item.minimumStock,
       unit: item.unit,
       title: item.name,
-      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\nMinimum stock level: ${formatUnitQuantity(item.minimumStock, item.unit)}`,
+      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\n${stockThresholdLines(item)}${item.criticalStock && item.quantity > 0 ? '\nCritical: at or below safety stock' : ''}`,
     })),
     ...outOfStockItems.map((item) => ({
       id: `out-${item.id}`,
@@ -2306,7 +2322,7 @@ export default function StaffWorkspace({
       minimumStock: item.minimumStock,
       unit: item.unit,
       title: item.name,
-      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\nMinimum stock level: ${formatUnitQuantity(item.minimumStock, item.unit)}`,
+      detail: `Expected: ${formatUnitQuantity(item.quantity, item.unit)}\n${stockThresholdLines(item)}${item.criticalStock && item.quantity > 0 ? '\nCritical: at or below safety stock' : ''}`,
     })),
     ...nearExpirationBatches.map(({ item, batch, daysRemaining }) => {
       const expiryText = daysRemaining === 0
@@ -3437,7 +3453,7 @@ export default function StaffWorkspace({
         const alertDeduction = deductions.find((deduction) => {
           const ingredient = ingredients.find((item) => item.id === deduction.ingredientId);
           return ingredient !== undefined && (
-            classifyStockLevel(deduction.newQuantity, ingredient.minimumStock) !== 'In Stock'
+            classifyStockLevel(deduction.newQuantity, stockThresholdOf(ingredient)) !== 'In Stock'
           );
         });
         const alertIngredient = alertDeduction
@@ -4304,7 +4320,8 @@ export default function StaffWorkspace({
       : gap < 0
         ? `${formatInventoryQuantity(Math.abs(gap), shownIngredient.quantityPrecision)} ${shownIngredient.unit} above minimum`
         : 'At minimum stock';
-    const statusLabel = inventoryStockStatus(shownIngredient.quantity, shownIngredient.minimumStock);
+    const statusLabel = inventoryStockStatus(shownIngredient.quantity, stockThresholdOf(shownIngredient));
+    const shownThreshold = stockThresholdOf(shownIngredient);
     const statusTone = statusLabel === 'Normal' ? 'good' : 'low';
     const recentMovements = historyTransactions
       .filter((transaction) => transaction.ingredientId === shownIngredient.id)
@@ -4368,6 +4385,14 @@ export default function StaffWorkspace({
               )}
             </Text>
           </View>
+          {shownThreshold > shownIngredient.minimumStock ? (
+            <View style={styles.stockSummaryLine}>
+              <Text style={styles.stockSummaryLabel}>Reorder point</Text>
+              <Text style={styles.stockSummaryValue}>
+                {formatInventoryUnitQuantity(shownThreshold, shownIngredient.unit, shownIngredient.quantityPrecision)}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.stockSummaryLine}>
             <Text style={styles.stockSummaryLabel}>Stock gap</Text>
             <Text style={[styles.stockSummaryValue, gap > 0 && styles.stockGapWarning]}>{stockGap}</Text>

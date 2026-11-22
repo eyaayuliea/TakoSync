@@ -8,6 +8,13 @@ import {
 } from '../services/inventoryStatusRules.ts';
 import { describeLotsForDisplay, lotExpiryTone, type LotDisplay } from '../services/fefoAllocation.ts';
 import {
+  DEFAULT_REPLENISHMENT_SETTINGS,
+  SERVICE_LEVEL_OPTIONS,
+  reorderPointSourceLabel,
+  serviceLevelLabel,
+  type ReplenishmentSettings,
+} from '../services/reorderPoint.ts';
+import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
@@ -19,6 +26,7 @@ import {
   loadStockExpirationSettings,
   updateBatchExpirationDate,
   updateBatchHold,
+  saveReplenishmentSettings,
   updateIngredientExpirationTracking,
   updateMinimumStock,
   updateLotExpiryWindow,
@@ -111,6 +119,9 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
   const [criticalHoursDraft, setCriticalHoursDraft] = useState('24');
   const [savingLotWindow, setSavingLotWindow] = useState(false);
   const [savingHold, setSavingHold] = useState<string | null>(null);
+  const [editingReorder, setEditingReorder] = useState<string | null>(null);
+  const [reorderDraft, setReorderDraft] = useState({ leadTimeDays: '', windowDays: '', minHistoryDays: '', shelfLifeDays: '', serviceLevelZ: 1.645 });
+  const [savingReorder, setSavingReorder] = useState(false);
   const previousRefreshing = useRef(refreshing);
 
   const refresh = async () => {
@@ -200,7 +211,12 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
     return result;
   }, [data]);
 
-  const lowRows = rows.filter((item) => classifyStockLevel(item.quantity, item.minimumStock) !== 'In Stock');
+  // A2: an item is low at or below its reorder point, which is never below the owner minimum.
+  const thresholdFor = (item: StockRow) => Math.max(
+    item.minimumStock,
+    data?.reorderPoints.get(`${item.branchId}:${item.ingredientId}`)?.effectiveRop ?? item.minimumStock,
+  );
+  const lowRows = rows.filter((item) => classifyStockLevel(item.quantity, thresholdFor(item)) !== 'In Stock');
   const thresholdKeys = useMemo(() => new Set(lowRows.map((item) => item.key)), [lowRows]);
   const batchStatuses = batches.flatMap((batch) => {
     if (!batch.expiration_date) return [];
@@ -213,8 +229,8 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
     const matchesSearch = `${item.ingredientName} ${item.category} ${item.branchName}`.toLocaleLowerCase().includes(normalizedSearch);
     const matchesStatus = stockFilter === 'All'
       || (stockFilter === 'At/below minimum'
-        ? classifyStockLevel(item.quantity, item.minimumStock) !== 'In Stock'
-        : classifyStockLevel(item.quantity, item.minimumStock) === 'In Stock');
+        ? classifyStockLevel(item.quantity, thresholdFor(item)) !== 'In Stock'
+        : classifyStockLevel(item.quantity, thresholdFor(item)) === 'In Stock');
     return matchesSearch && matchesStatus;
   });
   const visibleBatches = batches.filter((batch) => {
@@ -355,6 +371,40 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
       setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Unable to save the batch colour windows.' });
     } finally {
       setSavingLotWindow(false);
+    }
+  };
+
+  const startReorderEdit = (ingredientId: string, settings: ReplenishmentSettings) => {
+    setFeedback(null);
+    setEditingReorder(ingredientId);
+    setReorderDraft({
+      leadTimeDays: String(settings.leadTimeDays),
+      windowDays: String(settings.windowDays),
+      minHistoryDays: String(settings.minHistoryDays),
+      shelfLifeDays: settings.shelfLifeDays == null ? '' : String(settings.shelfLifeDays),
+      serviceLevelZ: settings.serviceLevelZ,
+    });
+  };
+
+  const saveReorder = async (ingredientId: string, ingredientName: string) => {
+    setSavingReorder(true);
+    setFeedback(null);
+    try {
+      await saveReplenishmentSettings(ingredientId, {
+        leadTimeDays: Number(reorderDraft.leadTimeDays),
+        serviceLevelZ: reorderDraft.serviceLevelZ,
+        windowDays: Number(reorderDraft.windowDays),
+        minHistoryDays: Number(reorderDraft.minHistoryDays),
+        shelfLifeDays: reorderDraft.shelfLifeDays.trim() ? Number(reorderDraft.shelfLifeDays) : null,
+      });
+      setEditingReorder(null);
+      setFeedback({ type: 'success', message: `Reorder settings saved for ${ingredientName}. Reorder points were recalculated.` });
+      await refresh();
+      onRefresh();
+    } catch (error) {
+      setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Unable to save the reorder settings.' });
+    } finally {
+      setSavingReorder(false);
     }
   };
 
@@ -515,6 +565,79 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
             <Text style={styles.currentSetting}>Current: <Text style={styles.currentSettingStrong}>yellow within {data.lotExpiryWindow.warningHours} h, red within {data.lotExpiryWindow.criticalHours} h</Text></Text>
           </View>
 
+          {data.replenishmentSettings ? (
+            <View style={styles.panel}>
+              <Text style={styles.sectionTitle}>Reorder settings</Text>
+              <Text style={styles.helperText}>Low-stock alerts use a reorder point: average daily use × supplier lead time, plus safety stock for days with higher use. It is worked out from the last operating days and never goes below the minimum stock. With too little sales history the minimum stock is used. Alerts are advice only; no purchase orders are created.</Text>
+              {data.ingredients.filter((ingredient) => ingredient.id !== 'prepared-batter').map((ingredient) => {
+                const settings = data.replenishmentSettings?.find((row) => row.ingredientId === ingredient.id)
+                  ?? { ingredientId: ingredient.id, ...DEFAULT_REPLENISHMENT_SETTINGS };
+                const editing = editingReorder === ingredient.id;
+                return (
+                  <View key={ingredient.id} style={styles.reorderRow}>
+                    <View style={styles.reorderRowHeading}>
+                      <View style={styles.rowCopy}>
+                        <Text style={styles.rowTitle}>{ingredient.name}</Text>
+                        <Text style={styles.rowMeta}>
+                          Lead time {settings.leadTimeDays} d · {serviceLevelLabel(settings.serviceLevelZ)} service level · last {settings.windowDays} operating days (min {settings.minHistoryDays})
+                          {settings.shelfLifeDays != null ? ` · shelf life ${settings.shelfLifeDays} d` : ''}
+                        </Text>
+                      </View>
+                      {!editing ? (
+                        <Pressable accessibilityRole="button" accessibilityLabel={`Edit reorder settings for ${ingredient.name}`} onPress={() => startReorderEdit(ingredient.id, settings)} style={styles.editButton}>
+                          <Text style={styles.editButtonText}>Edit</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    {editing ? (
+                      <View style={styles.reorderEditor}>
+                        {([
+                          ['leadTimeDays', 'Supplier lead time (days)'],
+                          ['windowDays', 'Usage window (operating days)'],
+                          ['minHistoryDays', 'Minimum history (days)'],
+                          ['shelfLifeDays', 'Shelf life (days, optional)'],
+                        ] as const).map(([key, label]) => (
+                          <View key={key} style={styles.settingInputWrap}>
+                            <Text style={styles.fieldLabel}>{label}</Text>
+                            <TextInput
+                              accessibilityLabel={`${label} for ${ingredient.name}`}
+                              value={reorderDraft[key]}
+                              onChangeText={(value) => setReorderDraft((current) => ({ ...current, [key]: value }))}
+                              keyboardType="decimal-pad"
+                              style={styles.input}
+                            />
+                          </View>
+                        ))}
+                        <Text style={styles.fieldLabel}>Service level</Text>
+                        <View style={styles.lotBadgeRow}>
+                          {SERVICE_LEVEL_OPTIONS.map((option) => (
+                            <Pressable
+                              key={option.label}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: Math.abs(reorderDraft.serviceLevelZ - option.z) < 0.0005 }}
+                              onPress={() => setReorderDraft((current) => ({ ...current, serviceLevelZ: option.z }))}
+                              style={[styles.statusBadge, Math.abs(reorderDraft.serviceLevelZ - option.z) < 0.0005 ? styles.goodBadge : styles.neutralBadge]}
+                            >
+                              <Text style={[styles.statusText, Math.abs(reorderDraft.serviceLevelZ - option.z) < 0.0005 ? styles.goodText : styles.neutralText]}>{option.label}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        <View style={styles.lotBadgeRow}>
+                          <Pressable accessibilityRole="button" disabled={savingReorder} onPress={() => void saveReorder(ingredient.id, ingredient.name)} style={styles.smallPrimaryButton}>
+                            <Text style={styles.primaryButtonText}>{savingReorder ? 'Saving…' : 'Save'}</Text>
+                          </Pressable>
+                          <Pressable accessibilityRole="button" disabled={savingReorder} onPress={() => setEditingReorder(null)} style={styles.cancelButton}>
+                            <Text style={styles.cancelText}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
           <View style={styles.sectionHeader}>
             <View style={styles.sectionHeadingCopy}>
               <Text style={styles.sectionTitle}>Minimum stock levels</Text>
@@ -551,7 +674,9 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
                 </View>
                 <View style={[styles.statusBadge, thresholdKeys.has(item.key) ? styles.lowBadge : styles.goodBadge]}>
                   <Text style={[styles.statusText, thresholdKeys.has(item.key) ? styles.lowText : styles.goodText]}>
-                    {thresholdKeys.has(item.key) ? 'At/below minimum' : 'In stock'}
+                    {thresholdKeys.has(item.key)
+                      ? thresholdFor(item) > item.minimumStock ? 'At/below reorder point' : 'At/below minimum'
+                      : 'In stock'}
                   </Text>
                 </View>
               </View>
@@ -591,6 +716,23 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
                   </View>
                 )}
               </View>
+              {(() => {
+                const point = data.reorderPoints.get(`${item.branchId}:${item.ingredientId}`);
+                if (!point) return null;
+                return (
+                  <View style={styles.reorderLine}>
+                    <Text style={styles.rowMeta}>
+                      Low-stock alert at {formatAmount(thresholdFor(item), item.quantityPrecision)} {item.unit} · {reorderPointSourceLabel(point)}
+                      {point.method === 'DYNAMIC_ROP' && point.averageDailyUsage != null
+                        ? ` · uses ${formatAmount(point.averageDailyUsage, item.quantityPrecision)} ${item.unit}/day, safety stock ${formatAmount(point.safetyStock, item.quantityPrecision)} ${item.unit}`
+                        : ''}
+                    </Text>
+                    {point.configInconsistent ? (
+                      <Text style={[styles.rowMeta, styles.lowText]}>Shelf life is shorter than the supplier lead time. Check the reorder settings.</Text>
+                    ) : null}
+                  </View>
+                );
+              })()}
             </View>
           )) : (
             <View style={styles.emptyCard}>
@@ -793,6 +935,10 @@ function useStyles() {
     rowMeta: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 7, lineHeight: 11, marginTop: 2 },
     statusBadge: { flexShrink: 0, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10 },
     lotBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+    reorderLine: { marginTop: 6, gap: 2 },
+    reorderRow: { borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 8, marginTop: 8 },
+    reorderRowHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    reorderEditor: { marginTop: 8, gap: 6 },
     statusText: { fontFamily: 'Poppins_600SemiBold', fontSize: 6 },
     lowBadge: { backgroundColor: colors.paleRed },
     lowText: { color: colors.red },
