@@ -1,4 +1,4 @@
-import type { TransactionHistoryItem } from '../services/takosync.ts';
+import type { StockInReceiptDetail, TransactionHistoryItem } from '../services/takosync.ts';
 
 export type StockInBranch = {
   id: string;
@@ -24,6 +24,18 @@ export type StockInRecord = {
   recordedBy: string;
   /** The entry was undone by an approved Entry Reversal; it stays listed. */
   isReversed: boolean;
+  /**
+   * OM-18 c2: from the Stock-In receipt (header + lines). Null for entries
+   * recorded before receipts existed, which have a single transaction date.
+   */
+  receiptReference: string | null;
+  datePurchased: string | null;
+  dateReceived: string | null;
+  /** When staff saved the receipt (server time). */
+  recordedAt: string | null;
+  /** The quantity as entered, when it was in a purchase unit (e.g. 3 pack). */
+  enteredQuantity: number | null;
+  enteredUnit: string | null;
 };
 
 type StockInHistoryItem = TransactionHistoryItem & { type: 'Stock-In' };
@@ -32,10 +44,17 @@ export function buildStockInRecords(
   history: TransactionHistoryItem[],
   batches: StockInBatch[],
   reversedIds: ReadonlySet<string> = new Set(),
+  receipts: ReadonlyMap<string, StockInReceiptDetail> = new Map(),
 ): StockInRecord[] {
   return history
-    .filter((record): record is StockInHistoryItem => record.type === 'Stock-In')
-    .map((record) => ({
+    // Received supplies only: a batter batch's yield is a Stock-In movement in the
+    // ledger but belongs to Batter Batch Recording, not to this report.
+    .filter((record): record is StockInHistoryItem =>
+      record.type === 'Stock-In' && !/^batter preparation/i.test(record.reason.trim()))
+    .map((record) => {
+      const receipt = receipts.get(record.id) ?? null;
+      const purchaseUnit = receipt !== null && receipt.enteredUnit !== record.unit;
+      return ({
       id: record.id,
       reference: record.reference,
       ingredientId: record.ingredientId,
@@ -47,10 +66,18 @@ export function buildStockInRecords(
       expirationDate: record.expirationDate
         ?? batches.find((batch) => batch.batch_reference === record.batchReference)?.expiration_date
         ?? null,
-      supplierReference: record.notes.trim() || record.batchReference || '',
+      // With a receipt, the supplier or reference staff typed; otherwise the old notes.
+      supplierReference: receipt ? receipt.supplierReference ?? '' : record.notes.trim() || record.batchReference || '',
       recordedBy: record.staff,
       isReversed: reversedIds.has(record.id),
-    }))
+      receiptReference: receipt?.receiptReference ?? null,
+      datePurchased: receipt?.datePurchased ?? null,
+      dateReceived: receipt?.dateReceived ?? null,
+      recordedAt: receipt?.recordedAt ?? null,
+      enteredQuantity: purchaseUnit ? receipt.enteredQuantity : null,
+      enteredUnit: purchaseUnit ? receipt.enteredUnit : null,
+    });
+    })
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
@@ -59,12 +86,13 @@ export async function loadStockInRecords(
   batches: StockInBatch[],
 ): Promise<StockInRecord[]> {
   if (branches.length === 0) throw new Error('Owner branches are unavailable for Stock-In records.');
-  const { loadReversedEntryIds, loadTransactionHistory } = await import('../services/takosync.ts');
-  const [historyByBranch, reversedIds] = await Promise.all([
+  const { loadReversedEntryIds, loadStockInReceiptDetails, loadTransactionHistory } = await import('../services/takosync.ts');
+  const [historyByBranch, reversedIds, receipts] = await Promise.all([
     Promise.all(branches.map((branch) => loadTransactionHistory(branch.id))),
     loadReversedEntryIds(),
+    loadStockInReceiptDetails(),
   ]);
-  return buildStockInRecords(historyByBranch.flat(), batches, reversedIds);
+  return buildStockInRecords(historyByBranch.flat(), batches, reversedIds, receipts);
 }
 
 export function formatStockInDateTime(value: string): string {
@@ -97,4 +125,21 @@ export function formatStockInExpirationDate(value: string): string {
 export function formatStockInQuantity(record: Pick<StockInRecord, 'quantity' | 'unit'>): string {
   const quantity = new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(Math.abs(record.quantity));
   return `+${quantity} ${record.unit}`;
+}
+
+/** "23 Nov 2026" for a YYYY-MM-DD date of a Stock-In receipt. */
+export function formatStockInDate(value: string): string {
+  return formatStockInExpirationDate(value);
+}
+
+/** OM-18 c1: the date line of a list row. Receipts show the date received, older entries their timestamp. */
+export function stockInListDate(record: Pick<StockInRecord, 'dateReceived' | 'createdAt'>): string {
+  return record.dateReceived ? `Received ${formatStockInDate(record.dateReceived)}` : formatStockInDateTime(record.createdAt);
+}
+
+/** "3 pack = 1.08 L" when the quantity was entered in a purchase unit, else null. */
+export function stockInEnteredQuantity(record: Pick<StockInRecord, 'enteredQuantity' | 'enteredUnit' | 'quantity' | 'unit'>): string | null {
+  if (record.enteredQuantity === null || !record.enteredUnit) return null;
+  const trim = (value: number) => String(Math.round(value * 1000) / 1000);
+  return `${trim(record.enteredQuantity)} ${record.enteredUnit} = ${trim(record.quantity)} ${record.unit}`;
 }

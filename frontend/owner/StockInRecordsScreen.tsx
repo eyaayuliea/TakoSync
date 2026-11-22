@@ -20,6 +20,9 @@ import {
   type StockInBatch,
   type StockInBranch,
   type StockInRecord,
+  formatStockInDate,
+  stockInEnteredQuantity,
+  stockInListDate,
 } from './stockInRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
 
@@ -173,10 +176,19 @@ export default function StockInRecordsScreen({
                 {[
                   { label: 'Ingredient', value: selected.ingredientName },
                   { label: 'Quantity', value: formatStockInQuantity(selected), tone: 'success' as const },
+                  // OM-18 c2: what staff entered when it was a purchase unit, and the receipt's dates.
+                  ...(stockInEnteredQuantity(selected) ? [{ label: 'Quantity received', value: stockInEnteredQuantity(selected) as string }] : []),
                   { label: 'Branch', value: selected.branchName },
-                  { label: 'Date & time', value: formatStockInDateTime(selected.createdAt) },
+                  ...(selected.datePurchased && selected.dateReceived ? [
+                    { label: 'Date purchased', value: formatStockInDate(selected.datePurchased) },
+                    { label: 'Date received', value: formatStockInDate(selected.dateReceived) },
+                    ...(selected.recordedAt ? [{ label: 'Recorded on', value: formatStockInDateTime(selected.recordedAt) }] : []),
+                  ] : [
+                    { label: 'Date & time', value: formatStockInDateTime(selected.createdAt) },
+                  ]),
                   { label: 'Expiration date', value: selected.expirationDate ? formatStockInExpirationDate(selected.expirationDate) : '—' },
                   { label: 'Supplier / reference', value: selected.supplierReference || '—' },
+                  ...(selected.receiptReference ? [{ label: 'Stock-In receipt', value: selected.receiptReference }] : []),
                   { label: 'Recorded by', value: selected.recordedBy },
                 ].map(({ label, value, tone }, index) => (
                   <OwnerRecordDetailRow
@@ -223,7 +235,7 @@ export default function StockInRecordsScreen({
                 <Text numberOfLines={1} style={styles.ingredientName}>{record.ingredientName}</Text>
                 <Text style={styles.quantity}>{formatStockInQuantity(record)}</Text>
               </View>
-              <Text style={styles.recordDate}>Stock-In · {formatStockInDateTime(record.createdAt)}</Text>
+              <Text style={styles.recordDate}>Stock-In · {stockInListDate(record)}</Text>
               <View style={styles.cardBottom}>
                 <View style={styles.branchLine}>
                   <Text style={styles.pinIcon}>⌖</Text>
