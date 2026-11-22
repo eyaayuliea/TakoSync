@@ -1,4 +1,5 @@
 import { manilaDateKey } from '../services/businessDaySettings.ts';
+import { lowStockThreshold } from '../services/reorderPoint.ts';
 import {
   NEAR_EXPIRATION_DEFAULT_DAYS,
   calendarDaysUntil,
@@ -27,6 +28,7 @@ export function buildOwnerInventoryComparisonRows(input: {
     ingredient_id: string;
     quantity: number | string | null;
     minimum_stock: number | string;
+    low_stock_threshold?: number | string | null;
   }[];
   batches: readonly {
     id: string;
@@ -65,7 +67,7 @@ export function buildOwnerInventoryComparisonRows(input: {
       unit: input.unit,
       batchCode: activeBatches[0]?.batch_reference ?? undefined,
       batchCount: activeBatches.length,
-      status: getInventoryStockStatus(quantity, record ? Number(record.minimum_stock) : 0),
+      status: getInventoryStockStatus(quantity, record ? lowStockThreshold(record) : 0),
     };
   });
 }

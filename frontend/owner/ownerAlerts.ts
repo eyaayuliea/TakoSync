@@ -1,5 +1,6 @@
 import { daysUntilManilaExpiration } from './ownerInventoryStatus.ts';
 import { classifyExpirationLevel, classifyStockLevel } from '../services/inventoryStatusRules.ts';
+import { lowStockThreshold } from '../services/reorderPoint.ts';
 
 export const OWNER_ALERT_EMPTY_MESSAGE = 'No alerts at the moment.';
 export const OWNER_ALERT_LOAD_ERROR = 'Unable to load data. Please check your internet connection and try again.';
@@ -13,6 +14,9 @@ export type OwnerAlertInventoryRecord = {
   ingredient_id: string;
   quantity: number | null;
   minimum_stock: number;
+  /** A2: effective reorder point; null or missing means the owner minimum is the threshold. */
+  low_stock_threshold?: number | null;
+  safety_stock?: number | null;
 };
 
 export type OwnerAlertBatchRecord = {
@@ -41,6 +45,10 @@ export type OwnerLowStockAlert = {
   branch: string;
   quantity: number;
   minimumStock: number;
+  /** A2: the quantity that triggered the alert (reorder point, at least the minimum). */
+  reorderPoint: number;
+  /** A2: at or below the safety stock, or out of stock. */
+  critical: boolean;
   unit: string;
   status: OwnerStockAlertKind;
 };
@@ -122,7 +130,8 @@ export function buildOwnerAlertSnapshot(input: {
   const allLowStock = [...inventoryByKey.values()].flatMap((record) => {
     const ingredient = ingredients.get(record.ingredient_id);
     const quantity = record.quantity === null ? null : Number(record.quantity);
-    const status = classifyOwnerStockAlert(quantity, Number(record.minimum_stock));
+    const threshold = lowStockThreshold(record);
+    const status = classifyOwnerStockAlert(quantity, threshold);
     if (!ingredient || !status || quantity === null) return [];
     return [{
       id: `${record.branch_id}:${record.ingredient_id}`,
@@ -132,6 +141,8 @@ export function buildOwnerAlertSnapshot(input: {
       branch: branchNames.get(record.branch_id) ?? 'Branch unavailable',
       quantity,
       minimumStock: Number(record.minimum_stock),
+      reorderPoint: threshold,
+      critical: quantity <= 0 || quantity <= Number(record.safety_stock ?? 0),
       unit: ingredient.unit,
       status,
     } satisfies OwnerLowStockAlert];

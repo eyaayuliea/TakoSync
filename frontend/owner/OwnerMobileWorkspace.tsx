@@ -16,6 +16,7 @@ import {
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
 import { resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
+import { lowStockThreshold } from '../services/reorderPoint.ts';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
 import OwnerBusinessDaySettings from './OwnerBusinessDaySettings';
 import OwnerStaffAccounts from './OwnerStaffAccounts';
@@ -439,6 +440,8 @@ export default function OwnerMobileWorkspace({
     if (!ingredient) return [];
     const quantity = record.quantity === null ? null : Number(record.quantity);
     const minimumStock = Number(record.minimum_stock);
+    // A2: the item is low at or below its reorder point (never below the owner minimum).
+    const reorderPoint = lowStockThreshold(record);
     const activeBatches = (data?.batches ?? [])
       .filter((item) => item.branch_id === record.branch_id
         && item.ingredient_id === record.ingredient_id
@@ -472,9 +475,10 @@ export default function OwnerMobileWorkspace({
       category: categories.get(ingredient.category_id) ?? 'Other',
       quantity,
       minimumStock,
+      reorderPoint,
       unit: ingredient.unit,
       expirationTracking: ingredient.expiration_tracking,
-      status: getInventoryStockStatus(quantity, minimumStock),
+      status: getInventoryStockStatus(quantity, reorderPoint),
       batches: batchRows,
     }];
   });
@@ -486,6 +490,7 @@ export default function OwnerMobileWorkspace({
   const inventoryStatusCounts = summarizeOwnerInventoryStatus(inventoryRows.map((item) => ({
     quantity: item.quantity,
     minimum_stock: item.minimumStock,
+    low_stock_threshold: item.reorderPoint,
   })));
   const lowStock = alertSnapshot.lowStock;
   const sortedExpirationItems = alertSnapshot.expiration;
@@ -836,7 +841,9 @@ export default function OwnerMobileWorkspace({
         <View style={styles.listCopy}>
           <Text style={styles.lowStockName} numberOfLines={1}>{item.name}</Text>
           <Text style={styles.lowStockMeta} numberOfLines={2}>
-            {item.branch} | Expected: {item.quantity} {item.unit} / Min: {item.minimumStock} {item.unit}
+            {item.branch} | Expected: {item.quantity} {item.unit} / {item.reorderPoint > item.minimumStock
+              ? `Reorder at: ${item.reorderPoint}`
+              : `Min: ${item.minimumStock}`} {item.unit}
           </Text>
         </View>
         <StatusBadge label={item.status} tone={statusTone} />
@@ -1196,7 +1203,7 @@ export default function OwnerMobileWorkspace({
       {!inventoryError && !inventoryLoading && inventoryRows.length > 0 ? (
         <View style={styles.inventoryBranchStatusList}>
           {summarizeOwnerInventoryStatusByBranch(
-            (data?.inventory ?? []).map((record) => ({ branch_id: record.branch_id, quantity: record.quantity, minimum_stock: record.minimum_stock })),
+            (data?.inventory ?? []).map((record) => ({ branch_id: record.branch_id, quantity: record.quantity, minimum_stock: record.minimum_stock, low_stock_threshold: record.low_stock_threshold })),
             branches,
           ).map((row) => (
             <View key={row.id} style={styles.inventoryBranchStatusRow} accessibilityLabel={`${row.name}: ${row.normal} normal, ${row.lowStock} low stock, ${row.outOfStock} out of stock`}>
@@ -1739,8 +1746,19 @@ export default function OwnerMobileWorkspace({
                     <Text style={styles.alertMetricValue}>{item.quantity} {item.unit}</Text>
                   </View>
                   <View style={styles.alertMetricRight}>
-                    <Text style={styles.alertMetricLabel}>Minimum stock level</Text>
-                    <Text style={styles.alertMetricValue}>{item.minimumStock} {item.unit}</Text>
+                    {/* A2: the reorder point is shown when it is above the owner minimum. */}
+                    <Text style={styles.alertMetricLabel}>
+                      {item.reorderPoint > item.minimumStock ? 'Reorder point' : 'Minimum stock level'}
+                    </Text>
+                    <Text style={styles.alertMetricValue}>
+                      {item.reorderPoint > item.minimumStock ? item.reorderPoint : item.minimumStock} {item.unit}
+                    </Text>
+                    {item.reorderPoint > item.minimumStock ? (
+                      <Text style={styles.alertMetricLabel}>Minimum {item.minimumStock} {item.unit}</Text>
+                    ) : null}
+                    {item.critical && item.status !== 'Out of Stock' ? (
+                      <Text style={styles.alertMetricLabel}>Critical: at or below safety stock</Text>
+                    ) : null}
                   </View>
                 </View>
               </View>

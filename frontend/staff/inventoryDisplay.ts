@@ -9,6 +9,8 @@ type DisplayableInventoryItem = {
   unit: string;
   quantity: number;
   minimumStock: number;
+  /** A2 low-stock threshold (reorder point or minimum), same units as quantity. */
+  stockThreshold?: number;
   quantityPrecision: number;
   unitName?: string;
 };
@@ -25,6 +27,9 @@ export function inventoryDisplayItem<T extends DisplayableInventoryItem>(item: T
     ...item,
     quantity,
     minimumStock,
+    ...(item.stockThreshold === undefined
+      ? {}
+      : { stockThreshold: roundTo3(item.stockThreshold / PREPARED_BATTER_ML_PER_BOTTLE) }),
     unit: 'bottles',
     unitName: `Bottle (${PREPARED_BATTER_ML_PER_BOTTLE} ml)`,
     quantityPrecision: Number.isInteger(quantity) && Number.isInteger(minimumStock) ? 0 : 3,
