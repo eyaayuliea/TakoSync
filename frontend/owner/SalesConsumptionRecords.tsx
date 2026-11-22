@@ -235,6 +235,10 @@ export default function SalesConsumptionRecords({
                     <Text style={styles.warningIcon}>▲</Text>
                     <Text style={styles.failedBadgeText}>Update failed · Review</Text>
                   </View>
+                ) : selected.saleVoided ? (
+                  <View style={styles.failedBadge}>
+                    <Text style={styles.failedBadgeText}>Sale voided · Reversed</Text>
+                  </View>
                 ) : null}
               </View>
               {[
@@ -258,6 +262,23 @@ export default function SalesConsumptionRecords({
                   <Text style={styles.linkedSale}>{selected.saleReference}</Text>
                 </Pressable>
               </View>
+              {/* OM-17 c3: the consumption of a voided sale is shown with the entry that reversed it. */}
+              {selected.saleVoided ? (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Sale status</Text>
+                    <Text style={styles.detailValue}>Voided</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Void Reversal entry</Text>
+                    <Text style={styles.detailValue}>
+                      {selected.voidReversal
+                        ? `${selected.voidReversal.reference} · +${formatConsumptionQuantity(selected.voidReversal.quantity, selected.voidReversal.unit)} ${selected.voidReversal.unit} · ${detailDateTime(selected.voidReversal.createdAt)}`
+                        : 'Not found for this ingredient'}
+                    </Text>
+                  </View>
+                </>
+              ) : null}
             </View>
             <View style={styles.readOnlyPill}>
               <Text style={styles.lockIcon}>▣</Text>
@@ -324,6 +345,12 @@ export default function SalesConsumptionRecords({
                   <View style={styles.failedBadge}>
                     <Text style={styles.warningIcon}>▲</Text>
                     <Text style={styles.failedBadgeText}>Update failed · Review</Text>
+                  </View>
+                ) : record.saleVoided ? (
+                  <View style={styles.failedBadge} accessibilityLabel="Sale voided, consumption reversed">
+                    <Text style={styles.failedBadgeText}>
+                      Sale voided · Reversed{record.voidReversal ? ` +${formatConsumptionQuantity(record.voidReversal.quantity, record.voidReversal.unit)} ${record.voidReversal.unit}` : ''}
+                    </Text>
                   </View>
                 ) : null}
               </View>

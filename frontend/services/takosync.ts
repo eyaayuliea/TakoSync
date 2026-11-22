@@ -1687,6 +1687,16 @@ export type OwnerSalesConsumptionBundle = {
     status: string;
     inventory_processing_status: string;
   }>;
+  /** OM-17 c3: the Void Reversal entries that put back the consumption of voided sales. */
+  voidReversals?: Array<{
+    id: string;
+    reference: string;
+    sale_id: string | null;
+    ingredient_id: string;
+    quantity: number | string;
+    unit: string;
+    transaction_date: string;
+  }>;
   /** True when more records exist after this page. */
   hasMore: boolean;
 };
@@ -1726,18 +1736,26 @@ export async function loadOwnerSalesConsumptionBundle(input: {
   const branchIds = [...new Set(movements.map((movement) => movement.branch_id))];
   const actorIds = [...new Set(movements.map((movement) => movement.actor_id))];
   const saleIds = [...new Set(movements.flatMap((movement) => movement.sale_id ? [movement.sale_id] : []))];
-  const [ingredientResult, branchResult, profileResult, saleResult] = await Promise.all([
+  const [ingredientResult, branchResult, profileResult, saleResult, reversalResult] = await Promise.all([
     client.from('ingredients').select('id, name').in('id', ingredientIds),
     client.from('branches').select('id, city, code').in('id', branchIds),
     client.from('profiles').select('id, full_name').in('id', actorIds),
     saleIds.length
       ? client.from('sales').select('id, transaction_reference, status, inventory_processing_status').in('id', saleIds)
       : Promise.resolve({ data: [], error: null }),
+    saleIds.length
+      ? client.from('inventory_movements')
+        .select('id, reference, sale_id, ingredient_id, quantity, unit, transaction_date')
+        .eq('type', 'void_reversal')
+        .in('sale_id', saleIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   assertNoError(ingredientResult.error);
   assertNoError(branchResult.error);
   assertNoError(profileResult.error);
   assertNoError(saleResult.error);
+  // Before the void migration the type does not exist (22P02); there is then nothing to show.
+  if (reversalResult.error && reversalResult.error.code !== '22P02') assertNoError(reversalResult.error);
 
   return {
     movements,
@@ -1745,6 +1763,7 @@ export async function loadOwnerSalesConsumptionBundle(input: {
     branches: branchResult.data ?? [],
     profiles: profileResult.data ?? [],
     sales: saleResult.data ?? [],
+    voidReversals: reversalResult.error ? [] : reversalResult.data ?? [],
     hasMore,
   };
 }

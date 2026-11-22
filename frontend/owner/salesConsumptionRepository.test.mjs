@@ -86,3 +86,23 @@ test('design-preview states can force loading, empty and error but never inject 
     else process.env.EXPO_PUBLIC_FORCE_SALES_CONSUMPTION_STATE = original;
   }
 });
+
+test('OM-17 c3: the consumption of a voided sale carries its Void Reversal entry', () => {
+  const voided = {
+    ...bundle,
+    sales: [
+      { id: 's1', transaction_reference: 'TXN-0001', status: 'voided', inventory_processing_status: 'completed' },
+      { id: 's2', transaction_reference: 'TXN-0002', status: 'completed', inventory_processing_status: 'completed' },
+    ],
+    voidReversals: [
+      { id: 'v1', reference: 'TX-VOID', sale_id: 's1', ingredient_id: 'batter', quantity: '0.320', unit: 'bottle', transaction_date: '2026-11-19T08:30:00Z' },
+    ],
+  };
+  const [octopus, batter] = buildSalesConsumptionRecords(voided);
+  assert.equal(batter.saleVoided, true);
+  assert.deepEqual(batter.voidReversal, { reference: 'TX-VOID', quantity: 0.32, unit: 'bottle', createdAt: '2026-11-19T08:30:00Z' });
+  assert.equal(octopus.saleVoided, false);
+  assert.equal(octopus.voidReversal, null);
+  // A bundle from a database without void reversals leaves every record unmarked.
+  assert.equal(buildSalesConsumptionRecords(bundle).every((record) => !record.saleVoided && record.voidReversal === null), true);
+});

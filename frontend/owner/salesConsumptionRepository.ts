@@ -24,6 +24,10 @@ export type SalesConsumptionRecord = {
   recordedBy: string;
   /** The linked sale's inventory processing is flagged as failed, so this deduction needs review. */
   updateFailed: boolean;
+  /** OM-17 c3: the linked sale was voided. */
+  saleVoided: boolean;
+  /** The Void Reversal entry that put this ingredient's consumption back, when the sale was voided. */
+  voidReversal: { reference: string; quantity: number; unit: string; createdAt: string } | null;
 };
 
 export type SalesConsumptionPage = {
@@ -49,11 +53,14 @@ export function buildSalesConsumptionRecords(bundle: OwnerSalesConsumptionBundle
   const branches = new Map(bundle.branches.map((branch) => [branch.id, branchLabel(branch.city, branch.code)]));
   const profiles = new Map(bundle.profiles.map((profile) => [profile.id, profile.full_name?.trim() || '']));
   const sales = new Map(bundle.sales.map((sale) => [sale.id, sale]));
+  // One Void Reversal per sale and ingredient.
+  const reversals = new Map((bundle.voidReversals ?? []).map((entry) => [`${entry.sale_id}:${entry.ingredient_id}`, entry]));
 
   return bundle.movements.flatMap((movement) => {
     // Sales-consumption rows always carry a sale; skip anything malformed rather than invent a link.
     if (!movement.sale_id) return [];
     const sale = sales.get(movement.sale_id);
+    const reversal = reversals.get(`${movement.sale_id}:${movement.ingredient_id}`);
     return [{
       id: movement.id,
       recordReference: movement.reference,
@@ -67,6 +74,13 @@ export function buildSalesConsumptionRecords(bundle: OwnerSalesConsumptionBundle
       createdAt: movement.transaction_date || movement.created_at,
       recordedBy: profiles.get(movement.actor_id) || 'Employee account',
       updateFailed: sale?.inventory_processing_status === 'failed',
+      saleVoided: sale?.status === 'voided' || Boolean(reversal),
+      voidReversal: reversal ? {
+        reference: reversal.reference,
+        quantity: Math.abs(Number(reversal.quantity)),
+        unit: reversal.unit,
+        createdAt: reversal.transaction_date,
+      } : null,
     }];
   });
 }
