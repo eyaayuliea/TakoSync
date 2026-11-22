@@ -691,7 +691,35 @@ async function changePassword(
     .eq('role', 'staff')
     .eq('active', true);
   if (flagError) throw new HttpError(500, 'Password updated, but the Staff password-change state could not be cleared.');
-  return response({ ok: true });
+  // Supabase Auth ends every session of a user whose password an admin changes,
+  // including the one that sent this request. Sign in again with the new password
+  // so the Staff member continues into the workspace (ST-01 c3, ST-15 c3).
+  const session = await sessionForNewPassword(profile.id, newPassword, auth, admin);
+  return response(session ? { ok: true, session } : { ok: true });
+}
+
+async function sessionForNewPassword(
+  profileId: string,
+  password: string,
+  auth: ReturnType<HandlerOptions['createClient']>,
+  admin: ReturnType<HandlerOptions['createClient']>,
+) {
+  const { data: authUserData, error: authUserError } = await admin.auth.admin.getUserById(profileId);
+  const email = typeof authUserData?.user?.email === 'string' ? authUserData.user.email.trim() : '';
+  if (authUserError || !email) return null;
+  const { data, error } = await auth.auth.signInWithPassword({ email, password });
+  if (error || !data?.session) {
+    console.error('[staff-auth] Sign-in after password change failed', { status: error?.status ?? null, code: error?.code ?? null });
+    return null;
+  }
+  return {
+    access_token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    expires_in: data.session.expires_in,
+    expires_at: data.session.expires_at,
+    token_type: data.session.token_type,
+    user: data.user,
+  };
 }
 
 export function createStaffAuthHandler(options: HandlerOptions) {

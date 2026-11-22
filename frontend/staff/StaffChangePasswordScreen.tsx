@@ -29,7 +29,8 @@ type Props = {
   /** ST-15 c3, c5: ask for the current password (not for a forced first change). */
   requireCurrentPassword?: boolean;
   onChanged: () => void | Promise<void>;
-  onCancel: () => void;
+  /** Omitted when the change is required (ST-01 c3): there is no way back to the workspace. */
+  onCancel?: () => void;
   onLogout: () => void | Promise<void>;
 };
 
@@ -211,20 +212,22 @@ export default function StaffChangePasswordScreen({
                 ? <ActivityIndicator color={ownerColors.white} />
                 : <Text style={styles.primaryText}>Save new password</Text>}
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Return to Staff workspace"
-              accessibilityState={{ disabled: saving || loggingOut }}
-              onPress={onCancel}
-              disabled={saving || loggingOut}
-              style={({ pressed }) => [
-                styles.secondary,
-                pressed && !saving && !loggingOut && styles.pressed,
-                (saving || loggingOut) && styles.disabled,
-              ]}
-            >
-              <Text style={styles.logoutText}>Return to Staff workspace</Text>
-            </Pressable>
+            {onCancel ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Return to Staff workspace"
+                accessibilityState={{ disabled: saving || loggingOut }}
+                onPress={onCancel}
+                disabled={saving || loggingOut}
+                style={({ pressed }) => [
+                  styles.secondary,
+                  pressed && !saving && !loggingOut && styles.pressed,
+                  (saving || loggingOut) && styles.disabled,
+                ]}
+              >
+                <Text style={styles.logoutText}>Return to Staff workspace</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Log out"

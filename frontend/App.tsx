@@ -186,7 +186,10 @@ function AppContent() {
   const visibleScreen =
     (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'staffChangePassword') && authenticatedUser === null
       ? 'login'
-      : screen;
+      // ST-01 c3: no Staff function opens until a required password change is done.
+      : screen === 'staffWorkspace' && authenticatedUser?.role === 'Staff' && authenticatedUser.mustChangePassword
+        ? 'staffChangePassword'
+        : screen;
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -203,7 +206,7 @@ function AppContent() {
           return;
         }
         setAuthenticatedUser(user);
-        setScreen(getAuthenticatedMobileDestination(user.role));
+        setScreen(getAuthenticatedMobileDestination(user.role, user.mustChangePassword));
       })
       .catch((error: unknown) => {
         if (active) {
@@ -560,7 +563,7 @@ function AppContent() {
       // held so the form still cannot be submitted again during the brief success message.
       setAuthenticating(false);
       await new Promise((resolve) => setTimeout(resolve, 600));
-      setScreen(getAuthenticatedMobileDestination(user.role));
+      setScreen(getAuthenticatedMobileDestination(user.role, user.mustChangePassword));
     } catch (error) {
       setLoginSuccess(false);
       const feedback = staffLoginFeedback(error);
@@ -851,7 +854,7 @@ function AppContent() {
                 employeeId={authenticatedUser.employeeId}
                 requireCurrentPassword={!authenticatedUser.mustChangePassword}
                 onChanged={handleStaffPasswordChanged}
-                onCancel={() => setScreen('staffWorkspace')}
+                onCancel={authenticatedUser.mustChangePassword ? undefined : () => setScreen('staffWorkspace')}
                 onLogout={handleLogout}
               />
             )}

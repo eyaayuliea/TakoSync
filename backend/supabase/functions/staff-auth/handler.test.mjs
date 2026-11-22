@@ -584,6 +584,10 @@ test('first-login password change uses Admin Auth and clears the profile flag', 
   assert.equal(fixture.authAdminPayloads[0][0], 'staff-id');
   assert.deepEqual(fixture.authAdminPayloads[0][1], { password: 'new-secure-password' });
   assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), true);
+  // The admin password update ends the caller's session, so a new one is issued.
+  assert.deepEqual(fixture.calls.filter((call) => call.kind === 'auth-login').at(-1),
+    { kind: 'auth-login', email: 'staff@example.test', password: 'new-secure-password' });
+  assert.equal(result.body.session.access_token, 'staff-access-token');
 });
 
 test('active Staff may change a password when no first-login change is pending', async () => {
