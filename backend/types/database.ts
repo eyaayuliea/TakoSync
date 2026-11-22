@@ -656,6 +656,10 @@ export type Database = {
         };
         Returns: Database['public']['Tables']['sales']['Row'];
       };
+      sale_stock_requirements: {
+        Args: { p_branch_id: string };
+        Returns: Json;
+      };
       inspect_sale_reconciliation: {
         Args: { p_transaction_reference: string };
         Returns: Json;

@@ -77,6 +77,7 @@ import {
 } from './dailyClosing';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { isInactiveAccountDenial } from './permissions.ts';
+import { isVariantOutOfStock, parseSaleStockSnapshot, type SaleStockSnapshot } from './saleStock.ts';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
   buildInventoryReportData,
@@ -638,6 +639,8 @@ export type StaffMenuCatalogItem = {
   /** ST-02 c5: owner-set maximum quantity per order; null = no maximum. */
   maxQuantity: number | null;
   isAvailable: boolean;
+  /** ST-02 c6 (decision #11): the branch stock cannot make one of this product. */
+  outOfStock?: boolean;
 };
 
 export type StaffMenuAddon = {
@@ -3170,9 +3173,11 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
 export async function loadStaffMenuCatalog(branchId: string): Promise<{
   products: StaffMenuCatalogItem[];
   addons: StaffMenuAddon[];
+  /** Per-unit ingredient needs and branch stock (decision #11); null before the migration. */
+  stock: SaleStockSnapshot | null;
 }> {
   const client = requireSupabase();
-  const [productsResult, variantsResult, visibilityResult, addonsResult] = await Promise.all([
+  const [productsResult, variantsResult, visibilityResult, addonsResult, stockResult] = await Promise.all([
     client.from('products')
       .select('id, product_name, description, is_available, category'),
     client.from('product_variants')
@@ -3186,8 +3191,14 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
       .select('id, addon_name, price, active')
       .eq('active', true)
       .order('addon_name', { ascending: true }),
+    client.rpc('sale_stock_requirements', { p_branch_id: branchId }),
   ]);
   assertNoError(productsResult.error);
+  let stock: SaleStockSnapshot | null = null;
+  if (!isMissingRpcFunction(stockResult.error, 'sale_stock_requirements')) {
+    assertNoError(stockResult.error);
+    stock = parseSaleStockSnapshot(stockResult.data);
+  }
   assertNoError(visibilityResult.error);
   assertNoError(addonsResult.error);
   let variantRows: Array<{
@@ -3211,9 +3222,10 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
     productsResult.data ?? [],
     visibleVariants,
     visibleVariantIds,
-  );
+  ).map((product) => (isVariantOutOfStock(product.id, stock) ? { ...product, outOfStock: true } : product));
 
   return {
+    stock,
     products,
     addons: (addonsResult.data ?? []).map((addon) => ({
       id: addon.id,
@@ -3313,7 +3325,11 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
       throw new SaleSubmissionRejectedError('This transaction reference belongs to a different branch.');
     }
     if (message.includes('exceeds available stock') || message.includes('insufficient stock')) {
-      throw new SaleSubmissionRejectedError('Insufficient inventory to complete this sale.');
+      // ST-02 c10 (decision #11): the stock changed after the order was built; nothing was saved.
+      const ingredient = /insufficient stock for ([^:]+):/i.exec(error.message)?.[1]?.trim();
+      throw new SaleSubmissionRejectedError(ingredient
+        ? `Order changed: there is no longer enough ${ingredient} in stock. Adjust the order and try again.`
+        : 'Order changed: there is no longer enough stock for this order. Adjust the order and try again.');
     }
     if (message.includes('exceeds the maximum of')) {
       // ST-02 c5: the owner's maximum per order changed after the order was built.

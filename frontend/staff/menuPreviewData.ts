@@ -13,6 +13,8 @@ export type MenuProduct = {
   /** ST-02 c5: owner-set maximum quantity per order; null or absent = no maximum. */
   maxQuantity?: number | null;
   isAvailable: boolean;
+  /** ST-02 c6 (decision #11): the branch stock cannot make one; tagged Out of Stock. */
+  outOfStock?: boolean;
 };
 
 export type MenuProductGroup = {

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot } from '../services/saleStock';
 import { classifyStockLevel, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import {
   describeLotsForDisplay,
@@ -1117,6 +1118,7 @@ export default function StaffWorkspace({
   const [menuAddons, setMenuAddons] = useState<StaffMenuAddon[]>([]);
   const menuSaleSubmissionLock = useRef(false);
   const [menuCatalogLoading, setMenuCatalogLoading] = useState(false);
+  const [menuStock, setMenuStock] = useState<SaleStockSnapshot | null>(null);
   const [menuCatalogError, setMenuCatalogError] = useState('');
   const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
   const [menuCatalogBranchId, setMenuCatalogBranchId] = useState<string | null>(null);
@@ -1741,10 +1743,11 @@ export default function StaffWorkspace({
     setMenuAddons([]);
     setMenuCatalogLoaded(false);
     loadStaffMenuCatalog(user.branchId)
-      .then(({ products, addons }) => {
+      .then(({ products, addons, stock }) => {
         if (active) {
           setMenuCatalog(products);
           setMenuAddons(addons);
+          setMenuStock(stock);
           setMenuCatalogError('');
           setMenuCatalogLoaded(true);
           setMenuCatalogBranchId(user.branchId);
@@ -1775,9 +1778,10 @@ export default function StaffWorkspace({
       return;
     }
     loadStaffMenuCatalog(user.branchId)
-      .then(({ products, addons }) => {
+      .then(({ products, addons, stock }) => {
         setMenuCatalog(products);
         setMenuAddons(addons);
+        setMenuStock(stock);
         setMenuCatalogError('');
         setMenuCatalogLoaded(true);
         setMenuCatalogBranchId(user.branchId);
@@ -2437,11 +2441,16 @@ export default function StaffWorkspace({
       setDashboardMessage(`${product.name} is currently unavailable and was not added.`);
       return;
     }
+    if (product.outOfStock) {
+      setDashboardMessage(`${product.name} · ${product.sizeLabel} is out of stock and was not added.`);
+      return;
+    }
     const existingQuantity = menuCart.find((line) => line.productId === productId)?.quantity ?? 0;
     if (product.maxQuantity !== null && isAtMenuQuantityLimit(existingQuantity, product.maxQuantity)) {
       setDashboardMessage(`${product.name} · ${product.sizeLabel}: ${menuQuantityLimitMessage(product.maxQuantity)}`);
       return;
     }
+    if (blockedByStock(productId, existingQuantity + 1)) return;
     setMenuCart((current) => {
       const existing = current.find((line) => line.productId === productId);
       if (!menuTransactionReference) {
@@ -2456,12 +2465,27 @@ export default function StaffWorkspace({
   const menuMaxQuantity = (productId: string) =>
     menuCatalog.find((item) => item.id === productId)?.maxQuantity ?? null;
 
+  /** ST-02 c6 (decision #11): refuse a quantity the branch stock cannot make, with the reason. */
+  const blockedByStock = (productId: string, quantity: number) => {
+    const shortage = orderStockShortage(withLineQuantity(menuCart, productId, quantity), menuStock);
+    if (!shortage) return false;
+    const product = menuCatalog.find((item) => item.id === productId);
+    setDashboardMessage(stockShortageMessage(product ? `${product.name} · ${product.sizeLabel}` : 'This order', shortage));
+    return true;
+  };
+
   const changeMenuProductQuantity = (productId: string, change: 1 | -1) => {
     const maxQuantity = menuMaxQuantity(productId);
+    if (change > 0) {
+      const current = menuCart.find((line) => line.productId === productId)?.quantity ?? 0;
+      if (blockedByStock(productId, current + 1)) return;
+    }
     setMenuCart((current) => changeMenuCartQuantity(current, productId, change, maxQuantity));
   };
 
   const setMenuProductQuantity = (productId: string, quantity: number) => {
+    const current = menuCart.find((line) => line.productId === productId)?.quantity ?? 0;
+    if (quantity > current && blockedByStock(productId, quantity)) return;
     const maxQuantity = menuMaxQuantity(productId);
     if (maxQuantity !== null && quantity > maxQuantity) {
       setDashboardMessage(`Quantity set to the limit. ${menuQuantityLimitMessage(maxQuantity)}`);
