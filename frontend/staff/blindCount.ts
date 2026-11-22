@@ -32,3 +32,12 @@ export function blindCountProgress(lines: Array<{ physicalQuantity: string }>): 
     total: lines.length,
   };
 }
+
+/**
+ * ST-12 c6: the label beside a count's difference (actual − expected). A count
+ * above the expected quantity is "Higher than expected", never "Lower".
+ */
+export function countDifferenceLabel(difference: number): 'Matches' | 'Lower than expected' | 'Higher than expected' {
+  if (difference === 0) return 'Matches';
+  return difference < 0 ? 'Lower than expected' : 'Higher than expected';
+}
