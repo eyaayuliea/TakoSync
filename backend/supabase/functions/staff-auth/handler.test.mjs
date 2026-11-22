@@ -26,6 +26,9 @@ function createFixture({
   sessionResult = { data: { active: true }, error: null },
   userError = null,
   lockout = null,
+  // OW-27 c3–c4: Staff accounts already in the target branch, and a username that is taken.
+  branchStaffCount = 0,
+  takenUsername = null,
 } = {}) {
   const calls = [];
   const accountOperations = [];
@@ -185,14 +188,17 @@ function createFixture({
           error: null,
         };
       }
+      if (current.selectOptions?.count === 'exact') {
+        return { count: branchStaffCount, data: null, error: null };
+      }
+      if (takenUsername && filters.username === takenUsername && current.selectedFields === 'id') {
+        return { data: { id: 'other-staff-id' }, error: null };
+      }
       if (filters.role === 'staff' && resultShape === 'many') {
         const rows = filters.active === undefined
           ? staffProfiles
           : staffProfiles.filter((profile) => profile.active === filters.active);
         return { data: rows, error: null };
-      }
-      if (current.selectOptions?.count === 'exact') {
-        return { count: 0, error: null };
       }
       if (current.operation === 'update') {
         return { data: { ...staffAccount, id: filters.id ?? 'created-staff-id' }, error: null };
@@ -331,6 +337,34 @@ test('client-supplied business session status cannot grant authorization', async
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
   }
+});
+
+test('OW-27 c3: a third Staff account for a branch is rejected with a specific message', async () => {
+  const fixture = createFixture({ branchStaffCount: 2 });
+  const created = await invoke(fixture, 'create', { username: 'Ben Reyes', branchId: 'branch-id' });
+  assert.equal(created.status, 409);
+  assert.equal(created.body.error, 'Each branch can have at most two Staff accounts.');
+  assert.deepEqual(fixture.authAdminOperations, [], 'no Auth user is created');
+  assert.equal(fixture.accountOperations.some((item) => item.operation === 'update'), false);
+
+  // Moving an existing account into a full branch is refused the same way.
+  const moved = await invoke(createFixture({ branchStaffCount: 2 }), 'update', {
+    id: 'staff-id', username: 'Ana Cruz', branchId: 'branch-id', active: true,
+  });
+  assert.equal(moved.status, 409);
+  assert.equal(moved.body.error, 'Each branch can have at most two Staff accounts.');
+
+  // A branch with one account still accepts a second.
+  const second = await invoke(createFixture({ branchStaffCount: 1 }), 'create', { username: 'Ben Reyes', branchId: 'branch-id' });
+  assert.equal(second.status, 200);
+});
+
+test('OW-27 c4: a duplicate username is rejected with a specific message', async () => {
+  const fixture = createFixture({ takenUsername: 'ben reyes_staff' });
+  const result = await invoke(fixture, 'create', { username: 'Ben Reyes', branchId: 'branch-id' });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, 'That employee name already belongs to another Staff account.');
+  assert.deepEqual(fixture.authAdminOperations, []);
 });
 
 test('invalid create input returns 400 without touching account data', async () => {
