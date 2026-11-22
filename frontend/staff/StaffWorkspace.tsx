@@ -160,7 +160,7 @@ import {
   type InventoryReportData,
 } from './inventoryReports';
 import { downloadSaleReceiptPdf, printSaleReceipt } from './receiptOutput';
-import { blindCountProgress, compareCount, countComparisonLabel } from './blindCount';
+import { blindCountProgress, compareCount, countComparisonLabel, countDifferenceLabel } from './blindCount';
 import { inventoryDisplayItem } from './inventoryDisplay';
 import {
   STAFF_HISTORY_TYPE_FILTERS,
@@ -1146,6 +1146,9 @@ export default function StaffWorkspace({
   const [inventoryReportError, setInventoryReportError] = useState('');
   const [inventoryReportRefreshKey, setInventoryReportRefreshKey] = useState(0);
   const [selectedInventoryReport, setSelectedInventoryReport] = useState<InventoryReportKey>('totalIngredientQuantity');
+  // ST-12 c9: opens the correction request view of a submitted count from its read-only details.
+  const [countCorrectionView, setCountCorrectionView] = useState(false);
+  const [countCorrectionNotice, setCountCorrectionNotice] = useState<{ countLineId: string; text: string } | null>(null);
   const [selectedInventoryCountId, setSelectedInventoryCountId] = useState<string | null>(null);
   const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Set<string>>(() => new Set());
   // ST-06 c6 / #43: Daily Sales is the only staff report. Staff reach their own counts and
@@ -1337,6 +1340,25 @@ export default function StaffWorkspace({
       setPendingCountCorrections(await pendingInventoryCountCorrectionStore.resolve(request.requestId));
       setInventoryReportRefreshKey((current) => current + 1);
       setDashboardMessage('Count correction request submitted to the Owner.');
+      // The count details stay open: show the request there as Pending and confirm it was sent.
+      setInventoryReportData((current) => current && {
+        ...current,
+        physicalCounts: current.physicalCounts.map((count) => count.id !== request.countLineId
+          || count.correctionRequests.some((existing) => existing.requestId === request.requestId)
+          ? count
+          : {
+            ...count,
+            correctionRequests: [...count.correctionRequests, {
+              requestId: request.requestId,
+              correctedActualQuantity: request.correctedActualQuantity,
+              reason: request.reason,
+              status: 'pending' as const,
+              decisionReason: null,
+              decidedAt: null,
+            }],
+          }),
+      });
+      setCountCorrectionNotice({ countLineId: request.countLineId, text: 'Correction request sent to the owner. The original count is kept until the owner decides.' });
     } catch (error) {
       if (error instanceof InventoryCountCorrectionSubmissionError) {
         if (error.definitiveRejection) {
@@ -2435,6 +2457,7 @@ export default function StaffWorkspace({
   };
 
   const openInventoryCountDetails = (count: InventoryCountRecord) => {
+    setCountCorrectionView(false);
     setSelectedInventoryCountId(count.id);
     setRoute('inventoryCountDetails');
   };
@@ -2990,7 +3013,8 @@ export default function StaffWorkspace({
         lines,
       });
       setDailyCheckDraftId(saved.draftId);
-      setDailyCheckDraftMessage('Matches expected · Draft can be edited until submitted.');
+      // Blind count (ST-12 c2): nothing about the expected quantity is said before submission.
+      setDailyCheckDraftMessage('Draft saved. You can keep editing it until you submit.');
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Unable to save the count draft.');
     } finally {
@@ -5925,7 +5949,7 @@ export default function StaffWorkspace({
                   matches ? styles.physicalCountDifferenceNeutral : styles.physicalCountDifferenceNegative,
                 ]}>
                   Difference {formatDailyDifference(record.difference, record.unit)}
-                  {' · '}{matches ? 'Matches' : 'Lower than expected'}
+                  {' · '}{countDifferenceLabel(record.difference)}
                 </Text>
                 <Text style={styles.physicalCountMeta}>
                   {formatHistoryDateTime(new Date(record.submittedAt))}
@@ -6290,7 +6314,7 @@ export default function StaffWorkspace({
         </View>
       );
     }
-    if (selectedInventoryReport === 'physicalInventoryCount') {
+    if (selectedInventoryReport === 'physicalInventoryCount' && !countCorrectionView) {
       const validated = record.countStatus === 'Validated' || Boolean(record.validation) || Boolean(record.adjustment);
       const matches = record.difference === 0;
       const actualQuantity = record.revisedActualQuantity ?? record.actualQuantity;
@@ -6323,7 +6347,7 @@ export default function StaffWorkspace({
                     matches ? styles.physicalCountDifferenceNeutral : styles.physicalCountDifferenceNegative,
                   ]}>
                     Difference {formatDailyDifference(record.difference, record.unit)}
-                    {' · '}{matches ? 'Matches' : 'Lower than expected'}
+                    {' · '}{countDifferenceLabel(record.difference)}
                   </Text>
                   <Text style={styles.physicalCountDetailMeta}>
                     {formatHistoryDateTime(new Date(record.submittedAt))}
@@ -6343,7 +6367,7 @@ export default function StaffWorkspace({
                     matches ? styles.physicalCountDifferenceNeutral : styles.physicalCountDifferenceNegative,
                   ]}>
                     Difference {formatDailyDifference(record.difference, record.unit)}
-                    {' · '}{matches ? 'Matches' : 'Lower than expected'}
+                    {' · '}{countDifferenceLabel(record.difference)}
                   </Text>
                   <Text style={styles.physicalCountDetailMeta}>
                     {formatHistoryDateTime(new Date(record.submittedAt))}
@@ -6363,7 +6387,7 @@ export default function StaffWorkspace({
                     matches ? styles.physicalCountDifferenceNeutral : styles.physicalCountDifferenceNegative,
                   ]}>
                     Difference {formatDailyDifference(record.difference, record.unit)}
-                    {' · '}{matches ? 'Matches' : 'Lower than expected'}
+                    {' · '}{countDifferenceLabel(record.difference)}
                   </Text>
                   <Text style={styles.physicalCountDetailMeta}>
                     {formatHistoryDateTime(new Date(record.submittedAt))}
@@ -6427,6 +6451,34 @@ export default function StaffWorkspace({
                   ? 'No direct editing. Count changes require a correction request in My counts & corrections.'
                   : 'Read-only · Count changes require a correction request in My counts & corrections.'}
             </Text>
+            {record.submittedBy === user.id && !validated &&
+              // The server accepts corrections only for counts that differ from the expected quantity.
+              record.originalActualQuantity !== record.expectedQuantity &&
+              !record.correctionRequests.some((request) => request.status === 'pending') &&
+              !pendingCountCorrections.some((request) => request.countLineId === record.id) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Request a correction for the ${record.ingredientName} count`}
+                  onPress={() => {
+                    setSelectedCorrectionCountLineId(record.id);
+                    setCorrectionActualQuantity(String(record.originalActualQuantity));
+                    setCorrectionReason('');
+                    setCorrectionFormError('');
+                    setCountCorrectionView(true);
+                  }}
+                  style={styles.discrepancyNeutralButton}
+                >
+                  <Text style={styles.discrepancyNeutralButtonText}>Request a correction</Text>
+                </Pressable>
+              ) : record.correctionRequests.length || pendingCountCorrections.some((request) => request.countLineId === record.id) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setCountCorrectionView(true)}
+                  style={styles.discrepancyNeutralButton}
+                >
+                  <Text style={styles.discrepancyNeutralButtonText}>View correction requests</Text>
+                </Pressable>
+              ) : null}
             {validated || record.revisedActualQuantity !== null ? (
               <Pressable
                 accessibilityRole="button"
@@ -6443,7 +6495,7 @@ export default function StaffWorkspace({
         </View>
       );
     }
-    if (selectedInventoryReport === 'inventoryDiscrepancy') {
+    if (selectedInventoryReport === 'inventoryDiscrepancy' && !countCorrectionView) {
       const adjusted = Boolean(record.adjustment) || record.countStatus === 'Validated';
       const status = adjusted ? 'Adjusted' : 'Pending Review';
       const lowerThanExpected = record.difference < 0;
@@ -6552,12 +6604,13 @@ export default function StaffWorkspace({
     }
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader('Physical count details', 'Back to report', () => setRoute('inventoryReport'))}
+        {renderInventoryReportHeader('Physical count details', countCorrectionView ? 'Back to count details' : 'Back to report',
+          () => (countCorrectionView ? setCountCorrectionView(false) : setRoute('inventoryReport')))}
         <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
           <View style={styles.inventoryReportMetadata}>
             <Text style={styles.inventoryReportMetadataText}>Branch: {record.branchName}</Text>
             <Text style={styles.inventoryReportMetadataText}>Submitted: {formatHistoryDateTime(new Date(record.submittedAt))}</Text>
-            <Text style={styles.inventoryReportMetadataText}>Submitting employee account: {record.submittedBy}</Text>
+            <Text style={styles.inventoryReportMetadataText}>Submitting employee account: {record.submittedBy === user.id ? user.displayName : 'Another staff member'}</Text>
             <Text style={styles.inventoryReportMetadataText}>Transaction reference: {record.reference}</Text>
           </View>
           <View style={styles.inventoryReportRecord}>
@@ -6620,6 +6673,9 @@ export default function StaffWorkspace({
                 Validated: {formatHistoryDateTime(new Date(record.validation.validatedAt))}
               </Text>
             </View>
+          ) : null}
+          {countCorrectionNotice?.countLineId === record.id ? (
+            <Text style={styles.inventoryReportRecordDetail} accessibilityRole="alert">✓ {countCorrectionNotice.text}</Text>
           ) : null}
           {countCorrectionStorageError ? (
             <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{countCorrectionStorageError}</Text>

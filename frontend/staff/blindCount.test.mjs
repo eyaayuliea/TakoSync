@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blindCountProgress, compareCount, countComparisonLabel } from './blindCount.ts';
+import { blindCountProgress, compareCount, countComparisonLabel, countDifferenceLabel } from './blindCount.ts';
 
 const kg = (value) => `${value} kg`;
 
@@ -22,4 +22,10 @@ test('progress counts the items with a count entered', () => {
     counted: 2,
     total: 3,
   });
+});
+
+test('ST-12 c6: a difference is labelled Matches, Lower, or Higher than expected', () => {
+  assert.equal(countDifferenceLabel(0), 'Matches');
+  assert.equal(countDifferenceLabel(-2.5), 'Lower than expected');
+  assert.equal(countDifferenceLabel(5), 'Higher than expected');
 });
