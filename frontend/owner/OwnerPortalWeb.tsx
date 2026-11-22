@@ -7,6 +7,7 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
+import { buildWebVoidReport } from './ownerPortalVoidReport';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   createIngredient,
@@ -22,6 +23,8 @@ import {
   loadOwnerDiscrepancyReviews,
   loadOwnerInventory,
   loadOwnerSalesData,
+  loadOwnerSaleVoidReviews,
+  type OwnerSaleVoidReview,
   loadProductManagement,
   loadSharedRecipes,
   loadStaffAccounts,
@@ -792,6 +795,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     'Branch Sales Report',
     'Products Sold Report',
     'Transaction Summary Report',
+    'Void Report',
   ];
   const [report, setReport] = useState(reportOptions[0]);
   const [period, setPeriod] = useState<ReportingPeriod>('This Month');
@@ -807,6 +811,16 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     [period, startDate, endDate],
   );
   const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+  // OW-06–OW-10 c1: the selections apply when the owner selects Generate Report.
+  const [generated, setGenerated] = useState<{ report: string; range: { start: Date; end: Date }; branchId: string | null; key: number } | null>(null);
+  const [voids, setVoids] = useState<OwnerSaleVoidReview[] | null>(null);
+  const generate = () => {
+    if (!range) {
+      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
+      return;
+    }
+    setGenerated({ report, range, branchId, key: Date.now() });
+  };
 
   useEffect(() => {
     let active = true;
@@ -820,28 +834,24 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
 
   useEffect(() => {
     let active = true;
-    if (!range) {
-      setSales(null);
-      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
-      setLoading(false);
-      return () => { active = false; };
-    }
-
+    if (!generated) return () => { active = false; };
     setLoading(true);
     setError('');
     setSales(null);
-    loadOwnerSalesData({ start: range.start, end: range.end, branchId })
-      .then((result) => {
-        if (active) setSales(result);
-      })
+    setVoids(null);
+    const request = generated.report === 'Void Report'
+      ? loadOwnerSaleVoidReviews().then((result) => { if (active) setVoids(result.requests); })
+      : loadOwnerSalesData({ start: generated.range.start, end: generated.range.end, branchId: generated.branchId })
+        .then((result) => { if (active) setSales(result); });
+    request
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the sales report.');
+        if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the report.');
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [range, branchId]);
+  }, [generated]);
 
   const records = sales ? filterOwnerPortalConfirmedSales(sales.sales) : [];
   const items = sales?.items ?? [];
@@ -873,6 +883,22 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     String(item.quantity),
     peso(item.totalSales),
   ]);
+  // OW-10: every voided sale of the period with its review.
+  const voidReport = voids && generated ? buildWebVoidReport(voids, { ...generated.range, branchId: generated.branchId }) : null;
+  const voidRows = (voidReport?.rows ?? []).map((row) => [
+    row.transactionReference,
+    row.branchName,
+    row.saleCreatedAt ? dateFormatter.format(new Date(row.saleCreatedAt)) : '—',
+    peso(row.saleTotal),
+    row.reason,
+    `${row.voidedBy}\n${dateFormatter.format(new Date(row.voidedAt))}`,
+    [
+      row.flagReason ? `${row.reviewStatus}: ${row.flagReason}` : row.reviewStatus,
+      row.reviewedBy && row.reviewedAt ? `by ${row.reviewedBy} · ${dateFormatter.format(new Date(row.reviewedAt))}` : null,
+    ].filter(Boolean).join('\n'),
+  ]);
+  const shownReport = generated?.report ?? null;
+  const hasReportData = shownReport === 'Void Report' ? Boolean(voidReport?.count) : records.length > 0;
 
   return (
     <>
@@ -882,9 +908,9 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           <Text style={styles.muted}>Supabase sales in the selected Manila reporting period.</Text>
         </View>
         <Pressable
-          disabled={loading || !records.length}
+          disabled={loading || !hasReportData}
           onPress={() => { if (typeof window !== 'undefined') window.print(); }}
-          style={styles.outline}
+          style={[styles.outline, (loading || !hasReportData) && { opacity: 0.45 }]}
         >
           <Text style={styles.pinkText}>Print / Export</Text>
         </Pressable>
@@ -901,6 +927,9 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           onChange={setBranch}
         />
         <Select value={report} options={reportOptions} onChange={setReport} />
+        <Pressable accessibilityRole="button" onPress={generate} disabled={loading} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }]}>
+          <Text style={styles.loginButtonText}>Generate Report</Text>
+        </Pressable>
       </View>
       {period === 'Custom' ? (
         <View style={[styles.row, { flexWrap: 'wrap' }]}>
@@ -925,21 +954,38 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           <Text style={styles.muted}>Loading sales report…</Text>
         </View>
       ) : null}
-      {!loading && sales ? (
-        <Panel title={report}>
-          {report === 'Total Sales Report' ? (
+      {!generated && !loading ? (
+        <Text style={styles.muted}>Choose the report type, reporting period and branch, then select Generate Report.</Text>
+      ) : null}
+      {!loading && shownReport === 'Void Report' && voidReport ? (
+        <Panel title="Void Report">
+          <View style={[styles.row, { justifyContent: 'flex-start', gap: 28, marginBottom: 14 }]}>
+            <View><Text style={styles.metricLabel}>Voided sales</Text><Text style={styles.metricValue}>{voidReport.count}</Text></View>
+            <View><Text style={styles.metricLabel}>Total amount voided</Text><Text style={styles.metricValue}>{peso(voidReport.total)}</Text></View>
+          </View>
+          {voidReport.count ? (
+            <Table
+              headers={['Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason', 'Voided by · date & time', 'Review status · reviewer']}
+              rows={voidRows}
+            />
+          ) : <Text style={styles.empty}>No sales were voided in this period.</Text>}
+        </Panel>
+      ) : null}
+      {!loading && sales && generated && shownReport !== 'Void Report' ? (
+        <Panel title={shownReport}>
+          {shownReport === 'Total Sales Report' ? (
             <>
               <Text style={styles.metricValue}>{peso(total)}</Text>
               <Text style={styles.muted}>{records.length} completed sales.</Text>
             </>
           ) : null}
-          {report === 'Branch Sales Report' ? (
+          {shownReport === 'Branch Sales Report' ? (
             <Table headers={['Branch', 'Transactions', 'Total Sales']} rows={branchRows} />
           ) : null}
-          {report === 'Products Sold Report' ? (
+          {shownReport === 'Products Sold Report' ? (
             <Table headers={['Product', 'Quantity Sold', 'Sales Total']} rows={productRows} />
           ) : null}
-          {report === 'Transaction Summary Report' ? (
+          {shownReport === 'Transaction Summary Report' ? (
             <Table
               headers={['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total']}
               rows={transactionRows}
