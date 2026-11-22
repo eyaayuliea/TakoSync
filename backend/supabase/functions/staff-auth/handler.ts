@@ -95,6 +95,16 @@ function isMissingFunction(error) {
   return error?.code === 'PGRST202' || error?.code === '42883';
 }
 
+/** S2 AC-RBAC-04-05: best-effort audit of a denial this function decided. Never changes the response. */
+async function auditDenial(admin, userId: string, endpoint: string, reason: string) {
+  try {
+    const { error } = await admin.rpc('log_service_access_denial', { p_user_id: userId, p_endpoint: endpoint, p_reason: reason });
+    if (error && !isMissingFunction(error)) console.error('[staff-auth] denial audit failed', { code: error.code ?? null });
+  } catch {
+    console.error('[staff-auth] denial audit threw');
+  }
+}
+
 async function lockoutRpc(admin, name: string, profileId: string) {
   try {
     const { data, error } = await admin.rpc(name, { p_profile_id: profileId });
@@ -201,6 +211,7 @@ async function requireOwner(
   if (profileResult.error) throw new HttpError(500, 'Unable to verify authorization.');
   const profile = profileResult.data;
   if (!profile || profile.role !== 'owner' || !profile.active) {
+    await auditDenial(admin, userData.user.id, 'staff-auth/owner-action', !profile ? 'DENY_NO_PROFILE' : !profile.active ? 'DENY_INACTIVE' : 'DENY_PERMISSION');
     throw new HttpError(403, 'Only an active Owner may manage Staff accounts.');
   }
 
@@ -619,6 +630,7 @@ async function requireActiveStaff(request: Request, admin: ReturnType<HandlerOpt
     .maybeSingle();
   if (profileError) throw profileError;
   if (!profile || profile.role !== 'staff' || !profile.active) {
+    await auditDenial(admin, userData.user.id, `staff-auth/${action}`, !profile ? 'DENY_NO_PROFILE' : !profile.active ? 'DENY_INACTIVE' : 'DENY_PERMISSION');
     throw new HttpError(403, `Only an active Staff account may ${action}.`);
   }
   return profile;
