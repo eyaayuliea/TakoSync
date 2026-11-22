@@ -2140,6 +2140,57 @@ export async function loadStaffDailyClosing(
   return { supported: true, closing: mapDailyClosingRow(data, names) };
 }
 
+export type StockInReceiptDetail = {
+  receiptReference: string;
+  supplierReference: string | null;
+  datePurchased: string;
+  dateReceived: string;
+  recordedAt: string;
+  enteredQuantity: number;
+  enteredUnit: string;
+};
+
+/**
+ * OM-18 c2 / OW-15: the Stock-In header and entered quantity of each ledger
+ * movement that came from a Stock-In receipt, keyed by the movement id. Empty
+ * for databases without the receipt tables and for older single-item entries.
+ */
+export async function loadStockInReceiptDetails(client?: StaffServiceClient): Promise<Map<string, StockInReceiptDetail>> {
+  const resolved = staffServiceClient(client);
+  const linesResult = await resolved.from('stock_in_receipt_lines')
+    .select('receipt_id, movement_id, entered_quantity, entered_unit');
+  if (linesResult.error && isMissingStockInReceiptTable(linesResult.error)) return new Map();
+  assertNoError(linesResult.error);
+  const lines = linesResult.data ?? [];
+  const receiptIds = [...new Set(lines.map((line) => line.receipt_id))];
+  if (!receiptIds.length) return new Map();
+  const receiptsResult = await resolved.from('stock_in_receipts')
+    .select('id, reference, supplier_reference, date_purchased, date_received, recorded_at')
+    .in('id', receiptIds);
+  assertNoError(receiptsResult.error);
+  const receipts = new Map((receiptsResult.data ?? []).map((receipt) => [receipt.id, receipt]));
+  const details = new Map<string, StockInReceiptDetail>();
+  for (const line of lines) {
+    const receipt = receipts.get(line.receipt_id);
+    if (!receipt) continue;
+    details.set(line.movement_id, {
+      receiptReference: receipt.reference,
+      supplierReference: receipt.supplier_reference,
+      datePurchased: receipt.date_purchased,
+      dateReceived: receipt.date_received,
+      recordedAt: receipt.recorded_at,
+      enteredQuantity: Number(line.entered_quantity),
+      enteredUnit: line.entered_unit,
+    });
+  }
+  return details;
+}
+
+function isMissingStockInReceiptTable(error: { code?: string; message?: string }): boolean {
+  return error.code === '42P01' || error.code === 'PGRST205'
+    || /stock_in_receipt/.test(error.message ?? '') && /does not exist|could not find|schema cache/i.test(error.message ?? '');
+}
+
 export class StockInError extends Error {}
 
 /**

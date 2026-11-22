@@ -323,6 +323,30 @@ export type Database = {
         decided_at: string | null;
         decision_reason: string | null;
       }>;
+      stock_in_receipts: Table<{
+        id: string;
+        reference: string;
+        request_id: string;
+        branch_id: string;
+        supplier_reference: string | null;
+        date_purchased: string;
+        date_received: string;
+        recorded_by: string;
+        recorded_at: string;
+      }>;
+      stock_in_receipt_lines: Table<{
+        id: string;
+        receipt_id: string;
+        branch_id: string;
+        line_index: number;
+        ingredient_id: string;
+        entered_quantity: number;
+        entered_unit: string;
+        base_quantity: number;
+        base_unit: string;
+        expiration_date: string | null;
+        movement_id: string;
+      }>;
       daily_opening_floats: Table<{
         id: string;
         reference: string;

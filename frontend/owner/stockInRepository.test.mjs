@@ -5,6 +5,8 @@ import {
   formatStockInDateTime,
   formatStockInExpirationDate,
   formatStockInQuantity,
+  stockInEnteredQuantity,
+  stockInListDate,
 } from './stockInRepository.ts';
 
 function historyRecord(overrides = {}) {
@@ -62,4 +64,40 @@ test('OM-18 c3: a reversed Stock-In stays listed and is marked reversed', () => 
   );
   assert.equal(records.length, 2);
   assert.deepEqual(records.map((record) => [record.reference, record.isReversed]).sort(), [['SI-1112-0012', false], ['SI-1112-0013', true]]);
+});
+
+test('OM-18 c2: a receipt adds date purchased, date received, the supplier, and the entered pack quantity', () => {
+  const receipts = new Map([['transaction-1', {
+    receiptReference: 'STOCKIN-20261123-0008', supplierReference: 'Seaside Market OR-1182',
+    datePurchased: '2026-11-22', dateReceived: '2026-11-23', recordedAt: '2026-11-22T16:40:00Z',
+    enteredQuantity: 3, enteredUnit: 'pack',
+  }]]);
+  const [withReceipt] = buildStockInRecords(
+    [historyRecord({ ingredientName: 'Takoyaki sauce', quantity: 1.08, unit: 'L', notes: 'STOCKIN-20261123-0008 · Seaside Market OR-1182' })],
+    [], new Set(), receipts,
+  );
+  assert.equal(withReceipt.datePurchased, '2026-11-22');
+  assert.equal(withReceipt.dateReceived, '2026-11-23');
+  assert.equal(withReceipt.supplierReference, 'Seaside Market OR-1182');
+  assert.equal(withReceipt.receiptReference, 'STOCKIN-20261123-0008');
+  assert.equal(stockInEnteredQuantity(withReceipt), '3 pack = 1.08 L');
+  assert.equal(stockInListDate(withReceipt), 'Received 23 Nov 2026');
+
+  // Entered in the base unit: no separate "as entered" line. Older entries keep their timestamp and notes.
+  const [baseUnit] = buildStockInRecords([historyRecord()], [], new Set(),
+    new Map([['transaction-1', { ...receipts.get('transaction-1'), enteredQuantity: 5, enteredUnit: 'kg', supplierReference: null }]]));
+  assert.equal(stockInEnteredQuantity(baseUnit), null);
+  assert.equal(baseUnit.supplierReference, '');
+  const [legacy] = buildStockInRecords([historyRecord()], []);
+  assert.equal(legacy.dateReceived, null);
+  assert.equal(legacy.supplierReference, 'Seaport Traders · DR-20481');
+  assert.match(stockInListDate(legacy), /2026/);
+});
+
+test('a batter batch yield is not a Stock-In report row', () => {
+  const records = buildStockInRecords([
+    historyRecord(),
+    historyRecord({ id: 'transaction-9', ingredientName: 'Prepared Takoyaki Batter', reason: 'Batter preparation' }),
+  ], []);
+  assert.deepEqual(records.map((record) => record.ingredientName), ['Octopus']);
 });
