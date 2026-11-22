@@ -130,6 +130,7 @@ limit 1
 
 update public.profiles
 set full_name = 'Local Test Staff',
+    username = 'localtest_staff',
     role = 'staff',
     branch_id = :'selected_branch_id'::uuid,
     active = true
@@ -150,4 +151,4 @@ commit;
 SQL
 
 keep_user=1
-echo "Created local Staff account $staff_email assigned to the first active branch."
+echo "Created local Staff account $staff_email (username localtest_staff) assigned to the first active branch."
