@@ -271,7 +271,7 @@ export default function EntryReversalRequestsScreen({ onBack, switcher }: { onBa
 
   return (
     <View style={styles.screen}>
-      <OwnerHeader title={selected ? 'Reversal Request' : 'Requests'} onBack={back} />
+      <OwnerHeader title={selected ? 'Reversal Request' : 'Void and Reversal Review'} onBack={back} />
       {!selected && switcher ? <View style={styles.switcher}>{switcher}</View> : null}
       {selected ? renderDetails(selected) : renderList()}
 

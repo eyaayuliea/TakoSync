@@ -8179,7 +8179,7 @@ export default function StaffWorkspace({
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction History</Text>
-            <Text style={styles.formSubtitle}>{assignedBranch} Â· View only</Text>
+            <Text style={styles.formSubtitle}>{assignedBranch} · View only</Text>
           </View>
         </View>
         <View style={styles.historySearchWrap}>
