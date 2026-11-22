@@ -690,6 +690,10 @@ export type Database = {
         Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
         Returns: Database['public']['Tables']['inventory_entry_reversal_requests']['Row'];
       };
+      record_stock_in: {
+        Args: { p_branch_id: string; p_request_id: string; p_header: Json; p_lines: Json };
+        Returns: Json;
+      };
       record_opening_float: {
         Args: { p_branch_id: string; p_amount: number; p_client_request_id: string };
         Returns: Database['public']['Tables']['daily_opening_floats']['Row'];

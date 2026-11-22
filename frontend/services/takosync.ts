@@ -82,6 +82,14 @@ import {
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { isInactiveAccountDenial } from './permissions.ts';
 import { isVariantOutOfStock, parseSaleStockSnapshot, type SaleStockSnapshot } from './saleStock.ts';
+import {
+  buildStockInRequest,
+  parseStockInReceipt,
+  stockInErrorMessage,
+  type StockInHeaderDraft,
+  type StockInLineDraft,
+  type StockInReceipt,
+} from './stockIn.ts';
 import { OwnerLoginError, isOwnerConnectionFailure } from './ownerAuthentication';
 import {
   buildInventoryReportData,
@@ -2110,6 +2118,33 @@ export async function loadStaffDailyClosing(
   if (!data) return { supported: true, closing: null };
   const names = await loadProfileNames(resolved, [data.recorded_by]);
   return { supported: true, closing: mapDailyClosingRow(data, names) };
+}
+
+export class StockInError extends Error {}
+
+/**
+ * ST-09: saves a Stock-In header with its lines in one transaction. A retry with
+ * the same request id returns the receipt already saved (c10).
+ */
+export async function recordStockIn(input: {
+  branchId: string;
+  requestId: string;
+  header: StockInHeaderDraft;
+  lines: StockInLineDraft[];
+}, client?: StaffServiceClient): Promise<StockInReceipt> {
+  const request = buildStockInRequest(input.header, input.lines);
+  const { data, error } = await staffServiceClient(client).rpc('record_stock_in', {
+    p_branch_id: input.branchId,
+    p_request_id: input.requestId,
+    p_header: request.header,
+    p_lines: request.lines,
+  });
+  if (error) throw new StockInError(stockInErrorMessage(error));
+  const receipt = parseStockInReceipt(data);
+  if (!receipt || receipt.branchId !== input.branchId) {
+    throw new StockInError('The Stock-In could not be confirmed. Check Transaction History before trying again.');
+  }
+  return receipt;
 }
 
 export class DailyClosingError extends Error {}
