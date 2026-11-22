@@ -7,6 +7,7 @@ import { buildWebSalesConsumptionReport, buildWebWasteReport, SALES_CONSUMPTION_
 import { buildSalesConsumptionRecords, type SalesConsumptionRecord } from './salesConsumptionRepository';
 import { ADJUSTMENT_REPORT_HEADERS, buildWebAdjustmentReport, buildWebCountReport, COUNT_REPORT_HEADERS } from './ownerPortalCountReports';
 import { loadPhysicalCountRecords, type PhysicalCountRecord } from './physicalCountRepository';
+import { buildTotalInventoryViews, TOTAL_INVENTORY_VIEWS, type TotalInventoryView } from './ownerPortalTotalInventoryReport';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
@@ -1047,7 +1048,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
   );
 }
 
-type InventoryReportPage = 'Expected Stock Quantity Report' | OwnerPortalMovementReport |
+type InventoryReportPage = 'Expected Stock Quantity Report' | 'Total Ingredient Inventory Report' | OwnerPortalMovementReport |
   'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report' | 'Reversal Report';
 
 function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable, batches }: {
@@ -1061,6 +1062,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   const narrow = useWindowDimensions().width < 720;
   const reportOptions: InventoryReportPage[] = [
     'Expected Stock Quantity Report',
+    'Total Ingredient Inventory Report',
     'Stock-In Report',
     'Sales Consumption Report',
     'Waste and Spillage Report',
@@ -1091,12 +1093,17 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   const [countRecords, setCountRecords] = useState<PhysicalCountRecord[] | null>(null);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string> | null>(null);
   const [reversals, setReversals] = useState<{ supported: boolean; requests: OwnerEntryReversalReview[]; entries: Map<string, ReversingEntry[]> } | null>(null);
-  const usesPeriod = report !== 'Expected Stock Quantity Report';
+  const usesPeriod = !isSnapshotReport(report);
   const setupMessage = reportSetupMessage({ report, period, startDate, endDate, usesPeriod });
   const canGenerate = !setupMessage && (Boolean(range) || !usesPeriod) && !loading;
+  // OW-14 c9: the Total Ingredient Inventory views share one frozen snapshot.
+  const [snapshot, setSnapshot] = useState<{ rows: InventoryRow[]; asOf: Date } | null>(null);
+  const [inventoryView, setInventoryView] = useState<TotalInventoryView>('Detailed');
   const generate = () => {
     if (!canGenerate || !report) return;
     setError('');
+    setSnapshot({ rows: filterOwnerPortalInventory(inventoryRows, branch), asOf: inventoryAsOf });
+    setInventoryView('Detailed');
     setGenerated({ report, range, branchId: draftBranchId, branchName: branch, periodLabel: period, key: Date.now() });
   };
   // OW-12 c8: Retry runs the same report again; the setup stays as selected.
@@ -1114,7 +1121,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     setCountRecords(null);
     setReversedEntryIds(null);
     setError('');
-    if (!generated || generated.report === 'Expected Stock Quantity Report' || !generated.range) {
+    if (!generated || isSnapshotReport(generated.report) || !generated.range) {
       setLoading(false);
       return () => { active = false; };
     }
@@ -1218,11 +1225,20 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     `${record.recordedBy}\n${formatStockInDateTime(record.recordedAt ?? record.createdAt)}`,
     record.isReversed ? 'Reversed' : 'Recorded',
   ]);
+  const totalInventoryViews = useMemo(
+    () => snapshot && generated?.report === 'Total Ingredient Inventory Report'
+      ? buildTotalInventoryViews(snapshot.rows, { branch: generated.branchName, asOf: formatReportDateTime(snapshot.asOf) })
+      : null,
+    [snapshot, generated],
+  );
   // OW-12 c4, c6, c7: one description of the report for the preview, Print and Export PDF.
   const table = (headers: string[], rows: string[][], empty = 'No records exist for the selected branch and reporting period.'): ReportSection =>
     rows.length ? { table: { headers, rows } } : { notes: [empty] };
   const inventorySections = (): ReportSection[] => {
     switch (shownReport) {
+      case 'Total Ingredient Inventory Report':
+        if (!snapshot) return [{ notes: ['Inventory data is unavailable.'] }];
+        return totalInventoryViews?.[inventoryView] ?? [];
       case 'Expected Stock Quantity Report':
         return [inventoryAvailable
           ? table(['Ingredient / Supply', 'Category', 'Branch', 'Expected Quantity', 'Status', 'Expiration', 'Active Batches'],
@@ -1322,16 +1338,17 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
         return [];
     }
   };
-  const reportDoc: ReportDocument | null = !generated || loading || (error && generated.report !== 'Expected Stock Quantity Report')
+  const reportDoc: ReportDocument | null = !generated || loading || (error && !isSnapshotReport(generated.report))
     ? null
     : {
-      title: generated.report,
-      period: generated.range && generated.report !== 'Expected Stock Quantity Report'
+      // OW-14 c10: Print and Export PDF output the selected view.
+      title: generated.report === 'Total Ingredient Inventory Report' ? `${generated.report} · ${inventoryView} view` : generated.report,
+      period: generated.range && !isSnapshotReport(generated.report)
         ? formatReportPeriod(generated.periodLabel, generated.range)
         : 'Current snapshot (not date-filtered)',
       branch: generated.branchName,
       generatedAt: new Date(generated.key),
-      figuresAsOf: generated.report === 'Expected Stock Quantity Report' ? inventoryAsOf : new Date(generated.key),
+      figuresAsOf: isSnapshotReport(generated.report) ? snapshot?.asOf ?? inventoryAsOf : new Date(generated.key),
       sections: inventorySections(),
     };
 
@@ -1364,6 +1381,21 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       {report && setupMessage ? <Text style={[styles.errorText, { marginBottom: 12 }]} accessibilityRole="alert">{setupMessage}</Text> : null}
       {error ? <ReportErrorBanner message={error} onRetry={generated ? retry : undefined} /> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
+      {reportDoc && shownReport === 'Total Ingredient Inventory Report' ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }} accessibilityRole="tablist">
+          {TOTAL_INVENTORY_VIEWS.map((view) => (
+            <Pressable
+              key={view}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: inventoryView === view }}
+              onPress={() => setInventoryView(view)}
+              style={[styles.outline, { marginTop: 0 }, inventoryView === view && { backgroundColor: C.pink }]}
+            >
+              <Text style={[styles.pinkText, inventoryView === view && { color: '#fff' }]}>{view}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {reportDoc ? <ReportPreview doc={reportDoc} /> : null}
     </>
   );
@@ -1505,6 +1537,9 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
   );
 }
 /** OW-05 c9 / OW-12 c8: a clear message for a report that could not be generated. */
+function isSnapshotReport(report: string | null | undefined): boolean {
+  return report === 'Expected Stock Quantity Report' || report === 'Total Ingredient Inventory Report';
+}
 function reportLoadError(reason: unknown): string {
   if (isOwnerConnectionFailure(reason)) return 'The report could not be generated. Check your internet connection, then select Retry.';
   const detail = reason instanceof Error && reason.message ? ` (${reason.message})` : '';
