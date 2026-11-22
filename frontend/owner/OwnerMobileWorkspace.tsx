@@ -92,6 +92,12 @@ import {
 } from './ownerInventoryStatus';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
+/** "+5", "-2.5" or "0": actual − expected, without float noise. */
+function countDifferenceText(expected: number, actual: number): string {
+  const difference = Math.round((actual - expected) * 1000) / 1000;
+  return `${difference > 0 ? '+' : ''}${difference}`;
+}
+
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport' | 'AuditIntegrity';
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
@@ -584,6 +590,9 @@ export default function OwnerMobileWorkspace({
     })),
   ];
   const sortedActivities = sortOwnerActivities(activities);
+  // OM-02 c7: the dashboard lists sales and inventory activities. Audit events (access changes,
+  // refused requests) stay in Records and Audit integrity.
+  const dashboardActivities = sortedActivities.filter((item) => item.category !== 'Audit');
   const visibleActivities = sortedActivities.filter((item) => recordType === 'All' || item.category === recordType);
   const filteredInventory = inventoryPageRows.filter((item) =>
     (inventoryCategory === 'All categories' || item.category === inventoryCategory)
@@ -1206,7 +1215,8 @@ export default function OwnerMobileWorkspace({
       {!inventoryError && !inventoryLoading && inventoryRows.length > 0 ? (
         <View style={styles.inventoryBranchStatusList}>
           {summarizeOwnerInventoryStatusByBranch(
-            (data?.inventory ?? []).map((record) => ({ branch_id: record.branch_id, quantity: record.quantity, minimum_stock: record.minimum_stock, low_stock_threshold: record.low_stock_threshold })),
+            // Active items only, like the totals above (inactive ingredients are not stocked).
+            (data?.inventory ?? []).filter((record) => ingredients.has(record.ingredient_id)).map((record) => ({ branch_id: record.branch_id, quantity: record.quantity, minimum_stock: record.minimum_stock, low_stock_threshold: record.low_stock_threshold })),
             branches,
           ).map((row) => (
             <View key={row.id} style={styles.inventoryBranchStatusRow} accessibilityLabel={`${row.name}: ${row.normal} normal, ${row.lowStock} low stock, ${row.outOfStock} out of stock`}>
@@ -1245,7 +1255,7 @@ export default function OwnerMobileWorkspace({
       <SectionHeading title="Recent Activities" action="See all" onAction={() => setPage('Records')} />
       {activityError ? showError(OWNER_ALERT_LOAD_ERROR) : activityLoading && !activityData ? (
         <SkeletonCard label="Loading activities" />
-      ) : sortedActivities.length ? sortedActivities.slice(0, 5).map((item) => renderActivity(item, 'Dashboard')) : (
+      ) : dashboardActivities.length ? dashboardActivities.slice(0, 5).map((item) => renderActivity(item, 'Dashboard')) : (
         <EmptyState text="No recent activities." />
       )}
       {dashboardDiscrepancies.length > 0 && (
@@ -1257,7 +1267,11 @@ export default function OwnerMobileWorkspace({
               <View style={styles.listCopy}>
                 <Text style={styles.listTitle}>{item.ingredient} · {item.branch}</Text>
                 <Text style={styles.listMeta}>Expected {item.expected} {item.unit} · Counted {item.actual} {item.unit}</Text>
-                <Text style={styles.listMeta}>Difference {item.difference > 0 ? '+' : ''}{item.difference} {item.unit} · {item.reference}</Text>
+                {/* The difference of the count shown on this card; a requested correction is listed separately until decided. */}
+                <Text style={styles.listMeta}>Difference {countDifferenceText(item.expected, item.actual)} {item.unit} · {item.reference}</Text>
+                {item.correctedActual !== null && item.correctedActual !== undefined && item.correctedActual !== item.actual ? (
+                  <Text style={styles.listMeta}>Correction requested: {item.correctedActual} {item.unit}</Text>
+                ) : null}
               </View>
               <StatusBadge label="Pending" tone="warning" />
             </View>
