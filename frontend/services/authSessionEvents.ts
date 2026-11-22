@@ -7,13 +7,18 @@ export type AuthSessionEvent =
   | 'USER_UPDATED'
   | 'MFA_CHALLENGE_VERIFIED';
 
-export type AuthenticatedMobileDestination = 'dashboard' | 'staffWorkspace';
+export type AuthenticatedMobileDestination = 'dashboard' | 'staffWorkspace' | 'staffChangePassword';
 
+/**
+ * ST-01 c3: a Staff member whose first login (or owner reset) requires a new
+ * password goes to the password change screen before any Staff function opens.
+ */
 export function getAuthenticatedMobileDestination(
   role: 'Owner' | 'Staff',
+  mustChangePassword = false,
 ): AuthenticatedMobileDestination {
   if (role === 'Owner') return 'dashboard';
-  return 'staffWorkspace';
+  return mustChangePassword ? 'staffChangePassword' : 'staffWorkspace';
 }
 
 /**

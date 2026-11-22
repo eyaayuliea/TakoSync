@@ -1135,6 +1135,10 @@ export async function changeStaffPassword(newPassword: string, currentPassword?:
     throw new StaffLoginError(data.code, { lockedUntil: data.lockedUntil, attemptsRemaining: data.attemptsRemaining });
   }
   if (!data?.ok) throw new Error(data?.error ?? 'Unable to change the Staff password securely.');
+  // The password change ends the old session; staff-auth returns a new one.
+  if (!data.session) throw new Error('Your password was changed. Please log out and log in with your new password.');
+  const { error: sessionError } = await requireSupabase().auth.setSession(data.session);
+  if (sessionError) throw new Error('Your password was changed. Please log out and log in with your new password.');
 }
 
 export async function saveStaffAccount(input: {

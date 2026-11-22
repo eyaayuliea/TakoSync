@@ -29,3 +29,9 @@ test('Staff sessions open the workspace after authentication', () => {
 test('Owner sessions always open the Owner dashboard', () => {
   assert.equal(getAuthenticatedMobileDestination('Owner'), 'dashboard');
 });
+
+test('ST-01 c3: a Staff member who must change the password opens the change screen first', () => {
+  assert.equal(getAuthenticatedMobileDestination('Staff', true), 'staffChangePassword');
+  assert.equal(getAuthenticatedMobileDestination('Staff', false), 'staffWorkspace');
+  assert.equal(getAuthenticatedMobileDestination('Owner', true), 'dashboard');
+});
