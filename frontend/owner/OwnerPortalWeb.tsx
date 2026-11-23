@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
@@ -802,7 +803,8 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     'Transaction Summary Report',
     'Void Report',
   ];
-  const [report, setReport] = useState(reportOptions[0]);
+  // OW-05 c3: no report type is chosen until the owner picks one.
+  const [report, setReport] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportingPeriod>('This Month');
   const [startDate, setStartDate] = useState(() => manilaDateKey());
   const [endDate, setEndDate] = useState(() => manilaDateKey());
@@ -819,13 +821,15 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
   // OW-06–OW-10 c1: the selections apply when the owner selects Generate Report.
   const [generated, setGenerated] = useState<{ report: string; range: { start: Date; end: Date }; branchId: string | null; branchName: string; periodLabel: string; key: number } | null>(null);
   const [voids, setVoids] = useState<OwnerSaleVoidReview[] | null>(null);
+  const setupMessage = reportSetupMessage({ report, period, startDate, endDate });
+  const canGenerate = !setupMessage && Boolean(range) && !loading;
   const generate = () => {
-    if (!range) {
-      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
-      return;
-    }
+    if (!canGenerate || !report || !range) return;
+    setError('');
     setGenerated({ report, range, branchId, branchName: branch, periodLabel: period, key: Date.now() });
   };
+  // OW-05 c9: Retry runs the same report again; the setup stays as selected.
+  const retry = () => setGenerated((current) => current && { ...current, key: Date.now() });
 
   useEffect(() => {
     let active = true;
@@ -850,7 +854,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
         .then((result) => { if (active) setSales(result); });
     request
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the report.');
+        if (active) setError(reportLoadError(reason));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -962,8 +966,8 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           options={['All Branches', ...branches.map((item) => item.name)]}
           onChange={setBranch}
         />
-        <Select value={report} options={reportOptions} onChange={setReport} />
-        <Pressable accessibilityRole="button" onPress={generate} disabled={loading} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }]}>
+        <Select value={report ?? 'Select report type'} options={reportOptions} onChange={setReport} />
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canGenerate }} onPress={generate} disabled={!canGenerate} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }, !canGenerate && { opacity: 0.45 }]}>
           <Text style={styles.loginButtonText}>Generate Report</Text>
         </Pressable>
       </View>
@@ -983,7 +987,8 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           />
         </View>
       ) : null}
-      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {report && setupMessage ? <Text style={[styles.errorText, { marginBottom: 12 }]} accessibilityRole="alert">{setupMessage}</Text> : null}
+      {error ? <ReportErrorBanner message={error} onRetry={generated ? retry : undefined} /> : null}
       {loading ? (
         <View style={styles.loadingRow}>
           <ActivityIndicator color={C.pink} />
@@ -1018,7 +1023,8 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     'Physical Inventory Count and Discrepancy Report',
     'Authorized Adjustment Report',
   ];
-  const [report, setReport] = useState<InventoryReportPage>(reportOptions[0]);
+  // OW-12 c3: no report type is chosen until the owner picks one.
+  const [report, setReport] = useState<InventoryReportPage | null>(null);
   const [period, setPeriod] = useState<ReportingPeriod>('This Month');
   const [startDate, setStartDate] = useState(() => manilaDateKey());
   const [endDate, setEndDate] = useState(() => manilaDateKey());
@@ -1036,13 +1042,16 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   // OW-12 c4: when the expected-stock snapshot shown was read.
   const inventoryAsOf = useMemo(() => new Date(), [inventoryRows]);
   const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
+  const usesPeriod = report !== 'Expected Stock Quantity Report';
+  const setupMessage = reportSetupMessage({ report, period, startDate, endDate, usesPeriod });
+  const canGenerate = !setupMessage && (Boolean(range) || !usesPeriod) && !loading;
   const generate = () => {
-    if (!range && report !== 'Expected Stock Quantity Report') {
-      setError('Enter a valid inclusive date range in YYYY-MM-DD format.');
-      return;
-    }
+    if (!canGenerate || !report) return;
+    setError('');
     setGenerated({ report, range, branchId: draftBranchId, branchName: branch, periodLabel: period, key: Date.now() });
   };
+  // OW-12 c8: Retry runs the same report again; the setup stays as selected.
+  const retry = () => setGenerated((current) => current && { ...current, key: Date.now() });
   const shownReport = generated?.report ?? null;
   const branchId = generated?.branchId ?? null;
 
@@ -1063,7 +1072,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       // OW-15: the same Stock-In records as the owner mobile report (receipts, reversals).
       loadStockInRecords(branchId ? branches.filter((item) => item.id === branchId) : branches, batches)
         .then((records) => { if (active) setStockIns(records); })
-        .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the Stock-In report.'); })
+        .catch((reason: unknown) => { if (active) setError(reportLoadError(reason)); })
         .finally(() => { if (active) setLoading(false); });
       return () => { active = false; };
     }
@@ -1074,9 +1083,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       if (!active) return;
       const failures = [activityResult, reviewResult]
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-      setError(failures.map((failure) => failure.reason instanceof Error
-        ? failure.reason.message
-        : 'An inventory report request failed.').join(' '));
+      setError(failures.length ? reportLoadError(failures[0].reason) : '');
       if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
       if (reviewResult.status === 'fulfilled') setReviews(reviewResult.value);
     }).finally(() => {
@@ -1239,22 +1246,23 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
       </View>
       <View style={[styles.toolbar, { flexWrap: 'wrap', gap: 10 }]}>
         <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
-        <Select value={report} options={reportOptions} onChange={(value) => setReport(value as InventoryReportPage)} />
+        <Select value={report ?? 'Select report type'} options={reportOptions} onChange={(value) => setReport(value as InventoryReportPage)} />
         <Select value={period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setPeriod(value as ReportingPeriod)} />
-        <Pressable accessibilityRole="button" onPress={generate} disabled={loading} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }]}>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canGenerate }} onPress={generate} disabled={!canGenerate} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 22, paddingVertical: 11 }, !canGenerate && { opacity: 0.45 }]}>
           <Text style={styles.loginButtonText}>Generate Report</Text>
         </Pressable>
       </View>
       {!generated && !loading ? (
         <Text style={styles.muted}>Choose the report type, reporting period and branch, then select Generate Report.</Text>
       ) : null}
-      {period === 'Custom' && report !== 'Expected Stock Quantity Report' ? (
+      {period === 'Custom' && usesPeriod ? (
         <View style={[styles.row, { flexWrap: 'wrap' }]}>
           <TextInput value={startDate} onChangeText={setStartDate} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
         </View>
       ) : null}
-      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {report && setupMessage ? <Text style={[styles.errorText, { marginBottom: 12 }]} accessibilityRole="alert">{setupMessage}</Text> : null}
+      {error ? <ReportErrorBanner message={error} onRetry={generated ? retry : undefined} /> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading inventory report…</Text></View> : null}
       {reportDoc ? <ReportPreview doc={reportDoc} /> : null}
     </>
@@ -1394,6 +1402,20 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
         </>
       ) : null}
     </>
+  );
+}
+/** OW-05 c9 / OW-12 c8: a clear message for a report that could not be generated. */
+function reportLoadError(reason: unknown): string {
+  if (isOwnerConnectionFailure(reason)) return 'The report could not be generated. Check your internet connection, then select Retry.';
+  const detail = reason instanceof Error && reason.message ? ` (${reason.message})` : '';
+  return `The report could not be generated${detail}. Select Retry to try again.`;
+}
+function ReportErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <View style={[styles.errorBanner, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }]} accessibilityRole="alert">
+      <Text style={[styles.errorText, { flex: 1 }]}>{message}</Text>
+      {onRetry ? <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable> : null}
+    </View>
   );
 }
 /** OW-05 c5–c6 / OW-12 c4: the preview of a generated report, drawn from the same description as Print and Export PDF. */
