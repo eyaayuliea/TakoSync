@@ -55,6 +55,8 @@ import {
   ownerDiscrepancyStatusLabel,
   isOwnerDiscrepancyActionable,
   isOwnerDiscrepancyValidatable,
+  isOwnerDiscrepancyValidationBlocked,
+  VALIDATION_BLOCKED_MESSAGE,
   getOwnerSaleInventoryStatusLabel,
   updateProduct,
   type AppUser,
@@ -1990,6 +1992,20 @@ export default function OwnerMobileWorkspace({
             >
               <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
             </Pressable>
+          ) : isOwnerDiscrepancyValidationBlocked(selected) ? (
+            // OM-14 c8: shown but disabled while the correction request is pending.
+            <View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: true }}
+                accessibilityHint={VALIDATION_BLOCKED_MESSAGE}
+                disabled
+                style={[styles.omPrimaryButton, { opacity: 0.45 }]}
+              >
+                <Text style={styles.omPrimaryButtonText}>Validate Count</Text>
+              </Pressable>
+              <Text style={[styles.auditDetail, { marginTop: 6 }]}>{VALIDATION_BLOCKED_MESSAGE}</Text>
+            </View>
           ) : null}
           {isOwnerDiscrepancyRecountable(selected) ? (
             <Pressable

@@ -30,6 +30,8 @@ import {
   loadBranches,
   isOwnerDiscrepancyActionable,
   isOwnerDiscrepancyValidatable,
+  isOwnerDiscrepancyValidationBlocked,
+  VALIDATION_BLOCKED_MESSAGE,
   loadIngredientRecipeConfiguration,
   loadOwnerActivityData,
   loadOwnerDiscrepancyReviews,
@@ -794,8 +796,20 @@ function Checks({ reviews, notify, onRefresh }: ChecksProps) {
                         {isSaving ? 'Saving…' : 'Validate Count'}
                       </Text>
                     </Pressable>
+                  ) : isOwnerDiscrepancyValidationBlocked(review) ? (
+                    // OW-25 / OM-14 c8: shown but disabled while the correction request is pending.
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: true }}
+                      accessibilityHint={VALIDATION_BLOCKED_MESSAGE}
+                      disabled
+                      style={[reviewStyles.approve, { opacity: 0.45 }]}
+                    >
+                      <Text style={reviewStyles.approveText}>Validate Count</Text>
+                    </Pressable>
                   ) : null}
                 </View>
+                {!validatable && isOwnerDiscrepancyValidationBlocked(review) ? <Text style={[styles.muted, { marginTop: 6 }]}>{VALIDATION_BLOCKED_MESSAGE}</Text> : null}
               </>
             ) : null}
           </View>
