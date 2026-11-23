@@ -131,24 +131,7 @@ export function RecordsMenuScreen({
     <OwnerMenuScreen
       title="Records"
       items={[
-        {
-          icon: 'receipt',
-          title: 'Sales Transaction',
-          subtitle: 'Confirmed sales per branch',
-          onTap: () => onSelectRecord('SalesTransactions'),
-        },
-        {
-          icon: 'salesChart',
-          title: 'Daily Closing',
-          subtitle: 'Closing cash count and over or short per branch',
-          onTap: () => onSelectRecord('DailyClosingReport'),
-        },
-        {
-          icon: 'receipt',
-          title: 'Void Report',
-          subtitle: 'Voided sales, reasons, and review status',
-          onTap: () => onSelectRecord('VoidReport'),
-        },
+        // OM-03: Transaction Summary, Void and Daily Closing are in the Sales section.
         {
           icon: 'clipboardCheck',
           title: 'Sales Consumption',
