@@ -1354,6 +1354,8 @@ export async function loadOwnerSalesData(input: {
   end: Date;
   branchId: string | null;
   includePrevious?: boolean;
+  /** OW-09 c5, c6: also return voided sales of the period (the transaction list shows them). */
+  includeVoided?: boolean;
 }): Promise<OwnerSalesData> {
   if (
     !Number.isFinite(input.start.getTime()) ||
@@ -1365,7 +1367,7 @@ export async function loadOwnerSalesData(input: {
 
   const client = requireSupabase();
   const pageSize = 500;
-  const fetchSales = async (start: Date, end: Date): Promise<OwnerSale[]> => {
+  const fetchSales = async (start: Date, end: Date, includeVoided = false): Promise<OwnerSale[]> => {
     const sales: OwnerSale[] = [];
     const baseColumns = 'id, transaction_reference, branch_id, staff_id, total_amount, payment_method, status, inventory_processing_status, inventory_processing_error, created_at';
     // OM-09 c3: cash received and change, when the database has those columns.
@@ -1374,7 +1376,7 @@ export async function loadOwnerSalesData(input: {
       const run = (selected: string) => {
         let query = client.from('sales')
           .select(selected)
-          .eq('status', 'completed')
+          .in('status', includeVoided ? ['completed', 'voided'] : ['completed'])
           .gte('created_at', start.toISOString())
           .lt('created_at', end.toISOString())
           .order('created_at', { ascending: false })
@@ -1404,11 +1406,12 @@ export async function loadOwnerSalesData(input: {
   const previousStart = new Date(previousEnd);
   previousStart.setUTCDate(previousStart.getUTCDate() - durationDays);
   const [sales, todaySales, previousSales] = await Promise.all([
-    fetchSales(input.start, input.end),
+    fetchSales(input.start, input.end, input.includeVoided === true),
     rangeIncludesToday ? Promise.resolve(null) : fetchSales(todayStart, tomorrowStart),
     input.includePrevious ? fetchSales(previousStart, previousEnd) : Promise.resolve([]),
   ]);
   const currentDaySales = todaySales ?? sales.filter((sale) => {
+    if (sale.status !== 'completed') return false;
     const createdAt = new Date(sale.created_at).getTime();
     return createdAt >= todayStart.getTime() && createdAt < tomorrowStart.getTime();
   });
