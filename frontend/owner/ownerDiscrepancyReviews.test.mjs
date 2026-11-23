@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import test from 'node:test';
 register('../services/testTsLoader.mjs', import.meta.url);
-const { isOwnerDiscrepancyActionable, isOwnerDiscrepancyValidatable } = await import('../services/takosync.ts');
+const { isOwnerDiscrepancyActionable, isOwnerDiscrepancyValidatable, isOwnerDiscrepancyValidationBlocked } = await import('../services/takosync.ts');
 
 test('submitted counts without a correction request remain read-only for Owner review', () => {
   assert.equal(isOwnerDiscrepancyActionable({ status: 'Pending', canDecide: false }), false);
@@ -41,4 +41,13 @@ test('OM-14 c9: Reject Count is offered only while the count is under review', a
   assert.equal(isOwnerDiscrepancyRecountable({ status: 'Rejected for Recount', canReject: true }), false);
   assert.equal(isOwnerDiscrepancyValidatable({ status: 'Rejected for Recount', canValidate: true }), false);
   assert.equal(isOwnerDiscrepancyValidatable({ status: 'Rejected', canValidate: true }), true, 'after a rejected correction the original count can be validated');
+});
+
+test('OM-14 c8: Validate Count is disabled only while the correction request is pending', () => {
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Pending', correctionStatus: 'pending' }), true);
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Pending', correctionStatus: null }), false); // plain count: validate directly
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Approved', correctionStatus: 'approved' }), false);
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Rejected', correctionStatus: 'rejected' }), false);
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Validated', correctionStatus: 'pending' }), false);
+  assert.equal(isOwnerDiscrepancyValidationBlocked({ status: 'Rejected for Recount', correctionStatus: 'pending' }), false);
 });

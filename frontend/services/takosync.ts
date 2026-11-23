@@ -576,6 +576,16 @@ export function isOwnerDiscrepancyActionable(review: Pick<OwnerDiscrepancyReview
   return review.status === 'Pending' && review.canDecide;
 }
 
+/**
+ * OM-14 c8 / OW-25: while the count's correction request is pending, Validate
+ * Count is shown but disabled; the owner approves or rejects the request first.
+ */
+export function isOwnerDiscrepancyValidationBlocked(review: Pick<OwnerDiscrepancyReview, 'status' | 'correctionStatus'>): boolean {
+  return review.status === 'Pending' && review.correctionStatus === 'pending';
+}
+
+export const VALIDATION_BLOCKED_MESSAGE = 'A correction request for this count is pending. Approve or reject it before validating the count.';
+
 export function isOwnerDiscrepancyValidatable(review: Pick<OwnerDiscrepancyReview, 'status' | 'canValidate'>): boolean {
   return review.canValidate && review.status !== 'Validated' && review.status !== 'Rejected for Recount';
 }
