@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
-import { loadStaffDailyClosing, loadStaffOpeningFloat, recordDailyClosing } from '../services/takosync';
-import { formatPeso, validateClosingCashCountInput, type DailyClosing, type OpeningFloat } from '../services/dailyClosing';
-import OpeningFloatForm from './OpeningFloatForm';
+import { loadStaffDailyClosing, recordDailyClosing } from '../services/takosync';
+import { formatPeso, validateDailyClosingInput, type DailyClosing } from '../services/dailyClosing';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -17,37 +16,32 @@ function dateTime(value: string): string {
 }
 
 /**
- * ST-06 c7–c10: staff record the opening float once at the start of the
- * business day (before the first sale) and the closing cash count at the end,
- * each once per branch and day. The comparison with the cash sales (expected
- * cash, over or short) is shown to the owner in the Daily Closing Report, so
- * staff count the cash without seeing the target.
+ * ST-06 c7–c10: at the end of the business day staff record the opening float
+ * and the closing cash count, once per branch and day. The comparison with
+ * the cash sales (expected cash, over or short) is shown to the owner in the
+ * Daily Closing Report, so staff count the cash without seeing the target.
  */
 export default function DailyClosingSection({
   branchId,
   businessDate,
   isToday,
   refreshKey,
-  onOpeningFloatRecorded,
 }: {
   branchId: string;
   /** YYYY-MM-DD, Manila business date. */
   businessDate: string;
   isToday: boolean;
   refreshKey: number;
-  /** Tells the workspace that today's float now exists (the POS stops asking for it). */
-  onOpeningFloatRecorded?: (openingFloat: OpeningFloat) => void;
 }) {
   const { colors } = useTheme();
   const [supported, setSupported] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [closing, setClosing] = useState<DailyClosing | null>(null);
-  const [openingFloat, setOpeningFloat] = useState<OpeningFloat | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+  const [openingFloat, setOpeningFloat] = useState('');
   const [closingCount, setClosingCount] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<{ closingCashCount?: string }>({});
-  const [confirming, setConfirming] = useState<{ closingCashCount: number } | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ openingFloat?: string; closingCashCount?: string }>({});
+  const [confirming, setConfirming] = useState<{ openingFloat: number; closingCashCount: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const clientRequestId = useRef(crypto.randomUUID());
@@ -56,12 +50,11 @@ export default function DailyClosingSection({
     let active = true;
     setLoading(true);
     setLoadError('');
-    Promise.all([loadStaffDailyClosing(branchId, businessDate), loadStaffOpeningFloat(branchId, businessDate)])
-      .then(([result, floatResult]) => {
+    loadStaffDailyClosing(branchId, businessDate)
+      .then((result) => {
         if (!active) return;
-        setSupported(result.supported && floatResult.supported);
+        setSupported(result.supported);
         setClosing(result.closing);
-        setOpeningFloat(floatResult.openingFloat);
       })
       .catch(() => {
         if (active) setLoadError('Unable to load the daily closing. Tap Refresh to try again.');
@@ -72,19 +65,19 @@ export default function DailyClosingSection({
     return () => {
       active = false;
     };
-  }, [branchId, businessDate, refreshKey, reloadKey]);
+  }, [branchId, businessDate, refreshKey]);
 
   if (!supported && !loading && !loadError) return null;
 
   const review = () => {
-    const result = validateClosingCashCountInput(closingCount);
+    const result = validateDailyClosingInput(openingFloat, closingCount);
     if (!result.valid) {
-      setFieldErrors({ closingCashCount: result.error });
+      setFieldErrors(result.errors);
       return;
     }
     setFieldErrors({});
     setSubmitError('');
-    setConfirming({ closingCashCount: result.amount });
+    setConfirming({ openingFloat: result.openingFloat, closingCashCount: result.closingCashCount });
   };
 
   const submit = async () => {
@@ -95,13 +88,14 @@ export default function DailyClosingSection({
       const saved = await recordDailyClosing({ branchId, ...confirming, clientRequestId: clientRequestId.current });
       setClosing(saved);
       setConfirming(null);
+      setOpeningFloat('');
       setClosingCount('');
     } catch (error: unknown) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to record the closing. Please try again.');
-      // A refused second closing means one exists; a missing float means it must be recorded first. Show the current state.
-      if (error instanceof Error && /already been recorded|opening float/i.test(error.message)) {
+      // A refused second closing means one exists; show it.
+      if (error instanceof Error && error.message.includes('already been recorded')) {
         setConfirming(null);
-        setReloadKey((key) => key + 1);
+        loadStaffDailyClosing(branchId, businessDate).then((result) => setClosing(result.closing)).catch(() => undefined);
       }
     } finally {
       setSubmitting(false);
@@ -135,49 +129,33 @@ export default function DailyClosingSection({
           </Text>
         </>
       ) : !isToday ? (
-        <>
-          {openingFloat ? (
-            <View style={styles.row}>
-              <Text style={[styles.label, { color: colors.secondaryText }]}>Opening float</Text>
-              <Text style={[styles.value, { color: colors.text }]}>{formatPeso(openingFloat.amount)}</Text>
-            </View>
-          ) : null}
-          <Text style={[styles.copy, { color: colors.secondaryText }]}>No closing was recorded for this business day.</Text>
-        </>
-      ) : !openingFloat ? (
-        <>
-          <Text style={[styles.copy, { color: colors.secondaryText }]}>
-            Start the day by recording the opening float: the cash in the drawer before the first sale. It is recorded
-            once per day, and the closing cash count is entered at the end of service.
-          </Text>
-          <OpeningFloatForm
-            branchId={branchId}
-            onRecorded={(saved) => {
-              setOpeningFloat(saved);
-              onOpeningFloatRecorded?.(saved);
-            }}
-            onAlreadyRecorded={() => setReloadKey((key) => key + 1)}
-          />
-        </>
+        <Text style={[styles.copy, { color: colors.secondaryText }]}>No closing was recorded for this business day.</Text>
       ) : (
         <>
-          <View style={styles.row}>
-            <Text style={[styles.label, { color: colors.secondaryText }]}>Opening float</Text>
-            <Text style={[styles.value, { color: colors.text }]}>{formatPeso(openingFloat.amount)}</Text>
-          </View>
-          <Text style={[styles.hint, { color: colors.secondaryText }]}>
-            Recorded{openingFloat.recordedByName ? ` by ${openingFloat.recordedByName}` : ''} on {dateTime(openingFloat.recordedAt)} ({openingFloat.reference}).
-          </Text>
           <Text style={[styles.copy, { color: colors.secondaryText }]}>
-            At the end of service, count all the cash in the drawer and record it. The closing can be recorded once per
-            day; after it, today’s sales can no longer be voided.
+            At the end of service, count the cash in the drawer and record it together with the opening float. It can be
+            recorded once per day.
           </Text>
-          <Text style={[styles.fieldLabel, { color: colors.text }]}>Closing cash count (₱) *</Text>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Opening float (₱)</Text>
+          <TextInput
+            value={openingFloat}
+            onChangeText={(value) => {
+              setOpeningFloat(value);
+              if (fieldErrors.openingFloat) setFieldErrors((current) => ({ ...current, openingFloat: undefined }));
+            }}
+            keyboardType="decimal-pad"
+            placeholder="e.g. 1000"
+            placeholderTextColor={colors.secondaryText}
+            accessibilityLabel="Opening float in pesos, required"
+            style={[styles.input, { color: colors.text, borderColor: fieldErrors.openingFloat ? colors.error : colors.border, backgroundColor: colors.background }]}
+          />
+          {fieldErrors.openingFloat ? <Text style={[styles.error, { color: colors.error }]}>{fieldErrors.openingFloat}</Text> : null}
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Closing cash count (₱)</Text>
           <TextInput
             value={closingCount}
             onChangeText={(value) => {
               setClosingCount(value);
-              if (fieldErrors.closingCashCount) setFieldErrors({});
+              if (fieldErrors.closingCashCount) setFieldErrors((current) => ({ ...current, closingCashCount: undefined }));
             }}
             keyboardType="decimal-pad"
             placeholder="All cash in the drawer, including the float"
@@ -206,12 +184,10 @@ export default function DailyClosingSection({
             </Text>
             {confirming ? (
               <>
-                {openingFloat ? (
-                  <View style={styles.row}>
-                    <Text style={[styles.label, { color: colors.secondaryText }]}>Opening float (recorded)</Text>
-                    <Text style={[styles.value, { color: colors.text }]}>{formatPeso(openingFloat.amount)}</Text>
-                  </View>
-                ) : null}
+                <View style={styles.row}>
+                  <Text style={[styles.label, { color: colors.secondaryText }]}>Opening float</Text>
+                  <Text style={[styles.value, { color: colors.text }]}>{formatPeso(confirming.openingFloat)}</Text>
+                </View>
                 <View style={styles.row}>
                   <Text style={[styles.label, { color: colors.secondaryText }]}>Closing cash count</Text>
                   <Text style={[styles.value, { color: colors.text }]}>{formatPeso(confirming.closingCashCount)}</Text>
