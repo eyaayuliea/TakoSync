@@ -16,7 +16,8 @@ import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import type { MenuCartLine, MenuProduct } from './menuPreviewData';
-import { resolveMenuAddons } from './menuAddons';
+import { extraFlavorTabs } from './menuFlavorOptions';
+import { addonsForCart, resolveMenuAddons } from './menuAddons';
 import { BULK_ORDER_LABEL, isBulkOrder } from '../services/bulkOrder';
 import {
   calculateSelectedAddonTotal,
@@ -125,6 +126,9 @@ const flavorOptions: FlavorOption[] = [
   },
 ];
 
+/** Artwork for products added by the owner (OW-21 c7). */
+const genericFlavorImage: ImageSourcePropType = require('../../assets/takoyaki-plate.png');
+
 const productArtwork: Record<string, ImageSourcePropType[]> = {
   'Octobits Takoyaki': [require('../../assets/OCTOBITS.png')],
   'Cheese Takoyaki': [require('../../assets/CHEESE.png')],
@@ -137,7 +141,7 @@ const productArtwork: Record<string, ImageSourcePropType[]> = {
 
 function ProductArtwork({ name }: { name: string }) {
   const { isDark } = useTheme();
-  const images = productArtwork[name] ?? [];
+  const images = productArtwork[name] ?? [genericFlavorImage];
   return (
     <View style={[styles.productArtwork, isDark && { backgroundColor: colors.navy }]}>
       {images.map((source, index) => (
@@ -469,7 +473,13 @@ export default function MenuWorkspace({
   // ST-03: null = closed, 'all' = the full menu, otherwise one product group's details.
   // Groups are looked up from the live catalog so a refresh shows the owner's latest changes.
   const [menuInfo, setMenuInfo] = useState<'all' | { groupId: string } | null>(null);
-  const selectedFlavor = flavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? flavorOptions[0];
+  // OW-21 c7: products the owner adds get their own flavor tab after the designed ones.
+  const allFlavorOptions: FlavorOption[] = useMemo(() => [
+    ...flavorOptions,
+    ...extraFlavorTabs(catalog, flavorOptions.flatMap((option) => [option.productName, ...(option.comboName ? [option.comboName] : [])]))
+      .map((tab) => ({ ...tab, image: genericFlavorImage })),
+  ], [catalog]);
+  const selectedFlavor = allFlavorOptions.find((flavor) => flavor.id === selectedFlavorId) ?? allFlavorOptions[0];
   const products: MenuProduct[] = useMemo(
     () => catalog.map((product) => ({
       id: product.id,
@@ -510,10 +520,17 @@ export default function MenuWorkspace({
 
   const totals = calculateMenuCart(cart, products);
   const bulkOrder = isBulkOrder(totals.count);
-  const { available: displayAddons, missingLabels: missingAddonNames } = useMemo(
-    () => resolveMenuAddons(addons),
-    [addons],
+  // OW-21 c5: only the add-ons offered with the products in the cart.
+  const cartProductIds = useMemo(
+    () => [...new Set(cart.flatMap((line) => catalog.find((item) => item.id === line.productId)?.productId ?? []))],
+    [cart, catalog],
   );
+  const { available: displayAddons, missingLabels: missingAddonNames } = useMemo(() => {
+    // "Not configured" lists add-ons missing from the catalog, not the ones this cart does not offer.
+    const resolved = resolveMenuAddons(addons);
+    const offered = new Set(addonsForCart(addons, cartProductIds).map((addon) => addon.id));
+    return { available: resolved.available.filter((addon) => offered.has(addon.id)), missingLabels: resolved.missingLabels };
+  }, [addons, cartProductIds]);
   const selectedAddons = displayAddons.filter((addon) => selectedAddonIds.includes(addon.id));
   const addonsTotal = calculateSelectedAddonTotal(displayAddons, selectedAddonIds);
   const checkoutTotal = Math.round((totals.total + addonsTotal) * 100) / 100;
@@ -845,7 +862,7 @@ export default function MenuWorkspace({
           showsHorizontalScrollIndicator={false}
           showsVerticalScrollIndicator={false}
         >
-          {flavorOptions.map((flavor) => {
+          {allFlavorOptions.map((flavor) => {
             const selected = flavor.id === selectedFlavor.id;
             const circleBackground = selected
               ? (isDark ? colors.white : colors.navy)

@@ -71,3 +71,11 @@ test('the remove (x) control reaches a 44 px touch target', () => {
   assert.ok(23 + slop.top + slop.bottom >= 44);
   assert.deepEqual(hitSlopForTarget(48, 48), { top: 0, bottom: 0, left: 0, right: 0 });
 });
+
+test('OW-21 c5: an add-on linked to products is offered only when one of them is in the cart', async () => {
+  const { addonsForCart } = await import('./menuAddons.ts');
+  const addons = [{ id: 'sauce', productIds: [] }, { id: 'cheese', productIds: ['p-combo'] }, { id: 'flakes' }];
+  assert.deepEqual(addonsForCart(addons, ['p-regular']).map((addon) => addon.id), ['sauce', 'flakes']);
+  assert.deepEqual(addonsForCart(addons, ['p-regular', 'p-combo']).map((addon) => addon.id), ['sauce', 'cheese', 'flakes']);
+  assert.deepEqual(addonsForCart(addons, []).map((addon) => addon.id), ['sauce', 'flakes']);
+});

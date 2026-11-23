@@ -199,8 +199,17 @@ export type Database = {
         internal_code: string | null;
         display_name: string | null;
         recipe_status: 'complete' | 'incomplete' | 'pending_confirmation';
+        /** OW-21 c2 (202611240001). */
+        flavor: string | null;
+        portion_type: 'Regular' | 'Combo + Cheese' | null;
         created_at: string;
         updated_at: string;
+      }>;
+      /** OW-21 c5: add-ons offered with a product (202611240001). */
+      product_addons: Table<{
+        product_id: string;
+        addon_id: string;
+        created_at: string;
       }>;
       units_of_measure: Table<{
         code: string;
@@ -481,6 +490,8 @@ export type Database = {
         near_expiration_days: number;
         lot_warning_hours: number;
         lot_critical_hours: number;
+        /** OW-21 c10 (202611240001), default 5. */
+        bulk_order_threshold: number;
         updated_at: string;
       }>;
       inventory_discrepancy_adjustments: Table<{

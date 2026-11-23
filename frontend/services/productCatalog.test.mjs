@@ -420,3 +420,38 @@ test('missing-column detection only matches the maximum-quantity column', () => 
   assert.equal(isMissingMaxOrderQuantityColumn({ code: '42703', message: 'column products.category does not exist' }), false);
   assert.equal(isMissingMaxOrderQuantityColumn(null), false);
 });
+
+test('OW-21 c2, c6: flavor and portion type are saved; prices must be greater than zero', async () => {
+  const client = new FakeSupabase();
+  const product = await createOwnerProduct(client, { ...productInput, flavor: 'Octobits', portion_type: 'Combo + Cheese' });
+  assert.equal(client.tables.products[0].flavor, 'Octobits');
+  assert.equal(client.tables.products[0].portion_type, 'Combo + Cheese');
+  // OW-21 c7: the POS shows combos from the Combo category.
+  assert.equal(client.tables.products[0].category, 'Combo');
+  await assert.rejects(
+    createOwnerProduct(new FakeSupabase(), { ...productInput, variants: productInput.variants.map((v, i) => (i === 1 ? { ...v, price: 0 } : v)) }),
+    { message: 'The selling price for 8 PCS must be greater than zero.' },
+  );
+  await assert.rejects(createOwnerProduct(new FakeSupabase(), { ...productInput, flavor: ' ' }), { message: 'Enter the flavor.' });
+  await assert.rejects(createOwnerProduct(new FakeSupabase(), { ...productInput, portion_type: 'Large' }), { message: 'Choose the portion type.' });
+  const [regular, medium, large] = client.tables.product_variants;
+  await assert.rejects(
+    updateOwnerProduct(client, product.id, { ...productInput, variants: [{ id: regular.id, price: 0 }, { id: medium.id, price: 89 }, { id: large.id, price: 120 }] }),
+    { message: 'The selling price for this size must be greater than zero.' },
+  );
+});
+
+test('OW-21 c3: pieces per portion can be edited and must be a whole number greater than zero', async () => {
+  const client = new FakeSupabase();
+  const product = await createOwnerProduct(client, productInput);
+  const [regular, medium, large] = client.tables.product_variants;
+  await updateOwnerProduct(client, product.id, {
+    ...productInput,
+    variants: [{ id: regular.id, price: 49, piece_count: 5 }, { id: medium.id, price: 89 }, { id: large.id, price: 120 }],
+  });
+  assert.deepEqual(client.tables.product_variants.map((variant) => variant.piece_count), [5, 8, 11]);
+  await assert.rejects(
+    updateOwnerProduct(client, product.id, { ...productInput, variants: [{ id: regular.id, price: 49, piece_count: 0 }, { id: medium.id, price: 89 }, { id: large.id, price: 120 }] }),
+    { message: 'The number of pieces per portion for this size must be a whole number greater than zero.' },
+  );
+});

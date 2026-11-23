@@ -12,6 +12,8 @@ export const standardProductVariants = [
 export type ProductVariantPrice = {
   id: string;
   price: number;
+  /** OW-21 c3: pieces per portion (used for batter consumption). Omit to keep the current value. */
+  piece_count?: number;
   /** ST-02 c5 / OW-21 c4: maximum quantity per order; null = no maximum. Omit to keep the current value. */
   max_order_quantity?: number | null;
 };
@@ -32,16 +34,46 @@ export function assertValidMaxOrderQuantity(value: number | null | undefined, la
   }
 }
 
+export const PRODUCT_PORTION_TYPES = ['Regular', 'Combo + Cheese'] as const;
+export type ProductPortionType = (typeof PRODUCT_PORTION_TYPES)[number];
+
 export type OwnerProductInput = {
   product_name: string;
   description: string;
   is_available: boolean;
+  /** OW-21 c2: the flavor and portion type (left unchanged when omitted). */
+  flavor?: string;
+  portion_type?: ProductPortionType;
 };
 
 function assertValidProduct(input: OwnerProductInput) {
-  if (!input.product_name.trim()) throw new Error('Product name is required.');
-  if (!input.description.trim()) throw new Error('Product description is required.');
+  if (!input.product_name.trim()) throw new Error('Enter the product name.');
+  if (input.flavor !== undefined && !input.flavor.trim()) throw new Error('Enter the flavor.');
+  if (input.portion_type !== undefined && !PRODUCT_PORTION_TYPES.includes(input.portion_type)) throw new Error('Choose the portion type.');
+  if (!input.description.trim()) throw new Error('Enter the product description.');
 }
+
+/** OW-21 c3: pieces per portion must be a whole number greater than zero. */
+export function assertValidPieceCount(value: number | undefined, label: string) {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`The number of pieces per portion for ${label} must be a whole number greater than zero.`);
+  }
+}
+
+/** OW-21 c6: a selling price must be greater than zero. */
+export function assertValidSellingPrice(price: number, label: string) {
+  if (!Number.isFinite(price) || price <= 0) throw new Error(`The selling price for ${label} must be greater than zero.`);
+}
+
+// The POS shows a flavor's Regular product from the "Flavors" category and its
+// combo from "Combo" (ST-03), so the category follows the portion type.
+const productFields = (input: OwnerProductInput) => ({
+  ...(input.flavor !== undefined ? { flavor: input.flavor.trim() } : {}),
+  ...(input.portion_type !== undefined
+    ? { portion_type: input.portion_type, category: input.portion_type === 'Combo + Cheese' ? 'Combo' : 'Flavors' }
+    : {}),
+});
 
 function assertValidVariantPrices(variants: ProductVariantPriceInput[]) {
   if (variants.length !== standardProductVariants.length) {
@@ -49,24 +81,15 @@ function assertValidVariantPrices(variants: ProductVariantPriceInput[]) {
   }
   for (const [index, variant] of standardProductVariants.entries()) {
     const submitted = variants[index];
-    if (
-      submitted.variant_code !== variant.variant_code ||
-      submitted.size_label !== variant.size_label ||
-      submitted.piece_count !== variant.piece_count ||
-      !Number.isFinite(submitted.price) ||
-      submitted.price < 0
-    ) {
-      throw new Error(`Enter a valid selling price for ${variant.size_label}.`);
+    if (submitted.variant_code !== variant.variant_code || submitted.size_label !== variant.size_label) {
+      throw new Error('Configure all standard menu variants before saving this product.');
     }
+    assertValidSellingPrice(submitted.price, variant.size_label);
+    assertValidPieceCount(submitted.piece_count, variant.size_label);
     assertValidMaxOrderQuantity(submitted.max_order_quantity, variant.size_label);
   }
 }
 
-function assertValidPrice(price: number) {
-  if (!Number.isFinite(price) || price < 0) {
-    throw new Error('Selling prices must be valid numbers greater than or equal to zero.');
-  }
-}
 
 export function parseCatalogPrice(value: unknown, label: string): number {
   const price = typeof value === 'number'
@@ -81,7 +104,7 @@ export function parseCatalogPrice(value: unknown, label: string): number {
 }
 
 /** `max_order_quantity` undefined = the column is not available, so it is left untouched. */
-type VariantRestorePoint = { id: string; price: number; max_order_quantity?: number | null };
+type VariantRestorePoint = { id: string; price: number; piece_count?: number; max_order_quantity?: number | null };
 
 async function restoreVariantPrices(
   client: ProductCatalogClient,
@@ -92,9 +115,11 @@ async function restoreVariantPrices(
   for (const variant of [...changed].reverse()) {
     const { error } = await client
       .from('product_variants')
-      .update(variant.max_order_quantity === undefined
-        ? { price: variant.price }
-        : { price: variant.price, max_order_quantity: variant.max_order_quantity })
+      .update({
+        price: variant.price,
+        ...(variant.piece_count === undefined ? {} : { piece_count: variant.piece_count }),
+        ...(variant.max_order_quantity === undefined ? {} : { max_order_quantity: variant.max_order_quantity }),
+      })
       .eq('id', variant.id)
       .eq('product_id', productId);
     if (error) failures.push(`variant ${variant.id}: ${error.message}`);
@@ -116,6 +141,7 @@ export async function createOwnerProduct(
       description: input.description.trim(),
       price: input.variants[0].price,
       is_available: input.is_available,
+      ...productFields(input),
     })
     .select('id, product_name, description, price, is_available, created_at, updated_at')
     .single();
@@ -161,7 +187,8 @@ export async function updateOwnerProduct(
 ) {
   assertValidProduct(input);
   for (const variant of input.variants) {
-    assertValidPrice(variant.price);
+    assertValidSellingPrice(variant.price, 'this size');
+    assertValidPieceCount(variant.piece_count, 'this size');
     assertValidMaxOrderQuantity(variant.max_order_quantity, 'this size');
   }
   if (new Set(input.variants.map((variant) => variant.id)).size !== input.variants.length) {
@@ -179,13 +206,13 @@ export async function updateOwnerProduct(
   let maxOrderQuantitySupported = true;
   let variantsLoad = await client
     .from('product_variants')
-    .select('id, variant_code, price, max_order_quantity')
+    .select('id, variant_code, price, piece_count, max_order_quantity')
     .eq('product_id', productId);
   if (isMissingMaxOrderQuantityColumn(variantsLoad.error)) {
     maxOrderQuantitySupported = false;
     const legacy = await client
       .from('product_variants')
-      .select('id, variant_code, price')
+      .select('id, variant_code, price, piece_count')
       .eq('product_id', productId);
     variantsLoad = { ...legacy, data: (legacy.data ?? []).map((variant) => ({ ...variant, max_order_quantity: null })) } as typeof variantsLoad;
   }
@@ -209,14 +236,18 @@ export async function updateOwnerProduct(
       const nextMax = variant.max_order_quantity === undefined || !maxOrderQuantitySupported
         ? previousMax
         : variant.max_order_quantity;
-      if (Number(current.price) === variant.price && previousMax === nextMax) continue;
+      const previousPieces = current.piece_count === null || current.piece_count === undefined ? undefined : Number(current.piece_count);
+      const nextPieces = variant.piece_count ?? previousPieces;
+      if (Number(current.price) === variant.price && previousMax === nextMax && previousPieces === nextPieces) continue;
       const previousPrice = Number(current.price);
 
       const { data, error } = await client
         .from('product_variants')
-        .update(maxOrderQuantitySupported
-          ? { price: variant.price, max_order_quantity: nextMax }
-          : { price: variant.price })
+        .update({
+          price: variant.price,
+          ...(nextPieces !== undefined && nextPieces !== previousPieces ? { piece_count: nextPieces } : {}),
+          ...(maxOrderQuantitySupported ? { max_order_quantity: nextMax } : {}),
+        })
         .eq('id', variant.id)
         .eq('product_id', productId)
         .select('id')
@@ -226,6 +257,7 @@ export async function updateOwnerProduct(
       changed.push({
         id: variant.id,
         price: previousPrice,
+        ...(previousPieces !== undefined ? { piece_count: previousPieces } : {}),
         ...(maxOrderQuantitySupported ? { max_order_quantity: previousMax } : {}),
       });
     }
@@ -235,6 +267,7 @@ export async function updateOwnerProduct(
       product_name: input.product_name.trim(),
       description: input.description.trim(),
       is_available: input.is_available,
+      ...productFields(input),
       ...(regularVariant ? { price: regularVariant.price } : {}),
     };
     const { data: updatedProduct, error: updateError } = await client
@@ -257,7 +290,7 @@ export async function updateOwnerProduct(
 }
 
 export function buildStaffMenuProducts(
-  products: Array<{ id: string; product_name: string; description: string; is_available: boolean; category?: string }>,
+  products: Array<{ id: string; product_name: string; description: string; is_available: boolean; category?: string; flavor?: string | null; portion_type?: string | null }>,
   variants: Array<{
     id: string;
     product_id: string;
@@ -285,6 +318,8 @@ export function buildStaffMenuProducts(
       name: product.product_name,
       description: product.description,
       category: product.category ?? 'Menu',
+      flavor: product.flavor ?? null,
+      portionType: product.portion_type ?? null,
       sizeLabel: variant.size_label,
       price: parseCatalogPrice(variant.price, `Menu variant ${variant.id}`),
       pieceCount: Number(variant.piece_count),

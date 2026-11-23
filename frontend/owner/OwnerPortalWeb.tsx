@@ -108,6 +108,11 @@ import {
   updateOwnerProfile,
   changeOwnerPassword,
   updateProduct,
+  loadMenuAddonConfiguration,
+  saveMenuAddon,
+  saveProductAddons,
+  updateBulkOrderThreshold,
+  type MenuAddonConfiguration,
   validateOwnerInventoryCountCorrection,
   validateOwnerSubmittedInventoryCount,
   type AppUser,
@@ -116,7 +121,7 @@ import {
   type SharedRecipeRecord,
 } from '../services/takosync';
 import { getConfiguredRecipeQuantity, getPerBottleRecipeQuantity } from '../services/batterRecipeQuantities';
-import { standardProductVariants } from '../services/productCatalog';
+import { PRODUCT_PORTION_TYPES, standardProductVariants, type ProductPortionType } from '../services/productCatalog';
 import { getManilaReportingRange, manilaDateKey, type ReportingPeriod } from '../services/businessDaySettings';
 import {
   filterOwnerPortalInventory,
@@ -124,7 +129,7 @@ import {
   type OwnerPortalBranch,
 } from './ownerPortalBranches';
 import { buildOwnerPortalInventoryRows, type OwnerPortalInventoryRow } from './ownerPortalInventory';
-import { buildOwnerPortalVariantPrices } from './ownerPortalProducts';
+import { buildOwnerPortalVariantPrices, PRODUCT_TABLE_HEADERS, productFormErrors, productTableRows } from './ownerPortalProducts';
 import {
   filterOwnerPortalConfirmedSales,
   summarizeOwnerPortalSalesByBranch,
@@ -2159,147 +2164,220 @@ function LegacySettingsEditor({ products, configuration, stockSettings, onSaved 
   return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text><View style={styles.grid}><Panel title="Product recipes"><Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text><Select value={products.find((item: any) => item.id === productId)?.product_name ?? 'Choose product'} options={products.map((item: any) => item.product_name)} onChange={(value) => setProductId(products.find((item: any) => item.product_name === value)?.id ?? '')} /><Select value={configuration?.ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'} options={(configuration?.ingredients ?? []).map((item: any) => item.name)} onChange={(value) => setIngredientId(configuration.ingredients.find((item: any) => item.name === value)?.id ?? '')} /><TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} /><TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text></Pressable><Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text></Panel><Panel title="Minimum stock thresholds"><Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text><Select value={thresholdBranch ? 'Selected branch inventory' : 'Choose inventory record'} options={['Choose inventory record', ...(stockSettings?.inventory ?? []).map((item: any) => `${item.branch_id} · ${item.ingredient_id}`)]} onChange={(value) => { const match = (stockSettings?.inventory ?? []).find((item: any) => `${item.branch_id} · ${item.ingredient_id}` === value); if (match) { setThresholdBranch(match.branch_id); setThresholdId(match.ingredient_id); setThreshold(String(match.minimum_stock)); } }} /><TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save threshold'}</Text></Pressable></Panel><Panel title="Prepared batter rules"><Text style={styles.body}>1 batch = 5 bottles = 125 pieces.</Text><Text style={styles.muted}>Raw ingredients are deducted during preparation; completed sales consume prepared batter and do not deduct raw batter ingredients again.</Text></Panel><Panel title="Expiration alerts"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save alert period'}</Text></Pressable><Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text></Panel></View></>;
 }
 
+/**
+ * OW-21 Products and Menu: the product table with search and Add Product, the
+ * product form (flavor, portion type, prices, pieces per portion, maximum per
+ * order, add-ons), the add-on prices, and the Bulk Order threshold.
+ */
 function OwnerProductEditor({ products, onSaved }: {
   products: ProductManagementItem[];
   onSaved: OwnerPortalNotify;
 }) {
-  const [productId, setProductId] = useState('');
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<string | null>(null); // product id, 'new', or null
   const [name, setName] = useState('');
+  const [flavor, setFlavor] = useState('');
+  const [portionType, setPortionType] = useState<ProductPortionType | ''>('');
   const [description, setDescription] = useState('');
   const [available, setAvailable] = useState(true);
-  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({
-    '4pcs': '',
-    '8pcs': '',
-    '10plus1pcs': '',
-  });
-  // OW-21 c4: maximum quantity per order for each size; blank = no maximum.
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [pieceDrafts, setPieceDrafts] = useState<Record<string, string>>({});
   const [maxQuantityDrafts, setMaxQuantityDrafts] = useState<Record<string, string>>({});
+  const [addonIds, setAddonIds] = useState<string[]>([]);
+  const [formErrors, setFormErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const selectedProduct = products.find((product) => product.id === productId);
+  const [menu, setMenu] = useState<MenuAddonConfiguration | null>(null);
+  const [menuError, setMenuError] = useState('');
+  const [addonPriceDrafts, setAddonPriceDrafts] = useState<Record<string, string>>({});
+  const [thresholdDraft, setThresholdDraft] = useState('');
+  const selectedProduct = editing && editing !== 'new' ? products.find((product) => product.id === editing) ?? null : null;
+  const table = productTableRows(products, query);
 
-  useEffect(() => {
-    if (!selectedProduct) {
-      setName('');
-      setDescription('');
-      setAvailable(true);
-      setPriceDrafts({ '4pcs': '', '8pcs': '', '10plus1pcs': '' });
-      setMaxQuantityDrafts({});
-      return;
-    }
+  const reloadMenu = () => {
+    loadMenuAddonConfiguration()
+      .then((result) => {
+        setMenu(result);
+        setMenuError('');
+        setAddonPriceDrafts(Object.fromEntries(result.addons.map((addon) => [addon.id, String(addon.price)])));
+        setThresholdDraft(String(result.bulkOrderThreshold));
+      })
+      .catch((reason: unknown) => setMenuError(ownerPortalErrorText(reason, 'The add-ons and Bulk Order threshold could not be loaded.')));
+  };
+  useEffect(reloadMenu, []);
 
-    setName(selectedProduct.product_name);
-    setDescription(selectedProduct.description);
-    setAvailable(selectedProduct.is_available);
-    setPriceDrafts(Object.fromEntries(standardProductVariants.map((variant) => {
-      const current = selectedProduct.variants.find((item) => item.variant_code === variant.variant_code);
-      return [variant.variant_code, current ? String(current.price) : ''];
-    })));
-    setMaxQuantityDrafts(Object.fromEntries(standardProductVariants.map((variant) => {
-      const current = selectedProduct.variants.find((item) => item.variant_code === variant.variant_code);
-      return [variant.variant_code, current?.max_order_quantity ? String(current.max_order_quantity) : ''];
-    })));
-  }, [selectedProduct]);
+  const openProduct = (id: string) => {
+    const product = id === 'new' ? null : products.find((item) => item.id === id) ?? null;
+    setEditing(id);
+    setFormErrors([]);
+    setName(product?.product_name ?? '');
+    setFlavor(product?.flavor ?? '');
+    setPortionType((product?.portion_type as ProductPortionType | null) ?? '');
+    setDescription(product?.description ?? '');
+    setAvailable(product?.is_available ?? true);
+    const byCode = (pick: (variant: ProductManagementItem['variants'][number]) => string) => Object.fromEntries(standardProductVariants.map((variant) => {
+      const current = product?.variants.find((item) => item.variant_code === variant.variant_code);
+      return [variant.variant_code, current ? pick(current) : ''];
+    }));
+    setPriceDrafts(byCode((variant) => String(variant.price)));
+    setPieceDrafts(product ? byCode((variant) => String(variant.piece_count)) : Object.fromEntries(standardProductVariants.map((variant) => [variant.variant_code, String(variant.piece_count)])));
+    setMaxQuantityDrafts(byCode((variant) => (variant.max_order_quantity ? String(variant.max_order_quantity) : '')));
+    setAddonIds(product && menu ? menu.addons.filter((addon) => addon.productIds.includes(product.id)).map((addon) => addon.id) : []);
+  };
 
   const save = async () => {
+    const errors = productFormErrors({ name, flavor, portionType, description });
+    let variantPrices: ReturnType<typeof buildOwnerPortalVariantPrices> = [];
+    try {
+      variantPrices = buildOwnerPortalVariantPrices(priceDrafts, standardProductVariants, maxQuantityDrafts, pieceDrafts);
+    } catch (reason: unknown) {
+      errors.push(reason instanceof Error ? reason.message : 'Check the prices.');
+    }
+    setFormErrors(errors);
+    if (errors.length || !portionType) return;
     setSaving(true);
     try {
-      const variantPrices = buildOwnerPortalVariantPrices(priceDrafts, standardProductVariants, maxQuantityDrafts);
-      const productInput = {
-        product_name: name,
-        description,
-        is_available: available,
-      };
-
+      const productInput = { product_name: name, description, is_available: available, flavor, portion_type: portionType };
+      let productId = selectedProduct?.id ?? '';
       if (selectedProduct) {
-        const missingVariant = standardProductVariants.find((variant) =>
-          !selectedProduct.variants.some((current) => current.variant_code === variant.variant_code),
-        );
-        if (missingVariant) {
-          throw new Error(`Cannot edit this product because its ${missingVariant.size_label} variant is missing.`);
-        }
+        const missing = standardProductVariants.find((variant) => !selectedProduct.variants.some((current) => current.variant_code === variant.variant_code));
+        if (missing) throw new Error(`Cannot edit this product because its ${missing.size_label} variant is missing.`);
         const builtByCode = new Map(variantPrices.map((variant) => [variant.variant_code, variant]));
         await updateProduct(selectedProduct.id, {
           ...productInput,
           variants: selectedProduct.variants.map((variant) => {
             const built = builtByCode.get(variant.variant_code);
-            return {
-              id: variant.id,
-              price: built?.price ?? variant.price,
-              ...(built ? { max_order_quantity: built.max_order_quantity ?? null } : {}),
-            };
+            return built
+              ? { id: variant.id, price: built.price, piece_count: built.piece_count, max_order_quantity: built.max_order_quantity ?? null }
+              : { id: variant.id, price: variant.price };
           }),
         });
       } else {
-        await createProduct({ ...productInput, variants: variantPrices });
+        productId = (await createProduct({ ...productInput, variants: variantPrices })).id;
       }
-
-      await onSaved(selectedProduct ? 'Product updated through Supabase.' : 'Product created through Supabase.');
-      if (!selectedProduct) setProductId('');
+      if (menu) await saveProductAddons(productId, addonIds);
+      setEditing(null);
+      reloadMenu();
+      // OW-21 c7: a confirmation; the staff menu shows the product by its availability.
+      await onSaved(selectedProduct ? `${name.trim()} saved.` : `${name.trim()} added to the menu.`);
     } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Product save failed.', true);
+      await onSaved(reason instanceof Error ? reason.message : 'The product could not be saved.', true);
     } finally {
       setSaving(false);
     }
   };
 
+  const saveAddonPrice = async (addon: MenuAddonConfiguration['addons'][number], active: boolean) => {
+    try {
+      await saveMenuAddon({ id: addon.id, name: addon.name, price: Number(addonPriceDrafts[addon.id] ?? addon.price), active });
+      reloadMenu();
+      await onSaved(`${addon.name} saved.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The add-on could not be saved.', true);
+    }
+  };
+
+  const saveThreshold = async () => {
+    const value = Number(thresholdDraft.trim());
+    try {
+      if (!/^\d+$/.test(thresholdDraft.trim())) throw new Error('The Bulk Order threshold must be a whole number from 1 to 999.');
+      await updateBulkOrderThreshold(value);
+      reloadMenu();
+      await onSaved(`Orders of ${value} or more products are now Bulk Orders.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The Bulk Order threshold could not be saved.', true);
+    }
+  };
+
   return (
-    <Panel title="Products & menu">
-      <Text style={styles.muted}>Create products or edit each variant price and product availability independently.</Text>
-      {products.map((product) => (
-        <Pressable
-          key={product.id}
-          accessibilityRole="button"
-          onPress={() => setProductId(product.id)}
-          style={styles.line}
-        >
-          <Text style={styles.body}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text>
-          <Text style={styles.pinkText}>{productId === product.id ? 'Selected' : 'Edit'}</Text>
-        </Pressable>
-      ))}
-      <Pressable accessibilityRole="button" onPress={() => setProductId('')} style={styles.outline}>
-        <Text style={styles.pinkText}>Add product</Text>
-      </Pressable>
-      <TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} />
-      <TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} />
-      {standardProductVariants.map((variant) => (
-        <View key={variant.variant_code} style={styles.variantFieldRow}>
-          <TextInput
-            value={priceDrafts[variant.variant_code]}
-            onChangeText={(value) => setPriceDrafts((current) => ({
-              ...current,
-              [variant.variant_code]: value,
-            }))}
-            keyboardType="decimal-pad"
-            placeholder={`${variant.size_label} selling price`}
-            accessibilityLabel={`${variant.size_label} selling price`}
-            style={[styles.input, styles.variantFieldWide]}
-          />
-          <TextInput
-            value={maxQuantityDrafts[variant.variant_code] ?? ''}
-            onChangeText={(value) => setMaxQuantityDrafts((current) => ({
-              ...current,
-              [variant.variant_code]: value,
-            }))}
-            keyboardType="number-pad"
-            placeholder="Max per order"
-            accessibilityLabel={`${variant.size_label} maximum quantity per order, leave blank for no maximum`}
-            style={[styles.input, styles.variantFieldNarrow]}
-          />
+    <>
+      <Panel title="Products & menu">
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+          <TextInput value={query} onChangeText={setQuery} placeholder="Search products or flavors…" accessibilityLabel="Search products" style={styles.search} />
+          <Pressable accessibilityRole="button" onPress={() => openProduct('new')} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 18, marginBottom: 16 }]}>
+            <Text style={styles.loginButtonText}>Add Product</Text>
+          </Pressable>
         </View>
-      ))}
-      <Text style={styles.muted}>Max per order limits how many of a size one order can hold. Leave it blank for no limit.</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ checked: available }}
-        onPress={() => setAvailable((current) => !current)}
-        style={styles.outline}
-      >
-        <Text style={styles.pinkText}>{available ? 'Available to Staff' : 'Unavailable to Staff'} · tap to toggle</Text>
-      </Pressable>
-      <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}>
-        <Text style={styles.loginButtonText}>{saving ? 'Saving…' : selectedProduct ? 'Save product' : 'Create product'}</Text>
-      </Pressable>
-    </Panel>
+        {table.rows.length ? (
+          <Table headers={PRODUCT_TABLE_HEADERS} rows={table.rows} onRowPress={(index) => openProduct(table.products[index].id)} rowLabel={(index) => `Edit ${table.products[index].product_name}`} />
+        ) : <Text style={styles.empty}>{query.trim() ? 'No products match the search.' : 'No products yet. Select Add Product.'}</Text>}
+      </Panel>
+      {editing ? (
+        <Panel title={selectedProduct ? `Edit ${selectedProduct.product_name}` : 'Add Product'}>
+          <Text style={styles.label}>Name</Text>
+          <TextInput value={name} onChangeText={setName} placeholder="e.g. Octobits / Cheese" accessibilityLabel="Product name" style={styles.input} />
+          <Text style={styles.label}>Flavor</Text>
+          <TextInput value={flavor} onChangeText={setFlavor} placeholder="e.g. Octobits" accessibilityLabel="Flavor" style={styles.input} />
+          <Text style={styles.label}>Portion type</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {PRODUCT_PORTION_TYPES.map((type) => (
+              <Pressable key={type} accessibilityRole="radio" accessibilityState={{ checked: portionType === type }} onPress={() => setPortionType(type)} style={[styles.outline, { marginTop: 0 }, portionType === type && { backgroundColor: C.pink }]}>
+                <Text style={[styles.pinkText, portionType === type && { color: '#FFFFFF' }]}>{type}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.label}>Description</Text>
+          <TextInput value={description} onChangeText={setDescription} placeholder="Description" accessibilityLabel="Description" style={styles.input} />
+          <Text style={styles.label}>Sizes: selling price, pieces per portion (batter use), maximum per order</Text>
+          {standardProductVariants.map((variant) => (
+            <View key={variant.variant_code} style={[styles.variantFieldRow, { alignItems: 'center', marginBottom: 6 }]}>
+              <Text style={[styles.strong, { width: 70 }]}>{variant.size_label}</Text>
+              <TextInput value={priceDrafts[variant.variant_code] ?? ''} onChangeText={(value) => setPriceDrafts((current) => ({ ...current, [variant.variant_code]: value }))} keyboardType="decimal-pad" placeholder="Price (₱)" accessibilityLabel={`${variant.size_label} selling price`} style={[styles.input, styles.variantFieldWide]} />
+              <TextInput value={pieceDrafts[variant.variant_code] ?? ''} onChangeText={(value) => setPieceDrafts((current) => ({ ...current, [variant.variant_code]: value }))} keyboardType="number-pad" placeholder="Pieces" accessibilityLabel={`${variant.size_label} pieces per portion`} style={[styles.input, styles.variantFieldNarrow]} />
+              <TextInput value={maxQuantityDrafts[variant.variant_code] ?? ''} onChangeText={(value) => setMaxQuantityDrafts((current) => ({ ...current, [variant.variant_code]: value }))} keyboardType="number-pad" placeholder="Max per order" accessibilityLabel={`${variant.size_label} maximum quantity per order, leave blank for no maximum`} style={[styles.input, styles.variantFieldNarrow]} />
+            </View>
+          ))}
+          <Text style={styles.muted}>Pieces per portion set how much prepared batter a sale uses. Leave the maximum blank for no limit.</Text>
+          <Text style={styles.label}>Optional add-ons</Text>
+          {menu ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {menu.addons.filter((addon) => addon.active).map((addon) => {
+                const selected = addonIds.includes(addon.id);
+                return (
+                  <Pressable key={addon.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setAddonIds((current) => (selected ? current.filter((id) => id !== addon.id) : [...current, addon.id]))} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink }]}>
+                    <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{selected ? '✓ ' : ''}{addon.name} · ₱{addon.price.toFixed(2)}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : <Text style={styles.muted}>{menuError || 'Loading add-ons…'}</Text>}
+          <Text style={styles.muted}>A product with no add-ons selected offers every add-on, as before.</Text>
+          <Pressable accessibilityRole="switch" accessibilityState={{ checked: available }} onPress={() => setAvailable((current) => !current)} style={styles.outline}>
+            <Text style={styles.pinkText}>{available ? 'Available on the staff menu' : 'Unavailable (greyed out on the staff menu)'} · select to change</Text>
+          </Pressable>
+          {formErrors.length ? (
+            <View style={[styles.errorBanner, { marginTop: 12 }]} accessibilityRole="alert">
+              {formErrors.map((message) => <Text key={message} style={styles.errorText}>{message}</Text>)}
+            </View>
+          ) : null}
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable accessibilityRole="button" disabled={saving} onPress={() => setEditing(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+            <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
+              <Text style={styles.loginButtonText}>{saving ? 'Saving…' : selectedProduct ? 'Save product' : 'Add product'}</Text>
+            </Pressable>
+          </View>
+        </Panel>
+      ) : null}
+      <View style={styles.two}>
+        <Panel title="Add-ons">
+          {menu ? menu.addons.map((addon) => (
+            <View key={addon.id} style={[styles.line, { alignItems: 'center', gap: 8 }]}>
+              <Text style={[styles.body, { flex: 1 }]}>{addon.name}{addon.active ? '' : ' (off)'}</Text>
+              <TextInput value={addonPriceDrafts[addon.id] ?? ''} onChangeText={(value) => setAddonPriceDrafts((current) => ({ ...current, [addon.id]: value }))} keyboardType="decimal-pad" accessibilityLabel={`${addon.name} price`} style={[styles.input, { width: 90, padding: 8 }]} />
+              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save</Text></Pressable>
+              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, !addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>{addon.active ? 'Turn off' : 'Turn on'}</Text></Pressable>
+            </View>
+          )) : <Text style={styles.muted}>{menuError || 'Loading add-ons…'}</Text>}
+        </Panel>
+        <Panel title="Bulk Order threshold">
+          <Text style={styles.body}>An order with at least this many products is labelled Bulk Order (default 5). It never changes the price.</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+            <TextInput value={thresholdDraft} onChangeText={setThresholdDraft} keyboardType="number-pad" accessibilityLabel="Bulk Order threshold" style={[styles.input, { width: 90 }]} />
+            <Text style={styles.body}>products or more · current {menu?.bulkOrderThreshold ?? '—'}</Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.pinkText}>Save Bulk Order threshold</Text></Pressable>
+        </Panel>
+      </View>
+    </>
   );
 }
 
