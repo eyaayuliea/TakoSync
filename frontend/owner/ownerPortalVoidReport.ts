@@ -1,6 +1,7 @@
-// OW-10 Void Report on the Owner Web Portal. Every voided sale whose original sale
-// falls in the reporting period, whatever its review status (c6: flagging does not
-// remove a void), newest sale first, with the count and total amount (c7).
+// OW-10 Void Report on the Owner Web Portal: every sale whose void request the
+// owner approved (c6), with the staff reason and requester (c3, c4), the
+// approving owner and time (c5), newest sale first, with the count and total
+// amount (c7). Pending and rejected requests are not voids and are not listed.
 
 export type WebVoidReportSource = {
   id: string;
@@ -13,7 +14,6 @@ export type WebVoidReportSource = {
   status: string;
   decidedByName: string | null;
   decidedAt: string | null;
-  decisionReason: string | null;
   sale: { transactionReference: string; totalAmount: number; createdAt: string } | null;
 };
 
@@ -24,58 +24,44 @@ export type WebVoidReportRow = {
   saleCreatedAt: string | null;
   saleTotal: number;
   reason: string;
-  voidedBy: string;
-  voidedAt: string;
-  reviewStatus: 'Pending Review' | 'Reviewed' | 'Flagged';
-  reviewedBy: string | null;
-  reviewedAt: string | null;
-  flagReason: string | null;
+  requestedBy: string;
+  requestedAt: string;
+  approvedBy: string;
+  approvedAt: string | null;
 };
 
-const REVIEW_STATUS: Record<string, WebVoidReportRow['reviewStatus']> = {
-  pending_review: 'Pending Review',
-  reviewed: 'Reviewed',
-  flagged: 'Flagged',
-};
-
-/** Only voids that took effect: legacy request rows (pending / rejected) never voided a sale. */
-function isVoid(row: WebVoidReportSource): boolean {
-  return row.status in REVIEW_STATUS;
-}
+export const WEB_VOID_REPORT_HEADERS = [
+  'Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason',
+  'Requested by · date & time', 'Approved by · date & time',
+];
 
 export function buildWebVoidReport(
-  voids: WebVoidReportSource[],
+  requests: WebVoidReportSource[],
   filter: { start: Date; end: Date; branchId: string | null },
 ): { rows: WebVoidReportRow[]; count: number; total: number } {
   const start = filter.start.getTime();
   const end = filter.end.getTime();
-  const rows = voids
-    .filter(isVoid)
+  const rows = requests
+    .filter((row) => row.status === 'approved')
     .filter((row) => !filter.branchId || row.branchId === filter.branchId)
     .filter((row) => {
-      // The period is the sale's original date (c2); the void date is the fallback.
+      // The period is the sale's original date (c2); the request date is the fallback.
       const at = Date.parse(row.sale?.createdAt ?? row.requestedAt);
       return Number.isFinite(at) && at >= start && at < end;
     })
     .sort((left, right) => (right.sale?.createdAt ?? right.requestedAt).localeCompare(left.sale?.createdAt ?? left.requestedAt))
-    .map((row): WebVoidReportRow => {
-      const reviewStatus = REVIEW_STATUS[row.status];
-      const reviewed = reviewStatus !== 'Pending Review';
-      return {
-        id: row.id,
-        transactionReference: row.sale?.transactionReference ?? row.reference,
-        branchName: row.branchName,
-        saleCreatedAt: row.sale?.createdAt ?? null,
-        saleTotal: row.sale?.totalAmount ?? 0,
-        reason: row.reason,
-        voidedBy: row.requestedByName ?? 'Staff account',
-        voidedAt: row.requestedAt,
-        reviewStatus,
-        reviewedBy: reviewed ? row.decidedByName ?? 'Owner' : null,
-        reviewedAt: reviewed ? row.decidedAt : null,
-        flagReason: reviewStatus === 'Flagged' ? row.decisionReason : null,
-      };
-    });
+    .map((row): WebVoidReportRow => ({
+      id: row.id,
+      transactionReference: row.sale?.transactionReference ?? row.reference,
+      branchName: row.branchName,
+      saleCreatedAt: row.sale?.createdAt ?? null,
+      saleTotal: row.sale?.totalAmount ?? 0,
+      reason: row.reason,
+      requestedBy: row.requestedByName ?? 'Staff account',
+      requestedAt: row.requestedAt,
+      approvedBy: row.decidedByName ?? 'Owner',
+      approvedAt: row.decidedAt,
+    }));
   let cents = 0;
   for (const row of rows) cents += Math.round(row.saleTotal * 100);
   return { rows, count: rows.length, total: cents / 100 };

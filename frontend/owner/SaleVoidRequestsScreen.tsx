@@ -15,7 +15,7 @@ import {
   OwnerTabs,
 } from './shared/ownerComponents';
 import {
-  reviewSaleVoid,
+  decideSaleVoid,
   loadOwnerSaleVoidReviews,
   type OwnerSaleVoidReview,
 } from '../services/takosync';
@@ -23,18 +23,20 @@ import {
   SALE_VOID_REASON_MAX_LENGTH,
   saleVoidRequestStatusLabel,
   sortSaleVoidRequestsForReview,
-  validateSaleVoidFlagReason,
+  validateSaleVoidRejectionReason,
   type SaleVoidRequestStatus,
 } from '../services/saleVoids';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
-const STATUS_FILTERS = ['All', 'Pending Review', 'Reviewed', 'Flagged'] as const;
+// OM-15 c1 / OW-26 c1: status filters Pending, Approved, Rejected (an approved
+// void shows a "Voided" indicator, OW-26 c10).
+const STATUS_FILTERS = ['All', 'Pending', 'Approved', 'Rejected'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 const STATUS_BY_FILTER: Record<Exclude<StatusFilter, 'All'>, SaleVoidRequestStatus> = {
-  'Pending Review': 'pending_review',
-  Reviewed: 'reviewed',
-  Flagged: 'flagged',
+  Pending: 'pending',
+  Approved: 'approved',
+  Rejected: 'rejected',
 };
 const ALL_BRANCHES = 'All branches';
 
@@ -51,14 +53,13 @@ function dateTime(value: string | null | undefined): string {
 }
 
 function statusTone(status: SaleVoidRequestStatus): 'warning' | 'error' | 'neutral' {
-  return status === 'pending_review' ? 'warning' : status === 'flagged' ? 'error' : 'neutral';
+  return status === 'pending' ? 'warning' : status === 'approved' ? 'error' : 'neutral';
 }
 
 /**
- * OM-15 (void half) / OW-26: the owner reviews the sales staff voided, Pending
- * Review first, and marks each one Reviewed or Flagged (a reason is required to
- * flag). The sale is already Voided; the review records the owner's view and
- * never undoes the void. A reviewed or flagged void is read-only.
+ * OM-15 (void half) / OW-26: the owner reviews staff void requests, Pending
+ * first, and approves (the sale becomes Voided and its ingredients return to
+ * stock) or rejects with a reason. Decided requests are read-only.
  */
 export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: () => void; switcher?: React.ReactNode }) {
   const styles = useStyles();
@@ -90,8 +91,8 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
       })
       .catch((reason: unknown) => {
         if (generation !== loadGeneration.current) return;
-        console.error('Unable to load voided sales.', reason);
-        setLoadError('Unable to load voided sales. Please check your internet connection and try again.');
+        console.error('Unable to load void requests.', reason);
+        setLoadError('Unable to load void requests. Please check your internet connection and try again.');
       })
       .finally(() => {
         if (generation === loadGeneration.current) setLoading(false);
@@ -113,7 +114,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
     (statusFilter === 'All' || request.status === STATUS_BY_FILTER[statusFilter])
     && (branchFilter === ALL_BRANCHES || request.branchName === branchFilter),
   )) as OwnerSaleVoidReview[], [requests, statusFilter, branchFilter]);
-  const pendingCount = requests.filter((request) => request.status === 'pending_review').length;
+  const pendingCount = requests.filter((request) => request.status === 'pending').length;
   const selected = selectedId ? requests.find((request) => request.id === selectedId) ?? null : null;
 
   const back = () => {
@@ -126,10 +127,10 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
     }
   };
 
-  const decide = async (decision: 'reviewed' | 'flagged') => {
+  const decide = async (decision: 'approve' | 'reject') => {
     if (!selected || deciding) return;
-    if (decision === 'flagged') {
-      const message = validateSaleVoidFlagReason(rejectReason);
+    if (decision === 'reject') {
+      const message = validateSaleVoidRejectionReason(rejectReason);
       if (message) {
         setDecisionError(message);
         return;
@@ -138,23 +139,29 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
     setDeciding(true);
     setDecisionError('');
     try {
-      const saved = await reviewSaleVoid({
-        voidId: selected.id,
+      const saved = await decideSaleVoid({
+        requestId: selected.id,
         decision,
-        reason: decision === 'flagged' ? rejectReason : undefined,
+        reason: decision === 'reject' ? rejectReason : undefined,
       });
       setRequests((current) => current.map((request) => request.id === saved.id
-        ? { ...request, ...saved, requestedByName: request.requestedByName, decidedByName: saved.decidedByName ?? 'You' }
+        ? {
+          ...request,
+          ...saved,
+          requestedByName: request.requestedByName,
+          decidedByName: saved.decidedByName ?? 'You',
+          sale: request.sale && decision === 'approve' ? { ...request.sale, status: 'voided' } : request.sale,
+        }
         : request));
       setConfirmApprove(false);
       setRejectOpen(false);
       setRejectReason('');
-      setNotice(decision === 'reviewed'
-        ? 'The void is marked Reviewed. The sale stays Voided.'
-        : 'The void is Flagged with your reason. The sale stays Voided; flagging records your concern and does not undo the void.');
+      setNotice(decision === 'approve'
+        ? 'The sale is now Voided. It is excluded from sales totals and its ingredients were returned to stock.'
+        : 'The request was rejected. The sale stays Completed and the staff member can see your reason.');
     } catch (reason: unknown) {
-      setDecisionError(reason instanceof Error ? reason.message : 'Unable to save the review. Please try again.');
-      // Someone may have reviewed it already; show the current state.
+      setDecisionError(reason instanceof Error ? reason.message : 'Unable to save the decision. Please try again.');
+      // Someone may have decided it already; show the current state.
       load();
     } finally {
       setDeciding(false);
@@ -162,13 +169,13 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
   };
 
   const renderList = () => {
-    if (loading) return <OwnerLoadingState label="Loading voided sales…" />;
+    if (loading) return <OwnerLoadingState label="Loading void requests…" />;
     if (loadError) return <OwnerErrorState message={loadError} onRetry={load} />;
     if (!supported) {
       return (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>
-            Void review is not available yet. The database needs the latest update before staff can void sales.
+            Void requests are not available yet. The database needs the latest update before staff can request voids.
           </Text>
         </View>
       );
@@ -176,7 +183,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
     return (
       <ScrollView style={styles.flex} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <Text style={styles.summary}>
-          {pendingCount === 0 ? 'No voids are waiting for your review.' : `${pendingCount} ${pendingCount === 1 ? 'void is' : 'voids are'} waiting for your review.`}
+          {pendingCount === 0 ? 'No requests are waiting for you.' : `${pendingCount} ${pendingCount === 1 ? 'request is' : 'requests are'} waiting for your decision.`}
         </Text>
         <OwnerTabs items={STATUS_FILTERS} selected={statusFilter} onSelect={(item) => setStatusFilter(item as StatusFilter)} />
         {branchOptions.length > 2 ? (
@@ -211,23 +218,22 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
 
   const renderDetails = (request: OwnerSaleVoidReview) => {
     const rows: Array<[string, string]> = [
-      ['Void', request.reference],
-      ['Review status', saleVoidRequestStatusLabel(request.status)],
+      ['Request', request.reference],
+      ['Status', saleVoidRequestStatusLabel(request.status)],
       ['Branch', request.branchName],
-      ['Voided by', request.requestedByName ?? 'Staff account'],
-      ['Voided', dateTime(request.requestedAt)],
+      ['Requested by', request.requestedByName ?? 'Staff account'],
+      ['Requested', dateTime(request.requestedAt)],
       ['Reason', request.reason],
-      ['Sale status', 'Voided · not counted in sales totals; ingredients returned to stock'],
       ['Sale', request.sale?.transactionReference ?? 'Sale not found'],
       ['Sale recorded', dateTime(request.sale?.createdAt)],
       ['Sale total', request.sale ? money(request.sale.totalAmount) : '—'],
     ];
-    if (request.status !== 'pending_review') {
+    if (request.status !== 'pending') {
       rows.push(
-        ['Reviewed by', request.decidedByName ?? 'Owner'],
-        ['Reviewed', dateTime(request.decidedAt)],
+        ['Decided by', request.decidedByName ?? 'Owner'],
+        ['Decided', dateTime(request.decidedAt)],
       );
-      if (request.decisionReason) rows.push([request.status === 'flagged' ? 'Flag reason' : 'Note', request.decisionReason]);
+      if (request.decisionReason) rows.push([request.status === 'rejected' ? 'Rejection reason' : 'Note', request.decisionReason]);
     }
 
     return (
@@ -239,7 +245,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
               key={label}
               label={label}
               value={value}
-              multiline={label === 'Reason' || label === 'Flag reason' || label === 'Note' || label === 'Sale status'}
+              multiline={label === 'Reason' || label === 'Rejection reason' || label === 'Note'}
               first={index === 0}
               last={index === rows.length - 1}
             />
@@ -259,13 +265,13 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
           </View>
         ) : null}
         {decisionError ? <Text style={styles.error} accessibilityRole="alert">{decisionError}</Text> : null}
-        {request.status === 'pending_review' ? (
+        {request.status === 'pending' ? (
           <View style={styles.actions}>
-            <OwnerButton label="Mark as Reviewed" onPress={() => { setDecisionError(''); setConfirmApprove(true); }} disabled={deciding} />
-            <OwnerButton label="Flag Void" variant="outline" onPress={() => { setDecisionError(''); setRejectReason(''); setRejectOpen(true); }} disabled={deciding} />
+            <OwnerButton label="Approve Void" onPress={() => { setDecisionError(''); setConfirmApprove(true); }} disabled={deciding} />
+            <OwnerButton label="Reject" variant="outline" onPress={() => { setDecisionError(''); setRejectReason(''); setRejectOpen(true); }} disabled={deciding} />
           </View>
         ) : (
-          <Text style={styles.readOnly}>This void has been {request.status === 'flagged' ? 'flagged' : 'reviewed'} and can no longer be changed.</Text>
+          <Text style={styles.readOnly}>This request has been decided and can no longer be changed.</Text>
         )}
       </ScrollView>
     );
@@ -273,26 +279,26 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
 
   return (
     <View style={styles.screen}>
-      <OwnerHeader title={selected ? 'Voided Sale' : 'Void and Reversal Review'} onBack={back} />
+      <OwnerHeader title={selected ? 'Void Request' : 'Requests'} onBack={back} />
       {!selected && switcher ? <View style={styles.switcher}>{switcher}</View> : null}
       {selected ? renderDetails(selected) : renderList()}
 
       <OwnerModal visible={confirmApprove} onClose={() => { if (!deciding) setConfirmApprove(false); }}>
-        <Text style={styles.modalTitle}>Mark this void as Reviewed?</Text>
+        <Text style={styles.modalTitle}>Approve this void?</Text>
         <Text style={styles.modalCopy}>
-          Sale {selected?.sale?.transactionReference} ({selected?.sale ? money(selected.sale.totalAmount) : ''}) is already Voided.
-          Marking it Reviewed records that you checked it. This cannot be changed afterwards.
+          Sale {selected?.sale?.transactionReference} ({selected?.sale ? money(selected.sale.totalAmount) : ''}) will be marked Voided,
+          removed from sales totals, and its ingredients returned to stock. This cannot be undone.
         </Text>
         {decisionError ? <Text style={styles.error} accessibilityRole="alert">{decisionError}</Text> : null}
         <View style={styles.modalActions}>
           <OwnerButton label="Cancel" variant="neutral" onPress={() => setConfirmApprove(false)} disabled={deciding} />
-          {deciding ? <ActivityIndicator color={colors.accent} /> : <OwnerButton label="Mark as Reviewed" onPress={() => void decide('reviewed')} />}
+          {deciding ? <ActivityIndicator color={colors.accent} /> : <OwnerButton label="Approve Void" onPress={() => void decide('approve')} />}
         </View>
       </OwnerModal>
 
       <OwnerModal visible={rejectOpen} onClose={() => { if (!deciding) setRejectOpen(false); }}>
-        <Text style={styles.modalTitle}>Flag this void?</Text>
-        <Text style={styles.modalCopy}>Flagging records your concern. It does not undo the void, and staff will see that it is Flagged.</Text>
+        <Text style={styles.modalTitle}>Reject this request?</Text>
+        <Text style={styles.modalCopy}>The sale stays Completed. Staff will see the reason you enter.</Text>
         <OwnerInput
           value={rejectReason}
           onChangeText={(value) => {
@@ -300,7 +306,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
             if (decisionError) setDecisionError('');
           }}
           placeholder="Reason (required)"
-          accessibilityLabel="Reason for flagging, required"
+          accessibilityLabel="Reason for rejecting, required"
           maxLength={SALE_VOID_REASON_MAX_LENGTH}
           multiline
           editable={!deciding}
@@ -308,7 +314,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
         {decisionError ? <Text style={styles.error} accessibilityRole="alert">{decisionError}</Text> : null}
         <View style={styles.modalActions}>
           <OwnerButton label="Cancel" variant="neutral" onPress={() => setRejectOpen(false)} disabled={deciding} />
-          {deciding ? <ActivityIndicator color={colors.accent} /> : <OwnerButton label="Flag Void" variant="outline" onPress={() => void decide('flagged')} />}
+          {deciding ? <ActivityIndicator color={colors.accent} /> : <OwnerButton label="Reject Request" variant="outline" onPress={() => void decide('reject')} />}
         </View>
       </OwnerModal>
     </View>

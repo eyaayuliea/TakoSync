@@ -2211,7 +2211,7 @@ export default function OwnerMobileWorkspace({
     WasteSpillageRecords: 'Waste and Spillage Records',
     PhysicalCountRecords: 'Physical Inventory Count Records',
     AuthorizedAdjustmentRecords: 'Authorized Adjustment Records',
-    VoidRequests: 'Void and Reversal Review',
+    VoidRequests: 'Requests',
     DailyClosingReport: 'Daily Closing Report',
     VoidReport: 'Void Report',
     ReversalReport: 'Reversal Report',

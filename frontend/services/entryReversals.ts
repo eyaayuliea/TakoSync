@@ -146,8 +146,8 @@ export function entryReversalStatusLabel(state: EntryReversalState): string | nu
 export function entryReversalRequestStatusLabel(status: EntryReversalStatus): string {
   switch (status) {
     case 'pending': return 'Pending';
-    // OM-15 c1/c10, OW-26 c1/c10: the request indicator reads Pending, Approved or Rejected.
-    case 'approved': return 'Approved';
+    // OW-26 c10: an approved request shows "Reversed" (the filter still reads Approved, OM-15 c1).
+    case 'approved': return 'Reversed';
     case 'rejected': return 'Rejected';
   }
 }

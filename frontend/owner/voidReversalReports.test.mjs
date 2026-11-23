@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { approvedOnly, newestFirst, summarizeVoidReport } from './voidReversalReports.ts';
 
-test('the Reversal Report lists approved entry reversals only (OM-22 c4)', () => {
+test('only approved requests are reported; rejected and pending are left out (OM-22 c4)', () => {
   const rows = [{ id: 'a', status: 'approved' }, { id: 'p', status: 'pending' }, { id: 'r', status: 'rejected' }];
   assert.deepEqual(approvedOnly(rows).map((row) => row.id), ['a']);
 });

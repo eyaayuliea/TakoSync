@@ -146,9 +146,9 @@ test('request rows map to the screen model', () => {
   assert.equal(mapped.decidedByName, 'Gelo');
 });
 
-test('OM-15 / OW-26 c10: the owner sees a reversal request as Pending, Approved or Rejected', () => {
+test('OW-26 c10: the owner sees a reversal request as Pending, Reversed or Rejected', () => {
   assert.deepEqual(
     ['pending', 'approved', 'rejected'].map(entryReversalRequestStatusLabel),
-    ['Pending', 'Approved', 'Rejected'],
+    ['Pending', 'Reversed', 'Rejected'],
   );
 });

@@ -17,7 +17,7 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
-import { buildWebVoidReport } from './ownerPortalVoidReport';
+import { buildWebVoidReport, WEB_VOID_REPORT_HEADERS } from './ownerPortalVoidReport';
 import { buildWebStockInReport } from './ownerPortalStockInReport';
 import { formatStockInDate, formatStockInDateTime, formatStockInExpirationDate, formatStockInQuantity, loadStockInRecords, stockInEnteredQuantity, type StockInRecord } from './stockInRepository';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
@@ -404,9 +404,10 @@ function Login({ username, password, error, fieldErrors = {}, connectionFailed =
 }
 /**
  * OW-26: the owner reviews voids and entry reversal requests on the web with the
- * same screens and server rules as the owner mobile app (OM-15): voids are marked
- * Reviewed or Flagged without being undone; entry reversals are approved (posting
- * an Entry Reversal movement) or rejected with a reason.
+ * same screens and server rules as the owner mobile app (OM-15): a void request is
+ * approved (the sale is voided and its consumption reversed) or rejected with a
+ * reason; entry reversals are approved (posting an Entry Reversal movement) or
+ * rejected with a reason.
  */
 function VoidReversalReview({ height, onBack }: { height: number; onBack: () => void }) {
   // The shared owner screens use Poppins, which the mobile app loads at startup.
@@ -926,7 +927,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     String(item.quantity),
     peso(item.totalSales),
   ]);
-  // OW-10: every voided sale of the period with its review.
+  // OW-10: the sales whose void request was approved in the period.
   const voidReport = voids && generated ? buildWebVoidReport(voids, { ...generated.range, branchId: generated.branchId }) : null;
   const voidRows = (voidReport?.rows ?? []).map((row) => [
     row.transactionReference,
@@ -934,11 +935,8 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     row.saleCreatedAt ? dateFormatter.format(new Date(row.saleCreatedAt)) : '—',
     peso(row.saleTotal),
     row.reason,
-    `${row.voidedBy}\n${dateFormatter.format(new Date(row.voidedAt))}`,
-    [
-      row.flagReason ? `${row.reviewStatus}: ${row.flagReason}` : row.reviewStatus,
-      row.reviewedBy && row.reviewedAt ? `by ${row.reviewedBy} · ${dateFormatter.format(new Date(row.reviewedAt))}` : null,
-    ].filter(Boolean).join('\n'),
+    `${row.requestedBy}\n${dateFormatter.format(new Date(row.requestedAt))}`,
+    row.approvedAt ? `${row.approvedBy}\n${dateFormatter.format(new Date(row.approvedAt))}` : row.approvedBy,
   ]);
   const shownReport = generated?.report ?? null;
   // OW-05 c6–c8: one description of the report for the preview, Print and Export PDF.
@@ -993,7 +991,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
         sections: [
           { summary: [['Voided sales', String(voidReport.count)], ['Total amount voided', peso(voidReport.total)]] },
           voidReport.count
-            ? { table: { headers: ['Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason', 'Voided by · date & time', 'Review status · reviewer'], rows: voidRows } }
+            ? { table: { headers: WEB_VOID_REPORT_HEADERS, rows: voidRows } }
             : { notes: ['No sales were voided in this period.'] },
         ],
       }

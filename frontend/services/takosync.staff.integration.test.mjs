@@ -12,8 +12,8 @@ const {
   validateOwnerSubmittedInventoryCount,
   submitDailyStockCheck,
   submitSale,
-  voidSale,
-  reviewSaleVoid,
+  requestSaleVoid,
+  decideSaleVoid,
   requestEntryReversal,
   decideEntryReversal,
   recordDailyClosing,
@@ -84,12 +84,12 @@ class RecordingSupabase {
         };
       case 'process_sale_inventory':
         return { data: { status: 'completed', sale_id: args.p_sale_id }, error: null };
-      case 'void_sale':
+      case 'request_sale_void':
         return {
           data: {
             id: 'void-1', reference: 'VOID-20261122-0001', client_request_id: args.p_client_request_id,
             sale_id: args.p_sale_id, branch_id: 'branch-1', requested_by: 'staff-1', reason: args.p_reason,
-            status: 'pending_review', requested_at: '2026-11-22T03:00:00Z', decided_by: null, decided_at: null,
+            status: 'pending', requested_at: '2026-11-22T03:00:00Z', decided_by: null, decided_at: null,
             decision_reason: null,
           },
           error: null,
@@ -143,12 +143,12 @@ class RecordingSupabase {
           },
           error: null,
         };
-      case 'review_sale_void':
+      case 'decide_sale_void':
         return {
           data: {
-            id: args.p_void_id, reference: 'VOID-20261122-0001', client_request_id: 'c-1', sale_id: 'sale-1',
+            id: args.p_request_id, reference: 'VOID-20261122-0001', client_request_id: 'c-1', sale_id: 'sale-1',
             branch_id: 'branch-1', requested_by: 'staff-1', reason: 'Wrong flavor',
-            status: args.p_decision, requested_at: '2026-11-22T03:00:00Z',
+            status: args.p_decision === 'approve' ? 'approved' : 'rejected', requested_at: '2026-11-22T03:00:00Z',
             decided_by: 'owner-1', decided_at: '2026-11-22T04:00:00Z', decision_reason: args.p_reason,
           },
           error: null,
@@ -504,61 +504,56 @@ test('real Staff sale service rejects an incomplete persisted-sale receipt respo
   );
 });
 
-test('ST-07: Void Sale sends the trimmed reason and the retry-safe request id', async () => {
+test('ST-07: a void request sends the trimmed reason and the retry-safe request id', async () => {
   const client = new RecordingSupabase();
-  const saved = await voidSale({ saleId: 'sale-1', reason: '  Wrong flavor ', clientRequestId: 'c-1' }, client);
+  const saved = await requestSaleVoid({ saleId: 'sale-1', reason: '  Wrong flavor ', clientRequestId: 'c-1' }, client);
   assert.deepEqual(client.calls.at(-1), {
-    name: 'void_sale',
+    name: 'request_sale_void',
     args: { p_sale_id: 'sale-1', p_reason: 'Wrong flavor', p_client_request_id: 'c-1' },
   });
-  assert.equal(saved.status, 'pending_review');
+  assert.equal(saved.status, 'pending');
   assert.equal(saved.reference, 'VOID-20261122-0001');
 });
 
 test('ST-07 c3: a blank void reason is rejected before calling Supabase', async () => {
   const client = new RecordingSupabase();
   await assert.rejects(
-    voidSale({ saleId: 'sale-1', reason: '  ', clientRequestId: 'c-1' }, client),
+    requestSaleVoid({ saleId: 'sale-1', reason: '  ', clientRequestId: 'c-1' }, client),
     { message: 'Enter the reason for voiding this sale.' },
   );
   assert.equal(client.calls.length, 0);
 });
 
-test('ST-07 c1, c8: the server refusing a void shows its message', async () => {
+test('ST-07 c6: the server refusing a second pending request shows its message', async () => {
   const client = new RecordingSupabase();
-  client.failures.set('void_sale', 'This sale is already voided.');
+  client.failures.set('request_sale_void', 'A void request for this sale is already pending.');
   await assert.rejects(
-    voidSale({ saleId: 'sale-1', reason: 'Again', clientRequestId: 'c-2' }, client),
-    { message: 'This sale is already voided.' },
-  );
-  client.failures.set('void_sale', 'The daily closing is already recorded, so sales of this business day can no longer be voided.');
-  await assert.rejects(
-    voidSale({ saleId: 'sale-1', reason: 'Late', clientRequestId: 'c-3' }, client),
-    { message: 'The daily closing is already recorded, so sales of this business day can no longer be voided.' },
+    requestSaleVoid({ saleId: 'sale-1', reason: 'Again', clientRequestId: 'c-2' }, client),
+    { message: 'A void request for this sale is already pending.' },
   );
 });
 
-test('OM-15: Reviewed and Flagged call review_sale_void; flagging needs a reason', async () => {
+test('OM-15: approving and rejecting call decide_sale_void; rejecting needs a reason', async () => {
   const client = new RecordingSupabase();
-  const reviewed = await reviewSaleVoid({ voidId: 'void-1', decision: 'reviewed' }, client);
-  assert.equal(reviewed.status, 'reviewed');
-  assert.deepEqual(client.calls.at(-1).args, { p_void_id: 'void-1', p_decision: 'reviewed', p_reason: null });
+  const approved = await decideSaleVoid({ requestId: 'void-1', decision: 'approve' }, client);
+  assert.equal(approved.status, 'approved');
+  assert.deepEqual(client.calls.at(-1).args, { p_request_id: 'void-1', p_decision: 'approve', p_reason: null });
 
   await assert.rejects(
-    reviewSaleVoid({ voidId: 'void-1', decision: 'flagged', reason: ' ' }, client),
-    { message: 'Enter the reason for flagging this void.' },
+    decideSaleVoid({ requestId: 'void-1', decision: 'reject', reason: ' ' }, client),
+    { message: 'Enter the reason for rejecting this request.' },
   );
-  const flagged = await reviewSaleVoid({ voidId: 'void-1', decision: 'flagged', reason: 'No complaint on record' }, client);
-  assert.equal(flagged.status, 'flagged');
-  assert.equal(flagged.decisionReason, 'No complaint on record');
+  const rejected = await decideSaleVoid({ requestId: 'void-1', decision: 'reject', reason: 'Sale was correct' }, client);
+  assert.equal(rejected.status, 'rejected');
+  assert.equal(rejected.decisionReason, 'Sale was correct');
 });
 
-test('OM-15 c9: a void someone already reviewed shows a clear message', async () => {
+test('OM-15 c9: a request someone already decided shows a clear message', async () => {
   const client = new RecordingSupabase();
-  client.failures.set('review_sale_void', 'This void has already been flagged.');
+  client.failures.set('decide_sale_void', 'This request has already been rejected.');
   await assert.rejects(
-    reviewSaleVoid({ voidId: 'void-1', decision: 'reviewed' }, client),
-    { message: 'This void has already been flagged and can no longer be changed.' },
+    decideSaleVoid({ requestId: 'void-1', decision: 'approve' }, client),
+    { message: 'This request has already been rejected and can no longer be changed.' },
   );
 });
 
