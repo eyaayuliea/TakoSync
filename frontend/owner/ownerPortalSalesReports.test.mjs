@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildSaleDetailRows,
   buildWebBranchSalesReport,
   buildWebProductsSoldReport,
   buildWebTransactionSummaryReport,
@@ -63,4 +64,15 @@ test('OW-09 c2–c7: completed and voided sales with payment, Bulk Order and sta
   assert.deepEqual(report.rows[1].slice(4), ['QR', '—', 'Completed', '₱50.20']);
   assert.deepEqual(report.rows[2], ['SALE-1', 'Manila · Branch 1', '01:00', 'Ana Reyes', 'Cash\nCash ₱500.00 · Change ₱400.00', 'Bulk Order', 'Completed', '₱99.10']);
   assert.deepEqual([report.completed, report.voided, report.total], [2, 1, 149.3]);
+  assert.deepEqual(report.saleIds, ['3', '2', '1']);
+});
+
+test('OW-03 c8: the details of a sale list each item with quantity, unit price at the time of sale and line amount', () => {
+  const detail = buildSaleDetailRows('1', [{ ...items[0], unit_price: 17.82 }], addons);
+  assert.deepEqual(detail.rows, [
+    ['Octobits Takoyaki · 4 PCS', '5', '₱17.82', '₱89.10'],
+    ['Add-on: Takoyaki sauce', '2', '₱5.00', '₱10.00'],
+  ]);
+  assert.equal(detail.total, 99.1);
+  assert.deepEqual(buildSaleDetailRows('missing', items, addons).rows, []);
 });

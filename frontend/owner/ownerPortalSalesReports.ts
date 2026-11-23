@@ -16,7 +16,7 @@ type Sale = {
   cash_received?: number | string | null;
   change_amount?: number | string | null;
 };
-type Item = { sale_id: string; product_id: string; product_name: string; variant_label?: string | null; quantity: number | string; subtotal: number | string };
+type Item = { sale_id: string; product_id: string; product_name: string; variant_label?: string | null; quantity: number | string; unit_price?: number | string; subtotal: number | string };
 type Addon = { sale_id: string; addon_id: string; addon_name: string; quantity: number | string; subtotal: number | string };
 
 const cents = (value: number | string) => Math.round(Number(value) * 100);
@@ -85,15 +85,15 @@ export function buildWebTransactionSummaryReport(input: {
   items: readonly Item[];
   branchName: (branchId: string) => string;
   formatDateTime: (iso: string) => string;
-}): { rows: string[][]; completed: number; voided: number; total: number } {
+}): { rows: string[][]; saleIds: string[]; completed: number; voided: number; total: number } {
   const listed = input.sales.filter((sale) => isCountedSale(sale) || sale.status === 'voided');
   const quantities = new Map<string, number[]>();
   for (const item of input.items) quantities.set(item.sale_id, [...(quantities.get(item.sale_id) ?? []), Number(item.quantity)]);
   let completed = 0;
   let voided = 0;
   let totalCents = 0;
-  const rows = [...listed]
-    .sort((left, right) => right.created_at.localeCompare(left.created_at))
+  const ordered = [...listed].sort((left, right) => right.created_at.localeCompare(left.created_at));
+  const rows = ordered
     .map((sale) => {
       const isVoided = sale.status === 'voided';
       if (isVoided) voided += 1;
@@ -117,5 +117,28 @@ export function buildWebTransactionSummaryReport(input: {
         isVoided ? `${pesoText(Number(sale.total_amount))}\n(not counted)` : pesoText(Number(sale.total_amount)),
       ];
     });
-  return { rows, completed, voided, total: totalCents / 100 };
+  return { rows, saleIds: ordered.map((sale) => sale.id), completed, voided, total: totalCents / 100 };
+}
+
+export const SALE_DETAIL_HEADERS = ['Item', 'Quantity', 'Unit Price', 'Line Amount'];
+
+/**
+ * OW-03 c8: one sale's lines with the quantity, the unit price saved at the
+ * time of sale and the line amount; add-ons follow the products.
+ */
+export function buildSaleDetailRows(saleId: string, items: readonly Item[], addons: readonly Addon[]): { rows: string[][]; total: number } {
+  let totalCents = 0;
+  const rows: string[][] = [];
+  for (const item of items.filter((line) => line.sale_id === saleId)) {
+    const quantity = Number(item.quantity);
+    const unit = item.unit_price === undefined ? Number(item.subtotal) / (quantity || 1) : Number(item.unit_price);
+    totalCents += cents(item.subtotal);
+    rows.push([`${item.product_name}${item.variant_label ? ` · ${item.variant_label}` : ''}`, String(quantity), pesoText(unit), pesoText(Number(item.subtotal))]);
+  }
+  for (const addon of addons.filter((line) => line.sale_id === saleId)) {
+    const quantity = Number(addon.quantity);
+    totalCents += cents(addon.subtotal);
+    rows.push([`Add-on: ${addon.addon_name}`, String(quantity), pesoText(Number(addon.subtotal) / (quantity || 1)), pesoText(Number(addon.subtotal))]);
+  }
+  return { rows, total: totalCents / 100 };
 }
