@@ -132,9 +132,20 @@ export function formatStockInDate(value: string): string {
   return formatStockInExpirationDate(value);
 }
 
-/** OM-18 c1: the date line of a list row. Receipts show the date received, older entries their timestamp. */
-export function stockInListDate(record: Pick<StockInRecord, 'dateReceived' | 'createdAt'>): string {
-  return record.dateReceived ? `Received ${formatStockInDate(record.dateReceived)}` : formatStockInDateTime(record.createdAt);
+/**
+ * OM-18 c1: the date and time line of a list row. Receipts show the date
+ * received and the time the entry was recorded (with its date when that was
+ * another day); older entries show their timestamp.
+ */
+export function stockInListDate(record: Pick<StockInRecord, 'dateReceived' | 'createdAt' | 'recordedAt'>): string {
+  // A receipt's ledger date is the date received; the time staff saved it is recordedAt.
+  const recorded = formatStockInDateTime(record.recordedAt ?? record.createdAt);
+  if (!record.dateReceived) return recorded;
+  const received = formatStockInDate(record.dateReceived);
+  const [recordedDay, recordedTime] = recorded.split(' · ');
+  return recordedDay === received
+    ? `Received ${received} · recorded ${recordedTime}`
+    : `Received ${received} · recorded ${recorded}`;
 }
 
 /** "3 pack = 1.08 L" when the quantity was entered in a purchase unit, else null. */

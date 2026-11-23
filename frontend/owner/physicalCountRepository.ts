@@ -1,8 +1,9 @@
-import type { OwnerDiscrepancyReview, TransactionHistoryItem } from '../services/takosync.ts';
+import type { OwnerCountDraftLine, OwnerDiscrepancyReview, TransactionHistoryItem } from '../services/takosync.ts';
 import type { InventoryCountHistoryRecord } from '../staff/inventoryReports.ts';
 
 export type PhysicalCountResult = 'Matches' | 'Lower than Expected' | 'Higher than Expected';
-export type PhysicalCountStatus = 'Submitted' | 'Validated' | 'Rejected for Recount';
+/** OM-20 c1: Draft is a count staff saved but have not submitted yet. */
+export type PhysicalCountStatus = 'Draft' | 'Submitted' | 'Validated' | 'Rejected for Recount';
 export type PhysicalCountDiscrepancyStatus = 'Pending Review' | 'Adjusted';
 
 export type PhysicalCountBranch = {
@@ -161,14 +162,59 @@ export function buildPhysicalCountRecords(
     .sort((left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime());
 }
 
+/**
+ * OM-20 c1: each counted line of a saved draft, with the Draft status. Lines
+ * not counted yet have no actual quantity and are not listed. A draft creates
+ * no discrepancy until it is submitted.
+ */
+export function buildDraftCountRecords(
+  drafts: OwnerCountDraftLine[],
+  branches: PhysicalCountBranch[],
+): PhysicalCountRecord[] {
+  const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
+  return drafts
+    .filter((line) => line.actualQuantity !== null && Number.isFinite(line.actualQuantity))
+    .map((line) => {
+      const actual = line.actualQuantity as number;
+      const difference = Number((actual - line.expectedQuantity).toFixed(3));
+      return {
+        id: `draft-${line.draftId}-${line.ingredientId}`,
+        countLineId: '',
+        reference: 'Draft · not submitted',
+        ingredientId: line.ingredientId,
+        ingredientName: line.ingredientName,
+        branchId: line.branchId,
+        branchName: branchNames.get(line.branchId) ?? 'Branch',
+        expectedQuantity: line.expectedQuantity,
+        originalActualQuantity: actual,
+        actualQuantity: actual,
+        difference,
+        unit: line.unit,
+        submittedAt: line.savedAt,
+        submittedBy: line.staffName,
+        employeeId: null,
+        email: null,
+        role: null,
+        countStatus: 'Draft' as const,
+        result: getPhysicalCountResult(difference),
+        discrepancyReference: null,
+        discrepancyStatus: null,
+        discrepancyReviewId: null,
+        revision: null,
+      };
+    });
+}
+
 export async function loadPhysicalCountRecords(
   branches: PhysicalCountBranch[],
 ): Promise<PhysicalCountRecord[]> {
   if (branches.length === 0) throw new Error('Owner branches are unavailable for Physical Count records.');
-  const { loadOwnerDiscrepancyReviews, loadTransactionHistory } = await import('../services/takosync.ts');
-  const [historyByBranch, reviews] = await Promise.all([
+  const { loadOwnerCountDrafts, loadOwnerDiscrepancyReviews, loadTransactionHistory } = await import('../services/takosync.ts');
+  const [historyByBranch, reviews, drafts] = await Promise.all([
     Promise.all(branches.map((branch) => loadTransactionHistory(branch.id))),
     loadOwnerDiscrepancyReviews(null),
+    loadOwnerCountDrafts(null),
   ]);
-  return buildPhysicalCountRecords(historyByBranch.flat(), reviews);
+  return [...buildDraftCountRecords(drafts, branches), ...buildPhysicalCountRecords(historyByBranch.flat(), reviews)]
+    .sort((left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime());
 }

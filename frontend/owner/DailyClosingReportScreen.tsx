@@ -14,6 +14,13 @@ import {
   type DailyClosing,
   type DailyClosingPeriod,
 } from '../services/dailyClosing';
+import {
+  ALL_BRANCHES as ALL_BRANCH_KEYS,
+  branchKey,
+  ownerReportSelectionCaption,
+  ownerReportSelectionDates,
+  type OwnerReportSelection,
+} from './ownerRecordFilters';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 const ALL_BRANCHES = 'All branches';
@@ -31,8 +38,10 @@ function formatTime(value: string): string {
  * OM-11 Daily Closing Report: the closing cash count of each branch and day,
  * compared with the expected cash, with over or short labelled in text. Days
  * without a closing are marked "No closing recorded".
+ * Given a `selection` (OM-11 c1), it is shown inside the Sales page and uses
+ * the page's Daily / Weekly / Monthly and branch selection instead of its own.
  */
-export default function DailyClosingReportScreen({ onBack }: { onBack: () => void }) {
+export default function DailyClosingReportScreen({ onBack, selection }: { onBack?: () => void; selection?: OwnerReportSelection }) {
   const styles = useStyles();
   const [period, setPeriod] = useState<DailyClosingPeriod>('Last 7 days');
   const [branchFilter, setBranchFilter] = useState(ALL_BRANCHES);
@@ -41,19 +50,34 @@ export default function DailyClosingReportScreen({ onBack }: { onBack: () => voi
   const [supported, setSupported] = useState(true);
   const [closings, setClosings] = useState<DailyClosing[]>([]);
   const [branches, setBranches] = useState<Array<{ id: string; name: string }>>([]);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const generation = useRef(0);
-  const dates = useMemo(() => dailyClosingPeriodDates(period), [period]);
+  const selectionStart = selection?.startDate;
+  const selectionEnd = selection?.endDate;
+  const dates = useMemo(
+    () => (selection ? ownerReportSelectionDates(selection) : dailyClosingPeriodDates(period)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [period, selectionStart, selectionEnd],
+  );
 
   const load = () => {
     const current = ++generation.current;
     setLoading(true);
     setError('');
+    if (dates.length === 0) {
+      // A selection entirely in the future has no business days yet.
+      setClosings([]);
+      setLoadedAt(new Date());
+      setLoading(false);
+      return;
+    }
     loadOwnerDailyClosings({ startDate: dates[dates.length - 1], endDate: dates[0] })
       .then((result) => {
         if (current !== generation.current) return;
         setSupported(result.supported);
         setClosings(result.closings);
         setBranches(result.branches);
+        setLoadedAt(new Date());
       })
       .catch((reason: unknown) => {
         if (current !== generation.current) return;
@@ -72,7 +96,9 @@ export default function DailyClosingReportScreen({ onBack }: { onBack: () => voi
     };
   }, [dates]);
 
-  const selectedBranch = branches.find((branch) => branch.name === branchFilter) ?? null;
+  const selectedBranch = selection
+    ? selection.branch === ALL_BRANCH_KEYS ? null : branches.find((branch) => branchKey(branch.name) === selection.branch) ?? null
+    : branches.find((branch) => branch.name === branchFilter) ?? null;
   const rows = buildDailyClosingReportRows({ closings, branches, dates, branchId: selectedBranch?.id ?? null });
   const summary = summarizeDailyClosingRows(rows);
 
@@ -93,6 +119,8 @@ export default function DailyClosingReportScreen({ onBack }: { onBack: () => voi
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>{summary.closed} closing{summary.closed === 1 ? '' : 's'} recorded · {summary.missing} missing</Text>
           <Text style={styles.summaryMeta}>Total over {formatPeso(summary.totalOver)} · Total short {formatPeso(summary.totalShort)}</Text>
+          {/* OM-03 c4: the period, branch and time the figures reflect. */}
+          {selection ? <Text style={styles.summaryMeta}>{ownerReportSelectionCaption(selection, loadedAt)}</Text> : null}
         </View>
         {summary.closed === 0 ? (
           <View style={styles.notice}>
@@ -141,9 +169,12 @@ export default function DailyClosingReportScreen({ onBack }: { onBack: () => voi
     );
   };
 
+  if (selection) {
+    return <View style={styles.embedded}>{renderBody()}</View>;
+  }
   return (
     <View style={styles.screen}>
-      <OwnerHeader title="Daily Closing Report" onBack={onBack} />
+      <OwnerHeader title="Daily Closing Report" onBack={() => onBack?.()} />
       <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <OwnerTabs items={DAILY_CLOSING_PERIODS} selected={period} onSelect={(item) => setPeriod(item as DailyClosingPeriod)} />
         {branches.length > 1 ? (
@@ -159,6 +190,7 @@ function useStyles() {
   const theme = useTheme();
   return StyleSheet.create(createThemedStyles({
     screen: { flex: 1, minHeight: 520 },
+    embedded: { width: '100%', marginTop: 12, gap: 10 },
     flex: { flex: 1 },
     content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: OWNER_NAVIGATION_HEIGHT, gap: 10 },
     summaryCard: { padding: 12, borderRadius: 12, backgroundColor: theme.colors.salesRecordTile, gap: 2 },

@@ -134,7 +134,7 @@ export default function PhysicalCountRecordsScreen({
       onPeriodChange={setRecordPeriod}
       extra={{
         label: 'Status',
-        options: ['All statuses', 'Submitted', 'Validated', 'Rejected for Recount'],
+        options: ['All statuses', 'Draft', 'Submitted', 'Validated', 'Rejected for Recount'],
         selected: recordStatus,
         onChange: setRecordStatus,
       }}
@@ -182,7 +182,7 @@ export default function PhysicalCountRecordsScreen({
                     : selected.result === 'Higher than Expected' ? 'warning' as const : 'critical' as const,
                 },
                 // OM-20 c4: a validated count is locked.
-                { label: 'Count status', value: selected.countStatus === 'Validated' ? 'Validated · Locked' : selected.countStatus },
+                { label: 'Count status', value: selected.countStatus === 'Validated' ? 'Validated · Locked' : selected.countStatus === 'Draft' ? 'Draft · not submitted yet' : selected.countStatus },
                 { label: 'Date & time', value: formatPhysicalCountDateTime(selected.submittedAt) },
               ].map(({ label, value, tone }, index) => (
                 <OwnerRecordDetailRow
@@ -197,7 +197,11 @@ export default function PhysicalCountRecordsScreen({
 
             <SubmittedByCard record={selected} />
 
-            {selected.difference === 0 ? (
+            {selected.countStatus === 'Draft' ? (
+              <View style={styles.noDiscrepancy}>
+                <Text style={styles.noDiscrepancyText}>Not submitted yet. A discrepancy is created only when staff submit the count.</Text>
+              </View>
+            ) : selected.difference === 0 ? (
               <View style={styles.noDiscrepancy}>
                 <OwnerMenuIcon name="check" color={colors.salesRecordMuted} size={12} />
                 <Text style={styles.noDiscrepancyText}>No discrepancy for this count.</Text>
@@ -328,13 +332,13 @@ function QuantityColumn({
   );
 }
 
-function StatusChip({ label }: { label: 'Submitted' | 'Validated' | 'Corrected' | 'Rejected for Recount' }) {
+function StatusChip({ label }: { label: 'Draft' | 'Submitted' | 'Validated' | 'Corrected' | 'Rejected for Recount' }) {
   const { colors } = useTheme();
   const styles = useStyles();
   return (
     <View style={[
       styles.statusChip,
-      label === 'Submitted' ? styles.submittedChip
+      label === 'Submitted' || label === 'Draft' ? styles.submittedChip
         : label === 'Validated' ? styles.validatedChip : styles.correctedChip,
     ]}>
       {label === 'Validated' ? (
@@ -343,7 +347,7 @@ function StatusChip({ label }: { label: 'Submitted' | 'Validated' | 'Corrected' 
         <Text style={[
           styles.statusChipIcon,
           label === 'Corrected' && styles.correctedIcon,
-        ]}>{label === 'Submitted' ? '◷' : '↻'}</Text>
+        ]}>{label === 'Draft' ? '✎' : label === 'Submitted' ? '◷' : '↻'}</Text>
       )}
       <Text style={[
         styles.statusChipText,
@@ -361,7 +365,7 @@ function SubmittedByCard({ record }: { record: PhysicalCountRecord }) {
   const showContact = Boolean(record.email);
   return (
     <View style={styles.employeeCard}>
-      <Text style={styles.employeeHeading}>Submitted by (employee account)</Text>
+      <Text style={styles.employeeHeading}>{record.countStatus === 'Draft' ? 'Saved by (employee account)' : 'Submitted by (employee account)'}</Text>
       <View style={styles.employeeLine}>
         <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
         <View style={styles.employeeCopy}>

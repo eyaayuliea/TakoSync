@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import OwnerRecordFilterBar, { OwnerLoadOlderButton, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
-import { ALL_BRANCHES, recordPeriodRange, type OwnerRecordPeriod } from './ownerRecordFilters';
+import {
+  ALL_BRANCHES,
+  ownerReportSelectionCaption,
+  recordPeriodRange,
+  type OwnerRecordPeriod,
+  type OwnerReportSelection,
+} from './ownerRecordFilters';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import {
@@ -41,12 +47,19 @@ function dateTime(value: string) {
   return `${day} ${monthNames[month - 1]} ${year} · ${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
 }
 
+/**
+ * OM-09 Transaction Summary. Given a `selection` (OM-09 c1), it is shown inside
+ * the Sales page and uses the page's Daily / Weekly / Monthly and branch
+ * selection instead of its own.
+ */
 export default function SalesTransactionRecords({
   onBack,
   initialTransactionId,
+  selection,
 }: {
-  onBack: () => void;
+  onBack?: () => void;
   initialTransactionId?: string | null;
+  selection?: OwnerReportSelection;
 }) {
   const { colors: themeColors } = useTheme();
   const styles = useStyles();
@@ -69,12 +82,19 @@ export default function SalesTransactionRecords({
   // OM-09 c1: the same branch and period selection as the other reports.
   const [recordBranch, setRecordBranch] = useState(ALL_BRANCHES);
   const [recordPeriod, setRecordPeriod] = useState<OwnerRecordPeriod>('All dates');
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const range = recordPeriodRange(recordPeriod);
-  const filters = {
-    branchKey: recordBranch === ALL_BRANCHES ? null : recordBranch,
-    startDate: range?.start ?? null,
-    endDate: range?.end ?? null,
-  };
+  const filters = selection
+    ? {
+      branchKey: selection.branch === ALL_BRANCHES ? null : selection.branch,
+      startDate: selection.startDate,
+      endDate: selection.endDate,
+    }
+    : {
+      branchKey: recordBranch === ALL_BRANCHES ? null : recordBranch,
+      startDate: range?.start ?? null,
+      endDate: range?.end ?? null,
+    };
   const branchOptions = useOwnerBranchFilterOptions(items.map((transaction) => transaction.branchName));
   const detailRequestId = useRef(0);
 
@@ -103,6 +123,7 @@ export default function SalesTransactionRecords({
       if (currentRequestId !== listRequestId.current) return;
       setItems(page.transactions);
       setHasMore(page.hasMore);
+      setLoadedAt(new Date());
       setLoading(false);
     }).catch((loadError: unknown) => {
       if (currentRequestId !== listRequestId.current) return;
@@ -119,7 +140,7 @@ export default function SalesTransactionRecords({
       listRequestId.current += 1;
       detailRequestId.current += 1;
     };
-  }, [recordBranch, recordPeriod]);
+  }, [recordBranch, recordPeriod, selection?.branch, selection?.startDate, selection?.endDate]);
 
   const openDetails = (id: string) => {
     const currentRequestId = ++detailRequestId.current;
@@ -179,20 +200,25 @@ export default function SalesTransactionRecords({
       setView('list');
       requestAnimationFrame(() => listRef.current?.scrollTo({ y: scrollOffset, animated: false }));
     } else {
-      onBack();
+      onBack?.();
     }
   };
 
   const detailTitle = view === 'details';
 
+  const embedded = Boolean(selection);
+  const ListBody = embedded ? View : ScrollView;
+  const DetailBody = embedded ? View : ScrollView;
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
-          <Text style={styles.backChevron}>‹</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>{detailTitle ? 'Sales Transaction Details' : 'Transaction Summary'}</Text>
-      </View>
+    <View style={embedded ? styles.embedded : styles.screen}>
+      {embedded && !detailTitle ? null : (
+        <View style={styles.header}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
+            <Text style={styles.backChevron}>‹</Text>
+          </Pressable>
+          <Text style={styles.headerTitle}>{detailTitle ? 'Sales Transaction Details' : 'Transaction Summary'}</Text>
+        </View>
+      )}
 
       {detailTitle ? (
         detailLoading ? (
@@ -211,7 +237,11 @@ export default function SalesTransactionRecords({
             </Pressable>
           </View>
         ) : (
-          <ScrollView style={styles.detailsScroll} contentContainerStyle={styles.detailsContent} showsVerticalScrollIndicator={false}>
+          <DetailBody
+            {...(embedded
+              ? { style: styles.detailsContent }
+              : { style: styles.detailsScroll, contentContainerStyle: styles.detailsContent, showsVerticalScrollIndicator: false })}
+          >
             <View style={styles.detailCard}>
               <View style={styles.summaryTop}>
                 <Text style={styles.transactionId}>{selected.transactionReference}</Text>
@@ -274,7 +304,7 @@ export default function SalesTransactionRecords({
               <Text style={styles.lockIcon}>▣</Text>
               <Text style={styles.readOnlyText}>Read-only</Text>
             </View>
-          </ScrollView>
+          </DetailBody>
         )
       ) : loading ? (
         <View style={styles.loadingCenter}>
@@ -293,37 +323,44 @@ export default function SalesTransactionRecords({
         </View>
       ) : (
         <>
-          <OwnerRecordFilterBar
-            branchOptions={branchOptions}
-            branch={recordBranch}
-            onBranchChange={setRecordBranch}
-            period={recordPeriod}
-            onPeriodChange={setRecordPeriod}
-          />
+          {embedded ? null : (
+            <OwnerRecordFilterBar
+              branchOptions={branchOptions}
+              branch={recordBranch}
+              onBranchChange={setRecordBranch}
+              period={recordPeriod}
+              onPeriodChange={setRecordPeriod}
+            />
+          )}
           {items.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyCircle}><Text style={styles.emptyIcon}>▣</Text></View>
           <Text style={styles.emptyTitle}>No transactions found.</Text>
           <Text style={styles.emptySubtext}>
-            {recordBranch === ALL_BRANCHES && recordPeriod === 'All dates'
+            {!embedded && recordBranch === ALL_BRANCHES && recordPeriod === 'All dates'
               ? 'Records will appear here once saved.'
               : 'There are no transactions for this branch and period.'}
           </Text>
+          {selection ? <Text style={styles.emptySubtext}>{ownerReportSelectionCaption(selection, loadedAt)}</Text> : null}
         </View>
           ) : (
-        <ScrollView
-          ref={listRef}
-          style={styles.listScroll}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          onScroll={(event) => {
-            const offset = event.nativeEvent.contentOffset.y;
-            setScrollOffset(offset);
-            const end = event.nativeEvent.layoutMeasurement.height + offset;
-            const content = event.nativeEvent.contentSize.height;
-            if (content - end < 56) loadMore();
-          }}
-          scrollEventThrottle={16}
+        <ListBody
+          {...(embedded
+            ? { style: styles.listContent }
+            : {
+              ref: listRef,
+              style: styles.listScroll,
+              contentContainerStyle: styles.listContent,
+              showsVerticalScrollIndicator: false,
+              onScroll: (event: { nativeEvent: { contentOffset: { y: number }; layoutMeasurement: { height: number }; contentSize: { height: number } } }) => {
+                const offset = event.nativeEvent.contentOffset.y;
+                setScrollOffset(offset);
+                const end = event.nativeEvent.layoutMeasurement.height + offset;
+                const content = event.nativeEvent.contentSize.height;
+                if (content - end < 56) loadMore();
+              },
+              scrollEventThrottle: 16,
+            })}
         >
           {/* OM-09 c5: voided transactions are listed but not added to the total. */}
           <View style={styles.summaryLine}>
@@ -333,6 +370,8 @@ export default function SalesTransactionRecords({
                 ? ` · ${items.filter((transaction) => transaction.status === 'Voided').length} voided (not counted)`
                 : ''}
             </Text>
+            {/* OM-03 c4: the period, branch and time the figures reflect. */}
+            {selection ? <Text style={styles.summaryLineMeta}>{ownerReportSelectionCaption(selection, loadedAt)}</Text> : null}
             {hasMore ? <Text style={styles.summaryLineMeta}>Showing the newest {items.length}; scroll or load older records to include more.</Text> : null}
           </View>
           {items.map((transaction) => (
@@ -378,7 +417,7 @@ export default function SalesTransactionRecords({
           ) : hasMore ? (
             <OwnerLoadOlderButton label="Load older records" onPress={loadMore} />
           ) : null}
-        </ScrollView>
+        </ListBody>
           )}
         </>
       )}
@@ -390,6 +429,7 @@ function useStyles() {
   const theme = useTheme();
   return useMemo(() => StyleSheet.create(createThemedStyles({
     screen: { flex: 1, minHeight: 520 },
+    embedded: { width: '100%', marginTop: 12 },
     header: { height: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 },
     backButton: { width: 24, height: 44, alignItems: 'flex-start', justifyContent: 'center' },
     backChevron: { color: theme.colors.salesRecordNavy, fontFamily: font.bold, fontSize: 24, lineHeight: 28 },

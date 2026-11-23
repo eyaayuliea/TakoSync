@@ -81,7 +81,11 @@ test('OM-18 c2: a receipt adds date purchased, date received, the supplier, and 
   assert.equal(withReceipt.supplierReference, 'Seaside Market OR-1182');
   assert.equal(withReceipt.receiptReference, 'STOCKIN-20261123-0008');
   assert.equal(stockInEnteredQuantity(withReceipt), '3 pack = 1.08 L');
-  assert.equal(stockInListDate(withReceipt), 'Received 23 Nov 2026');
+  // OM-18 c1: the row shows the date received and the time the entry was recorded.
+  assert.equal(stockInListDate({ ...withReceipt, recordedAt: null }), 'Received 23 Nov 2026 · recorded 12 Nov 2026 · 8:00 AM');
+  assert.equal(stockInListDate({ ...withReceipt, recordedAt: null, dateReceived: '2026-11-12' }), 'Received 12 Nov 2026 · recorded 8:00 AM');
+  // The time staff saved the receipt, not the ledger date, when the receipt has it.
+  assert.equal(stockInListDate({ ...withReceipt, recordedAt: '2026-11-23T09:57:00Z' }), 'Received 23 Nov 2026 · recorded 5:57 PM');
 
   // Entered in the base unit: no separate "as entered" line. Older entries keep their timestamp and notes.
   const [baseUnit] = buildStockInRecords([historyRecord()], [], new Set(),

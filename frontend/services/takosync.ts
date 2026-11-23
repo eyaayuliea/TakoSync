@@ -2292,6 +2292,42 @@ export async function loadOwnerDailyClosings(
   return { supported: true, closings: rows.map((row) => mapDailyClosingRow(row, names)), branches };
 }
 
+// OM-20 c1: counts saved as drafts, which the owner sees with the Draft status.
+// Empty until the database has migration 202611230003.
+export type OwnerCountDraftLine = {
+  draftId: string;
+  branchId: string;
+  staffName: string;
+  checkDate: string;
+  savedAt: string;
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  expectedQuantity: number;
+  actualQuantity: number | null;
+};
+
+export async function loadOwnerCountDrafts(
+  branchId: string | null = null,
+  client?: StaffServiceClient,
+): Promise<OwnerCountDraftLine[]> {
+  const { data, error } = await staffServiceClient(client).rpc('list_owner_count_drafts', { p_branch_id: branchId });
+  if (isMissingRpcFunction(error, 'list_owner_count_drafts')) return [];
+  assertNoError(error);
+  return (data ?? []).map((row) => ({
+    draftId: row.draft_id,
+    branchId: row.branch_id,
+    staffName: row.staff_name,
+    checkDate: row.check_date,
+    savedAt: row.saved_at,
+    ingredientId: row.ingredient_id,
+    ingredientName: row.ingredient_name,
+    unit: row.unit,
+    expectedQuantity: Number(row.expected_quantity),
+    actualQuantity: row.actual_quantity === null ? null : Number(row.actual_quantity),
+  }));
+}
+
 // ST-13 / OW-26 / OM-15: entry reversal requests. Hidden until the database
 // has migration 202611220004.
 
