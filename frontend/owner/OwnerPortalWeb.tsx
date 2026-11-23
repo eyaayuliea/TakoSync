@@ -13,6 +13,8 @@ import {
   TRANSACTION_SUMMARY_HEADERS,
 } from './ownerPortalSalesReports';
 import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
+import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
+import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import {
   buildWebSalesConsumptionReport,
   buildWebVoidReversalReport,
@@ -102,10 +104,33 @@ import {
 } from './ownerPortalReports';
 import { reviewStyles } from './ownerPortalReviewStyles';
 
-type Page = 'Dashboard' | 'Branches' | 'Inventory' | 'Stock Movements' | 'Daily Checks' | 'Void & Reversal Review' | 'Reports' | 'Inventory Reports' | 'Staff Accounts' | 'Settings' | 'Audit History';
+type Page = 'Dashboard' | 'Inventory Monitoring' | 'Sales Reports' | 'Inventory Reports' | 'Configuration' | 'Reconciliation'
+  | 'Void & Reversal Review' | 'Staff Accounts' | 'Branches' | 'Inventory Movements' | 'Audit History' | 'Profile';
 type Branch = string;
 type InventoryRow = OwnerPortalInventoryRow;
-const nav: Array<[Page, string]> = [['Dashboard', '⌂'], ['Branches', '⌘'], ['Inventory', '▦'], ['Stock Movements', '↕'], ['Daily Checks', '✓'], ['Void & Reversal Review', '↺'], ['Reports', '▤'], ['Inventory Reports', '▤'], ['Staff Accounts', '♙'], ['Settings', '⚙'], ['Audit History', '◷']];
+// OW-02 c1: the sections in the order of the project charter (2 Dashboard, 4 Inventory
+// Monitoring, 5–6 Reports, 7–10 Configuration, 11 Reconciliation, 12 Void and Reversal
+// Review, 13 Staff Accounts, 14 Branches, 15 Audit History, 16 Profile).
+const nav: Array<[Page, string]> = [
+  ['Dashboard', '⌂'], ['Inventory Monitoring', '▦'], ['Sales Reports', '▤'], ['Inventory Reports', '▤'],
+  ['Configuration', '⚙'], ['Reconciliation', '✓'], ['Void & Reversal Review', '↺'], ['Staff Accounts', '♙'],
+  ['Branches', '⌘'], ['Inventory Movements', '↕'], ['Audit History', '◷'], ['Profile', '☺'],
+];
+// The data each page needs before it can show its content (OW-02 c9).
+const PAGE_DATA: Record<Page, PortalDataset[]> = {
+  Dashboard: ['inventory', 'sales', 'reviews'],
+  'Inventory Monitoring': ['inventory'],
+  'Sales Reports': [],
+  'Inventory Reports': ['inventory'],
+  Configuration: ['configuration', 'inventory'],
+  Reconciliation: ['reviews'],
+  'Void & Reversal Review': [],
+  'Staff Accounts': ['staff', 'inventory'],
+  Branches: ['inventory', 'sales'],
+  'Inventory Movements': ['activity', 'inventory'],
+  'Audit History': ['activity', 'reviews', 'sales', 'inventory'],
+  Profile: [],
+};
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function OwnerPortalWeb() {
@@ -117,6 +142,17 @@ export default function OwnerPortalWeb() {
   const [showPassword, setShowPassword] = useState(false); const [user, setUser] = useState<AppUser | null>(null);
   const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [logoutBusy, setLogoutBusy] = useState(false); const [error, setError] = useState('');
   const [dataError, setDataError] = useState(''); const [query, setQuery] = useState(''); const [toast, setToast] = useState('');
+  // OW-02 c9 / OW-31 c2, c8: each section shows loading, then its data or an error with Retry.
+  const [loadErrors, setLoadErrors] = useState<Partial<Record<PortalDataset, string>>>({});
+  const [loadingSets, setLoadingSets] = useState<ReadonlySet<PortalDataset>>(new Set());
+  const [reloadKey, setReloadKey] = useState(0);
+  const [loadedSets, setLoadedSets] = useState<ReadonlySet<PortalDataset>>(new Set());
+  const markLoaded = (names: PortalDataset[]) => setLoadedSets((current) => new Set([...current, ...names]));
+  // OW-31 c1: a session restore that cannot reach the server offers Retry instead of the login page.
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [restoreKey, setRestoreKey] = useState(0);
+  // OW-30 c8: Log Out asks for a confirmation.
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [inventoryData, setInventoryData] = useState<Awaited<ReturnType<typeof loadOwnerInventory>> | null>(null);
   const [salesData, setSalesData] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(null);
   const [activityData, setActivityData] = useState<Awaited<ReturnType<typeof loadOwnerActivityData>> | null>(null);
@@ -125,13 +161,27 @@ export default function OwnerPortalWeb() {
   const [configuration, setConfiguration] = useState<any>(null); const [products, setProducts] = useState<ProductManagementItem[]>([]); const [stockSettings, setStockSettings] = useState<any>(null);
   const notify = (message: string, isError = false) => {
     if (isError) {
-      setDataError(message);
+      // OW-31 c3, c10: a plain message; the form keeps what the owner entered.
+      setDataError(ownerPortalErrorText(message, 'The change could not be saved. Please try again.'));
       return;
     }
     setToast(message);
     setTimeout(() => setToast(''), 2400);
   };
-  useEffect(() => { getCurrentUser().then(async (current) => { if (current?.role === 'Owner') setUser(current); else if (current) { setError('This account does not have Owner access.'); await signOut(); } }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to restore the Supabase session.')).finally(() => setAuthBusy(false)); }, []);
+  useEffect(() => {
+    setAuthBusy(true);
+    setRestoreFailed(false);
+    getCurrentUser()
+      .then(async (current) => {
+        if (current?.role === 'Owner') setUser(current);
+        else if (current) { setError('This account does not have Owner access.'); await signOut(); }
+      })
+      .catch((reason: unknown) => {
+        if (isOwnerPortalConnectionError(reason)) setRestoreFailed(true);
+        else setError(ownerPortalErrorText(reason, 'Your session could not be restored. Please log in again.'));
+      })
+      .finally(() => setAuthBusy(false));
+  }, [restoreKey]);
   useEffect(() => {
     if (!user) {
       setInventoryData(null);
@@ -146,6 +196,8 @@ export default function OwnerPortalWeb() {
     let active = true;
     setBusy(true);
     setDataError('');
+    setLoadErrors((current) => ({ ...current, inventory: undefined, sales: undefined, activity: undefined, reviews: undefined, staff: undefined }));
+    setLoadingSets((current) => new Set([...current, 'inventory', 'sales', 'activity', 'reviews', 'staff']));
     const reportingRange = getManilaReportingRange('This Month');
     if (!reportingRange) {
       setDataError('Unable to determine the current Manila reporting month.');
@@ -168,16 +220,17 @@ export default function OwnerPortalWeb() {
       loadStaffAccounts(),
     ]).then((results) => {
       if (!active) return;
-      const failures = results.filter(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      );
-      if (failures.length) {
-        setDataError(failures
-          .map((failure) => failure.reason instanceof Error
-            ? failure.reason.message
-            : 'A Supabase data request failed.')
-          .join(' '));
-      }
+      const names: PortalDataset[] = ['inventory', 'sales', 'activity', 'reviews', 'staff'];
+      setLoadErrors((current) => {
+        const next = { ...current };
+        results.forEach((result, index) => {
+          next[names[index]] = result.status === 'rejected'
+            ? ownerPortalErrorText(result.reason, 'This section could not be loaded. Please try again.')
+            : undefined;
+        });
+        return next;
+      });
+      markLoaded(names.filter((_, index) => results[index].status === 'fulfilled'));
       const [inventory, sales, activity, discrepancy, accounts] = results;
       if (inventory.status === 'fulfilled') setInventoryData(inventory.value);
       if (sales.status === 'fulfilled') setSalesData(sales.value);
@@ -185,10 +238,12 @@ export default function OwnerPortalWeb() {
       if (discrepancy.status === 'fulfilled') setReviews(discrepancy.value);
       if (accounts.status === 'fulfilled') setStaff(accounts.value);
     }).finally(() => {
-      if (active) setBusy(false);
+      if (!active) return;
+      setBusy(false);
+      setLoadingSets((current) => new Set([...current].filter((name) => !['inventory', 'sales', 'activity', 'reviews', 'staff'].includes(name))));
     });
     return () => { active = false; };
-  }, [user]);
+  }, [user, reloadKey]);
   useEffect(() => {
     if (!user) {
       setProducts([]);
@@ -197,28 +252,29 @@ export default function OwnerPortalWeb() {
       return;
     }
     let active = true;
+    setLoadingSets((current) => new Set([...current, 'configuration']));
+    setLoadErrors((current) => ({ ...current, configuration: undefined }));
     Promise.allSettled([
       loadProductManagement(),
       loadIngredientRecipeConfiguration(),
       loadStockExpirationSettings(),
     ]).then(([productResult, configurationResult, stockResult]) => {
       if (!active) return;
-      const failures = [productResult, configurationResult, stockResult]
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-      if (failures.length) {
-        setDataError((current) => [
-          current,
-          ...failures.map((failure) => failure.reason instanceof Error
-            ? failure.reason.message
-            : 'An Owner configuration request failed.'),
-        ].filter(Boolean).join(' '));
-      }
+      const failure = [productResult, configurationResult, stockResult]
+        .find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      setLoadErrors((current) => ({
+        ...current,
+        configuration: failure ? ownerPortalErrorText(failure.reason, 'The configuration could not be loaded. Please try again.') : undefined,
+      }));
+      if (!failure) markLoaded(['configuration']);
       if (productResult.status === 'fulfilled') setProducts(productResult.value);
       if (configurationResult.status === 'fulfilled') setConfiguration(configurationResult.value);
       if (stockResult.status === 'fulfilled') setStockSettings(stockResult.value);
+    }).finally(() => {
+      if (active) setLoadingSets((current) => new Set([...current].filter((name) => name !== 'configuration')));
     });
     return () => { active = false; };
-  }, [user]);
+  }, [user, reloadKey]);
   const rows = useMemo(() => buildOwnerPortalInventoryRows(inventoryData), [inventoryData]);
   const visibleRows = filterOwnerPortalInventory(rows, branch).filter((row) =>
     row.name.toLowerCase().includes(query.toLowerCase()),
@@ -247,25 +303,35 @@ export default function OwnerPortalWeb() {
       else {
         const offline = isOwnerConnectionFailure(reason);
         setConnectionFailed(offline);
-        setError(offline ? new OwnerLoginError('connection_failure').message : reason instanceof Error ? reason.message : 'Unable to sign in. Please try again.');
+        setError(offline ? new OwnerLoginError('connection_failure').message : ownerPortalErrorText(reason, 'Unable to log in. Please try again.'));
       }
     } finally {
       setBusy(false);
     }
   };
   const logout = async () => {
+    setConfirmingLogout(false);
     setLogoutBusy(true);
     setDataError('');
     try {
       await signOut();
       setUser(null);
     } catch (reason: unknown) {
-      notify(reason instanceof Error ? reason.message : 'Unable to end the Supabase session.', true);
+      notify(ownerPortalErrorText(reason, 'Unable to log out. Please try again.'), true);
     } finally {
       setLogoutBusy(false);
     }
   };
-  if (authBusy) return <View style={styles.center}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Restoring secure Supabase session…</Text></View>;
+  if (authBusy) return <View style={styles.center}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Restoring your session…</Text></View>;
+  if (restoreFailed) {
+    return (
+      <View style={styles.center} accessibilityRole="alert">
+        <Text style={styles.section}>Unable to connect</Text>
+        <Text style={styles.muted}>{OWNER_PORTAL_CONNECTION_MESSAGE}</Text>
+        <Pressable accessibilityRole="button" onPress={() => setRestoreKey((key) => key + 1)} style={styles.outline}><Text style={styles.pinkText}>Retry</Text></Pressable>
+      </View>
+    );
+  }
   if (!user) return <Login username={username} password={password} error={error} fieldErrors={fieldErrors} connectionFailed={connectionFailed} busy={busy} showPassword={showPassword} setUsername={(value: string) => { setUsername(value); setFieldErrors((current) => ({ ...current, email: undefined })); }} setPassword={(value: string) => { setPassword(value); setFieldErrors((current) => ({ ...current, password: undefined })); }} setShowPassword={setShowPassword} login={login} narrow={narrow} />;
   const refreshInventory = async (message: string, isError = false) => {
     if (isError) {
@@ -304,6 +370,7 @@ export default function OwnerPortalWeb() {
   const refreshReviews = async () => {
     setReviews(await loadOwnerDiscrepancyReviews(null));
   };
+  const pageState = portalPageState(PAGE_DATA[page], loadErrors, loadingSets, loadedSets);
   return (
     <View style={[styles.app, dark && styles.dark, narrow && { flexDirection: 'column' }]}>
       <View style={[styles.sidebar, compact && styles.sidebarSmall, narrow && { width: '100%', height: 58, padding: 8, paddingTop: 8, flexDirection: 'row', alignItems: 'center' }]}>
@@ -317,7 +384,7 @@ export default function OwnerPortalWeb() {
             <Pressable key={label} accessibilityRole="button" accessibilityLabel={label} onPress={() => setPage(label)} style={[styles.nav, page === label && styles.navActive, narrow && { marginBottom: 0, paddingHorizontal: 8 }]}>
               <Text style={styles.navIcon}>{icon}</Text>
               {!compact && <Text style={styles.navText}>{label}</Text>}
-              {label === 'Daily Checks' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}
+              {label === 'Reconciliation' && <Text style={styles.badge}>{reviews.filter((item) => item.status === 'Pending').length}</Text>}
             </Pressable>
           ))}
         </ScrollView>
@@ -325,7 +392,7 @@ export default function OwnerPortalWeb() {
           <Text style={styles.avatar}>{user.displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</Text>
           {!compact && <View><Text style={styles.profileName}>{user.displayName}</Text><Text style={styles.profileRole}>Owner · {user.email}</Text></View>}
         </View>}
-        <Pressable disabled={logoutBusy} onPress={() => void logout()}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Log out" disabled={logoutBusy} onPress={() => setConfirmingLogout(true)}>
           <Text style={styles.logout}>{logoutBusy ? 'Signing out…' : `↪ ${compact ? '' : 'Log out'}`}</Text>
         </Pressable>
       </View>
@@ -338,8 +405,21 @@ export default function OwnerPortalWeb() {
           </View>
         </View>
         <ScrollView contentContainerStyle={[styles.content, narrow && { padding: 16, paddingBottom: 40 }]}>
-          {dataError && <View style={styles.errorBanner}><Text style={styles.errorText}>{dataError}</Text></View>}
-          {busy && <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading live Owner data…</Text></View>}
+          {dataError && <View style={styles.errorBanner} accessibilityRole="alert"><Text style={styles.errorText}>{dataError}</Text></View>}
+          {confirmingLogout ? (
+            <Panel title="Log out?">
+              <Text style={styles.body}>You will need to log in again to use the Owner Web Portal.</Text>
+              <View style={styles.line}>
+                <Pressable accessibilityRole="button" onPress={() => setConfirmingLogout(false)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="Confirm log out" onPress={() => void logout()} style={styles.loginButton}><Text style={styles.loginButtonText}>Log Out</Text></Pressable>
+              </View>
+            </Panel>
+          ) : null}
+          {pageState.kind === 'error' ? (
+            <SectionError message={pageState.message} onRetry={() => setReloadKey((key) => key + 1)} />
+          ) : pageState.kind === 'loading' ? (
+            <SectionLoading label={`Loading ${page.toLowerCase()}…`} />
+          ) : <>
           {page === 'Dashboard' && (
             <Dashboard
               rows={rows}
@@ -350,11 +430,11 @@ export default function OwnerPortalWeb() {
             />
           )}
           {page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}
-          {page === 'Inventory' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
-          {page === 'Stock Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
-          {page === 'Daily Checks' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
+          {page === 'Inventory Monitoring' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
+          {page === 'Inventory Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+          {page === 'Reconciliation' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
           {page === 'Void & Reversal Review' && <VoidReversalReview height={Math.max(560, height - 200)} onBack={() => setPage('Dashboard')} />}
-          {page === 'Reports' && <Reports sales={salesData} />}
+          {page === 'Sales Reports' && <Reports sales={salesData} />}
           {page === 'Inventory Reports' && (
             <InventoryReports
               branch={branch}
@@ -366,8 +446,10 @@ export default function OwnerPortalWeb() {
             />
           )}
           {page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
-          {page === 'Settings' && <><SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} /><ProfileEditor user={user} onSaved={notify} /></>}
+          {page === 'Configuration' && <SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} />}
+          {page === 'Profile' && <ProfileEditor user={user} onSaved={notify} />}
           {page === 'Audit History' && <Audit activity={activityData} reviews={reviews} sales={salesData} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
+          </>}
         </ScrollView>
         {toast && <View style={styles.toast}><Text style={styles.toastText}>✓ {toast}</Text></View>}
       </View>
@@ -643,6 +725,8 @@ function Inventory({ rows, branch, setBranch, branches, query, setQuery }: { row
         headers={['Ingredient', 'Category', 'Branch', 'Quantity', 'Status', 'Expiration', 'Active batches']}
         rows={rows.map((row) => [row.name, row.category, row.branch, `${row.quantityLabel} ${row.unit}`, row.status, row.expiry, row.batches])}
       />
+      {/* OW-04 c10 / OW-31 c9 */}
+      {rows.length === 0 ? <Text style={styles.empty}>{query.trim() ? `No ingredients match “${query.trim()}”.` : 'No inventory items for this branch yet.'}</Text> : null}
     </>
   );
 }
@@ -1599,10 +1683,25 @@ function Audit({ activity, reviews, sales, branches, inventoryRows }: {
 function isSnapshotReport(report: string | null | undefined): boolean {
   return report === 'Expected Stock Quantity Report' || report === 'Total Ingredient Inventory Report';
 }
+// OW-12 c8 / OW-31 c4, c10: a plain message; technical details are never shown.
 function reportLoadError(reason: unknown): string {
   if (isOwnerConnectionFailure(reason)) return 'The report could not be generated. Check your internet connection, then select Retry.';
-  const detail = reason instanceof Error && reason.message ? ` (${reason.message})` : '';
-  return `The report could not be generated${detail}. Select Retry to try again.`;
+  const plain = ownerPortalErrorText(reason, '');
+  return plain ? `The report could not be generated: ${plain} Select Retry to try again.` : 'The report could not be generated. Select Retry to try again.';
+}
+/** OW-02 c9 / OW-31 c2: a section that could not load, with Retry. */
+function SectionError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={[styles.panel, { alignItems: 'flex-start', gap: 10 }]} accessibilityRole="alert">
+      <Text style={styles.section}>This section could not be loaded</Text>
+      <Text style={styles.body}>{message}</Text>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable>
+    </View>
+  );
+}
+/** OW-31 c8: a section whose data is loading. */
+function SectionLoading({ label }: { label: string }) {
+  return <View style={styles.loadingRow} accessibilityRole="progressbar"><ActivityIndicator color={C.pink} /><Text style={styles.muted}>{label}</Text></View>;
 }
 function ReportErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
@@ -1801,6 +1900,7 @@ function StaffManager({ accounts, branches, onSaved }: {
     <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : editing ? 'Save staff account' : 'Create staff account'}</Text></Pressable>
     {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
     {/* OW-27 c1, c9: status (Active / Inactive) and lock status (Locked until … / Not locked). */}
+    {accounts.length === 0 ? <Text style={styles.empty}>No staff accounts yet. Create the first one above.</Text> : null}
     <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Lock status']} rows={accounts.map((account) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', staffLockStatus(account).label])} />
     {resetTarget ? (
       <Panel title="Reset password?">
