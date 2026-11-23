@@ -4,6 +4,15 @@ import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaL
 import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortalDailyClosingReport';
 import { buildWebReversalReport, REVERSAL_REPORT_HEADERS, type ReversingEntry } from './ownerPortalReversalReport';
 import {
+  ADDONS_SOLD_HEADERS,
+  BRANCH_SALES_HEADERS,
+  buildWebBranchSalesReport,
+  buildWebProductsSoldReport,
+  buildWebTransactionSummaryReport,
+  PRODUCTS_SOLD_HEADERS,
+  TRANSACTION_SUMMARY_HEADERS,
+} from './ownerPortalSalesReports';
+import {
   buildWebSalesConsumptionReport,
   buildWebVoidReversalReport,
   buildWebWasteReport,
@@ -86,7 +95,6 @@ import { buildOwnerPortalVariantPrices } from './ownerPortalProducts';
 import {
   filterOwnerPortalConfirmedSales,
   summarizeOwnerPortalSalesByBranch,
-  summarizeOwnerPortalSalesByProduct,
   totalOwnerPortalSales,
   type OwnerPortalMovementReport,
 } from './ownerPortalReports';
@@ -892,7 +900,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
           startDate: manilaDateKey(generated.range.start),
           endDate: manilaDateKey(new Date(generated.range.end.getTime() - 1)),
         }).then((result) => { if (active) setClosings(result); })
-        : loadOwnerSalesData({ start: generated.range.start, end: generated.range.end, branchId: generated.branchId })
+        : loadOwnerSalesData({ start: generated.range.start, end: generated.range.end, branchId: generated.branchId, includeVoided: true })
         .then((result) => { if (active) setSales(result); });
     request
       .catch((reason: unknown) => {
@@ -904,36 +912,26 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
     return () => { active = false; };
   }, [generated]);
 
+  // Voided sales are loaded for the transaction list (OW-09 c6); every total counts completed sales only.
   const records = sales ? filterOwnerPortalConfirmedSales(sales.sales) : [];
-  const items = sales?.items ?? [];
   const total = totalOwnerPortalSales(records);
-  const visibleBranches = branchId ? branches.filter((item) => item.id === branchId) : branches;
-  const branchSummary = summarizeOwnerPortalSalesByBranch(records, visibleBranches);
-  const productSummary = summarizeOwnerPortalSalesByProduct(records, items);
+  const visibleBranches = generated?.branchId ? branches.filter((item) => item.id === generated.branchId) : branches;
   const branchNames = new Map(branches.map((item) => [item.id, item.name]));
   const dateFormatter = new Intl.DateTimeFormat('en-PH', {
     timeZone: 'Asia/Manila',
     dateStyle: 'medium',
     timeStyle: 'short',
   });
-  const transactionRows = records.map((sale) => [
-    sale.transaction_reference,
-    branchNames.get(sale.branch_id) ?? 'Branch unavailable',
-    sale.recorded_by_name ?? 'Staff unavailable',
-    sale.payment_method,
-    dateFormatter.format(new Date(sale.created_at)),
-    peso(Number(sale.total_amount)),
-  ]);
-  const branchRows = branchSummary.map((item) => [
-    item.name,
-    String(item.salesCount),
-    peso(item.totalSales),
-  ]);
-  const productRows = productSummary.map((item) => [
-    item.name,
-    String(item.quantity),
-    peso(item.totalSales),
-  ]);
+  const branchReport = sales ? buildWebBranchSalesReport(sales.sales, visibleBranches) : null;
+  const productsReport = sales ? buildWebProductsSoldReport(sales.sales, sales.items, sales.addons ?? []) : null;
+  const transactionReport = sales
+    ? buildWebTransactionSummaryReport({
+      sales: sales.sales,
+      items: sales.items,
+      branchName: (id) => branchNames.get(id) ?? 'Branch unavailable',
+      formatDateTime: (iso) => dateFormatter.format(new Date(iso)),
+    })
+    : null;
   // OW-10: the sales whose void request was approved in the period.
   const voidReport = voids && generated ? buildWebVoidReport(voids, { ...generated.range, branchId: generated.branchId }) : null;
   const voidRows = (voidReport?.rows ?? []).map((row) => [
@@ -953,11 +951,33 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
       case 'Total Sales Report':
         return [{ summary: [['Total sales', peso(total)], ['Completed sales', String(records.length)]] }, ...(records.length ? [] : [none])];
       case 'Branch Sales Report':
-        return [records.length ? { table: { headers: ['Branch', 'Transactions', 'Total Sales'], rows: branchRows } } : none];
+        // OW-07 c3, c5: every branch, even without sales, and the grand total.
+        return branchReport ? [
+          { summary: [['Grand total', peso(branchReport.total)], ['Transactions', String(branchReport.transactions)]] },
+          { table: { headers: BRANCH_SALES_HEADERS, rows: branchReport.rows } },
+          { notes: ['Voided sales are excluded from every branch total.'] },
+        ] : [none];
       case 'Products Sold Report':
-        return [records.length ? { table: { headers: ['Product', 'Quantity Sold', 'Sales Total'], rows: productRows } } : none];
+        if (!productsReport || !productsReport.productRows.length) return [none];
+        return [
+          { summary: [['Items sold', String(productsReport.quantity)], ['Sales amount', peso(productsReport.total)]] },
+          { heading: 'Products by flavor and portion (highest quantity first)', table: { headers: PRODUCTS_SOLD_HEADERS, rows: productsReport.productRows } },
+          productsReport.addonRows.length
+            ? { heading: 'Add-ons', table: { headers: ADDONS_SOLD_HEADERS, rows: productsReport.addonRows } }
+            : { heading: 'Add-ons', notes: ['No add-ons were sold in this period.'] },
+          { notes: ['Quantities of voided sales are excluded.'] },
+        ];
       case 'Transaction Summary Report':
-        return [records.length ? { table: { headers: ['Reference', 'Branch', 'Recorded By', 'Payment', 'Timestamp (Manila)', 'Total'], rows: transactionRows } } : none];
+        if (!transactionReport || !transactionReport.rows.length) return [none];
+        return [
+          { summary: [
+            ['Completed transactions', String(transactionReport.completed)],
+            ['Voided transactions', String(transactionReport.voided)],
+            ['Total of completed sales', peso(transactionReport.total)],
+          ] },
+          { table: { headers: TRANSACTION_SUMMARY_HEADERS, rows: transactionReport.rows } },
+          { notes: ['Voided sales are listed with the Voided status and are not added to the total.'] },
+        ];
       default:
         return [];
     }
