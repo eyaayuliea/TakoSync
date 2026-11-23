@@ -1,5 +1,5 @@
-// OW-16 Sales Consumption Report and OW-17 Waste and Spillage Report on the
-// Owner Web Portal.
+// OW-16 Sales Consumption Report, OW-17 Waste and Spillage Report and the
+// OW-12 c5 Void Reversal Report on the Owner Web Portal.
 import type { SalesConsumptionRecord } from './salesConsumptionRepository';
 
 const quantityText = (quantity: number, unit: string) =>
@@ -120,4 +120,62 @@ export function buildWebWasteReport(input: {
     ];
   });
   return { rows, byIngredient: totalPairs(byIngredient), byCategory: totalPairs(byCategory) };
+}
+
+export type VoidReversalMovement = {
+  id: string;
+  reference: string;
+  branch_id: string;
+  ingredient_id: string;
+  type: string;
+  quantity: number;
+  unit: string;
+  reason: string;
+  notes: string;
+  transaction_date: string;
+  actor_name?: string;
+};
+
+export const VOID_REVERSAL_REPORT_HEADERS = [
+  'Entry reference', 'Item', 'Quantity returned', 'Branch', 'Voided sale', 'Void request', 'Approved by · date & time',
+];
+
+/**
+ * OW-12 c5: Void Reversal entries in their own report. Each entry returns the
+ * ingredients a voided sale had consumed; it is posted when the owner approves
+ * the void request (OW-26).
+ */
+export function buildWebVoidReversalReport(input: {
+  movements: readonly VoidReversalMovement[];
+  itemName: (movement: VoidReversalMovement) => string;
+  branchName: (movement: VoidReversalMovement) => string;
+  formatDateTime: (iso: string) => string;
+}): { rows: string[][]; summary: Array<[string, string]>; byIngredient: Array<[string, string]> } {
+  const entries = input.movements
+    .filter((movement) => movement.type === 'void_reversal')
+    .slice()
+    .sort((left, right) => right.transaction_date.localeCompare(left.transaction_date) || left.reference.localeCompare(right.reference));
+  const totals = new Map<string, Total>();
+  const sales = new Set<string>();
+  const rows = entries.map((movement) => {
+    const item = input.itemName(movement);
+    addTotal(totals, item, movement.unit, movement.quantity);
+    const sale = /^void of sale\s+(.+)$/i.exec(movement.reason.trim())?.[1]?.trim() ?? '—';
+    if (sale !== '—') sales.add(sale);
+    const request = /^void:(.+)$/i.exec(movement.notes.trim())?.[1]?.trim() ?? '—';
+    return [
+      movement.reference,
+      item,
+      `+${quantityText(movement.quantity, movement.unit)}`,
+      input.branchName(movement),
+      sale,
+      request,
+      `${movement.actor_name ?? 'Owner'}\n${input.formatDateTime(movement.transaction_date)}`,
+    ];
+  });
+  return {
+    rows,
+    summary: [['Void Reversal entries', String(entries.length)], ['Voided sales', String(sales.size)]],
+    byIngredient: totalPairs(totals),
+  };
 }

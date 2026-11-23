@@ -3,7 +3,14 @@ import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
 import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortalDailyClosingReport';
 import { buildWebReversalReport, REVERSAL_REPORT_HEADERS, type ReversingEntry } from './ownerPortalReversalReport';
-import { buildWebSalesConsumptionReport, buildWebWasteReport, SALES_CONSUMPTION_HEADERS, WASTE_SPILLAGE_HEADERS } from './ownerPortalMovementReports';
+import {
+  buildWebSalesConsumptionReport,
+  buildWebVoidReversalReport,
+  buildWebWasteReport,
+  SALES_CONSUMPTION_HEADERS,
+  VOID_REVERSAL_REPORT_HEADERS,
+  WASTE_SPILLAGE_HEADERS,
+} from './ownerPortalMovementReports';
 import { buildSalesConsumptionRecords, type SalesConsumptionRecord } from './salesConsumptionRepository';
 import { ADJUSTMENT_REPORT_HEADERS, buildWebAdjustmentReport, buildWebCountReport, COUNT_REPORT_HEADERS } from './ownerPortalCountReports';
 import { loadPhysicalCountRecords, type PhysicalCountRecord } from './physicalCountRepository';
@@ -1061,7 +1068,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
 }
 
 type InventoryReportPage = 'Expected Stock Quantity Report' | 'Total Ingredient Inventory Report' | OwnerPortalMovementReport |
-  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report' | 'Reversal Report';
+  'Physical Inventory Count and Discrepancy Report' | 'Authorized Adjustment Report' | 'Void Reversal Report' | 'Entry Reversal Report';
 
 function InventoryReports({ branch, setBranch, branches, inventoryRows, inventoryAvailable, batches }: {
   branch: string;
@@ -1080,7 +1087,9 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     'Waste and Spillage Report',
     'Physical Inventory Count and Discrepancy Report',
     'Authorized Adjustment Report',
-    'Reversal Report',
+    // OW-12 c5: each reversal type has its own report.
+    'Void Reversal Report',
+    'Entry Reversal Report',
   ];
   // OW-12 c3: no report type is chosen until the owner picks one.
   const [report, setReport] = useState<InventoryReportPage | null>(null);
@@ -1171,7 +1180,7 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
         .finally(() => { if (active) setLoading(false); });
       return () => { active = false; };
     }
-    if (generated.report === 'Reversal Report') {
+    if (generated.report === 'Entry Reversal Report') {
       // OW-20: approved reversals with the Entry Reversal entries that were posted.
       loadOwnerEntryReversalReviews()
         .then(async (result) => {
@@ -1298,7 +1307,23 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           { notes: ['Adjustment = the counted quantity minus the expected quantity saved with the count. Only adjustments the owner authorized are listed.'] },
         ];
       }
-      case 'Reversal Report': {
+      case 'Void Reversal Report': {
+        if (!activity) return [{ notes: ['Void reversal data is unavailable.'] }];
+        const report = buildWebVoidReversalReport({
+          movements: activity.transactions.filter((item) => !branchId || item.branch_id === branchId),
+          itemName: (item) => itemNameById.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
+          branchName: (item) => branchNameById.get(item.branch_id) ?? 'Branch',
+          formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+        });
+        if (!report.rows.length) return [{ notes: ['No sales were voided for the selected branch and reporting period, so there are no Void Reversal entries.'] }];
+        return [
+          { summary: report.summary },
+          { heading: 'Total returned per ingredient', compact: true, summary: report.byIngredient },
+          { table: { headers: VOID_REVERSAL_REPORT_HEADERS, rows: report.rows } },
+          { notes: ['A Void Reversal entry returns the ingredients a sale had consumed. It is posted when the owner approves the void request; the sale\'s Sales Consumption entries stay in the history.'] },
+        ];
+      }
+      case 'Entry Reversal Report': {
         if (!reversals || !reportRange) return [];
         if (!reversals.supported) return [{ notes: ['Entry reversals are not available on this server yet.'] }];
         const reversalReport = buildWebReversalReport({
