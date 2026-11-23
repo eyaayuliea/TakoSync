@@ -1,20 +1,16 @@
 // ST-14 c2: the Inventory Transaction History type filter offers exactly these
-// types. Other movement types (Usage, Stock-Out, transfers) still appear under
-// "All types".
+// types (User Story sheet of 2026-11-23). Other rows still appear under
+// "All types": Usage, Stock-Out, transfers, the raw ingredients a batter batch
+// used and the prepared batter it made (reason "Batter preparation"), and
+// opening stock (a Stock-In with the reason "Opening", OW-28).
 //
-// The ledger stores a batter batch as a Usage movement per raw ingredient and a
-// Stock-In movement of prepared batter, both with the reason "Batter
-// preparation"; they are shown under Batter Use and Batter Yield. Opening stock
-// is a Stock-In with the reason "Opening" (it has no rows until opening stock
-// is entered, OW-28).
+// Stock-In lists received supplies only, so batter batches and opening stock
+// are not counted as deliveries.
 
 export const STAFF_HISTORY_TYPE_FILTERS = [
   'All types',
-  'Opening',
   'Stock-In',
   'Sales Consumption',
-  'Batter Use',
-  'Batter Yield',
   'Waste',
   'Spillage',
   'Spoilage',
@@ -52,15 +48,9 @@ export function matchesHistoryTypeFilter(row: HistoryRow, filter: StaffHistoryTy
   switch (filter) {
     case 'All types':
       return true;
-    case 'Opening':
-      return isOpening(row);
     case 'Stock-In':
-      // Received supplies only: batter yield and opening stock have their own filters.
+      // Received supplies only: batter batches and opening stock show under All types.
       return row.type === 'Stock-In' && !isBatterPreparation(row) && !isOpening(row);
-    case 'Batter Use':
-      return row.type === 'Usage' && isBatterPreparation(row);
-    case 'Batter Yield':
-      return row.type === 'Stock-In' && isBatterPreparation(row);
     case 'Waste':
       return row.type === 'Waste' && !isSpillage(row);
     case 'Spillage':

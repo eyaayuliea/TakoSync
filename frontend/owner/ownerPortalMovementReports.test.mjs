@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWebSalesConsumptionReport, buildWebWasteReport, lossCategory } from './ownerPortalMovementReports.ts';
+import { buildWebSalesConsumptionReport, buildWebVoidReversalReport, buildWebWasteReport, lossCategory, VOID_REVERSAL_REPORT_HEADERS } from './ownerPortalMovementReports.ts';
 
 const record = (overrides) => ({
   id: overrides.id, recordReference: `TX-${overrides.id}`, ingredientName: 'Prepared Takoyaki Batter', quantity: 0.16, unit: 'bottle',
@@ -50,4 +50,30 @@ test('OW-17 c2–c6: losses only, reversed entries marked and not totalled', () 
   assert.equal(report.rows.filter((row) => row[7] === 'Reversed').length, 1);
   assert.deepEqual(report.byIngredient, [['Octopus', '1.5 kg'], ['Takoyaki sauce', '0.2 L']]);
   assert.deepEqual(report.byCategory, [['Spillage', '0.2 L'], ['Spoilage', '1 kg'], ['Waste', '0.5 kg']]);
+});
+
+test('OW-12 c5: Void Reversal entries have their own report and no other movement type is merged in', () => {
+  const movement = (overrides) => ({
+    id: 'm', reference: 'TX-1', branch_id: 'b1', ingredient_id: 'batter', type: 'void_reversal', quantity: 0.16, unit: 'bottle',
+    reason: 'Void of sale SALE-1', notes: 'void:VOID-20261123-0001', transaction_date: '2026-11-23T08:00:00Z', actor_name: 'Owner Test',
+    ...overrides,
+  });
+  const report = buildWebVoidReversalReport({
+    movements: [
+      movement({}),
+      movement({ id: 'm2', reference: 'TX-2', ingredient_id: 'cheese', quantity: 10, unit: 'g', transaction_date: '2026-11-23T09:00:00Z' }),
+      movement({ id: 'm3', reference: 'TX-3', type: 'sales_consumption', reason: 'Sale SALE-2', notes: '' }),
+      movement({ id: 'm4', reference: 'TX-4', type: 'entry_reversal', reason: 'Reversal of WASTE-1', notes: 'reversal:REV-1' }),
+    ],
+    itemName: (m) => (m.ingredient_id === 'batter' ? 'Prepared batter' : 'Cheese'),
+    branchName: () => 'Manila · Branch 1',
+    formatDateTime: (iso) => iso.slice(11, 16),
+  });
+  assert.equal(VOID_REVERSAL_REPORT_HEADERS.length, report.rows[0].length);
+  assert.deepEqual(report.rows.map((row) => row[0]), ['TX-2', 'TX-1']);
+  assert.deepEqual(report.rows[1], ['TX-1', 'Prepared batter', '+0.16 bottle', 'Manila · Branch 1', 'SALE-1', 'VOID-20261123-0001', 'Owner Test\n08:00']);
+  assert.deepEqual(report.summary, [['Void Reversal entries', '2'], ['Voided sales', '1']]);
+  assert.deepEqual(report.byIngredient, [['Cheese', '10 g'], ['Prepared batter', '0.16 bottle']]);
+  const empty = buildWebVoidReversalReport({ movements: [movement({ type: 'waste' })], itemName: () => '', branchName: () => '', formatDateTime: (iso) => iso });
+  assert.equal(empty.rows.length, 0);
 });

@@ -95,7 +95,7 @@ export function buildTotalInventoryViews(
     compact: true,
     notes: [
       'The Total Ingredient Inventory Report lists every ingredient and supply of the selected branch with its expected quantity, minimum stock level and stock status, and totals them per category. Retired (inactive) ingredients are not included.',
-      'The expected quantity of each item is the sum of its ledger movements: Opening and Stock-In add stock; Sales Consumption, Batter Use, Waste, Spillage and Spoilage remove it; Batter Yield, Void Reversal, Entry Reversal and Authorized Adjustment entries correct it.',
+      'The expected quantity of each item is the sum of its ledger movements: Stock-In adds stock; Sales Consumption, Waste, Spillage and Spoilage remove it; Void Reversal, Entry Reversal and Authorized Adjustment entries correct it. A prepared batter batch moves its raw ingredients into prepared batter.',
       'Stock status: Out of Stock at zero or below; Low Stock at or below the minimum stock level (or the reorder point when it is higher); otherwise Normal. Near Expiration and Expired are noted beside the stock status.',
       'The Detailed and Summary views are built from this same snapshot, so their counts always agree.',
     ],

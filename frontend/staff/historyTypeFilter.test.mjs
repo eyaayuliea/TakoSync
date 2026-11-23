@@ -4,7 +4,7 @@ import { STAFF_HISTORY_TYPE_FILTERS, historyTypeFilterTabLabel, matchesHistoryTy
 
 test('the type filter offers exactly the ST-14 c2 types', () => {
   assert.deepEqual([...STAFF_HISTORY_TYPE_FILTERS], [
-    'All types', 'Opening', 'Stock-In', 'Sales Consumption', 'Batter Use', 'Batter Yield', 'Waste', 'Spillage', 'Spoilage',
+    'All types', 'Stock-In', 'Sales Consumption', 'Waste', 'Spillage', 'Spoilage',
     'Physical Inventory Count', 'Count Revision', 'Authorized Adjustment', 'Void', 'Entry Reversal',
   ]);
 });
@@ -33,20 +33,18 @@ test('Void lists Void Reversal entries; other types match by name; All shows eve
   assert.equal(matchesHistoryTypeFilter({ type: 'Usage', reason: 'Batter preparation' }, 'All types'), true);
 });
 
-test('ST-14 c2: batter batches and opening stock have their own filters', () => {
+test('ST-14 c2: batter batches and opening stock appear only under All types', () => {
   const use = { type: 'Usage', reason: 'Batter preparation' };
   const yieldRow = { type: 'Stock-In', reason: 'Batter preparation' };
   const receipt = { type: 'Stock-In', reason: 'Stock-In' };
   const opening = { type: 'Stock-In', reason: 'Opening stock' };
   const cooking = { type: 'Usage', reason: 'Cooking usage' };
-  assert.equal(matchesHistoryTypeFilter(use, 'Batter Use'), true);
-  assert.equal(matchesHistoryTypeFilter(cooking, 'Batter Use'), false);
-  assert.equal(matchesHistoryTypeFilter(yieldRow, 'Batter Yield'), true);
-  assert.equal(matchesHistoryTypeFilter(receipt, 'Batter Yield'), false);
   assert.deepEqual([receipt, yieldRow, opening].map((row) => matchesHistoryTypeFilter(row, 'Stock-In')), [true, false, false]);
-  assert.equal(matchesHistoryTypeFilter(opening, 'Opening'), true);
-  assert.equal(matchesHistoryTypeFilter({ type: 'Opening', reason: '' }, 'Opening'), true);
-  for (const row of [use, yieldRow, receipt, opening, cooking]) assert.equal(matchesHistoryTypeFilter(row, 'All types'), true);
+  for (const row of [use, yieldRow, opening, cooking]) {
+    const matching = STAFF_HISTORY_TYPE_FILTERS.filter((filter) => matchesHistoryTypeFilter(row, filter));
+    assert.deepEqual(matching, ['All types']);
+  }
+  for (const removed of ['Opening', 'Batter Use', 'Batter Yield']) assert.ok(!STAFF_HISTORY_TYPE_FILTERS.includes(removed));
   assert.equal(historyTypeFilterTabLabel('Sales Consumption'), 'Sales Consumption');
   assert.equal(historyTypeFilterTabLabel('All types'), 'All');
 });
