@@ -74,9 +74,7 @@ import {
   dailyClosingErrorMessage,
   isMissingDailyClosingSupport,
   mapDailyClosingRow,
-  mapOpeningFloatRow,
   type DailyClosing,
-  type OpeningFloat,
 } from './dailyClosing';
 import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { isInactiveAccountDenial } from './permissions.ts';
@@ -2250,52 +2248,16 @@ export async function recordStockIn(input: {
 
 export class DailyClosingError extends Error {}
 
-/** The opening float recorded for one branch and business date (YYYY-MM-DD), if any. */
-export async function loadStaffOpeningFloat(
-  branchId: string,
-  businessDate: string,
-  client?: StaffServiceClient,
-): Promise<{ supported: boolean; openingFloat: OpeningFloat | null }> {
-  if (!branchId.trim()) return { supported: true, openingFloat: null };
-  const resolved = staffServiceClient(client);
-  const { data, error } = await resolved.from('daily_opening_floats')
-    .select('id, reference, branch_id, business_date, amount, recorded_by, recorded_at')
-    .eq('branch_id', branchId)
-    .eq('business_date', businessDate)
-    .maybeSingle();
-  if (isMissingDailyClosingSupport(error)) return { supported: false, openingFloat: null };
-  assertNoError(error);
-  if (!data) return { supported: true, openingFloat: null };
-  const names = await loadProfileNames(resolved, [data.recorded_by]);
-  return { supported: true, openingFloat: mapOpeningFloatRow(data, names) };
-}
-
-/** ST-06 c7, c10: records today's opening float once; a retry with the same id is safe. */
-export async function recordOpeningFloat(input: {
-  branchId: string;
-  amount: number;
-  clientRequestId: string;
-}, client?: StaffServiceClient): Promise<OpeningFloat> {
-  const { data, error } = await staffServiceClient(client).rpc('record_opening_float', {
-    p_branch_id: input.branchId,
-    p_amount: input.amount,
-    p_client_request_id: input.clientRequestId,
-  });
-  if (error) throw new DailyClosingError(dailyClosingErrorMessage(error));
-  if (!data || data.branch_id !== input.branchId) {
-    throw new DailyClosingError('The opening float could not be confirmed. Please check Daily Sales before trying again.');
-  }
-  return mapOpeningFloatRow(data);
-}
-
-/** ST-06 c8–c10: records today's closing against the recorded opening float; a retry with the same id is safe. */
+/** ST-06 c7, c8, c10: records today's closing; a retry with the same id is safe. */
 export async function recordDailyClosing(input: {
   branchId: string;
+  openingFloat: number;
   closingCashCount: number;
   clientRequestId: string;
 }, client?: StaffServiceClient): Promise<DailyClosing> {
   const { data, error } = await staffServiceClient(client).rpc('record_daily_closing', {
     p_branch_id: input.branchId,
+    p_opening_float: input.openingFloat,
     p_closing_cash_count: input.closingCashCount,
     p_client_request_id: input.clientRequestId,
   });

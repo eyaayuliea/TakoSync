@@ -347,16 +347,6 @@ export type Database = {
         expiration_date: string | null;
         movement_id: string;
       }>;
-      daily_opening_floats: Table<{
-        id: string;
-        reference: string;
-        client_request_id: string;
-        branch_id: string;
-        business_date: string;
-        amount: number;
-        recorded_by: string;
-        recorded_at: string;
-      }>;
       daily_closings: Table<{
         id: string;
         reference: string;
@@ -718,12 +708,8 @@ export type Database = {
         Args: { p_branch_id: string; p_request_id: string; p_header: Json; p_lines: Json };
         Returns: Json;
       };
-      record_opening_float: {
-        Args: { p_branch_id: string; p_amount: number; p_client_request_id: string };
-        Returns: Database['public']['Tables']['daily_opening_floats']['Row'];
-      };
       record_daily_closing: {
-        Args: { p_branch_id: string; p_closing_cash_count: number; p_client_request_id: string };
+        Args: { p_branch_id: string; p_opening_float: number; p_closing_cash_count: number; p_client_request_id: string };
         Returns: Database['public']['Tables']['daily_closings']['Row'];
       };
       decide_sale_void: {
