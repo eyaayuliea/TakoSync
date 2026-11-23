@@ -1,7 +1,7 @@
 import { formatInventoryQuantity, getInventoryStockStatus } from './ownerInventoryStatus';
 import { lowStockThreshold } from '../services/reorderPoint.ts';
 import { manilaDateKey } from '../services/businessDaySettings';
-import { classifyStockLevel } from '../services/inventoryStatusRules.ts';
+import { calendarDaysUntil, classifyExpirationLevel, classifyStockLevel } from '../services/inventoryStatusRules.ts';
 
 export type OwnerPortalInventoryRow = {
   ingredientId: string;
@@ -19,6 +19,8 @@ export type OwnerPortalInventoryRow = {
   minimumStock?: number | null;
   /** OW-14 c5: stock level only (expiry aside), so Summary counts match the Detailed view. */
   stockLevel?: 'Normal' | 'Low Stock' | 'Out of Stock' | 'Not tracked';
+  /** OW-02 c6: the earliest lot's expiration level, kept apart from the stock level. */
+  expirationLevel?: 'Expired' | 'Near Expiration' | null;
 };
 
 type OwnerInventorySnapshot = {
@@ -106,6 +108,9 @@ export function buildOwnerPortalInventoryRows(
       expiry: trackedExpiry ?? '—',
       minimumStock: record.minimum_stock === null || record.minimum_stock === undefined ? null : Number(record.minimum_stock),
       stockLevel: level === 'In Stock' ? 'Normal' : level,
+      expirationLevel: trackedExpiry && quantity !== null && quantity > 0
+        ? classifyExpirationLevel(calendarDaysUntil(trackedExpiry, referenceDate), snapshot.nearExpirationDays)
+        : null,
       batches: activeBatches.map((batch) => {
         const reference = batch.batch_reference?.trim() || 'Unreferenced batch';
         const expiration = ingredient.expiration_tracking
