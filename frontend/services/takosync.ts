@@ -2413,6 +2413,32 @@ export async function loadReversedEntryIds(client?: StaffServiceClient): Promise
 }
 
 /** OM-22 c2–c3: the Entry Reversal movements an approved request posted, with what they reversed. */
+/**
+ * OW-20 c5: the Entry Reversal movements posted for many approved requests,
+ * keyed by request reference (the movement notes are "reversal:<reference>").
+ */
+export async function loadEntryReversalMovementsByRequest(
+  requestReferences: string[],
+  client?: StaffServiceClient,
+): Promise<Map<string, Array<{ reference: string; quantity: number; unit: string; transactionDate: string }>>> {
+  const result = new Map<string, Array<{ reference: string; quantity: number; unit: string; transactionDate: string }>>();
+  if (!requestReferences.length) return result;
+  const resolved = staffServiceClient(client);
+  const { data, error } = await resolved.from('inventory_transactions')
+    .select('reference, quantity, unit, transaction_date, notes')
+    .eq('type', 'entry_reversal')
+    .in('notes', requestReferences.map((reference) => `reversal:${reference}`))
+    .order('transaction_date');
+  assertNoError(error);
+  for (const row of data ?? []) {
+    const key = String(row.notes ?? '').replace(/^reversal:/, '');
+    const list = result.get(key) ?? [];
+    list.push({ reference: row.reference, quantity: Math.abs(Number(row.quantity)), unit: row.unit, transactionDate: row.transaction_date });
+    result.set(key, list);
+  }
+  return result;
+}
+
 export async function loadEntryReversalMovements(
   requestReference: string,
   client?: StaffServiceClient,
