@@ -29,6 +29,7 @@ import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScre
 import OwnerRequestsScreen from './OwnerRequestsScreen';
 import DailyClosingReportScreen from './DailyClosingReportScreen';
 import VoidReportScreen from './VoidReportScreen';
+import type { OwnerSalesSectionReport } from './OwnerSalesWorkspace';
 import AuditIntegrityScreen from './AuditIntegrityScreen';
 import ReversalReportScreen from './ReversalReportScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
@@ -101,6 +102,13 @@ function countDifferenceText(expected: number, actual: number): string {
 }
 
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport' | 'AuditIntegrity';
+
+// OM-03: the sales reports opened from the Sales section.
+const SALES_SECTION_REPORT_PAGES: Record<OwnerSalesSectionReport, OwnerPage> = {
+  'Transaction Summary': 'SalesTransactions',
+  Void: 'VoidReport',
+  'Daily Closing': 'DailyClosingReport',
+};
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -797,12 +805,13 @@ export default function OwnerMobileWorkspace({
     }
   };
 
-  const activePrimaryPage = page === 'Reports' ? 'Sales'
+  // OM-03: the Transaction Summary, Void and Daily Closing reports belong to the Sales section.
+  const activePrimaryPage = page === 'Reports' || page === 'SalesTransactions' || page === 'DailyClosingReport' || page === 'VoidReport' ? 'Sales'
     : page === 'CompareInventory' ? 'Inventory'
-      : page === 'Records' || page === 'SalesTransactions' || page === 'RecordCategories'
+      : page === 'Records' || page === 'RecordCategories'
         || page === 'SalesConsumptionRecords' || page === 'StockInRecords' || page === 'WasteSpillageRecords'
         || page === 'PhysicalCountRecords' || page === 'AuthorizedAdjustmentRecords' || page === 'Profile'
-        || page === 'VoidRequests' || page === 'DailyClosingReport' || page === 'VoidReport' || page === 'ReversalReport'
+        || page === 'VoidRequests' || page === 'ReversalReport'
         || page === 'AuditIntegrity'
         || page === 'Products' || page === 'Ingredients' || page === 'StockSettings' || page === 'BusinessHours'
         ? 'More' : page;
@@ -1294,6 +1303,7 @@ export default function OwnerMobileWorkspace({
       initialStartDate={customStart}
       initialEndDate={customEnd}
       onOpenReports={() => setPage('Reports')}
+      onOpenSalesReport={(report) => pushMenuPage('Sales', SALES_SECTION_REPORT_PAGES[report])}
       onRefresh={onRefresh}
       availableWidth={contentWidth - 36}
     />
@@ -2194,7 +2204,7 @@ export default function OwnerMobileWorkspace({
     BusinessHours: 'Business Closing Time',
     Discrepancies: 'Discrepancy review',
     Records: 'Business records',
-    SalesTransactions: 'Sales Transaction Records',
+    SalesTransactions: 'Transaction Summary',
     RecordCategories: 'Records',
     SalesConsumptionRecords: 'Sales Consumption Records',
     StockInRecords: 'Stock-In Records',
@@ -2212,7 +2222,7 @@ export default function OwnerMobileWorkspace({
   };
   const activeIndex =
     page === 'Dashboard' ? 0
-      : page === 'Sales' || page === 'Reports' ? 1
+      : activePrimaryPage === 'Sales' ? 1
         : page === 'Inventory' || page === 'CompareInventory' ? 2
           : page === 'Discrepancies' ? 3
             : page === 'Alerts' ? 4

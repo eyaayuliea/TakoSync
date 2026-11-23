@@ -264,6 +264,10 @@ function ChoiceChip({
   );
 }
 
+/** OM-03 c1: the sales reports that open as their own screens from the Sales section. */
+export const OWNER_SALES_SECTION_REPORTS = ['Transaction Summary', 'Void', 'Daily Closing'] as const;
+export type OwnerSalesSectionReport = (typeof OWNER_SALES_SECTION_REPORTS)[number];
+
 export default function OwnerSalesWorkspace({
   mode,
   branches,
@@ -274,6 +278,7 @@ export default function OwnerSalesWorkspace({
   initialStartDate,
   initialEndDate,
   onOpenReports,
+  onOpenSalesReport,
   onBack,
   onRefresh,
   availableWidth,
@@ -287,6 +292,8 @@ export default function OwnerSalesWorkspace({
   initialStartDate?: string;
   initialEndDate?: string;
   onOpenReports?: () => void;
+  /** OM-03 c1, c6: open the Transaction Summary, Void or Daily Closing report; its back control returns here. */
+  onOpenSalesReport?: (report: OwnerSalesSectionReport) => void;
   onBack?: () => void;
   onRefresh?: () => Promise<void> | void;
   availableWidth: number;
@@ -1077,6 +1084,18 @@ export default function OwnerSalesWorkspace({
               <Text style={[styles.omTabText, activeSalesTab === tab && styles.omTabTextSelected]}>{tab}</Text>
             </Pressable>
           ))}
+          {onOpenSalesReport ? OWNER_SALES_SECTION_REPORTS.map((report) => (
+            <Pressable
+              key={report}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${report} report`}
+              disabled={loading}
+              onPress={() => onOpenSalesReport(report)}
+              style={styles.omTab}
+            >
+              <Text style={styles.omTabText}>{report}</Text>
+            </Pressable>
+          )) : null}
         </ScrollView>
 
         {activeSalesTab === 'Branch' && !error && (
