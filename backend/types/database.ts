@@ -205,6 +205,16 @@ export type Database = {
         created_at: string;
         updated_at: string;
       }>;
+      /** OW-22 c7: ingredients consumed by an add-on (202611240002). */
+      addon_recipes: Table<{
+        id: string;
+        addon_id: string;
+        ingredient_id: string;
+        quantity_required: number;
+        unit_of_measure: string;
+        created_at: string;
+        updated_at: string;
+      }>;
       /** OW-21 c5: add-ons offered with a product (202611240001). */
       product_addons: Table<{
         product_id: string;

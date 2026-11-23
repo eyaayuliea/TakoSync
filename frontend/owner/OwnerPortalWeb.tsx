@@ -19,6 +19,18 @@ import { OwnerPasswordChangeError, validateOwnerPasswordChange, type OwnerPasswo
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
+import {
+  BASE_UNITS,
+  baseUnitOf,
+  INGREDIENT_HEADERS,
+  ingredientFormErrors,
+  ingredientTableRows,
+  RECIPE_HEADERS,
+  recipeTableRows,
+  UNITS_BY_BASE,
+  type BaseUnit,
+  type IngredientForm,
+} from './ownerPortalIngredients';
 import { AUDIT_HEADERS, AUDIT_RECORD_TYPES, auditRow, buildAuditRecords, filterAuditRecords } from './ownerPortalAudit';
 import {
   ADJUSTMENT_HISTORY_HEADERS,
@@ -108,6 +120,8 @@ import {
   updateOwnerProfile,
   changeOwnerPassword,
   updateProduct,
+  saveIngredientPurchaseUnit,
+  saveAddonRecipe,
   loadMenuAddonConfiguration,
   saveMenuAddon,
   saveProductAddons,
@@ -2381,100 +2395,273 @@ function OwnerProductEditor({ products, onSaved }: {
   );
 }
 
+type IngredientRecipeConfiguration = Awaited<ReturnType<typeof loadIngredientRecipeConfiguration>>;
+
+/** A failed save keeps the form and offers Retry (OW-22 c10). */
+function SaveErrorWithRetry({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={[styles.errorBanner, { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }]} accessibilityRole="alert">
+      <Text style={[styles.errorText, { flex: 1 }]}>{message}</Text>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable>
+    </View>
+  );
+}
+
+/**
+ * OW-22 c1–c3: the ingredient list (search, category filter, Add Ingredient) and
+ * the form with base unit, unit of measurement and purchase unit.
+ */
 function IngredientConfigurationEditor({ configuration, onSaved }: {
-  configuration: Awaited<ReturnType<typeof loadIngredientRecipeConfiguration>> | null;
+  configuration: IngredientRecipeConfiguration | null;
   onSaved: OwnerPortalNotify;
 }) {
-  const [ingredientId, setIngredientId] = useState('');
-  const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [unit, setUnit] = useState('kg');
-  const [categoryName, setCategoryName] = useState('');
-  const [savingIngredient, setSavingIngredient] = useState(false);
-  const [savingCategory, setSavingCategory] = useState(false);
   const ingredients = configuration?.ingredients ?? [];
   const categories = configuration?.categories ?? [];
-  const selectedIngredient = ingredients.find((item) => item.id === ingredientId);
-  const unitOptions = [...new Set(['g', 'kg', 'ml', 'L', 'pcs', 'bottle', 'pack', 'tsp', 'tbsp', unit])];
-
-  const selectIngredient = (value: string) => {
-    const selected = ingredients.find((item) => item.name === value);
-    setIngredientId(selected?.id ?? '');
-    setName(selected?.name ?? '');
-    setCategoryId(selected?.category_id ?? categories[0]?.id ?? '');
-    setUnit(selected?.unit ?? 'kg');
+  const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All categories');
+  const [form, setForm] = useState<IngredientForm | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [categoryName, setCategoryName] = useState('');
+  const filterId = categories.find((category) => category.name === categoryFilter)?.id ?? null;
+  const table = ingredientTableRows(ingredients, categories, configuration?.purchaseUnits ?? [], { query, categoryId: filterId });
+  const open = (id: string | null) => {
+    const item = id ? ingredients.find((ingredient) => ingredient.id === id) : null;
+    const pack = id ? configuration?.purchaseUnits.find((unit) => unit.ingredient_id === id) : null;
+    setErrors([]);
+    setSaveError('');
+    setForm({
+      id: item?.id ?? null,
+      name: item?.name ?? '',
+      categoryId: item?.category_id ?? '',
+      baseUnit: item ? baseUnitOf(item.unit) ?? '' : '',
+      unit: item?.unit ?? '',
+      purchaseLabel: pack?.package_label ?? '',
+      purchaseQuantity: pack ? String(pack.package_quantity) : '',
+    });
   };
-
-  const saveIngredient = async () => {
-    if (!configuration) {
-      await onSaved('Ingredient configuration is unavailable.', true);
-      return;
-    }
-    if (!name.trim() || !categoryId || !unit.trim()) {
-      await onSaved('Enter an ingredient name, category, and unit.', true);
-      return;
-    }
-    setSavingIngredient(true);
+  const save = async () => {
+    if (!form) return;
+    const found = ingredientFormErrors(form, ingredients);
+    setErrors(found);
+    setSaveError('');
+    if (found.length) return;
+    setSaving(true);
     try {
-      if (ingredientId) {
-        await updateIngredient(ingredientId, { name, category_id: categoryId, unit });
-      } else {
-        await createIngredient({ name, category_id: categoryId, unit });
-      }
-      await onSaved(ingredientId ? 'Ingredient updated.' : 'Ingredient created.');
-      setIngredientId('');
-      setName('');
+      const values = { name: form.name, category_id: form.categoryId, unit: form.unit };
+      const saved = form.id ? await updateIngredient(form.id, values) : await createIngredient(values);
+      await saveIngredientPurchaseUnit(saved, form.purchaseLabel.trim()
+        ? { label: form.purchaseLabel, quantity: Number(form.purchaseQuantity) }
+        : null);
+      setForm(null);
+      await onSaved(form.id ? `${saved.name} saved.` : `${saved.name} added.`);
     } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.', true);
+      setSaveError(ownerPortalErrorText(reason, 'The ingredient could not be saved.'));
     } finally {
-      setSavingIngredient(false);
+      setSaving(false);
     }
   };
-
   const saveCategory = async () => {
-    if (!categoryName.trim()) {
-      await onSaved('Enter a category name.', true);
-      return;
-    }
-    setSavingCategory(true);
+    if (!categoryName.trim()) { await onSaved('Enter a category name.', true); return; }
     try {
-      const category = await createIngredientCategory(categoryName);
-      setCategoryId(category.id);
+      await createIngredientCategory(categoryName);
       setCategoryName('');
       await onSaved('Ingredient category saved.');
     } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Category save failed.', true);
-    } finally {
-      setSavingCategory(false);
+      await onSaved(reason instanceof Error ? reason.message : 'The category could not be saved.', true);
     }
   };
-
+  const set = (patch: Partial<IngredientForm>) => setForm((current) => (current ? { ...current, ...patch } : current));
   return (
-    <Panel title="Ingredients, categories & units">
+    <Panel title="Ingredients & supplies">
       {configuration === null ? <Text style={styles.muted}>Ingredient configuration is unavailable.</Text> : (
         <>
-          <Text style={styles.muted}>{ingredients.length} ingredients · {categories.length} categories</Text>
-          <Select
-            value={selectedIngredient?.name ?? 'Create ingredient'}
-            options={['Create ingredient', ...ingredients.map((item) => item.name)]}
-            onChange={selectIngredient}
-          />
-          <TextInput value={name} onChangeText={setName} placeholder="Ingredient or supply name" style={styles.input} />
-          <Select
-            value={categories.find((category) => category.id === categoryId)?.name ?? 'Choose category'}
-            options={categories.map((category) => category.name)}
-            onChange={(value) => setCategoryId(categories.find((category) => category.name === value)?.id ?? '')}
-          />
-          <Select value={unit} options={unitOptions} onChange={setUnit} />
-          <Pressable disabled={savingIngredient} onPress={() => void saveIngredient()} style={styles.loginButton}>
-            <Text style={styles.loginButtonText}>{savingIngredient ? 'Saving…' : ingredientId ? 'Save ingredient' : 'Add ingredient'}</Text>
-          </Pressable>
-          <View style={styles.line}>
-            <TextInput value={categoryName} onChangeText={setCategoryName} placeholder="New category name" style={[styles.input, { flex: 1 }]} />
-            <Pressable disabled={savingCategory} onPress={() => void saveCategory()} style={styles.outline}>
-              <Text style={styles.pinkText}>{savingCategory ? 'Saving…' : 'Add category'}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+            <TextInput value={query} onChangeText={setQuery} placeholder="Search ingredients…" accessibilityLabel="Search ingredients" style={styles.search} />
+            <View style={{ marginBottom: 16 }}><Select value={categoryFilter} options={['All categories', ...categories.map((category) => category.name)]} onChange={setCategoryFilter} /></View>
+            <Pressable accessibilityRole="button" onPress={() => open(null)} style={[styles.loginButton, { marginTop: 0, marginBottom: 16, paddingHorizontal: 18 }]}>
+              <Text style={styles.loginButtonText}>Add Ingredient</Text>
             </Pressable>
           </View>
+          {table.rows.length ? (
+            <Table headers={INGREDIENT_HEADERS} rows={table.rows} onRowPress={(index) => open(table.ingredients[index].id)} rowLabel={(index) => `Edit ${table.ingredients[index].name}`} />
+          ) : <Text style={styles.empty}>No ingredients match the search or category.</Text>}
+          {form ? (
+            <View style={{ marginTop: 16, maxWidth: 520 }}>
+              <Text style={styles.panelTitle}>{form.id ? `Edit ${form.name || 'ingredient'}` : 'Add Ingredient'}</Text>
+              <Text style={styles.label}>Name</Text>
+              <TextInput value={form.name} onChangeText={(value) => set({ name: value })} accessibilityLabel="Ingredient name" placeholder="e.g. Nori" style={styles.input} />
+              <Text style={styles.label}>Category</Text>
+              <Select value={categories.find((category) => category.id === form.categoryId)?.name ?? 'Choose category'} options={categories.map((category) => category.name)} onChange={(value) => set({ categoryId: categories.find((category) => category.name === value)?.id ?? '' })} />
+              <Text style={styles.label}>Base unit</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {BASE_UNITS.map((base) => (
+                  <Pressable key={base} accessibilityRole="radio" accessibilityState={{ checked: form.baseUnit === base }} onPress={() => set({ baseUnit: base, unit: UNITS_BY_BASE[base].includes(form.unit) ? form.unit : base })} style={[styles.outline, { marginTop: 0 }, form.baseUnit === base && { backgroundColor: C.pink }]}>
+                    <Text style={[styles.pinkText, form.baseUnit === base && { color: '#FFFFFF' }]}>{base}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.label}>Unit of measurement (stock is kept in this unit)</Text>
+              <Select value={form.unit || 'Choose unit'} options={form.baseUnit ? UNITS_BY_BASE[form.baseUnit as BaseUnit] : []} onChange={(value) => set({ unit: value })} />
+              <Text style={styles.label}>Purchase unit and conversion factor (optional)</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                <TextInput value={form.purchaseLabel} onChangeText={(value) => set({ purchaseLabel: value })} accessibilityLabel="Purchase unit name" placeholder="e.g. One bottle" style={[styles.input, { flex: 1 }]} />
+                <Text style={styles.body}>=</Text>
+                <TextInput value={form.purchaseQuantity} onChangeText={(value) => set({ purchaseQuantity: value })} keyboardType="decimal-pad" accessibilityLabel="Conversion factor" placeholder="e.g. 360" style={[styles.input, { width: 100 }]} />
+                <Text style={styles.body}>{form.unit || 'unit'}</Text>
+              </View>
+              <Text style={styles.muted}>Stock-In converts a purchase unit into the unit of measurement with this factor.</Text>
+              {errors.length ? (
+                <View style={[styles.errorBanner, { marginTop: 10 }]} accessibilityRole="alert">
+                  {errors.map((message) => <Text key={message} style={styles.errorText}>{message}</Text>)}
+                </View>
+              ) : null}
+              {saveError ? <SaveErrorWithRetry message={saveError} onRetry={() => void save()} /> : null}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setForm(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
+                  <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+          <View style={[styles.line, { marginTop: 12 }]}>
+            <TextInput value={categoryName} onChangeText={setCategoryName} placeholder="New category name" accessibilityLabel="New category name" style={[styles.input, { flex: 1 }]} />
+            <Pressable accessibilityRole="button" onPress={() => void saveCategory()} style={styles.outline}><Text style={styles.pinkText}>Add category</Text></Pressable>
+          </View>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+type RecipeDraftLine = { key: string; ingredientId: string; quantity: string };
+
+/**
+ * OW-22 c4–c10: every product's recipe ("Recipe required" when it has none), and
+ * a recipe form for a product or an add-on with add, edit and remove.
+ */
+function RecipesEditor({ products, configuration, onSaved }: {
+  products: ProductManagementItem[];
+  configuration: IngredientRecipeConfiguration | null;
+  onSaved: OwnerPortalNotify;
+}) {
+  const [shared, setShared] = useState<SharedRecipeRecord[]>([]);
+  const [addons, setAddons] = useState<MenuAddonConfiguration['addons']>([]);
+  const [target, setTarget] = useState<{ kind: 'product' | 'addon'; id: string } | null>(null);
+  const [lines, setLines] = useState<RecipeDraftLine[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    loadSharedRecipes().then(setShared).catch(() => setShared([]));
+    loadMenuAddonConfiguration().then((result) => setAddons(result.addons)).catch(() => setAddons([]));
+  }, []);
+  const ingredients = (configuration?.ingredients ?? []).filter((item) => item.active);
+  const ingredientById = new Map(ingredients.map((item) => [item.id, item]));
+  const table = recipeTableRows(products, configuration?.recipeIngredients ?? [], shared, (id) => ingredientById.get(id)?.name ?? id);
+  const targetName = target ? (target.kind === 'product' ? products.find((item) => item.id === target.id)?.product_name : addons.find((item) => item.id === target.id)?.name) ?? '' : '';
+  const open = (kind: 'product' | 'addon', id: string) => {
+    const current = kind === 'product'
+      ? (configuration?.recipeIngredients ?? []).filter((line) => line.product_id === id && line.ingredient_id !== 'prepared-batter')
+      : (configuration?.addonRecipes ?? []).filter((line) => line.addon_id === id);
+    setTarget({ kind, id });
+    setErrors([]);
+    setSaveError('');
+    setLines(current.map((line, index) => ({ key: `${line.ingredient_id}-${index}`, ingredientId: line.ingredient_id, quantity: String(line.quantity_required) })));
+  };
+  const save = async () => {
+    if (!target) return;
+    const found: string[] = [];
+    const seen = new Set<string>();
+    const payload = lines.map((line) => {
+      const ingredient = ingredientById.get(line.ingredientId);
+      const quantity = Number(line.quantity);
+      if (!ingredient) found.push('Choose an ingredient for every line.');
+      else if (seen.has(line.ingredientId)) found.push(`${ingredient.name} appears twice.`);
+      else if (!line.quantity.trim() || !Number.isFinite(quantity) || quantity <= 0) found.push(`Enter a required quantity greater than zero for ${ingredient.name}.`);
+      seen.add(line.ingredientId);
+      return { ingredient_id: line.ingredientId, quantity_required: quantity, unit_of_measure: ingredient?.unit ?? '' };
+    });
+    setErrors([...new Set(found)]);
+    setSaveError('');
+    if (found.length) return;
+    setSaving(true);
+    try {
+      if (target.kind === 'product') {
+        // The shared batter recipe supplies prepared batter; keep any prepared-batter line as it is.
+        const batter = (configuration?.recipeIngredients ?? []).filter((line) => line.product_id === target.id && line.ingredient_id === 'prepared-batter')
+          .map((line) => ({ ingredient_id: line.ingredient_id, quantity_required: Number(line.quantity_required), unit_of_measure: line.unit_of_measure }));
+        await saveProductRecipe(target.id, [...batter, ...payload]);
+      } else {
+        await saveAddonRecipe(target.id, payload);
+      }
+      setTarget(null);
+      await onSaved(`Recipe for ${targetName} saved. It applies to future sales only.`);
+    } catch (reason: unknown) {
+      setSaveError(ownerPortalErrorText(reason, 'The recipe could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Panel title="Recipes">
+      <Text style={styles.muted}>Takoyaki use prepared batter (the shared batter recipe), not the raw batter ingredients. A product marked “Recipe required” cannot be sold. Changes apply to future sales only.</Text>
+      {configuration === null ? <Text style={styles.muted}>Recipe configuration is unavailable.</Text> : (
+        <>
+          <Table headers={RECIPE_HEADERS} rows={table.rows} onRowPress={(index) => open('product', products[index].id)} rowLabel={(index) => `Edit recipe for ${products[index].product_name}`} />
+          <Text style={[styles.panelTitle, { marginTop: 14 }]}>Add-on recipes</Text>
+          {addons.map((addon) => {
+            const addonLines = (configuration.addonRecipes ?? []).filter((line) => line.addon_id === addon.id);
+            return (
+              <Pressable key={addon.id} accessibilityRole="button" accessibilityLabel={`Edit recipe for ${addon.name}`} onPress={() => open('addon', addon.id)} style={styles.line}>
+                <Text style={styles.body}>{addon.name}</Text>
+                <Text style={styles.body}>{addonLines.length ? addonLines.map((line) => `${ingredientById.get(line.ingredient_id)?.name ?? line.ingredient_id}: ${line.quantity_required} ${line.unit_of_measure}`).join(' · ') : 'No recipe (consumes nothing)'} ›</Text>
+              </Pressable>
+            );
+          })}
+          {target ? (
+            <View style={{ marginTop: 16, maxWidth: 560 }}>
+              <Text style={styles.panelTitle}>Recipe for {targetName}</Text>
+              {lines.length === 0 ? <Text style={styles.muted}>No ingredients yet. Select Add ingredient.</Text> : null}
+              {lines.map((line) => {
+                const ingredient = ingredientById.get(line.ingredientId);
+                return (
+                  <View key={line.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <View style={{ flex: 1 }}>
+                      <Select value={ingredient?.name ?? 'Choose ingredient'} options={ingredients.map((item) => item.name)} onChange={(value) => {
+                        const next = ingredients.find((item) => item.name === value);
+                        if (next) setLines((current) => current.map((item) => (item.key === line.key ? { ...item, ingredientId: next.id } : item)));
+                      }} />
+                    </View>
+                    <TextInput value={line.quantity} onChangeText={(quantity) => setLines((current) => current.map((item) => (item.key === line.key ? { ...item, quantity } : item)))} keyboardType="decimal-pad" accessibilityLabel={`Required quantity of ${ingredient?.name ?? 'ingredient'}`} placeholder="Quantity" style={[styles.input, { width: 100 }]} />
+                    <Text style={[styles.body, { width: 50 }]}>{ingredient?.unit ?? ''}</Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${ingredient?.name ?? 'line'}`} onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={[styles.outline, { marginTop: 0 }]}>
+                      <Text style={styles.pinkText}>Remove</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+              <Pressable accessibilityRole="button" onPress={() => {
+                const next = ingredients.find((item) => !lines.some((line) => line.ingredientId === item.id));
+                if (next) setLines((current) => [...current, { key: `${next.id}-${Date.now()}`, ingredientId: next.id, quantity: '' }]);
+              }} style={styles.outline}><Text style={styles.pinkText}>Add ingredient</Text></Pressable>
+              <Text style={styles.muted}>Quantities are per unit sold, in the ingredient’s unit of measurement.</Text>
+              {errors.length ? (
+                <View style={[styles.errorBanner, { marginTop: 10 }]} accessibilityRole="alert">
+                  {errors.map((message) => <Text key={message} style={styles.errorText}>{message}</Text>)}
+                </View>
+              ) : null}
+              {saveError ? <SaveErrorWithRetry message={saveError} onRetry={() => void save()} /> : null}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setTarget(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
+                  <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
         </>
       )}
     </Panel>
@@ -2702,16 +2889,11 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
   stockSettings: any;
   onSaved: OwnerPortalNotify;
 }) {
-  const [productId, setProductId] = useState(products[0]?.id ?? '');
-  const [ingredientId, setIngredientId] = useState(configuration?.ingredients?.[0]?.id ?? '');
-  const [recipeQty, setRecipeQty] = useState('1');
-  const [recipeUnit, setRecipeUnit] = useState('kg');
   const [thresholdId, setThresholdId] = useState(stockSettings?.inventory?.[0]?.ingredient_id ?? '');
   const [thresholdBranch, setThresholdBranch] = useState(stockSettings?.inventory?.[0]?.branch_id ?? '');
   const [threshold, setThreshold] = useState('0');
   const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7));
   const [saving, setSaving] = useState(false);
-  const recipeLines = configuration?.recipeIngredients ?? [];
   const ingredients = configuration?.ingredients ?? [];
   const inventorySettings = stockSettings?.inventory ?? [];
   const selectedThreshold = inventorySettings.find((item: any) =>
@@ -2721,37 +2903,6 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
     'Choose inventory record',
     ...inventorySettings.map((item: any) => `${item.branch_id} · ${item.ingredient_id}`),
   ];
-
-  const saveRecipe = async () => {
-    const quantity = Number(recipeQty);
-    if (!productId || !ingredientId || !configuration) {
-      await onSaved('Choose a product and ingredient after configuration data has loaded.', true);
-      return;
-    }
-    if (!Number.isFinite(quantity) || quantity <= 0 || !recipeUnit.trim()) {
-      await onSaved('Enter a positive recipe quantity and its unit of measure.', true);
-      return;
-    }
-    setSaving(true);
-    try {
-      const existing = recipeLines
-        .filter((line: any) => line.product_id === productId && line.ingredient_id !== ingredientId)
-        .map((line: any) => ({
-          ingredient_id: line.ingredient_id,
-          quantity_required: Number(line.quantity_required),
-          unit_of_measure: line.unit_of_measure,
-        }));
-      await saveProductRecipe(productId, [
-        ...existing,
-        { ingredient_id: ingredientId, quantity_required: quantity, unit_of_measure: recipeUnit.trim() },
-      ]);
-      await onSaved('Recipe line saved for future sales calculations.');
-    } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Recipe save failed.', true);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const saveThreshold = async () => {
     const minimumStock = Number(threshold);
@@ -2798,25 +2949,7 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
       <View style={styles.grid}>
         <OwnerProductEditor products={products} onSaved={onSaved} />
         <IngredientConfigurationEditor configuration={configuration} onSaved={onSaved} />
-        <Panel title="Product recipes">
-          <Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text>
-          <Select
-            value={products.find((item) => item.id === productId)?.product_name ?? 'Choose product'}
-            options={products.map((item) => item.product_name)}
-            onChange={(value) => setProductId(products.find((item) => item.product_name === value)?.id ?? '')}
-          />
-          <Select
-            value={ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'}
-            options={ingredients.map((item: any) => item.name)}
-            onChange={(value) => setIngredientId(ingredients.find((item: any) => item.name === value)?.id ?? '')}
-          />
-          <TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} />
-          <TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} />
-          <Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}>
-            <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text>
-          </Pressable>
-          <Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text>
-        </Panel>
+        <RecipesEditor products={products} configuration={configuration} onSaved={onSaved} />
         <Panel title="Minimum stock thresholds">
           <Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text>
           <Select
