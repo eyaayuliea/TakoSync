@@ -963,6 +963,9 @@ export type StaffAccount = {
   active: boolean;
   must_change_password?: boolean;
   created_at: string;
+  /** OW-27 c9: set for 15 minutes after 5 failed logins (ST-01 c3). */
+  locked_until?: string | null;
+  failed_login_attempts?: number | null;
 };
 
 export async function signInStaff(username: string, password: string, clientOverride?: StaffServiceClient): Promise<AppUser> {
