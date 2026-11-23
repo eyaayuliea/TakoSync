@@ -7,7 +7,16 @@
  *
  * This module has no imports so it can be unit tested directly.
  */
+/** OW-31 c3: shown when the request never reached the server. */
+export const FUNCTION_CONNECTION_MESSAGE = 'Unable to connect. Please check your internet connection and try again.';
+
 export async function functionErrorMessage(error: unknown, fallback: string): Promise<string> {
+  // supabase-js raises FunctionsFetchError when the request could not be sent (offline).
+  const name = (error as { name?: unknown } | null)?.name;
+  const text = (error as { message?: unknown } | null)?.message;
+  if (name === 'FunctionsFetchError' || (typeof text === 'string' && /failed to send a request|failed to fetch|network/i.test(text))) {
+    return FUNCTION_CONNECTION_MESSAGE;
+  }
   const context = (error as { context?: unknown } | null)?.context;
   if (!context || typeof (context as { json?: unknown }).json !== 'function') return fallback;
   try {
