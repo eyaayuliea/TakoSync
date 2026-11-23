@@ -18,8 +18,8 @@ export type SaleVoidRequestSale = {
 };
 
 /**
- * ST-07 c5, c7: whether this sale is voided and how the owner's review stands,
- * and the Void Sale action while it is still allowed (c1, c8).
+ * ST-07 c5, c7, c9: what happened to this sale's void, and the Request Void
+ * action when it is still allowed (c1, c6).
  */
 export function SaleVoidStatusPanel({
   state,
@@ -34,33 +34,35 @@ export function SaleVoidStatusPanel({
   let tone: 'error' | 'warning' | 'neutral' = 'neutral';
   if (state.kind === 'voided') {
     tone = 'error';
-    const request = state.request;
-    const review = !request ? ''
-      : request.status === 'pending_review' ? ' Owner review: Pending Review.'
-      : request.status === 'reviewed' ? ` Owner review: Reviewed${request.decidedAt ? ` on ${approvalDateTime(request.decidedAt)}` : ''}.`
-      : ` Owner review: Flagged${request.decisionReason ? `: “${request.decisionReason}”` : ''}.`;
-    message = `VOID${request ? ` · ${request.reference}` : ''}. Voided`
-      + `${request?.requestedAt ? ` on ${approvalDateTime(request.requestedAt)}` : ''}`
-      + `${request?.requestedByName ? ` by ${request.requestedByName}` : ''}. This sale is not counted in sales`
-      + ` totals and its ingredients were returned to stock.${review}`;
+    message = `Voided${state.request?.decidedAt ? ` on ${approvalDateTime(state.request.decidedAt)}` : ''}`
+      + `${state.request?.decidedByName ? ` by ${state.request.decidedByName}` : ''}. This sale is not counted in sales`
+      + ' totals and its ingredients were returned to stock.';
+  } else if (state.kind === 'pending') {
+    tone = 'warning';
+    message = `Void request ${state.request.reference} is Pending (sent ${approvalDateTime(state.request.requestedAt)}).`
+      + ' The sale still counts in the totals until the owner decides.';
+  } else if (state.kind === 'rejected') {
+    message = `The owner rejected void request ${state.request.reference}`
+      + `${state.request.decisionReason ? `: “${state.request.decisionReason}”` : ''}. The sale stays Completed.`;
   } else {
-    message = 'This sale has not been voided.';
+    message = 'No void has been requested for this sale.';
   }
+  const showHint = !availability.allowed && (state.kind === 'none' || state.kind === 'rejected');
   return (
     <ApprovalStatusPanel
       title="Void"
       message={message}
       tone={tone}
-      actionLabel={availability.allowed ? 'Void Sale' : undefined}
+      actionLabel={availability.allowed ? 'Request Void' : undefined}
       onAction={availability.allowed ? onRequestVoid : undefined}
-      hint={state.kind === 'none' && !availability.allowed ? availability.reason : undefined}
+      hint={showHint && !availability.allowed ? availability.reason : undefined}
     />
   );
 }
 
 /**
- * ST-07 c2–c4: the void form. It shows the sale, requires a reason, and asks
- * for a confirmation before the sale is voided.
+ * ST-07 c2–c4: the void request form. It shows the sale, requires a reason,
+ * and asks for a confirmation before saving.
  */
 export function SaleVoidRequestModal({
   visible,
@@ -77,10 +79,10 @@ export function SaleVoidRequestModal({
   return (
     <ReasonRequestModal
       visible={visible}
-      title="Void Sale"
-      intro="Voiding takes effect right away: the sale is marked VOID, leaves the sales totals, and its ingredients return to stock. The owner reviews every void."
-      confirmTitle="Void this sale?"
-      confirmIntro="This cannot be undone. The void is saved with your employee account and the time, and is sent to the owner for review."
+      title="Request Void"
+      intro="The owner reviews every void. The sale stays recorded and counted until it is approved."
+      confirmTitle="Send this void request?"
+      confirmIntro="The owner will be asked to approve or reject it. You cannot edit the request after sending it."
       heading={sale.transactionReference}
       lines={sale.lines.map((line) => ({
         id: line.id,
@@ -91,7 +93,7 @@ export function SaleVoidRequestModal({
       reasonPlaceholder="e.g. Wrong flavor entered"
       reasonAccessibilityLabel="Reason for the void, required"
       maxLength={SALE_VOID_REASON_MAX_LENGTH}
-      submitLabel="Void Sale"
+      submitLabel="Send Request"
       validateReason={validateSaleVoidReason}
       onClose={onClose}
       onSubmit={onSubmit}

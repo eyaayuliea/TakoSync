@@ -294,7 +294,7 @@ export type Database = {
         branch_id: string;
         requested_by: string;
         reason: string;
-        status: 'pending_review' | 'reviewed' | 'flagged' | 'pending' | 'rejected';
+        status: 'pending' | 'approved' | 'rejected';
         requested_at: string;
         decided_by: string | null;
         decided_at: string | null;
@@ -702,7 +702,7 @@ export type Database = {
         Args: { p_sale_id: string };
         Returns: Json;
       };
-      void_sale: {
+      request_sale_void: {
         Args: { p_sale_id: string; p_reason: string; p_client_request_id: string };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];
       };
@@ -726,8 +726,8 @@ export type Database = {
         Args: { p_branch_id: string; p_closing_cash_count: number; p_client_request_id: string };
         Returns: Database['public']['Tables']['daily_closings']['Row'];
       };
-      review_sale_void: {
-        Args: { p_void_id: string; p_decision: 'reviewed' | 'flagged'; p_reason?: string | null };
+      decide_sale_void: {
+        Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];
       };
     };

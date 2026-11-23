@@ -1,6 +1,5 @@
-// OM-10 Void Report and OM-22 Reversal Report helpers. The Reversal Report lists
-// approved entry reversals only (OM-22 c4); the Void Report lists every voided
-// sale, whatever its review status (OW-10 c6).
+// OM-10 Void Report and OM-22 Reversal Report: read-only lists of approved
+// requests. Rejected requests are never listed (OM-22 c4).
 
 export function approvedOnly<T extends { status: string }>(requests: T[]): T[] {
   return requests.filter((request) => request.status === 'approved');
