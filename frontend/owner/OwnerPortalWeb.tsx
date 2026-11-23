@@ -9,7 +9,9 @@ import {
   buildWebBranchSalesReport,
   buildWebProductsSoldReport,
   buildWebTransactionSummaryReport,
+  buildSaleDetailRows,
   PRODUCTS_SOLD_HEADERS,
+  SALE_DETAIL_HEADERS,
   TRANSACTION_SUMMARY_HEADERS,
 } from './ownerPortalSalesReports';
 import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
@@ -105,21 +107,22 @@ import {
 } from './ownerPortalReports';
 import { reviewStyles } from './ownerPortalReviewStyles';
 
-type Page = 'Dashboard' | 'Inventory Monitoring' | 'Sales Reports' | 'Inventory Reports' | 'Configuration' | 'Reconciliation'
+type Page = 'Dashboard' | 'Sales Monitoring' | 'Inventory Monitoring' | 'Sales Reports' | 'Inventory Reports' | 'Configuration' | 'Reconciliation'
   | 'Void & Reversal Review' | 'Staff Accounts' | 'Branches' | 'Inventory Movements' | 'Audit History' | 'Profile';
 type Branch = string;
 type InventoryRow = OwnerPortalInventoryRow;
-// OW-02 c1: the sections in the order of the project charter (2 Dashboard, 4 Inventory
+// OW-02 c1: the sections in the order of the project charter (2 Dashboard, 3 Sales Monitoring, 4 Inventory
 // Monitoring, 5–6 Reports, 7–10 Configuration, 11 Reconciliation, 12 Void and Reversal
 // Review, 13 Staff Accounts, 14 Branches, 15 Audit History, 16 Profile).
 const nav: Array<[Page, string]> = [
-  ['Dashboard', '⌂'], ['Inventory Monitoring', '▦'], ['Sales Reports', '▤'], ['Inventory Reports', '▤'],
+  ['Dashboard', '⌂'], ['Sales Monitoring', '₱'], ['Inventory Monitoring', '▦'], ['Sales Reports', '▤'], ['Inventory Reports', '▤'],
   ['Configuration', '⚙'], ['Reconciliation', '✓'], ['Void & Reversal Review', '↺'], ['Staff Accounts', '♙'],
   ['Branches', '⌘'], ['Inventory Movements', '↕'], ['Audit History', '◷'], ['Profile', '☺'],
 ];
 // The data each page needs before it can show its content (OW-02 c9).
 const PAGE_DATA: Record<Page, PortalDataset[]> = {
   Dashboard: ['inventory', 'sales', 'reviews'],
+  'Sales Monitoring': ['inventory'],
   'Inventory Monitoring': ['inventory'],
   'Sales Reports': [],
   'Inventory Reports': ['inventory'],
@@ -432,6 +435,7 @@ export default function OwnerPortalWeb() {
             />
           )}
           {page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}
+          {page === 'Sales Monitoring' && <SalesMonitoring branches={inventoryData?.branches ?? []} />}
           {page === 'Inventory Monitoring' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
           {page === 'Inventory Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
           {page === 'Reconciliation' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
@@ -710,6 +714,136 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
           ) : <Text style={styles.empty}>No low-stock or expiration alerts.</Text>}
         </Panel>
       </View>
+    </>
+  );
+}
+
+/**
+ * OW-03 Multi-Branch Sales Monitoring: the sales of the applied period and
+ * branch, read-only. Voided sales are listed but never counted.
+ */
+function SalesMonitoring({ branches }: { branches: OwnerPortalBranch[] }) {
+  const narrow = useWindowDimensions().width < 720;
+  // OW-03 c1: the filters apply on "Apply"; the default is the current reporting period.
+  const DEFAULT_FILTER = { period: 'This Month' as ReportingPeriod, startDate: manilaDateKey(), endDate: manilaDateKey(), branch: 'All Branches' };
+  const [draft, setDraft] = useState(DEFAULT_FILTER);
+  const [applied, setApplied] = useState(DEFAULT_FILTER);
+  const [retryKey, setRetryKey] = useState(0);
+  const [sales, setSales] = useState<Awaited<ReturnType<typeof loadOwnerSalesData>> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+  const range = useMemo(
+    () => getManilaReportingRange(applied.period, new Date(), applied.startDate, applied.endDate),
+    [applied],
+  );
+  const draftRange = getManilaReportingRange(draft.period, new Date(), draft.startDate, draft.endDate);
+  const branchId = branches.find((item) => item.name === applied.branch)?.id ?? null;
+
+  useEffect(() => {
+    let active = true;
+    if (!range) return () => { active = false; };
+    setLoading(true);
+    setError('');
+    setSelectedSaleId(null);
+    loadOwnerSalesData({ start: range.start, end: range.end, branchId, includeVoided: true })
+      .then((result) => { if (active) setSales(result); })
+      .catch((reason: unknown) => { if (active) { setSales(null); setError(ownerPortalErrorText(reason, 'The sales could not be loaded. Please try again.')); } })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [range, branchId, retryKey]);
+
+  const branchNames = new Map(branches.map((item) => [item.id, item.name]));
+  const shownBranches = branchId ? branches.filter((item) => item.id === branchId) : branches;
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
+  const branchReport = sales ? buildWebBranchSalesReport(sales.sales, shownBranches) : null;
+  const productsReport = sales ? buildWebProductsSoldReport(sales.sales, sales.items, sales.addons ?? []) : null;
+  const transactions = sales
+    ? buildWebTransactionSummaryReport({
+      sales: sales.sales,
+      items: sales.items,
+      branchName: (id) => branchNames.get(id) ?? 'Branch unavailable',
+      formatDateTime: (iso) => dateFormatter.format(new Date(iso)),
+    })
+    : null;
+  const selectedIndex = transactions && selectedSaleId ? transactions.saleIds.indexOf(selectedSaleId) : -1;
+  const selectedSale = sales && selectedSaleId ? sales.sales.find((sale) => sale.id === selectedSaleId) ?? null : null;
+  const detail = sales && selectedSaleId ? buildSaleDetailRows(selectedSaleId, sales.items, sales.addons ?? []) : null;
+
+  return (
+    <>
+      <View style={[styles.toolbar, { flexWrap: 'wrap' }]}>
+        <Text style={styles.section}>Sales across branches</Text>
+        <Select value={draft.period} options={['Today', 'This Week', 'This Month', 'Custom']} onChange={(value) => setDraft((current) => ({ ...current, period: value as ReportingPeriod }))} />
+        <Select value={draft.branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={(value) => setDraft((current) => ({ ...current, branch: value }))} />
+        <Pressable accessibilityRole="button" disabled={!draftRange || loading} onPress={() => { setApplied(draft); setRetryKey((key) => key + 1); }} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 18 }, (!draftRange || loading) && { opacity: 0.5 }]}>
+          <Text style={styles.loginButtonText}>Apply</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" disabled={loading} onPress={() => { setDraft(DEFAULT_FILTER); setApplied(DEFAULT_FILTER); setRetryKey((key) => key + 1); }} style={[styles.outline, { marginTop: 0 }]}>
+          <Text style={styles.pinkText}>Reset</Text>
+        </Pressable>
+      </View>
+      {draft.period === 'Custom' ? (
+        <View style={[styles.row, { flexWrap: 'wrap' }]}>
+          <TextInput value={draft.startDate} onChangeText={(value) => setDraft((current) => ({ ...current, startDate: value }))} placeholder="Start date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+          <TextInput value={draft.endDate} onChangeText={(value) => setDraft((current) => ({ ...current, endDate: value }))} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
+        </View>
+      ) : null}
+      {!draftRange ? <Text style={styles.errorText}>Enter a valid date range (YYYY-MM-DD, start not after end).</Text> : null}
+      <Text style={styles.muted}>
+        Showing {range ? formatReportPeriod(applied.period, range) : '—'} · {applied.branch} · Read-only. Voided sales are listed but never counted.
+      </Text>
+      {error ? <ReportErrorBanner message={error} onRetry={() => setRetryKey((key) => key + 1)} /> : null}
+      {loading ? <SectionLoading label="Loading sales…" /> : null}
+      {!loading && sales && transactions ? (transactions.rows.length === 0 ? (
+        // OW-03 c9: a period without sales.
+        <Text style={styles.empty}>No sales were recorded for this period and branch. Choose another period, or select Reset.</Text>
+      ) : (
+        <>
+          <View style={styles.grid}>
+            {[
+              ['Combined Sales', peso(branchReport?.total ?? 0), `${transactions.completed} completed transactions`],
+              ['Voided Transactions', String(transactions.voided), 'Listed, not counted'],
+              ['Items Sold', String(productsReport?.quantity ?? 0), 'Voided sales excluded'],
+            ].map(([label, value, note]) => (
+              <View style={styles.metric} key={label}>
+                <Text style={styles.metricLabel}>{label}</Text>
+                <Text style={styles.metricValue}>{value}</Text>
+                <Text style={styles.muted}>{note}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={styles.two}>
+            <Panel title="Sales per branch">
+              <Table headers={BRANCH_SALES_HEADERS} rows={branchReport?.rows ?? []} />
+            </Panel>
+            <Panel title="Product sales summary">
+              {productsReport?.productRows.length ? <Table headers={PRODUCTS_SOLD_HEADERS} rows={productsReport.productRows} /> : <Text style={styles.empty}>No products were sold.</Text>}
+              {productsReport?.addonRows.length ? <Table headers={ADDONS_SOLD_HEADERS} rows={productsReport.addonRows} /> : null}
+            </Panel>
+          </View>
+          <Panel title="Transactions">
+            <Text style={styles.muted}>Select a transaction to see its items.</Text>
+            <Table
+              headers={TRANSACTION_SUMMARY_HEADERS}
+              rows={transactions.rows}
+              onRowPress={(index) => setSelectedSaleId(transactions.saleIds[index])}
+              rowLabel={(index) => `Open transaction ${transactions.rows[index][0]}`}
+            />
+          </Panel>
+          {selectedSale && detail && selectedIndex >= 0 ? (
+            <Panel title={`Transaction ${selectedSale.transaction_reference}`}>
+              <Text style={styles.body}>
+                {transactions.rows[selectedIndex][1]} · {transactions.rows[selectedIndex][2]} · {transactions.rows[selectedIndex][3]} · {transactions.rows[selectedIndex][6]}
+                {transactions.rows[selectedIndex][5] !== '—' ? ` · ${transactions.rows[selectedIndex][5]}` : ''}
+              </Text>
+              <Table headers={SALE_DETAIL_HEADERS} rows={[...detail.rows, ['Total', '', '', peso(detail.total)]]} />
+              <Text style={styles.muted}>{transactions.rows[selectedIndex][4].replace('\n', ' · ')}</Text>
+              <Pressable accessibilityRole="button" onPress={() => setSelectedSaleId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.pinkText}>Close details</Text></Pressable>
+            </Panel>
+          ) : null}
+        </>
+      )) : null}
     </>
   );
 }
@@ -1807,22 +1941,31 @@ function ReportActions({ doc }: { doc: ReportDocument | null }) {
   );
 }
 function Panel({ title, action, children }: any) { return <View style={styles.panel}><View style={styles.row}><Text style={styles.panelTitle}>{title}</Text>{action && <Pressable onPress={action}><Text style={styles.pinkText}>Refresh</Text></Pressable>}</View>{children}</View>; }
-function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
+function Table({ headers, rows, onRowPress, rowLabel }: {
+  headers: string[];
+  rows: string[][];
+  /** Makes each row a button (e.g. OW-03 c8: open a transaction's details). */
+  onRowPress?: (index: number) => void;
+  rowLabel?: (index: number) => string;
+}) {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ minWidth: '100%' }}>
       <View style={styles.table}>
         <View style={styles.tableHead}>
           {headers.map((header) => <Text style={styles.headCell} key={header}>{header}</Text>)}
         </View>
-        {rows.length ? rows.map((row, index) => (
-          <View style={styles.tableRow} key={`${row[0]}-${index}`}>
-            {row.map((cell, cellIndex) => (
-              <Text style={[styles.cell, cellIndex === 0 && styles.strong]} key={`${cell}-${cellIndex}`}>
-                {cell}
-              </Text>
-            ))}
-          </View>
-        )) : <Text style={styles.empty}>No live records returned.</Text>}
+        {rows.length ? rows.map((row, index) => {
+          const cells = row.map((cell, cellIndex) => (
+            <Text style={[styles.cell, cellIndex === 0 && styles.strong]} key={`${cell}-${cellIndex}`}>
+              {cell}
+            </Text>
+          ));
+          return onRowPress ? (
+            <Pressable accessibilityRole="button" accessibilityLabel={rowLabel?.(index)} onPress={() => onRowPress(index)} style={({ pressed }) => [styles.tableRow, pressed && { opacity: 0.7 }]} key={`${row[0]}-${index}`}>
+              {cells}
+            </Pressable>
+          ) : <View style={styles.tableRow} key={`${row[0]}-${index}`}>{cells}</View>;
+        }) : <Text style={styles.empty}>No live records returned.</Text>}
       </View>
     </ScrollView>
   );
