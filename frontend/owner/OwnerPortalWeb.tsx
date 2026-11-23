@@ -3,6 +3,8 @@ import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
 import { buildWebDailyClosingReport, DAILY_CLOSING_HEADERS } from './ownerPortalDailyClosingReport';
 import { buildWebReversalReport, REVERSAL_REPORT_HEADERS, type ReversingEntry } from './ownerPortalReversalReport';
+import { buildWebSalesConsumptionReport, buildWebWasteReport, SALES_CONSUMPTION_HEADERS, WASTE_SPILLAGE_HEADERS } from './ownerPortalMovementReports';
+import { buildSalesConsumptionRecords, type SalesConsumptionRecord } from './salesConsumptionRepository';
 import { downloadReportPdf, openReportPrintView } from './reportOutputWeb';
 import { OwnerLoginError, isOwnerConnectionFailure } from '../services/ownerAuthentication';
 import OwnerRequestsScreen from './OwnerRequestsScreen';
@@ -28,6 +30,8 @@ import {
   loadIngredientRecipeConfiguration,
   loadOwnerActivityData,
   loadOwnerDiscrepancyReviews,
+  loadOwnerSalesConsumptionBundle,
+  loadReversedEntryIds,
   loadOwnerEntryReversalReviews,
   loadEntryReversalMovementsByRequest,
   type OwnerEntryReversalReview,
@@ -1083,6 +1087,8 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   // OW-12 c4: when the expected-stock snapshot shown was read.
   const inventoryAsOf = useMemo(() => new Date(), [inventoryRows]);
   const [stockIns, setStockIns] = useState<StockInRecord[] | null>(null);
+  const [consumption, setConsumption] = useState<SalesConsumptionRecord[] | null>(null);
+  const [reversedEntryIds, setReversedEntryIds] = useState<Set<string> | null>(null);
   const [reversals, setReversals] = useState<{ supported: boolean; requests: OwnerEntryReversalReview[]; entries: Map<string, ReversingEntry[]> } | null>(null);
   const usesPeriod = report !== 'Expected Stock Quantity Report';
   const setupMessage = reportSetupMessage({ report, period, startDate, endDate, usesPeriod });
@@ -1103,6 +1109,8 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     setReviews(null);
     setStockIns(null);
     setReversals(null);
+    setConsumption(null);
+    setReversedEntryIds(null);
     setError('');
     if (!generated || generated.report === 'Expected Stock Quantity Report' || !generated.range) {
       setLoading(false);
@@ -1111,6 +1119,22 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     const range = generated.range;
     const branchId = generated.branchId;
     setLoading(true);
+    if (generated.report === 'Sales Consumption Report') {
+      // OW-16: consumption rows with their sale and any Void Reversal, 200 per request.
+      (async () => {
+        const records: SalesConsumptionRecord[] = [];
+        for (let offset = 0; ; offset += 200) {
+          const bundle = await loadOwnerSalesConsumptionBundle({ offset, limit: 200, start: range.start, end: range.end, branchId });
+          records.push(...buildSalesConsumptionRecords(bundle));
+          if (!bundle.hasMore) break;
+        }
+        return records;
+      })()
+        .then((records) => { if (active) setConsumption(records); })
+        .catch((reason: unknown) => { if (active) setError(reportLoadError(reason)); })
+        .finally(() => { if (active) setLoading(false); });
+      return () => { active = false; };
+    }
     if (generated.report === 'Reversal Report') {
       // OW-20: approved reversals with the Entry Reversal entries that were posted.
       loadOwnerEntryReversalReviews()
@@ -1134,9 +1158,12 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     Promise.allSettled([
       loadOwnerActivityData({ start: range.start, end: range.end, branchId }),
       loadOwnerDiscrepancyReviews(branchId),
-    ]).then(([activityResult, reviewResult]) => {
+      // OW-17 c5: approved reversals mark their Waste / Spillage entries.
+      generated.report === 'Waste and Spillage Report' ? loadReversedEntryIds() : Promise.resolve(null),
+    ]).then(([activityResult, reviewResult, reversedResult]) => {
       if (!active) return;
-      const failures = [activityResult, reviewResult]
+      if (reversedResult.status === 'fulfilled') setReversedEntryIds(reversedResult.value);
+      const failures = [activityResult, reviewResult, reversedResult]
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
       setError(failures.length ? reportLoadError(failures[0].reason) : '');
       if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
@@ -1161,24 +1188,6 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
     timeStyle: 'short',
   });
   const filteredInventory = filterOwnerPortalInventory(inventoryRows, generated?.branchName ?? branch);
-  const isMovementReport = shownReport === 'Sales Consumption Report'
-    || shownReport === 'Waste and Spillage Report';
-  const movementRows = activity && reportRange && isMovementReport
-    ? filterOwnerPortalReportMovements(activity.transactions, shownReport as OwnerPortalMovementReport, {
-      branchId,
-      start: reportRange.start,
-      end: reportRange.end,
-    }).map((item) => [
-      item.reference,
-      branchNameById.get(item.branch_id) ?? item.branch_id,
-      itemNameById.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
-      `${item.quantity} ${item.unit}`,
-      `${item.before_quantity} → ${item.after_quantity} ${item.unit}`,
-      item.actor_name,
-      item.reason || item.notes || '—',
-      dateFormatter.format(new Date(item.transaction_date)),
-    ])
-    : [];
   const countRows = activity && reportRange && shownReport === 'Physical Inventory Count and Discrepancy Report'
     ? buildOwnerPortalCountReportRows({
       checks: activity.dailyChecks,
@@ -1289,8 +1298,40 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
           ...(reversalReport.rows.length ? [{ notes: ['Each original entry stays in the Inventory Audit History; the reversing Entry Reversal entry offsets it. Rejected requests are not listed.'] }] : []),
         ];
       }
+      case 'Sales Consumption Report': {
+        if (!consumption) return [];
+        const report = buildWebSalesConsumptionReport(consumption, (iso) => formatReportDateTime(new Date(iso)));
+        if (!report.rows.length) return [{ notes: ['No sales consumption was recorded for the selected branch and reporting period.'] }];
+        return [
+          {
+            heading: `Total consumed per ingredient${report.voidedCount ? ' (voided sales not counted)' : ''}`,
+            compact: true,
+            summary: report.totals,
+            notes: report.totals.length ? [] : ['Every sale in this period was voided, so nothing counts as consumed.'],
+          },
+          { table: { headers: SALES_CONSUMPTION_HEADERS, rows: report.rows } },
+          { notes: ['Each row is the recipe quantity times the quantity sold. Takoyaki uses prepared batter, shown in bottles (pieces sold ÷ the configured pieces per bottle), not raw batter ingredients.'] },
+        ];
+      }
+      case 'Waste and Spillage Report': {
+        if (!activity) return [{ notes: ['Waste and spillage data is unavailable.'] }];
+        const report = buildWebWasteReport({
+          movements: activity.transactions.filter((item) => !branchId || item.branch_id === branchId),
+          reversedIds: reversedEntryIds ?? new Set(),
+          itemName: (item) => itemNameById.get(`${item.branch_id}:${item.ingredient_id}`) ?? item.ingredient_id,
+          branchName: (item) => branchNameById.get(item.branch_id) ?? 'Branch',
+          formatDateTime: (iso) => formatReportDateTime(new Date(iso)),
+        });
+        if (!report.rows.length) return [{ notes: ['No waste, spillage or spoilage was recorded for the selected branch and reporting period.'] }];
+        const reversedNote = report.rows.some((row) => row[7] === 'Reversed') ? ' (reversed entries not counted)' : '';
+        return [
+          { heading: `Total lost per category${reversedNote}`, compact: true, summary: report.byCategory },
+          { heading: `Total lost per ingredient${reversedNote}`, compact: true, summary: report.byIngredient },
+          { table: { headers: WASTE_SPILLAGE_HEADERS, rows: report.rows } },
+        ];
+      }
       default:
-        return [table(['Reference', 'Branch', 'Ingredient / Supply', 'Quantity', 'Before → After', 'Employee', 'Reason / Audit Detail', 'Timestamp (Manila)'], movementRows)];
+        return [];
     }
   };
   const reportDoc: ReportDocument | null = !generated || loading || (error && generated.report !== 'Expected Stock Quantity Report')
