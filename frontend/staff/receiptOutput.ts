@@ -6,6 +6,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { formatStaffSaleReceiptHtml, saleReceiptFileName, type StaffSaleReceipt } from './saleReceipt';
+import { buildSaleReceiptPdf } from './receiptPdf';
 
 /**
  * On web, expo-print prints the whole app page, so the receipt is printed from
@@ -51,16 +52,30 @@ export async function printSaleReceipt(receipt: StaffSaleReceipt): Promise<void>
   await Print.printAsync({ html });
 }
 
+/** On web, the PDF file is built in the browser and saved through a download link. */
+function downloadPdfOnWeb(receipt: StaffSaleReceipt): void {
+  if (typeof document === 'undefined') throw new Error('Downloads are unavailable in this browser.');
+  const bytes = buildSaleReceiptPdf(receipt);
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = saleReceiptFileName(receipt);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /**
- * Creates the PDF and opens the share sheet so staff can save or send it.
- * Returns 'print-dialog' on web, where the browser's Save as PDF is used.
+ * Creates the PDF. On web the file is downloaded; on a phone the share sheet
+ * opens so staff can save or send it.
  */
-export async function downloadSaleReceiptPdf(receipt: StaffSaleReceipt): Promise<'shared' | 'print-dialog'> {
-  const html = formatStaffSaleReceiptHtml(receipt);
+export async function downloadSaleReceiptPdf(receipt: StaffSaleReceipt): Promise<'shared' | 'downloaded'> {
   if (Platform.OS === 'web') {
-    await printHtmlOnWeb(html);
-    return 'print-dialog';
+    downloadPdfOnWeb(receipt);
+    return 'downloaded';
   }
+  const html = formatStaffSaleReceiptHtml(receipt);
   const { uri } = await Print.printToFileAsync({ html });
   let shareUri = uri;
   const directory = FileSystem.cacheDirectory;

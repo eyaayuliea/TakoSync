@@ -616,8 +616,11 @@ const cashSale = {
 
 test('ST-05 c5: a cash sale is saved with the cash received', async () => {
   const client = new RecordingSupabase();
-  await submitSale({ ...cashSale, cashReceived: 100 }, client);
+  const sale = await submitSale({ ...cashSale, cashReceived: 100 }, client);
   assert.equal(client.calls.at(-1).name, 'submit_sale_with_payment');
+  // ST-05 c1: the Sale Completed screen shows the saved cash and change.
+  assert.equal(sale.cash_received, 100);
+  assert.equal(sale.change_amount, 75);
   assert.equal(client.calls.at(-1).args.p_cash_received, 100);
   assert.equal(client.calls.at(-1).args.p_transaction_reference, 'SALE-CASH-1');
 });

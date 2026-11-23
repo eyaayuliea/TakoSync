@@ -105,6 +105,7 @@ import {
   requestInventoryCountCorrection,
   InventoryCountCorrectionSubmissionError,
   type AppUser,
+  type OwnerSale,
   type SaleSubmission,
   type StaffMenuAddon,
   type StaffMenuCatalogItem,
@@ -167,7 +168,7 @@ import {
   matchesHistoryTypeFilter,
   type StaffHistoryTypeFilter,
 } from './historyTypeFilter';
-import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER } from './saleReceipt';
+import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER, saleReceiptFileName } from './saleReceipt';
 import { SaleVoidRequestModal, SaleVoidStatusPanel } from './SaleVoidRequest';
 import { EntryReversalRequestModal, EntryReversalStatusPanel } from './EntryReversalRequest';
 import DailyClosingSection from './DailyClosingSection';
@@ -757,6 +758,30 @@ function CubeOutlineIcon() {
   );
 }
 
+type CompletedSale = {
+  id: string;
+  reference: string;
+  totalAmount: number;
+  paymentMethod: string;
+  cashReceived: number | null;
+  change: number | null;
+};
+
+const optionalAmount = (value: number | string | null | undefined): number | null =>
+  value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
+
+/** ST-05 c1: what the Sale Completed screen shows, from the sale the server confirmed. */
+function completedSaleFrom(sale: OwnerSale): CompletedSale {
+  return {
+    id: sale.id,
+    reference: sale.transaction_reference,
+    totalAmount: Number(sale.total_amount),
+    paymentMethod: sale.payment_method,
+    cashReceived: optionalAmount(sale.cash_received),
+    change: optionalAmount(sale.change_amount),
+  };
+}
+
 function DetailRow({ label, value }: { label: string; value: string }) {
   const styles = useStaffStyles();
   return (
@@ -1159,7 +1184,9 @@ export default function StaffWorkspace({
   const [retryingSaleIds, setRetryingSaleIds] = useState<Set<string>>(() => new Set());
   const inventoryRetryLocks = useRef(new Set<string>());
   const [selectedSaleReceiptId, setSelectedSaleReceiptId] = useState<string | null>(null);
-  const [saleReceiptReturnRoute, setSaleReceiptReturnRoute] = useState<'menu' | 'dailySales'>('menu');
+  const [saleReceiptReturnRoute, setSaleReceiptReturnRoute] = useState<'menu' | 'dailySales' | 'saleCompleted'>('menu');
+  // ST-05 c1: the Sale Completed screen of the sale just confirmed, with Generate Receipt.
+  const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
   const [saleReceipt, setSaleReceipt] = useState<StaffSaleReceipt | null>(null);
   const [saleReceiptLoading, setSaleReceiptLoading] = useState(false);
   const [saleReceiptError, setSaleReceiptError] = useState('');
@@ -2612,7 +2639,7 @@ export default function StaffWorkspace({
         ? { id: sale.id, reference: sale.transaction_reference }
         : null);
       setDashboardMessage(getStaffSaleFeedback(sale.transaction_reference, sale.inventory_processing_status));
-      openSaleReceipt(sale.id);
+      showSaleCompleted(sale);
     } finally {
       menuSaleSubmissionLock.current = false;
     }
@@ -2643,7 +2670,7 @@ export default function StaffWorkspace({
         ? { id: sale.id, reference: sale.transaction_reference }
         : null);
       await refreshBackendData();
-      openSaleReceipt(sale.id);
+      showSaleCompleted(sale);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The checkout was rejected.';
       if (!isRetryableSaleSubmissionError(error)) {
@@ -2707,12 +2734,18 @@ export default function StaffWorkspace({
     });
   };
 
-  const openSaleReceipt = (saleId: string, returnRoute: 'menu' | 'dailySales' = 'menu') => {
+  const showSaleCompleted = (sale: OwnerSale) => {
+    setCompletedSale(completedSaleFrom(sale));
+    setRoute('saleCompleted');
+  };
+
+  const openSaleReceipt = (saleId: string, returnRoute: 'menu' | 'dailySales' | 'saleCompleted' = 'menu') => {
     setSaleReceiptReturnRoute(returnRoute);
     setSelectedSaleReceiptId(saleId);
     setSaleReceipt(null);
     setSaleReceiptError('');
     setSaleReceiptShareError('');
+    setSaleReceiptOutputNotice('');
     setRoute('saleReceipt');
   };
 
@@ -2805,8 +2838,8 @@ export default function StaffWorkspace({
     try {
       if (kind === 'print') {
         await printSaleReceipt(saleReceipt);
-      } else if (await downloadSaleReceiptPdf(saleReceipt) === 'print-dialog') {
-        setSaleReceiptOutputNotice('In the print window, choose “Save as PDF” to download the receipt.');
+      } else if (await downloadSaleReceiptPdf(saleReceipt) === 'downloaded') {
+        setSaleReceiptOutputNotice(`Downloaded ${saleReceiptFileName(saleReceipt)}.`);
       }
     } catch (error) {
       setSaleReceiptShareError(error instanceof Error ? error.message : 'Unable to create this receipt. Please try again.');
@@ -8588,6 +8621,54 @@ export default function StaffWorkspace({
     );
   };
 
+  const renderSaleCompleted = () => {
+    if (!completedSale) {
+      return (
+        <View style={styles.inventoryFallback}>
+          <Text style={styles.inventoryEmptyTitle}>No sale to show</Text>
+          <Pressable onPress={() => setRoute('menu')} style={styles.detailBackFallback}>
+            <Text style={styles.detailBackLabel}>Back to POS</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.saleReceiptPage} showsVerticalScrollIndicator={false}>
+        <View style={styles.saleReceiptHeader}>
+          <Text style={styles.saleCompletedCheck} accessibilityElementsHidden importantForAccessibility="no">✓</Text>
+          <Text style={styles.saleReceiptBusiness} accessibilityRole="header">Sale Completed</Text>
+          <Text style={styles.saleReceiptReference}>{completedSale.reference}</Text>
+          <Text style={styles.saleCompletedTotal}>{formatSaleMoney(completedSale.totalAmount)}</Text>
+        </View>
+        <View style={styles.saleReceiptDetails}>
+          <DetailRow label="Transaction reference" value={completedSale.reference} />
+          <DetailRow label="Payment method" value={completedSale.paymentMethod} />
+          {completedSale.cashReceived !== null ? <DetailRow label="Cash received" value={formatSaleMoney(completedSale.cashReceived)} /> : null}
+          {completedSale.change !== null ? <DetailRow label="Change" value={formatSaleMoney(completedSale.change)} /> : null}
+        </View>
+        <View style={styles.saleCompletedActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => openSaleReceipt(completedSale.id, 'saleCompleted')}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.saveButtonText}>Generate Receipt</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setCompletedSale(null);
+              setRoute('menu');
+            }}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.saveButtonText}>New Order</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  };
+
   const renderSaleReceipt = () => {
     if (saleReceiptLoading) {
       return (
@@ -8618,7 +8699,9 @@ export default function StaffWorkspace({
         <View style={styles.formHeader}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={saleReceiptReturnRoute === 'dailySales' ? 'Back to Daily Sales' : 'Back to POS'}
+            accessibilityLabel={saleReceiptReturnRoute === 'dailySales'
+              ? 'Back to Daily Sales'
+              : saleReceiptReturnRoute === 'saleCompleted' ? 'Back to Sale Completed' : 'Back to POS'}
             onPress={() => setRoute(saleReceiptReturnRoute)}
             style={styles.backButton}
           >
@@ -8823,6 +8906,9 @@ export default function StaffWorkspace({
       break;
     case 'transactionDetails':
       screenContent = renderTransactionDetails();
+      break;
+    case 'saleCompleted':
+      screenContent = renderSaleCompleted();
       break;
     case 'saleReceipt':
       screenContent = renderSaleReceipt();
@@ -9628,6 +9714,9 @@ function createStaffStyles(theme: AppTheme) {
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
   historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
   historyPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
+  saleCompletedCheck: { color: colors.pink, fontFamily: font.bold, fontSize: 34, lineHeight: 40 },
+  saleCompletedActions: { gap: 10 },
+  saleCompletedTotal: { color: colors.navy, fontFamily: font.bold, fontSize: 22, marginTop: 8 },
   saleReceiptPage: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
   saleReceiptHeader: { alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.line },
   saleReceiptBusiness: { color: colors.navy, fontFamily: font.bold, fontSize: 16 },

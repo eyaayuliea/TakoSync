@@ -3567,6 +3567,9 @@ export async function submitSale(input: SaleSubmission, client?: StaffServiceCli
     inventory_processing_status: data.inventory_processing_status,
     inventory_processing_error: data.inventory_processing_error,
     created_at: data.created_at,
+    // ST-05 c1/c5: the Sale Completed screen shows the saved cash and change.
+    cash_received: (data as { cash_received?: number | string | null }).cash_received ?? null,
+    change_amount: (data as { change_amount?: number | string | null }).change_amount ?? null,
   };
 }
 
