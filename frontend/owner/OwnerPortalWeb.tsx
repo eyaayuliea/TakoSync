@@ -19,6 +19,18 @@ import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPor
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
 import {
+  ADJUSTMENT_HISTORY_HEADERS,
+  adjustmentHistoryRows,
+  DISCREPANCY_HEADERS,
+  discrepancyRow,
+  filterDiscrepancies,
+  RECONCILIATION_STATUSES,
+  reconciliationStatus,
+  REVISION_HEADERS,
+  revisionHistoryRows,
+  type ReconciliationStatus,
+} from './ownerPortalReconciliation';
+import {
   BRANCH_COMPARISON_TAB,
   BRANCH_INVENTORY_HEADERS,
   branchInventoryRows,
@@ -57,6 +69,8 @@ import {
   createIngredientCategory,
   createProduct,
   decideOwnerInventoryCountCorrection,
+  isOwnerDiscrepancyRecountable,
+  rejectOwnerSubmittedInventoryCount,
   getCurrentUser,
   loadBranches,
   isOwnerDiscrepancyActionable,
@@ -136,7 +150,7 @@ const PAGE_DATA: Record<Page, PortalDataset[]> = {
   'Sales Reports': [],
   'Inventory Reports': ['inventory'],
   Configuration: ['configuration', 'inventory'],
-  Reconciliation: ['reviews'],
+  Reconciliation: ['reviews', 'inventory'],
   'Void & Reversal Review': [],
   'Staff Accounts': ['staff', 'inventory'],
   Branches: ['inventory', 'sales'],
@@ -444,7 +458,7 @@ export default function OwnerPortalWeb() {
           {page === 'Sales Monitoring' && <SalesMonitoring branches={inventoryData?.branches ?? []} />}
           {page === 'Inventory Monitoring' && <Inventory rows={rows} branches={inventoryData?.branches ?? []} />}
           {page === 'Inventory Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
-          {page === 'Reconciliation' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
+          {page === 'Reconciliation' && <Checks reviews={reviews} branches={inventoryData?.branches ?? []} notify={notify} onRefresh={refreshReviews} />}
           {page === 'Void & Reversal Review' && <VoidReversalReview height={Math.max(560, height - 200)} onBack={() => setPage('Dashboard')} />}
           {page === 'Sales Reports' && <Reports sales={salesData} />}
           {page === 'Inventory Reports' && (
@@ -964,157 +978,188 @@ function Movements({ activity, branches, inventoryRows }: {
 }
 type ChecksProps = {
   reviews: OwnerDiscrepancyReview[];
+  branches: OwnerPortalBranch[];
   notify: (message: string, isError?: boolean) => void;
   onRefresh: () => Promise<void>;
 };
 
-function Checks({ reviews, notify, onRefresh }: ChecksProps) {
-  const [saving, setSaving] = useState<string | null>(null);
-  const [reasons, setReasons] = useState<Record<string, string>>({});
+type ReconciliationAction = 'approved' | 'rejected' | 'validate' | 'recount';
 
-  const runAction = async (
-    review: OwnerDiscrepancyReview,
-    action: 'approved' | 'rejected' | 'validate',
-  ) => {
-    const reason = reasons[review.countLineId]?.trim() ?? '';
-    if (!reason) {
+/**
+ * OW-25 Inventory Reconciliation: the Discrepancies tab (filters, table,
+ * details with revision history and the owner's actions) and the Adjustment
+ * History tab.
+ */
+function Checks({ reviews, branches, notify, onRefresh }: ChecksProps) {
+  const [tab, setTab] = useState<'Discrepancies' | 'Adjustment History'>('Discrepancies');
+  const [branch, setBranch] = useState('All Branches');
+  const [status, setStatus] = useState<ReconciliationStatus>('All statuses');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [confirming, setConfirming] = useState<ReconciliationAction | null>(null);
+  const [saving, setSaving] = useState(false);
+  const branchId = branches.find((item) => item.name === branch)?.id ?? null;
+  const dateFormatter = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
+  const formatDateTime = (iso: string) => dateFormatter.format(new Date(iso));
+  const shown = filterDiscrepancies(reviews, { branchId, status });
+  const selected = selectedId ? reviews.find((review) => review.countLineId === selectedId) ?? null : null;
+
+  const run = async (review: OwnerDiscrepancyReview, action: ReconciliationAction) => {
+    const text = reason.trim();
+    if (!text) {
       notify('Enter a reason before submitting this review.', true);
+      setConfirming(null);
       return;
     }
-
-    if (action === 'validate' && typeof window !== 'undefined') {
-      const message = `Authorize this count for ${review.ingredient}? Expected: ${review.expected} ${review.unit}; actual: ${review.actual} ${review.unit}. Inventory may change.`;
-      if (!window.confirm(message)) return;
-    }
-
-    setSaving(review.countLineId);
-    let successMessage: string;
+    setSaving(true);
+    let success = '';
     try {
       if (action === 'approved' || action === 'rejected') {
-        await decideOwnerInventoryCountCorrection({
-          requestId: review.correctionRequestId,
-          decision: action,
-          reason,
-        });
-        successMessage = `Correction request ${action}.`;
+        await decideOwnerInventoryCountCorrection({ requestId: review.correctionRequestId, decision: action, reason: text });
+        success = `Correction request ${action}.`;
+      } else if (action === 'recount') {
+        await rejectOwnerSubmittedInventoryCount({ countLineId: review.countLineId, reason: text });
+        success = 'Count rejected. Staff will be asked for a recount; the expected quantity is unchanged.';
       } else {
         if (review.validationTarget === 'correction_request') {
-          await validateOwnerInventoryCountCorrection({
-            requestId: review.correctionRequestId,
-            reason,
-          });
+          await validateOwnerInventoryCountCorrection({ requestId: review.correctionRequestId, reason: text });
         } else {
-          await validateOwnerSubmittedInventoryCount({
-            countLineId: review.countLineId,
-            reason,
-          });
+          await validateOwnerSubmittedInventoryCount({ countLineId: review.countLineId, reason: text });
         }
-        successMessage = 'Count validated through the authorized inventory workflow.';
+        success = 'Count validated. The adjustment is listed in Adjustment History.';
       }
-    } catch (reasonError: unknown) {
-      notify(reasonError instanceof Error ? reasonError.message : 'Unable to save the Owner review.', true);
-      setSaving(null);
+    } catch (error: unknown) {
+      notify(error instanceof Error ? error.message : 'Unable to save the review.', true);
+      setSaving(false);
+      setConfirming(null);
       return;
     }
-
+    setReason('');
+    setConfirming(null);
     try {
       await onRefresh();
-      setReasons((current) => ({ ...current, [review.countLineId]: '' }));
-      notify(successMessage);
-    } catch (refreshError: unknown) {
-      notify(
-        `The review was saved, but the latest records could not be loaded: ${
-          refreshError instanceof Error ? refreshError.message : 'refresh failed.'
-        }`,
-        true,
-      );
+      notify(success);
+    } catch {
+      notify('The review was saved, but the latest records could not be loaded. Select Reconciliation again to refresh.', true);
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
+  };
+
+  const tabs = (
+    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }} accessibilityRole="tablist">
+      {(['Discrepancies', 'Adjustment History'] as const).map((name) => (
+        <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: tab === name }} onPress={() => { setTab(name); setSelectedId(null); }} style={[styles.outline, { marginTop: 0 }, tab === name && { backgroundColor: C.pink, borderColor: C.pink }]}>
+          <Text style={[styles.pinkText, tab === name && { color: '#FFFFFF' }]}>{name}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+
+  if (tab === 'Adjustment History') {
+    const rows = adjustmentHistoryRows(reviews, formatDateTime, branchId);
+    return (
+      <>
+        {tabs}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+          <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={setBranch} />
+        </View>
+        <Text style={styles.muted}>Adjustments authorized by validating a count. Read-only.</Text>
+        {rows.length ? <Table headers={ADJUSTMENT_HISTORY_HEADERS} rows={rows} /> : <Text style={styles.empty}>No adjustments have been authorized{branchId ? ' for this branch' : ''}.</Text>}
+      </>
+    );
+  }
+
+  const actionable = selected ? isOwnerDiscrepancyActionable(selected) : false;
+  const validatable = selected ? isOwnerDiscrepancyValidatable(selected) : false;
+  const recountable = selected ? isOwnerDiscrepancyRecountable(selected) : false;
+  const blocked = selected ? isOwnerDiscrepancyValidationBlocked(selected) : false;
+  const revisions = selected ? revisionHistoryRows(selected, formatDateTime) : [];
+  const confirmText: Record<ReconciliationAction, string> = {
+    approved: 'Approve this correction? The revised value replaces the counted quantity.',
+    rejected: 'Reject this correction? The original count stays.',
+    validate: selected ? `Validate this count for ${selected.ingredient}? The difference (${selected.difference} ${selected.unit}) is added to the current balance and the count is locked.` : '',
+    recount: 'Reject this count and ask staff for a recount? The expected quantity is not changed.',
+  };
+  const confirmLabel: Record<ReconciliationAction, string> = {
+    approved: 'Approve correction', rejected: 'Reject correction', validate: 'Validate Count', recount: 'Reject Count',
   };
 
   return (
     <>
-      <Text style={styles.section}>Daily checks & reconciliation</Text>
-      <Text style={styles.muted}>Review submitted counts; validating a count is a separate, authorized inventory action.</Text>
-      {reviews.map((review) => {
-        const actionable = isOwnerDiscrepancyActionable(review);
-        const validatable = isOwnerDiscrepancyValidatable(review);
-        const isSaving = saving === review.countLineId;
-        const disabled = saving !== null;
-
-        return (
-          <View style={reviewStyles.card} key={review.correctionRequestId}>
-            <View style={styles.row}>
-              <Text style={styles.strong}>{review.reference} · {review.ingredient}</Text>
-              <Text style={styles.body}>{review.branch}</Text>
-            </View>
-            <Text style={styles.muted}>
-              Expected {review.expected} {review.unit} · Actual {review.actual} {review.unit} · Difference {review.difference} {review.unit}
-            </Text>
-            <Text style={styles.muted}>Status: {review.status}</Text>
-            {actionable || validatable ? (
-              <>
-                <TextInput
-                  accessibilityLabel={`Owner review reason for ${review.ingredient}`}
-                  value={reasons[review.countLineId] ?? ''}
-                  onChangeText={(value) => setReasons((current) => ({
-                    ...current,
-                    [review.countLineId]: value,
-                  }))}
-                  placeholder="Reason required for this action"
-                  maxLength={1000}
-                  style={styles.search}
-                />
+      {tabs}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+        <Select value={branch} options={['All Branches', ...branches.map((item) => item.name)]} onChange={(value) => { setBranch(value); setSelectedId(null); }} />
+        <Select value={status} options={RECONCILIATION_STATUSES} onChange={(value) => { setStatus(value as ReconciliationStatus); setSelectedId(null); }} />
+      </View>
+      <Text style={styles.muted}>Select a discrepancy to see its details and review it. Validating a count authorizes the adjustment.</Text>
+      {shown.length ? (
+        <Table
+          headers={DISCREPANCY_HEADERS}
+          rows={shown.map((review) => discrepancyRow(review, formatDateTime))}
+          onRowPress={(index) => { setSelectedId(shown[index].countLineId); setReason(''); setConfirming(null); }}
+          rowLabel={(index) => `Open discrepancy ${shown[index].reference} ${shown[index].ingredient}`}
+        />
+      ) : <Text style={styles.empty}>No discrepancies match this branch and status.</Text>}
+      {selected ? (
+        <Panel title={`${selected.ingredient} · ${selected.reference}`}>
+          <Text style={styles.body}>
+            {selected.branch} · submitted by {selected.staff} · {formatDateTime(selected.submittedAt)} · {reconciliationStatus(selected)}
+          </Text>
+          <Text style={styles.body}>
+            Expected (saved with the count) {selected.expected} {selected.unit} · Actual {selected.correctionStatus === 'approved' ? `${selected.correctedActual} ${selected.unit} (corrected from ${selected.actual})` : `${selected.actual} ${selected.unit}`} · Difference {selected.difference} {selected.unit}
+          </Text>
+          <Text style={styles.strong}>Staff remarks</Text>
+          <Text style={styles.body}>{selected.remarks.trim() || 'No remarks.'}</Text>
+          <Text style={styles.strong}>Count revision history</Text>
+          {revisions.length ? <Table headers={REVISION_HEADERS} rows={revisions} /> : <Text style={styles.muted}>No revisions. The count is as submitted.</Text>}
+          {selected.rejection ? <Text style={styles.body}>Rejected for recount by {selected.rejection.rejectedBy} · {formatDateTime(selected.rejection.rejectedAt)} · “{selected.rejection.reason}”</Text> : null}
+          {selected.adjustment ? <Text style={styles.body}>Adjusted {selected.adjustment.beforeQuantity} → {selected.adjustment.afterQuantity} {selected.unit} by {selected.adjustment.approvingOwner || selected.adjustment.approvedBy} · {formatDateTime(selected.adjustment.approvedAt)} · Locked</Text> : null}
+          {actionable || validatable || recountable || blocked ? (
+            <>
+              <TextInput
+                accessibilityLabel={`Review reason for ${selected.ingredient}`}
+                value={reason}
+                onChangeText={setReason}
+                placeholder="Reason required for this action"
+                maxLength={1000}
+                style={styles.search}
+              />
+              {confirming ? (
+                <View style={[reviewStyles.card, { marginTop: 8 }]} accessibilityRole="alert">
+                  <Text style={styles.body}>{confirmText[confirming]}</Text>
+                  <View style={reviewStyles.actions}>
+                    <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming(null)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Confirm ${confirmLabel[confirming]}`} disabled={saving} onPress={() => void run(selected, confirming)} style={reviewStyles.approve}>
+                      <Text style={reviewStyles.approveText}>{saving ? 'Saving…' : confirmLabel[confirming]}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
                 <View style={reviewStyles.actions}>
                   {actionable ? (
                     <>
-                      <Pressable
-                        disabled={disabled}
-                        onPress={() => void runAction(review, 'approved')}
-                        style={[reviewStyles.approve, disabled && { opacity: 0.6 }]}
-                      >
-                        <Text style={reviewStyles.approveText}>{isSaving ? 'Saving…' : 'Approve'}</Text>
-                      </Pressable>
-                      <Pressable
-                        disabled={disabled}
-                        onPress={() => void runAction(review, 'rejected')}
-                        style={[reviewStyles.reject, disabled && { opacity: 0.6 }]}
-                      >
-                        <Text style={reviewStyles.rejectText}>Reject</Text>
-                      </Pressable>
+                      <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming('approved')} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>Approve correction</Text></Pressable>
+                      <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming('rejected')} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Reject correction</Text></Pressable>
                     </>
                   ) : null}
                   {validatable ? (
-                    <Pressable
-                      disabled={disabled}
-                      onPress={() => void runAction(review, 'validate')}
-                      style={[reviewStyles.approve, disabled && { opacity: 0.6 }]}
-                    >
-                      <Text style={reviewStyles.approveText}>
-                        {isSaving ? 'Saving…' : 'Validate Count'}
-                      </Text>
-                    </Pressable>
-                  ) : isOwnerDiscrepancyValidationBlocked(review) ? (
-                    // OW-25 / OM-14 c8: shown but disabled while the correction request is pending.
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityState={{ disabled: true }}
-                      accessibilityHint={VALIDATION_BLOCKED_MESSAGE}
-                      disabled
-                      style={[reviewStyles.approve, { opacity: 0.45 }]}
-                    >
-                      <Text style={reviewStyles.approveText}>Validate Count</Text>
-                    </Pressable>
+                    <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming('validate')} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>Validate Count</Text></Pressable>
+                  ) : blocked ? (
+                    // OW-25 c8: shown but disabled while the correction request is pending.
+                    <Pressable accessibilityRole="button" accessibilityState={{ disabled: true }} accessibilityHint={VALIDATION_BLOCKED_MESSAGE} disabled style={[reviewStyles.approve, { opacity: 0.45 }]}><Text style={reviewStyles.approveText}>Validate Count</Text></Pressable>
+                  ) : null}
+                  {recountable ? (
+                    <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming('recount')} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Reject Count</Text></Pressable>
                   ) : null}
                 </View>
-                {!validatable && isOwnerDiscrepancyValidationBlocked(review) ? <Text style={[styles.muted, { marginTop: 6 }]}>{VALIDATION_BLOCKED_MESSAGE}</Text> : null}
-              </>
-            ) : null}
-          </View>
-        );
-      })}
-      {reviews.length === 0 && <Text style={styles.empty}>No discrepancy records returned.</Text>}
+              )}
+              {blocked ? <Text style={[styles.muted, { marginTop: 6 }]}>{VALIDATION_BLOCKED_MESSAGE}</Text> : null}
+            </>
+          ) : null}
+          <Pressable accessibilityRole="button" onPress={() => setSelectedId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.pinkText}>Close details</Text></Pressable>
+        </Panel>
+      ) : null}
     </>
   );
 }
