@@ -15,6 +15,7 @@ import {
   TRANSACTION_SUMMARY_HEADERS,
 } from './ownerPortalSalesReports';
 import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
+import { OwnerPasswordChangeError, validateOwnerPasswordChange, type OwnerPasswordErrors, type OwnerPasswordFields } from '../services/ownerPasswordChange';
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
@@ -105,6 +106,7 @@ import {
   updateMinimumStock,
   updateNearExpirationDays,
   updateOwnerProfile,
+  changeOwnerPassword,
   updateProduct,
   validateOwnerInventoryCountCorrection,
   validateOwnerSubmittedInventoryCount,
@@ -474,7 +476,7 @@ export default function OwnerPortalWeb() {
           )}
           {page === 'Staff Accounts' && <StaffManager accounts={staff} branches={inventoryData?.branches ?? []} onSaved={refreshStaff} />}
           {page === 'Configuration' && <SettingsEditor products={products} configuration={configuration} stockSettings={stockSettings} onSaved={refreshInventory} />}
-          {page === 'Profile' && <ProfileEditor user={user} onSaved={notify} />}
+          {page === 'Profile' && <ProfileEditor user={user} onSaved={notify} onNameChanged={(displayName) => setUser((current) => current && { ...current, displayName })} />}
           {page === 'Audit History' && <Audit branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
           </>}
         </ScrollView>
@@ -2774,38 +2776,101 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
   );
 }
 
-function ProfileEditor({ user, onSaved }: {
+/**
+ * OW-30 Owner Profile: the profile information, Account Settings (name) and
+ * Security Settings (password change with the current password).
+ */
+function ProfileEditor({ user, onSaved, onNameChanged }: {
   user: AppUser;
   onSaved: OwnerPortalNotify;
+  onNameChanged: (name: string) => void;
 }) {
   const [name, setName] = useState(user.displayName);
-  const [password, setPassword] = useState('');
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    if (!name.trim()) {
-      await onSaved('Owner name is required.', true);
-      return;
-    }
-    setSaving(true);
+  const [nameError, setNameError] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [fields, setFields] = useState<OwnerPasswordFields>({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [fieldErrors, setFieldErrors] = useState<OwnerPasswordErrors>({});
+  const [savingPassword, setSavingPassword] = useState(false);
+  const setField = (key: keyof OwnerPasswordFields, value: string) => {
+    setFields((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => ({ ...current, [key]: undefined }));
+  };
+  const saveName = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) { setNameError('Enter your name.'); return; }
+    if (trimmed === user.displayName) { setNameError('The name is unchanged.'); return; }
+    setSavingName(true);
     try {
-      await updateOwnerProfile({ fullName: name.trim(), newPassword: password || undefined });
-      setPassword('');
-      await onSaved('Owner profile updated securely through Supabase.');
+      await updateOwnerProfile({ fullName: trimmed });
+      onNameChanged(trimmed);
+      await onSaved('Account settings saved.');
     } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Profile update failed.', true);
+      await onSaved(reason instanceof Error ? reason.message : 'The account settings could not be saved.', true);
     } finally {
-      setSaving(false);
+      setSavingName(false);
     }
   };
+  const changePassword = async () => {
+    const errors = validateOwnerPasswordChange(fields);
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) return;
+    setSavingPassword(true);
+    try {
+      await changeOwnerPassword(fields);
+      setFields({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      await onSaved('Password changed. Use the new password at your next login.');
+    } catch (reason: unknown) {
+      if (reason instanceof OwnerPasswordChangeError) setFieldErrors(reason.fieldErrors);
+      else await onSaved(reason instanceof Error ? reason.message : 'The password could not be changed.', true);
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+  const passwordInput = (key: keyof OwnerPasswordFields, label: string) => (
+    <>
+      <Text style={styles.label}>{label}</Text>
+      {/* OW-30 c6: passwords are never displayed. */}
+      <TextInput value={fields[key]} onChangeText={(value) => setField(key, value)} secureTextEntry autoComplete="off" accessibilityLabel={label} placeholder={label} style={styles.input} />
+      {fieldErrors[key] ? <Text style={styles.errorText} accessibilityRole="alert">{fieldErrors[key]}</Text> : null}
+    </>
+  );
   return (
-    <Panel title="Owner profile & security">
-      <Text style={styles.body}>{user.email}</Text>
-      <TextInput value={name} onChangeText={setName} placeholder="Owner full name" style={styles.input} />
-      <TextInput value={password} onChangeText={setPassword} placeholder="New password (8+ characters)" secureTextEntry style={styles.input} />
-      <Pressable disabled={saving} onPress={() => void save()} style={styles.outline}>
-        <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save profile / password'}</Text>
-      </Pressable>
-    </Panel>
+    <>
+      <View style={styles.two}>
+        <Panel title="Profile">
+          {[
+            ['Name', user.displayName],
+            ['Email', user.email ?? '—'],
+            ['Role', 'Owner'],
+            ['Account ID', user.id],
+          ].map(([label, value]) => (
+            <View key={label} style={styles.line}>
+              <Text style={styles.body}>{label}</Text>
+              <Text style={styles.strong} selectable>{value}</Text>
+            </View>
+          ))}
+        </Panel>
+        <Panel title="Account settings">
+          <Text style={styles.label}>Name</Text>
+          <TextInput value={name} onChangeText={(value) => { setName(value); setNameError(''); }} accessibilityLabel="Name" placeholder="Your name" style={styles.input} />
+          {nameError ? <Text style={styles.errorText} accessibilityRole="alert">{nameError}</Text> : null}
+          <Text style={styles.muted}>The email address and role are managed by the system and cannot be changed here.</Text>
+          <Pressable accessibilityRole="button" disabled={savingName} onPress={() => void saveName()} style={styles.outline}>
+            <Text style={styles.pinkText}>{savingName ? 'Saving…' : 'Save account settings'}</Text>
+          </Pressable>
+        </Panel>
+      </View>
+      <Panel title="Security settings">
+        <View style={{ maxWidth: 420 }}>
+          {passwordInput('currentPassword', 'Current password')}
+          {passwordInput('newPassword', 'New password (at least 8 characters)')}
+          {passwordInput('confirmPassword', 'Confirm new password')}
+          <Pressable accessibilityRole="button" disabled={savingPassword} onPress={() => void changePassword()} style={styles.loginButton}>
+            <Text style={styles.loginButtonText}>{savingPassword ? 'Changing…' : 'Change password'}</Text>
+          </Pressable>
+        </View>
+      </Panel>
+    </>
   );
 }
 
