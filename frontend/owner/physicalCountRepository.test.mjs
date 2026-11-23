@@ -115,7 +115,7 @@ test('live history maps revised values, employee metadata, review status, and pu
   assert.equal(mapped.countStatus, 'Validated');
   assert.equal(mapped.discrepancyStatus, null);
   assert.equal(mapped.discrepancyReference, null);
-  assert.equal(mapped.branchName, 'Branch 3');
+  assert.equal(mapped.branchName, 'Quezon City · Branch 3');
   assert.equal(mapped.employeeId, 'EMP-014');
   assert.equal(mapped.email, 'maria.santos@gelostakoyaki.com');
   assert.equal(mapped.revision?.editor, 'Ana Reyes');

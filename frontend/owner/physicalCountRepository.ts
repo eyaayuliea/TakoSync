@@ -88,11 +88,6 @@ type CountHistoryItem = TransactionHistoryItem & {
   physicalCount: InventoryCountHistoryRecord['physicalCount'];
 };
 
-function branchNameWithoutCity(value: string): string {
-  const match = value.match(/Branch\s+\d+$/);
-  return match?.[0] ?? value;
-}
-
 export function buildPhysicalCountRecords(
   history: TransactionHistoryItem[],
   reviews: OwnerDiscrepancyReview[],
@@ -144,7 +139,7 @@ export function buildPhysicalCountRecords(
         ingredientId: record.ingredientId,
         ingredientName: record.ingredientName,
         branchId: record.branchId,
-        branchName: branchNameWithoutCity(record.branch),
+        branchName: record.branch,
         expectedQuantity: count.expectedQuantity,
         originalActualQuantity: count.originalActualQuantity,
         actualQuantity,

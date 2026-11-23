@@ -1,4 +1,5 @@
 import type { OwnerSalesTransactionBundle } from '../services/takosync.ts';
+import { formatBranchName } from '../services/branchNames.ts';
 import { recordedSaleIsBulkOrder } from '../services/bulkOrder.ts';
 
 export const pageSize = 20;
@@ -43,10 +44,6 @@ export function getForcedSalesTransactionState(): SalesTransactionForcedState {
   return null;
 }
 
-function branchLabel(city: string, code: string): string {
-  const number = Number(code.replace(/\D/g, '')) || code;
-  return `${city ? `${city} · ` : ''}Branch ${number}`;
-}
 
 function money(value: number | string | null | undefined): number {
   const amount = Number(value ?? 0);
@@ -54,7 +51,7 @@ function money(value: number | string | null | undefined): number {
 }
 
 export function buildSalesTransactions(bundle: OwnerSalesTransactionBundle): SalesTransaction[] {
-  const branches = new Map(bundle.branches.map((branch) => [branch.id, branchLabel(branch.city, branch.code)]));
+  const branches = new Map(bundle.branches.map((branch) => [branch.id, formatBranchName(branch)]));
   const staff = new Map(bundle.profiles.map((profile) => [profile.id, profile.full_name?.trim() || '']));
   const products = new Map(bundle.products.map((product) => [product.id, product.product_name]));
   const variants = new Map(bundle.variants.map((variant) => [variant.id, variant.size_label]));
