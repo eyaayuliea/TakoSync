@@ -4,7 +4,14 @@ import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { OwnerDetailRow, OwnerErrorState, OwnerHeader, OwnerLoadingState, OwnerReadOnlyPill } from './shared/ownerComponents';
 import OwnerRecordFilterBar, { OwnerFilteredEmptyState, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
-import { ALL_BRANCHES, filterOwnerRecords, type OwnerRecordPeriod } from './ownerRecordFilters';
+import {
+  ALL_BRANCHES,
+  filterOwnerRecords,
+  filterOwnerRecordsBySelection,
+  ownerReportSelectionCaption,
+  type OwnerRecordPeriod,
+  type OwnerReportSelection,
+} from './ownerRecordFilters';
 import { approvedOnly, newestFirst, summarizeVoidReport } from './voidReversalReports';
 import { loadOwnerSaleVoidReviews, type OwnerSaleVoidReview } from '../services/takosync';
 
@@ -25,8 +32,10 @@ function dateTime(value: string | null | undefined): string {
 /**
  * OM-10 Void Report: every voided sale with its reason, the requesting
  * employee, and the approving owner, for the selected period and branch.
+ * Given a `selection` (OM-10 c1), it is shown inside the Sales page and uses
+ * the page's Daily / Weekly / Monthly and branch selection instead of its own.
  */
-export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
+export default function VoidReportScreen({ onBack, selection }: { onBack?: () => void; selection?: OwnerReportSelection }) {
   const styles = useStyles();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -35,6 +44,7 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [branch, setBranch] = useState(ALL_BRANCHES);
   const [period, setPeriod] = useState<OwnerRecordPeriod>('This month');
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const generation = useRef(0);
 
   const load = () => {
@@ -46,6 +56,7 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
         if (current !== generation.current) return;
         setSupported(result.supported);
         setVoids(approvedOnly(result.requests));
+        setLoadedAt(new Date());
       })
       .catch((reason: unknown) => {
         if (current !== generation.current) return;
@@ -66,14 +77,12 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
 
   const branchOptions = useOwnerBranchFilterOptions(voids.map((row) => row.branchName));
   // OM-10 c1: the period is the sale's original date.
+  const dateOf = (row: OwnerSaleVoidReview) => row.sale?.createdAt ?? row.decidedAt;
   const rows = newestFirst(
-    filterOwnerRecords(voids, {
-      branch,
-      period,
-      branchOf: (row) => row.branchName,
-      dateOf: (row) => row.sale?.createdAt ?? row.decidedAt,
-    }),
-    (row) => row.sale?.createdAt ?? row.decidedAt,
+    selection
+      ? filterOwnerRecordsBySelection(voids, { selection, branchOf: (row) => row.branchName, dateOf })
+      : filterOwnerRecords(voids, { branch, period, branchOf: (row) => row.branchName, dateOf }),
+    dateOf,
   );
   const summary = summarizeVoidReport(rows);
   const selected = selectedId ? voids.find((row) => row.id === selectedId) ?? null : null;
@@ -91,9 +100,13 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
       ['Approved', dateTime(row.decidedAt)],
       ['Void request', row.reference],
     ];
+    const Body = selection ? View : ScrollView;
+    const bodyProps = selection
+      ? { style: styles.embeddedList }
+      : { style: styles.flex, contentContainerStyle: styles.content, showsVerticalScrollIndicator: false };
     return (
-      <View style={styles.flex}>
-        <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={selection ? undefined : styles.flex}>
+        <Body {...bodyProps}>
           <View style={styles.card}>
             {details.map(([label, value], index) => (
               <OwnerDetailRow key={label} label={label} value={value} multiline={label === 'Reason'} first={index === 0} last={index === details.length - 1} />
@@ -110,7 +123,7 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
               ))}
             </View>
           ) : null}
-        </ScrollView>
+        </Body>
         <OwnerReadOnlyPill />
       </View>
     );
@@ -126,17 +139,28 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
         </View>
       );
     }
+    const List = selection ? View : ScrollView;
+    const listProps = selection
+      ? { style: styles.embeddedList }
+      : { style: styles.flex, contentContainerStyle: styles.content, showsVerticalScrollIndicator: false };
     return (
       <>
-        <OwnerRecordFilterBar branchOptions={branchOptions} branch={branch} onBranchChange={setBranch} period={period} onPeriodChange={setPeriod} />
-        {rows.length === 0 ? (
+        {selection ? null : (
+          <OwnerRecordFilterBar branchOptions={branchOptions} branch={branch} onBranchChange={setBranch} period={period} onPeriodChange={setPeriod} />
+        )}
+        {rows.length === 0 && !selection ? (
           <OwnerFilteredEmptyState branch={branch} period={period} note="There are no voided sales for this selection." />
         ) : (
-          <ScrollView style={styles.flex} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <List {...listProps}>
             <View style={styles.summary}>
               <Text style={styles.summaryTitle}>{summary.count} voided {summary.count === 1 ? 'sale' : 'sales'} · {money(summary.total)}</Text>
               <Text style={styles.summaryMeta}>Voided sales are excluded from every sales total.</Text>
+              {/* OM-03 c4: the period, branch and time the figures reflect. */}
+              {selection ? <Text style={styles.summaryMeta}>{ownerReportSelectionCaption(selection, loadedAt)}</Text> : null}
             </View>
+            {selection && rows.length === 0 ? (
+              <Text style={styles.emptyText}>There are no voided sales for this period and branch.</Text>
+            ) : null}
             {rows.map((row) => (
               <Pressable
                 key={row.id}
@@ -154,15 +178,23 @@ export default function VoidReportScreen({ onBack }: { onBack: () => void }) {
                 <Text style={styles.meta}>Approved by {row.decidedByName ?? 'Owner'} · {dateTime(row.decidedAt)}</Text>
               </Pressable>
             ))}
-          </ScrollView>
+          </List>
         )}
       </>
     );
   };
 
+  if (selection) {
+    return (
+      <View style={styles.embedded}>
+        {selected ? <OwnerHeader title="Voided Sale" onBack={() => setSelectedId(null)} /> : null}
+        {selected ? renderDetails(selected) : renderList()}
+      </View>
+    );
+  }
   return (
     <View style={styles.screen}>
-      <OwnerHeader title={selected ? 'Voided Sale' : 'Void Report'} onBack={selected ? () => setSelectedId(null) : onBack} />
+      <OwnerHeader title={selected ? 'Voided Sale' : 'Void Report'} onBack={selected ? () => setSelectedId(null) : () => onBack?.()} />
       {selected ? renderDetails(selected) : renderList()}
     </View>
   );
@@ -172,6 +204,9 @@ function useStyles() {
   const theme = useTheme();
   return StyleSheet.create(createThemedStyles({
     screen: { flex: 1, minHeight: 520 },
+    embedded: { width: '100%', marginTop: 12 },
+    embeddedList: { gap: 8 },
+    emptyText: { color: theme.colors.salesRecordMuted, fontFamily: font.regular, fontSize: 10, textAlign: 'center', paddingVertical: 16 },
     flex: { flex: 1 },
     content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: OWNER_NAVIGATION_HEIGHT, gap: 8 },
     summary: { padding: 12, borderRadius: 12, backgroundColor: theme.colors.salesRecordTile, gap: 2 },

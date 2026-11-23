@@ -712,6 +712,21 @@ export type Database = {
         Args: { p_branch_id: string; p_opening_float: number; p_closing_cash_count: number; p_client_request_id: string };
         Returns: Database['public']['Tables']['daily_closings']['Row'];
       };
+      list_owner_count_drafts: {
+        Args: { p_branch_id?: string | null };
+        Returns: {
+          draft_id: string;
+          branch_id: string;
+          staff_name: string;
+          check_date: string;
+          saved_at: string;
+          ingredient_id: string;
+          ingredient_name: string;
+          unit: string;
+          expected_quantity: number | string;
+          actual_quantity: number | string | null;
+        }[];
+      };
       decide_sale_void: {
         Args: { p_request_id: string; p_decision: 'approve' | 'reject'; p_reason?: string | null };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];

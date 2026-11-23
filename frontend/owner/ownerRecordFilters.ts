@@ -61,7 +61,19 @@ export function filterOwnerRecords<T>(
     now?: Date;
   },
 ): T[] {
-  const range = recordPeriodRange(options.period, options.now);
+  return filterRecordsInRange(records, { ...options, range: recordPeriodRange(options.period, options.now) });
+}
+
+function filterRecordsInRange<T>(
+  records: T[],
+  options: {
+    branch: string;
+    range: { start: string; end: string } | null;
+    branchOf: (record: T) => string;
+    dateOf: (record: T) => string | null | undefined;
+  },
+): T[] {
+  const { range } = options;
   return records.filter((record) => {
     if (options.branch !== ALL_BRANCHES && branchKey(options.branchOf(record)) !== options.branch) return false;
     if (!range) return true;
@@ -72,6 +84,55 @@ export function filterOwnerRecords<T>(
     const day = manilaBusinessDate(date);
     return day >= range.start && day <= range.end;
   });
+}
+
+/**
+ * OM-09 c1 / OM-10 c1 / OM-11 c1: the Transaction Summary, Void and Daily
+ * Closing reports use the Sales page's Daily / Weekly / Monthly date and branch
+ * selection. Dates are Manila business dates, both ends included; branch is
+ * ALL_BRANCHES or a "Branch N" key.
+ */
+export type OwnerReportSelection = {
+  startDate: string;
+  endDate: string;
+  branch: string;
+  /** The period as the Sales page shows it, e.g. "Mon, 23 Nov 2026" or "November 2026". */
+  periodLabel: string;
+  /** The branch as the Sales page shows it, e.g. "All branches" or "Manila · Branch 1". */
+  branchLabel: string;
+};
+
+export function filterOwnerRecordsBySelection<T>(
+  records: T[],
+  options: {
+    selection: OwnerReportSelection;
+    branchOf: (record: T) => string;
+    dateOf: (record: T) => string | null | undefined;
+  },
+): T[] {
+  return filterRecordsInRange(records, {
+    branch: options.selection.branch,
+    range: { start: options.selection.startDate, end: options.selection.endDate },
+    branchOf: options.branchOf,
+    dateOf: options.dateOf,
+  });
+}
+
+/** OM-03 c4: "November 2026 · All branches · as of 5:40 PM". */
+export function ownerReportSelectionCaption(selection: OwnerReportSelection, asOf: Date | null): string {
+  const time = asOf && Number.isFinite(asOf.getTime())
+    ? ` · as of ${asOf.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' })}`
+    : '';
+  return `${selection.periodLabel} · ${selection.branchLabel}${time}`;
+}
+
+/** Each business date of a selection, newest first, never after today (Manila). */
+export function ownerReportSelectionDates(selection: OwnerReportSelection, now: Date = new Date()): string[] {
+  const today = manilaBusinessDate(now);
+  const end = selection.endDate < today ? selection.endDate : today;
+  const dates: string[] = [];
+  for (let date = end; date >= selection.startDate; date = shiftDate(date, -1)) dates.push(date);
+  return dates;
 }
 
 /** Empty-state text for a filtered list (OM-16 c6). */

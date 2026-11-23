@@ -29,7 +29,6 @@ import AuthorizedAdjustmentRecordsScreen from './AuthorizedAdjustmentRecordsScre
 import OwnerRequestsScreen from './OwnerRequestsScreen';
 import DailyClosingReportScreen from './DailyClosingReportScreen';
 import VoidReportScreen from './VoidReportScreen';
-import type { OwnerSalesSectionReport } from './OwnerSalesWorkspace';
 import AuditIntegrityScreen from './AuditIntegrityScreen';
 import ReversalReportScreen from './ReversalReportScreen';
 import OwnerProfileScreen from './OwnerProfileScreen';
@@ -103,12 +102,6 @@ function countDifferenceText(expected: number, actual: number): string {
 
 type OwnerPage = 'Dashboard' | 'Sales' | 'Reports' | 'Inventory' | 'CompareInventory' | 'Alerts' | 'More' | 'Products' | 'Ingredients' | 'StockSettings' | 'BusinessHours' | 'Discrepancies' | 'Records' | 'SalesTransactions' | 'RecordCategories' | 'SalesConsumptionRecords' | 'StockInRecords' | 'WasteSpillageRecords' | 'PhysicalCountRecords' | 'AuthorizedAdjustmentRecords' | 'ActivityDetail' | 'Profile' | 'StaffAccounts' | 'VoidRequests' | 'DailyClosingReport' | 'VoidReport' | 'ReversalReport' | 'AuditIntegrity';
 
-// OM-03: the sales reports opened from the Sales section.
-const SALES_SECTION_REPORT_PAGES: Record<OwnerSalesSectionReport, OwnerPage> = {
-  'Transaction Summary': 'SalesTransactions',
-  Void: 'VoidReport',
-  'Daily Closing': 'DailyClosingReport',
-};
 type OwnerData = Awaited<ReturnType<typeof loadOwnerInventory>>;
 type ActivityData = Awaited<ReturnType<typeof loadOwnerActivityData>>;
 type Branch = OwnerData['branches'][number];
@@ -1303,7 +1296,7 @@ export default function OwnerMobileWorkspace({
       initialStartDate={customStart}
       initialEndDate={customEnd}
       onOpenReports={() => setPage('Reports')}
-      onOpenSalesReport={(report) => pushMenuPage('Sales', SALES_SECTION_REPORT_PAGES[report])}
+      showSalesReports
       onRefresh={onRefresh}
       availableWidth={contentWidth - 36}
     />

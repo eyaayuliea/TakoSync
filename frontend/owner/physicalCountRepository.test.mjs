@@ -7,6 +7,7 @@ import {
   formatPhysicalCountDifference,
   formatPhysicalCountQuantity,
   getPhysicalCountResult,
+  buildDraftCountRecords,
 } from './physicalCountRepository.ts';
 
 function countHistoryRecord(overrides = {}) {
@@ -188,4 +189,25 @@ test('OM-20 c1, c4: a settled count stays listed (check status "validated")', ()
 
   const [matching] = buildPhysicalCountRecords([settled({ originalActualQuantity: 12, difference: 0 })], []);
   assert.equal(matching.countStatus, 'Validated');
+});
+
+test('OM-20 c1: counted lines of a saved draft are listed with the Draft status', () => {
+  const line = {
+    draftId: 'd1', branchId: 'b1', staffName: 'Ana Reyes', checkDate: '2026-11-23', savedAt: '2026-11-23T02:00:00Z',
+    ingredientId: 'flour', ingredientName: 'Flour', unit: 'kg', expectedQuantity: 10, actualQuantity: 9.5,
+  };
+  const records = buildDraftCountRecords(
+    [line, { ...line, ingredientId: 'eggs', ingredientName: 'Eggs', unit: 'pc', actualQuantity: null }],
+    [{ id: 'b1', name: 'Manila · Branch 1' }],
+  );
+  assert.equal(records.length, 1);
+  const [draft] = records;
+  assert.equal(draft.countStatus, 'Draft');
+  assert.equal(draft.branchName, 'Manila · Branch 1');
+  assert.equal(draft.difference, -0.5);
+  assert.equal(draft.result, 'Lower than Expected');
+  assert.equal(draft.submittedBy, 'Ana Reyes');
+  assert.equal(draft.submittedAt, '2026-11-23T02:00:00Z');
+  assert.equal(draft.discrepancyStatus, null);
+  assert.equal(draft.discrepancyReference, null);
 });

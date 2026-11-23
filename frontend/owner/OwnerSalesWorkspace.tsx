@@ -23,6 +23,10 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import SalesTransactionRecords from './SalesTransactionRecords';
+import VoidReportScreen from './VoidReportScreen';
+import DailyClosingReportScreen from './DailyClosingReportScreen';
+import { ALL_BRANCHES, branchKey, type OwnerReportSelection } from './ownerRecordFilters';
 import {
   filterOwnerSalesByInventoryState,
   getOwnerSaleInventoryStatusLabel,
@@ -278,7 +282,7 @@ export default function OwnerSalesWorkspace({
   initialStartDate,
   initialEndDate,
   onOpenReports,
-  onOpenSalesReport,
+  showSalesReports = false,
   onBack,
   onRefresh,
   availableWidth,
@@ -292,8 +296,8 @@ export default function OwnerSalesWorkspace({
   initialStartDate?: string;
   initialEndDate?: string;
   onOpenReports?: () => void;
-  /** OM-03 c1, c6: open the Transaction Summary, Void or Daily Closing report; its back control returns here. */
-  onOpenSalesReport?: (report: OwnerSalesSectionReport) => void;
+  /** OM-03 c1 / OM-09–OM-11 c1: show the Transaction Summary, Void and Daily Closing reports as tabs of this page. */
+  showSalesReports?: boolean;
   onBack?: () => void;
   onRefresh?: () => Promise<void> | void;
   availableWidth: number;
@@ -341,7 +345,7 @@ export default function OwnerSalesWorkspace({
   const [showAllProducts, setShowAllProducts] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
-  const [activeSalesTab, setActiveSalesTab] = useState<'Daily' | 'Weekly' | 'Monthly' | 'Branch' | 'Products'>(
+  const [activeSalesTab, setActiveSalesTab] = useState<'Daily' | 'Weekly' | 'Monthly' | 'Branch' | 'Products' | OwnerSalesSectionReport>(
     period === 'Weekly' ? 'Weekly' : period === 'Monthly' ? 'Monthly' : 'Daily',
   );
   const [datePickerVisible, setDatePickerVisible] = useState(false);
@@ -351,6 +355,12 @@ export default function OwnerSalesWorkspace({
   const [branchPickerVisible, setBranchPickerVisible] = useState(false);
   const [branchSubTab, setBranchSubTab] = useState<'Daily' | 'Weekly' | 'Monthly'>('Daily');
   const [productSubTab, setProductSubTab] = useState<'Daily' | 'Weekly' | 'Monthly'>('Daily');
+  // OM-09 c1 / OM-10 c1 / OM-11 c1: the Transaction Summary, Void and Daily Closing reports
+  // use this page's Daily / Weekly / Monthly date and branch selection.
+  const [reportSubTab, setReportSubTab] = useState<'Daily' | 'Weekly' | 'Monthly'>('Daily');
+  const activeReport = (OWNER_SALES_SECTION_REPORTS as readonly string[]).includes(activeSalesTab)
+    ? activeSalesTab as OwnerSalesSectionReport
+    : null;
   const [productSortDescending, setProductSortDescending] = useState(true);
   const [branchDrillDownId, setBranchDrillDownId] = useState<string | null>(null);
   const salesTabScrollRef = useRef<ScrollView>(null);
@@ -784,7 +794,13 @@ export default function OwnerSalesWorkspace({
     const dailyLabel = period === 'Custom'
       ? ownerSalesRangeLabel(fromText, toText)
       : ownerSalesDayLabel(isDateKey(fromText) ? fromText : today);
-    const dateLabel = activeSalesTab === 'Branch'
+    const dateLabel = activeReport
+      ? reportSubTab === 'Weekly'
+        ? selectedWeek.dropdownLabel
+        : reportSubTab === 'Monthly'
+          ? ownerSalesMonthLabel(anchorDate)
+          : dailyLabel
+      : activeSalesTab === 'Branch'
       ? branchSubTab === 'Weekly'
         ? selectedWeek.dropdownLabel
         : branchSubTab === 'Monthly'
@@ -802,6 +818,22 @@ export default function OwnerSalesWorkspace({
           ? ownerSalesMonthLabel(anchorDate)
           : dailyLabel;
     const branchLabel = branches.find((branch) => branch.id === branchId)?.name ?? 'All branches';
+    const reportSelection: OwnerReportSelection | null = activeReport && isDateKey(fromText) && isDateKey(toText)
+      ? {
+        startDate: fromText,
+        endDate: toText,
+        branch: branchId ? branchKey(branchLabel) : ALL_BRANCHES,
+        periodLabel: dateLabel,
+        branchLabel,
+      }
+      : null;
+    const renderSalesSectionReport = (report: OwnerSalesSectionReport) => {
+      if (!reportSelection) return null;
+      // Keyed by report so each keeps its own state; the selection is passed in.
+      if (report === 'Transaction Summary') return <SalesTransactionRecords key={report} selection={reportSelection} />;
+      if (report === 'Void') return <VoidReportScreen key={report} selection={reportSelection} />;
+      return <DailyClosingReportScreen key={report} selection={reportSelection} />;
+    };
     // The real branches, shown by their short "Branch N" label (OM-07 c2). Their names carry the
     // city ("Manila · Branch 1"), so they are matched by their ending, not exactly.
     const orderedBranches = orderBranchesForSales(branches);
@@ -1084,16 +1116,28 @@ export default function OwnerSalesWorkspace({
               <Text style={[styles.omTabText, activeSalesTab === tab && styles.omTabTextSelected]}>{tab}</Text>
             </Pressable>
           ))}
-          {onOpenSalesReport ? OWNER_SALES_SECTION_REPORTS.map((report) => (
+          {showSalesReports ? OWNER_SALES_SECTION_REPORTS.map((report) => (
             <Pressable
               key={report}
               accessibilityRole="button"
-              accessibilityLabel={`Open ${report} report`}
-              disabled={loading}
-              onPress={() => onOpenSalesReport(report)}
-              style={styles.omTab}
+              accessibilityLabel={`${report} report`}
+              accessibilityState={{ selected: activeSalesTab === report }}
+              onPress={() => {
+                // The period, date and branch the owner picked stay selected.
+                const nextSubTab = activeReport
+                  ? reportSubTab
+                  : activeSalesTab === 'Branch'
+                    ? branchSubTab
+                    : activeSalesTab === 'Products'
+                      ? productSubTab
+                      : activeSalesTab === 'Weekly' || activeSalesTab === 'Monthly' ? activeSalesTab : 'Daily';
+                setActiveSalesTab(report);
+                setReportSubTab(nextSubTab);
+                switchView(nextSubTab);
+              }}
+              style={[styles.omTab, activeSalesTab === report && styles.omTabSelected]}
             >
-              <Text style={styles.omTabText}>{report}</Text>
+              <Text style={[styles.omTabText, activeSalesTab === report && styles.omTabTextSelected]}>{report}</Text>
             </Pressable>
           )) : null}
         </ScrollView>
@@ -1143,6 +1187,28 @@ export default function OwnerSalesWorkspace({
           </>
         )}
 
+        {activeReport && (
+          <>
+            <View style={styles.omBranchDivider} />
+            <View style={styles.omBranchSubTabRow}>
+              {(['Daily', 'Weekly', 'Monthly'] as const).map((subTab) => (
+                <Pressable
+                  key={subTab}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: reportSubTab === subTab }}
+                  onPress={() => {
+                    setReportSubTab(subTab);
+                    switchView(subTab);
+                  }}
+                  style={[styles.omBranchSubTab, reportSubTab === subTab && styles.omBranchSubTabSelected]}
+                >
+                  <Text style={[styles.omBranchSubTabText, reportSubTab === subTab && styles.omBranchSubTabTextSelected]}>{subTab}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        )}
+
         <View style={styles.omSelectorRow}>
           <Pressable
             accessibilityRole="button"
@@ -1153,7 +1219,9 @@ export default function OwnerSalesWorkspace({
                 ? branchSubTab
                 : activeSalesTab === 'Products'
                   ? productSubTab
-                  : activeSalesTab;
+                  : activeReport
+                    ? reportSubTab
+                    : activeSalesTab;
               if (activeDateMode === 'Weekly') {
                 setWeekPickerVisible(true);
                 return;
@@ -1186,7 +1254,7 @@ export default function OwnerSalesWorkspace({
           </Pressable>
         </View>
 
-        {loading && !data ? (
+        {activeReport ? renderSalesSectionReport(activeReport) : loading && !data ? (
           <>
             {activeSalesTab === 'Products' ? (
               <View style={styles.omProductLoadingCard}>
