@@ -23,3 +23,17 @@ test('a recorded sale uses its saved flag, otherwise its saved product quantitie
   assert.equal(recordedSaleIsBulkOrder(undefined, [2, 3]), true, 'derived: 2 + 3');
   assert.equal(recordedSaleIsBulkOrder(null, [2, 2]), false, 'derived: 2 + 2');
 });
+
+test('OW-21 c10: the configured threshold applies where no threshold is passed', async () => {
+  const { setBulkOrderThreshold, bulkOrderThreshold, isBulkOrder, recordedSaleIsBulkOrder } = await import('./bulkOrder.ts');
+  setBulkOrderThreshold(8);
+  assert.equal(bulkOrderThreshold(), 8);
+  assert.equal(isBulkOrder(7), false);
+  assert.equal(isBulkOrder(8), true);
+  assert.equal(recordedSaleIsBulkOrder(null, [5]), false);
+  setBulkOrderThreshold(0); // invalid → default
+  assert.equal(bulkOrderThreshold(), 5);
+  assert.equal(isBulkOrder(5), true);
+  setBulkOrderThreshold(null);
+  assert.equal(bulkOrderThreshold(), 5);
+});

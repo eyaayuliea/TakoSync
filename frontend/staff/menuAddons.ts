@@ -27,6 +27,15 @@ export function matchSupportedAddon(name: string): SupportedAddonKey | null {
   return SUPPORTED_ADDONS.find((definition) => definition.pattern.test(normalized))?.key ?? null;
 }
 
+/**
+ * OW-21 c5: the add-ons offered for the products in the cart. An add-on linked to
+ * products is offered when one of them is in the cart; one without links is
+ * offered with every product.
+ */
+export function addonsForCart<T extends { productIds?: readonly string[] }>(addons: readonly T[], cartProductIds: readonly string[]): T[] {
+  return addons.filter((addon) => !addon.productIds?.length || addon.productIds.some((id) => cartProductIds.includes(id)));
+}
+
 export function resolveMenuAddons<T extends MenuAddonLike>(addons: readonly T[]): {
   available: T[];
   missingLabels: string[];

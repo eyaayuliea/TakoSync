@@ -6,6 +6,7 @@ import {
   type OwnerPasswordFields,
 } from './ownerPasswordChange.ts';
 import { formatBranchName } from './branchNames.ts';
+import { bulkOrderThreshold, setBulkOrderThreshold } from './bulkOrder.ts';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
 import {
@@ -647,6 +648,9 @@ export type ProductMenuItem = {
   is_available: boolean;
   created_at: string;
   updated_at: string;
+  /** OW-21 c2: null until migration 202611240001 fills it in. */
+  flavor?: string | null;
+  portion_type?: 'Regular' | 'Combo + Cheese' | null;
 };
 
 export type ProductManagementItem = ProductMenuItem & {
@@ -666,6 +670,9 @@ export type StaffMenuCatalogItem = {
   id: string;
   productId: string;
   name: string;
+  /** OW-21 c7: the product's flavor and portion type (POS flavor tabs). */
+  flavor?: string | null;
+  portionType?: string | null;
   description: string;
   category: string;
   sizeLabel: string;
@@ -683,6 +690,8 @@ export type StaffMenuAddon = {
   name: string;
   price: number;
   isAvailable: boolean;
+  /** OW-21 c5: the products it is offered with; empty = every product. */
+  productIds: string[];
 };
 
 export type SharedRecipeRecord = {
@@ -2606,6 +2615,8 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     loadLotExpiryWindow(client),
     loadHeldLotIds(client, branchId),
     loadReorderPointMap(client, branchId),
+    // OW-21 c10: reports and records label Bulk Orders with the owner's threshold.
+    refreshBulkOrderThreshold(client),
   ]);
 
   const inventory = indexBranchInventorySnapshot(inventoryResult.data ?? []);
@@ -3380,14 +3391,24 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
   const client = requireSupabase();
   const [productsResult, variantsResult] = await Promise.all([
     client.from('products')
-      .select('id, product_name, description, price, is_available, created_at, updated_at')
+      .select('id, product_name, description, price, is_available, created_at, updated_at, flavor, portion_type')
       .order('product_name', { ascending: true }),
     client.from('product_variants')
       .select('id, product_id, variant_code, size_label, piece_count, price, max_order_quantity, active, is_available')
       .order('product_id')
       .order('variant_code'),
   ]);
-  assertNoError(productsResult.error);
+  let productRows = (productsResult.data ?? []) as unknown as ProductMenuItem[];
+  if (productsResult.error && isMissingSchemaColumn(productsResult.error)) {
+    // Before migration 202611240001: products without flavor and portion type.
+    const legacy = await client.from('products')
+      .select('id, product_name, description, price, is_available, created_at, updated_at')
+      .order('product_name', { ascending: true });
+    assertNoError(legacy.error);
+    productRows = legacy.data ?? [];
+  } else {
+    assertNoError(productsResult.error);
+  }
   let variantRows: Array<Omit<ProductManagementItem['variants'][number], 'max_order_quantity'> & {
     product_id: string;
     max_order_quantity?: unknown;
@@ -3416,7 +3437,7 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
     variantsByProduct.set(variant.product_id, variants);
   }
 
-  return (productsResult.data ?? []).map((product) => {
+  return productRows.map((product) => {
     const variants = variantsByProduct.get(product.id) ?? [];
     const regularVariant = variants.find((variant) => variant.variant_code === '4pcs');
     return {
@@ -3436,7 +3457,7 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   const client = requireSupabase();
   const [productsResult, variantsResult, visibilityResult, addonsResult, stockResult] = await Promise.all([
     client.from('products')
-      .select('id, product_name, description, is_available, category'),
+      .select('id, product_name, description, is_available, category, flavor, portion_type'),
     client.from('product_variants')
       .select('id, product_id, size_label, price, piece_count, max_order_quantity, is_available, active')
       .eq('active', true),
@@ -3450,7 +3471,17 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
       .order('addon_name', { ascending: true }),
     client.rpc('sale_stock_requirements', { p_branch_id: branchId }),
   ]);
-  assertNoError(productsResult.error);
+  let productRows: Array<{ id: string; product_name: string; description: string; is_available: boolean; category: string; flavor?: string | null; portion_type?: string | null }>
+    = (productsResult.data ?? []) as unknown as typeof productRows;
+  if (productsResult.error && isMissingSchemaColumn(productsResult.error)) {
+    // Before migration 202611240001: no flavor or portion type yet.
+    const legacy = await client.from('products').select('id, product_name, description, is_available, category');
+    assertNoError(legacy.error);
+    productRows = legacy.data ?? [];
+  } else {
+    assertNoError(productsResult.error);
+  }
+  const [addonLinks] = await Promise.all([loadProductAddonLinks(client), refreshBulkOrderThreshold(client)]);
   let stock: SaleStockSnapshot | null = null;
   if (!isMissingRpcFunction(stockResult.error, 'sale_stock_requirements')) {
     assertNoError(stockResult.error);
@@ -3476,7 +3507,7 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
   const visibleVariantIds = new Set((visibilityResult.data ?? []).map((row) => row.product_variant_id));
   const visibleVariants = filterBranchVisibleMenuVariants(variantRows, visibleVariantIds);
   const products = buildStaffMenuProducts(
-    productsResult.data ?? [],
+    productRows,
     visibleVariants,
     visibleVariantIds,
   ).map((product) => (isVariantOutOfStock(product.id, stock) ? { ...product, outOfStock: true } : product));
@@ -3489,8 +3520,106 @@ export async function loadStaffMenuCatalog(branchId: string): Promise<{
       name: addon.addon_name,
       price: parseCatalogPrice(addon.price, `Add-on ${addon.addon_name}`),
       isAvailable: addon.active,
+      productIds: addonLinks.get(addon.id) ?? [],
     })),
   };
+}
+
+/** OW-21 c5: add-on id → the products it is offered with (empty before migration 202611240001). */
+async function loadProductAddonLinks(client: StaffServiceClient): Promise<Map<string, string[]>> {
+  const { data, error } = await client.from('product_addons').select('product_id, addon_id');
+  const links = new Map<string, string[]>();
+  if (error) {
+    if (isMissingSchemaColumn(error) || /product_addons/.test(error.message ?? '')) return links;
+    assertNoError(error);
+  }
+  for (const row of data ?? []) links.set(row.addon_id, [...(links.get(row.addon_id) ?? []), row.product_id]);
+  return links;
+}
+
+/** OW-21 c10: loads the owner-set Bulk Order threshold into the bulk-order module. */
+async function refreshBulkOrderThreshold(client: StaffServiceClient): Promise<number> {
+  const { data, error } = await client.from('owner_inventory_settings').select('bulk_order_threshold').eq('id', true).maybeSingle();
+  if (!error) setBulkOrderThreshold(data?.bulk_order_threshold ?? null);
+  return bulkOrderThreshold();
+}
+
+export type MenuAddonConfiguration = {
+  addons: Array<{ id: string; name: string; price: number; active: boolean; productIds: string[] }>;
+  bulkOrderThreshold: number;
+};
+
+/** OW-21 c5, c10: the add-ons with their product links, and the Bulk Order threshold. */
+export async function loadMenuAddonConfiguration(): Promise<MenuAddonConfiguration> {
+  const client = requireSupabase();
+  const [addonsResult, links, threshold] = await Promise.all([
+    client.from('menu_addons').select('id, addon_name, price, active').order('addon_name', { ascending: true }),
+    loadProductAddonLinks(client),
+    refreshBulkOrderThreshold(client),
+  ]);
+  assertNoError(addonsResult.error);
+  return {
+    addons: (addonsResult.data ?? []).map((addon) => ({
+      id: addon.id,
+      name: addon.addon_name,
+      price: Number(addon.price),
+      active: addon.active,
+      productIds: links.get(addon.id) ?? [],
+    })),
+    bulkOrderThreshold: threshold,
+  };
+}
+
+/** OW-21 c5: the add-ons offered with a product (replaces its current links). */
+export async function saveProductAddons(productId: string, addonIds: string[]): Promise<void> {
+  const client = requireSupabase();
+  const { data: current, error: loadError } = await client.from('product_addons').select('addon_id').eq('product_id', productId);
+  assertNoError(loadError);
+  const existing = new Set((current ?? []).map((row) => row.addon_id));
+  const wanted = new Set(addonIds);
+  const removed = [...existing].filter((id) => !wanted.has(id));
+  const added = [...wanted].filter((id) => !existing.has(id));
+  if (removed.length) {
+    const { error } = await client.from('product_addons').delete().eq('product_id', productId).in('addon_id', removed);
+    assertNoError(error);
+  }
+  if (added.length) {
+    const { error } = await client.from('product_addons').insert(added.map((addonId) => ({ product_id: productId, addon_id: addonId })));
+    assertNoError(error);
+  }
+}
+
+/**
+ * OW-21 c5, c6: updates an add-on's price and availability (the price must be
+ * greater than zero). The POS offers the supported add-ons only, so the owner
+ * edits those rather than creating new ones.
+ */
+export async function saveMenuAddon(input: { id: string; name: string; price: number; active: boolean }): Promise<void> {
+  if (!Number.isFinite(input.price) || input.price <= 0) throw new Error(`The price of ${input.name} must be greater than zero.`);
+  const { data, error } = await requireSupabase()
+    .from('menu_addons')
+    .update({ price: input.price, active: input.active })
+    .eq('id', input.id)
+    .select('id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error(`${input.name} could not be saved.`);
+}
+
+/** OW-21 c10: the number of products from which an order is a Bulk Order. */
+export async function updateBulkOrderThreshold(threshold: number): Promise<void> {
+  if (!Number.isSafeInteger(threshold) || threshold < 1 || threshold > 999) {
+    throw new Error('The Bulk Order threshold must be a whole number from 1 to 999.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('owner_inventory_settings')
+    .update({ bulk_order_threshold: threshold })
+    .eq('id', true)
+    .select('bulk_order_threshold')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The Bulk Order threshold could not be saved.');
+  setBulkOrderThreshold(data.bulk_order_threshold);
 }
 
 /**
