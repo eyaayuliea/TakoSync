@@ -1,4 +1,10 @@
 import { createIsolatedAuthClient, requireSupabase } from './supabase';
+import {
+  OWNER_WRONG_CURRENT_PASSWORD,
+  OwnerPasswordChangeError,
+  validateOwnerPasswordChange,
+  type OwnerPasswordFields,
+} from './ownerPasswordChange.ts';
 import { formatBranchName } from './branchNames.ts';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
@@ -1196,6 +1202,31 @@ export async function saveStaffAccount(input: {
 
 export async function signOut(): Promise<void> {
   const { error } = await requireSupabase().auth.signOut();
+  assertNoError(error);
+}
+
+/**
+ * OW-30 c3–c5: checks the current password on a throwaway client (the owner's
+ * session is not replaced), then sets the new one. Field problems throw an
+ * OwnerPasswordChangeError; a lost connection throws the original error.
+ */
+export async function changeOwnerPassword(fields: OwnerPasswordFields): Promise<void> {
+  const fieldErrors = validateOwnerPasswordChange(fields);
+  if (Object.keys(fieldErrors).length) throw new OwnerPasswordChangeError(fieldErrors);
+  const client = requireSupabase();
+  const user = await loadCurrentUser(client);
+  if (!user || user.role !== 'Owner' || !user.email) throw new Error('Only a signed-in Owner can change this password.');
+  const check = createIsolatedAuthClient();
+  const { error: checkError } = await check.auth.signInWithPassword({ email: user.email, password: fields.currentPassword });
+  if (checkError) {
+    if (/invalid login credentials|invalid_credentials|invalid grant/i.test(`${checkError.message} ${(checkError as { code?: string }).code ?? ''}`)) {
+      throw new OwnerPasswordChangeError({ currentPassword: OWNER_WRONG_CURRENT_PASSWORD });
+    }
+    throw checkError;
+  }
+  // End the session the check created; the owner's own session stays.
+  await check.auth.signOut({ scope: 'local' }).catch(() => undefined);
+  const { error } = await client.auth.updateUser({ password: fields.newPassword });
   assertNoError(error);
 }
 
