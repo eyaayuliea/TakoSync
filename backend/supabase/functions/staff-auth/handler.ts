@@ -524,7 +524,8 @@ async function validateBranch(admin: ReturnType<HandlerOptions['createClient']>,
 
 async function accountList(admin: ReturnType<HandlerOptions['createClient']>) {
   const [{ data: profiles, error: profileError }, { data: branches, error: branchError }] = await Promise.all([
-    admin.from('profiles').select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at').eq('role', 'staff').order('created_at'),
+    // OW-27 c1, c9: the lock status comes from the ST-01 lockout fields.
+    admin.from('profiles').select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at, failed_login_attempts, locked_until').eq('role', 'staff').order('created_at'),
     admin.from('branches').select('id, name').eq('active', true).order('created_at'),
   ]);
   if (profileError) throw profileError;

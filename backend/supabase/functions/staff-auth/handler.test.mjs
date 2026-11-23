@@ -31,6 +31,7 @@ function createFixture({
   takenUsername = null,
 } = {}) {
   const calls = [];
+  const selects = [];
   const accountOperations = [];
   const profiles = [];
   const branches = [];
@@ -125,7 +126,7 @@ function createFixture({
       filters: [],
       operation: 'select',
       selectOptions: null,
-      select(fields, options) { this.selectedFields = fields; this.selectOptions = options; return this; },
+      select(fields, options) { this.selectedFields = fields; this.selectOptions = options; selects.push({ table, fields }); return this; },
       eq(column, value) { this.filters.push([column, value]); return this; },
       neq(column, value) { this.filters.push([`not-${column}`, value]); return this; },
       order() { return this; },
@@ -211,7 +212,7 @@ function createFixture({
 
   const handler = createStaffAuthHandler(options);
   const authAdminPayloads = [];
-  return { handler, calls, accountOperations, authAdminOperations, authAdminPayloads, profiles, branches };
+  return { handler, calls, selects, accountOperations, authAdminOperations, authAdminPayloads, profiles, branches };
 }
 
 function request(action, account, authorization = 'Bearer valid-token') {
@@ -252,6 +253,16 @@ for (const action of ['list', 'create', 'update']) {
     assert.equal(fixture.calls.some((call) => call.kind === 'session-rpc'), false);
   });
 }
+
+test('OW-27 c1, c9: the account list returns the lockout fields for the Lock status column', async () => {
+  const fixture = createFixture();
+  const result = await invoke(fixture, 'list');
+  assert.equal(result.status, 200);
+  const profileSelect = fixture.selects.find((entry) => entry.table === 'profiles' && /employee_id/.test(entry.fields));
+  assert.ok(profileSelect, 'the list reads Staff profiles');
+  assert.match(profileSelect.fields, /\blocked_until\b/);
+  assert.match(profileSelect.fields, /\bfailed_login_attempts\b/);
+});
 
 test('invalid JWT is rejected before any account operation', async () => {
   const fixture = createFixture();

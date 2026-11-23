@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
 import { loadBranches, loadStaffAccounts, provisionExistingStaffAccounts, resetStaffPasswordToEmployeeId, saveStaffAccount, type StaffAccount } from '../services/takosync';
 import { ownerColors } from './shared/ownerTokens';
 
@@ -21,6 +22,8 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selected, setSelected] = useState<StaffAccount | null>(null);
+  // OW-27 c10: the reset runs only after the owner confirms it.
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<StaffAccount | null>(null);
   const [username, setUsername] = useState('');
   const [branchId, setBranchId] = useState('');
@@ -50,6 +53,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
 
   const reset = () => {
     setSelected(null);
+    setConfirmingReset(false);
     setUsername('');
     setBranchId(branches[0]?.id ?? '');
     setActive(true);
@@ -58,6 +62,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
 
   const edit = (account: StaffAccount) => {
     setSelected(account);
+    setConfirmingReset(false);
     setUsername(account.full_name || account.username);
     setBranchId(account.branch_id);
     setActive(account.active);
@@ -90,12 +95,14 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
 
   const resetPassword = async () => {
     if (!selected || saving) return;
+    setConfirmingReset(false);
     setSaving(true);
     setError('');
     setFeedback('');
     try {
       await resetStaffPasswordToEmployeeId(selected.id);
-      setFeedback('Initial password reset to the Employee ID.');
+      setFeedback('Password reset to the Employee ID. The employee must change it at the next login.');
+      setAccounts(await loadStaffAccounts());
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : 'Unable to reset the Staff password.');
     } finally {
@@ -174,12 +181,23 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
         ) : null}
         <View style={styles.actions}>
           {selected ? <Pressable onPress={reset} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Cancel</Text></Pressable> : null}
-          {selected ? <Pressable onPress={() => void resetPassword()} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Reset initial password</Text></Pressable> : null}
+          {selected?.active ? <Pressable onPress={() => setConfirmingReset(true)} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Reset password</Text></Pressable> : null}
           <Pressable onPress={() => void save()} disabled={saving || loading} style={[styles.primaryButton, (saving || loading) && styles.disabled]}>
             {saving ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryText}>{selected ? 'Save changes' : 'Create account'}</Text>}
           </Pressable>
         </View>
       </View>
+
+      {selected && confirmingReset ? (
+        <View style={styles.generatedCard} accessibilityRole="alert">
+          <Text style={styles.generatedTitle}>Reset password?</Text>
+          <Text style={styles.generatedHint}>{staffPasswordResetPrompt(selected)}</Text>
+          <View style={styles.actions}>
+            <Pressable onPress={() => setConfirmingReset(false)} disabled={saving} style={styles.secondaryButton}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Confirm password reset" onPress={() => void resetPassword()} disabled={saving} style={styles.primaryButton}><Text style={styles.primaryText}>Reset password</Text></Pressable>
+          </View>
+        </View>
+      ) : null}
 
       {createdAccount ? (
         <View style={styles.generatedCard}>
@@ -199,7 +217,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
         <Pressable key={account.id} onPress={() => edit(account)} style={styles.accountCard}>
           <View style={styles.accountCopy}>
             <Text style={styles.accountName}>{account.full_name || account.username}</Text>
-            <Text style={styles.accountMeta}>{account.branch_name ?? 'Branch unavailable'} · {account.active ? 'Active' : 'Inactive'}</Text>
+            <Text style={styles.accountMeta}>{account.branch_name ?? 'Branch unavailable'} · {account.active ? 'Active' : 'Inactive'} · {staffLockStatus(account).label}</Text>
           </View>
           <Text style={styles.editText}>Edit</Text>
         </Pressable>

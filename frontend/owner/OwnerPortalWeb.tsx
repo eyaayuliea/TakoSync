@@ -12,6 +12,7 @@ import {
   PRODUCTS_SOLD_HEADERS,
   TRANSACTION_SUMMARY_HEADERS,
 } from './ownerPortalSalesReports';
+import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
 import {
   buildWebSalesConsumptionReport,
   buildWebVoidReversalReport,
@@ -64,6 +65,7 @@ import {
   loadProductManagement,
   loadSharedRecipes,
   loadStaffAccounts,
+  resetStaffPasswordToEmployeeId,
   loadStockExpirationSettings,
   saveProductRecipe,
   saveSharedRecipe,
@@ -1734,6 +1736,22 @@ function StaffManager({ accounts, branches, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [savingAccountId, setSavingAccountId] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState('');
+  // OW-27 c10: the account whose password reset waits for the owner's confirmation.
+  const [resetTarget, setResetTarget] = useState<(typeof accounts)[number] | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const confirmReset = async () => {
+    if (!resetTarget || resetting) return;
+    setResetting(true);
+    try {
+      await resetStaffPasswordToEmployeeId(resetTarget.id);
+      setResetTarget(null);
+      await onSaved(`${resetTarget.full_name || resetTarget.username}'s password was reset to their Employee ID. They must change it at their next login.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'Unable to reset the Staff password.', true);
+    } finally {
+      setResetting(false);
+    }
+  };
   const save = async () => {
     if (!username.trim() || !branchId) {
       await onSaved('Enter a username and choose an assigned branch.', true);
@@ -1782,8 +1800,18 @@ function StaffManager({ accounts, branches, onSaved }: {
     <Select value={branches.find((item: any) => item.id === branchId)?.name ?? 'Choose branch'} options={branches.map((item: any) => item.name)} onChange={(value) => setBranchId(branches.find((item: any) => item.name === value)?.id ?? '')} />
     <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : editing ? 'Save staff account' : 'Create staff account'}</Text></Pressable>
     {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
-    <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', 'Edit'])} />
-    {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable></View>)}
+    {/* OW-27 c1, c9: status (Active / Inactive) and lock status (Locked until … / Not locked). */}
+    <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Lock status']} rows={accounts.map((account) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', staffLockStatus(account).label])} />
+    {resetTarget ? (
+      <Panel title="Reset password?">
+        <Text style={styles.body}>{staffPasswordResetPrompt(resetTarget)}</Text>
+        <View style={styles.line}>
+          <Pressable disabled={resetting} onPress={() => setResetTarget(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Confirm password reset" disabled={resetting} onPress={() => void confirmReset()} style={styles.loginButton}><Text style={styles.loginButtonText}>{resetting ? 'Resetting…' : 'Reset password'}</Text></Pressable>
+        </View>
+      </Panel>
+    ) : null}
+    {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable>{account.active ? <Pressable accessibilityRole="button" accessibilityLabel={`Reset password for ${account.full_name || account.username}`} disabled={savingAccountId !== null || saving || resetting} onPress={() => setResetTarget(account)}><Text style={styles.pinkText}>Reset password</Text></Pressable> : null}</View>)}
   </>;
 }
 function LegacySettingsEditor({ products, configuration, stockSettings, onSaved }: any) {
