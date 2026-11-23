@@ -67,7 +67,7 @@ export function wrapText(text: string, width: number, size: number, bold = false
 const hex4 = (value: number) => value.toString(16).toUpperCase().padStart(4, '0');
 
 /** Text as a hex string of 2-byte glyph ids (Identity-H). */
-function pdfGlyphs(text: string, bold: boolean): string {
+export function pdfGlyphs(text: string, bold: boolean): string {
   const font = fontFor(bold);
   let out = '<';
   for (const char of pdfSafeText(text)) out += hex4(glyphOf(font, char));
@@ -275,23 +275,37 @@ export function buildReportPdf(doc: ReportDocument): Uint8Array {
     ops.push(`BT /F1 7 Tf ${n(PAGE_WIDTH - MARGIN - textWidth(label, 7))} 20 Td ${pdfGlyphs(label, false)} Tj ET`);
   });
 
+  return assemblePdf({
+    title: doc.title,
+    creator: 'TakoSync Owner Web Portal',
+    width: PAGE_WIDTH,
+    height: PAGE_HEIGHT,
+    pages: layout.pages.map((ops) => ops.join('\n')),
+  });
+}
+
+/**
+ * Writes a PDF 1.4 file from page content streams that draw text with /F1
+ * (regular) and /F2 (bold), the embedded Noto Sans subsets. Shared by the
+ * reports and the staff sale receipt (ST-05 c7).
+ */
+export function assemblePdf(input: { title: string; creator: string; width: number; height: number; pages: string[] }): Uint8Array {
   // Objects: 1 catalog, 2 pages, 3 info, 4–8 regular font, 9–13 bold font, then page + content pairs.
   const objects: string[] = [];
-  const pageIds = layout.pages.map((_, index) => 14 + index * 2);
+  const pageIds = input.pages.map((_, index) => 14 + index * 2);
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
-  objects[2] = `<< /Type /Pages /Count ${pageCount} /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] >>`;
-  objects[3] = `<< /Title ${pdfTextString(doc.title)} /Creator (TakoSync Owner Web Portal) /Producer (TakoSync) >>`;
+  objects[2] = `<< /Type /Pages /Count ${input.pages.length} /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] >>`;
+  objects[3] = `<< /Title ${pdfTextString(input.title)} /Creator ${pdfTextString(input.creator)} /Producer (TakoSync) >>`;
   const embedded = [...fontObjects(REPORT_PDF_FONTS.regular, 4, 'TKSYNA'), ...fontObjects(REPORT_PDF_FONTS.bold, 9, 'TKSYNB')];
-  layout.pages.forEach((ops, index) => {
+  input.pages.forEach((content, index) => {
     const pageId = pageIds[index];
-    const content = ops.join('\n');
-    objects[pageId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 4 0 R /F2 9 0 R >> >> /Contents ${pageId + 1} 0 R >>`;
+    objects[pageId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(input.width)} ${n(input.height)}] /Resources << /Font << /F1 4 0 R /F2 9 0 R >> >> /Contents ${pageId + 1} 0 R >>`;
     objects[pageId + 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
   });
 
   // Every character written is one byte (text is hex-encoded; the font files are
   // binary strings of 0–255), so string offsets are byte offsets.
-  let file = '%PDF-1.4\n%âãÏÓ\n';
+  let file = '%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n';
   const offsets: number[] = [];
   for (let id = 1; id < objects.length; id += 1) {
     offsets[id] = file.length;

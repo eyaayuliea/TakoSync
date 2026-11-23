@@ -3,6 +3,7 @@ export type StaffRoute =
   | 'menu'
   | 'cart'
   | 'checkout'
+  | 'saleCompleted'
   | 'saleReceipt'
   | 'dailySales'
   | 'inventoryReporting'
@@ -77,7 +78,7 @@ export function isMoreFlowRoute(route: StaffRoute): boolean {
 
 /** The tab a route-only caller (no origin) belongs to. */
 function defaultStaffTab(route: StaffRoute): StaffTab {
-  if (route === 'cart' || route === 'checkout' || route === 'saleReceipt') return 'menu';
+  if (route === 'cart' || route === 'checkout' || route === 'saleCompleted' || route === 'saleReceipt') return 'menu';
   if (
     route === 'dailySales' ||
     route === 'profileSettings'
