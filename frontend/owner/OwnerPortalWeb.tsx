@@ -15,6 +15,7 @@ import {
 import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
+import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
 import {
   buildWebSalesConsumptionReport,
   buildWebVoidReversalReport,
@@ -422,6 +423,7 @@ export default function OwnerPortalWeb() {
           ) : <>
           {page === 'Dashboard' && (
             <Dashboard
+              onOpenReconciliation={() => setPage('Reconciliation')}
               rows={rows}
               inventoryAvailable={inventoryData !== null}
               branches={inventoryData?.branches ?? []}
@@ -537,12 +539,14 @@ function Toolbar({ branch, setBranch, branches }: { branch: string; setBranch: (
   );
 }
 
-function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
+function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOpenReconciliation }: {
   rows: InventoryRow[];
   inventoryAvailable: boolean;
   branches: OwnerPortalBranch[];
   branch: string;
   setBranch: (value: string) => void;
+  /** OW-02 c8: the discrepancies section links to Reconciliation. */
+  onOpenReconciliation: () => void;
 }) {
   const narrow = useWindowDimensions().width < 720;
   const [period, setPeriod] = useState<ReportingPeriod>('This Month');
@@ -553,6 +557,8 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
   const [reviews, setReviews] = useState<Awaited<ReturnType<typeof loadOwnerDiscrepancyReviews>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
   const range = useMemo(
     () => getManilaReportingRange(period, new Date(), startDate, endDate),
     [period, startDate, endDate],
@@ -583,9 +589,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
       if (!active) return;
       const failures = [salesResult, activityResult, reviewsResult]
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-      setError(failures.map((failure) => failure.reason instanceof Error
-        ? failure.reason.message
-        : 'A dashboard data request failed.').join(' '));
+      setError(failures.length ? ownerPortalErrorText(failures[0].reason, 'Some dashboard figures could not be loaded. Please try again.') : '');
       if (salesResult.status === 'fulfilled') setSales(salesResult.value);
       if (activityResult.status === 'fulfilled') setActivity(activityResult.value);
       if (reviewsResult.status === 'fulfilled') setReviews(reviewsResult.value);
@@ -593,7 +597,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [range, branchId]);
+  }, [range, branchId, retryKey]);
 
   const confirmedSales = sales ? filterOwnerPortalConfirmedSales(sales.sales) : null;
   const branchSales = confirmedSales ? summarizeOwnerPortalSalesByBranch(confirmedSales, branches) : [];
@@ -620,6 +624,11 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
     dateFormatter.format(new Date(item.transaction_date)),
   ]);
   const visibleReviews = pendingReviews?.slice(0, 5) ?? [];
+  // OW-02 c5, c6: status counts per branch and the alerts list, for the selected branch.
+  const shownBranches = branchId ? branches.filter((item) => item.id === branchId) : branches;
+  const stockCounts = dashboardStockCounts(rows, shownBranches);
+  const alerts = dashboardAlerts(selectedRows);
+  const shownAlerts = showAllAlerts ? alerts : alerts.slice(0, 10);
 
   return (
     <>
@@ -634,14 +643,14 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="End date (YYYY-MM-DD)" style={[styles.search, narrow && { width: '100%' }]} />
         </View>
       ) : null}
-      {error ? <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View> : null}
+      {error ? <ReportErrorBanner message={error} onRetry={() => setRetryKey((key) => key + 1)} /> : null}
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading dashboard data…</Text></View> : null}
       <View style={styles.grid}>
         {[
           ['Recorded Sales', confirmedSales ? peso(totalOwnerPortalSales(confirmedSales)) : '—', 'Confirmed sales in selected period'],
           ['Inventory Items', inventoryAvailable ? String(selectedRows.length) : '—', 'Current branch inventory'],
-          ['Low-Stock Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Low Stock').length) : '—', 'Needs attention'],
-          ['Expiration Alerts', inventoryAvailable ? String(selectedRows.filter((row) => row.status === 'Near Expiry' || row.status === 'Expired').length) : '—', 'Near expiry or expired'],
+          ['Low-Stock Alerts', inventoryAvailable ? String(alerts.filter((alert) => alert.type === 'Low stock' || alert.type === 'Out of stock').length) : '—', 'Low or out of stock'],
+          ['Expiration Alerts', inventoryAvailable ? String(alerts.filter((alert) => alert.type === 'Near expiry' || alert.type === 'Expired').length) : '—', 'Near expiry or expired'],
         ].map(([label, value, note]) => (
           <View style={styles.metric} key={label}>
             <Text style={styles.metricLabel}>{label}</Text>
@@ -656,13 +665,18 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
             <Text style={styles.empty}>{sales ? 'No confirmed sales exist for this period.' : 'Sales data is unavailable.'}</Text>
           )}
         </Panel>
-        <Panel title="Pending inventory discrepancies">
+        <Panel title="Discrepancies requiring review">
           {pendingReviews === null ? <Text style={styles.muted}>{loading ? 'Loading pending reviews…' : 'Review data is unavailable.'}</Text> : visibleReviews.length ? visibleReviews.map((review) => (
-            <View key={review.countLineId} style={styles.line}>
+            <Pressable key={review.countLineId} accessibilityRole="link" accessibilityLabel={`Review ${review.ingredient} at ${review.branch} in Reconciliation`} onPress={onOpenReconciliation} style={styles.line}>
               <Text style={styles.body}>{review.reference} · {review.ingredient} · {review.branch}</Text>
-              <Text style={styles.strong}>{review.difference} {review.unit}</Text>
-            </View>
+              <Text style={styles.strong}>{review.difference} {review.unit} ›</Text>
+            </Pressable>
           )) : <Text style={styles.empty}>No pending discrepancies require review.</Text>}
+          {pendingReviews && pendingReviews.length ? (
+            <Pressable accessibilityRole="link" onPress={onOpenReconciliation} style={[styles.outline, { alignSelf: 'flex-start' }]}>
+              <Text style={styles.pinkText}>Open Reconciliation{pendingReviews.length > visibleReviews.length ? ` (${pendingReviews.length} pending)` : ''} →</Text>
+            </Pressable>
+          ) : null}
         </Panel>
       </View>
       <View style={styles.two}>
@@ -677,17 +691,25 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch }: {
           ) : <Text style={styles.empty}>No inventory activity exists for this period.</Text>}
         </Panel>
       </View>
-      <Panel title="Branch inventory health">
-        {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : branches.length ? branches.map((branchItem) => {
-          const branchRows = rows.filter((row) => row.branchId === branchItem.id);
-          return (
-            <View style={styles.line} key={branchItem.id}>
-              <Text style={styles.body}>{branchItem.name}</Text>
-              <Text style={styles.strong}>{branchRows.filter((row) => row.status === 'Normal').length}/{branchRows.length} normal</Text>
-            </View>
-          );
-        }) : <Text style={styles.empty}>No branch records returned.</Text>}
-      </Panel>
+      <View style={styles.two}>
+        <Panel title="Inventory status">
+          {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : stockCounts.length ? (
+            <Table headers={['Branch', 'Normal', 'Low stock', 'Out of stock']} rows={stockCounts.map((item) => [item.branch, String(item.normal), String(item.low), String(item.out)])} />
+          ) : <Text style={styles.empty}>No branch records returned.</Text>}
+        </Panel>
+        <Panel title="Low-stock and expiration alerts">
+          {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : alerts.length ? (
+            <>
+              <Table headers={['Ingredient', 'Branch', 'Alert', 'Details']} rows={shownAlerts.map((alert) => [alert.ingredient, alert.branch, alert.type, alert.detail])} />
+              {alerts.length > 10 ? (
+                <Pressable accessibilityRole="button" onPress={() => setShowAllAlerts((value) => !value)} style={[styles.outline, { alignSelf: 'flex-start' }]}>
+                  <Text style={styles.pinkText}>{showAllAlerts ? 'Show fewer' : `Show all ${alerts.length} alerts`}</Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : <Text style={styles.empty}>No low-stock or expiration alerts.</Text>}
+        </Panel>
+      </View>
     </>
   );
 }
