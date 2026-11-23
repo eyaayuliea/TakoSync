@@ -795,8 +795,8 @@ export default function OwnerSalesWorkspace({
           ? ownerSalesMonthLabel(anchorDate)
           : dailyLabel;
     const branchLabel = branches.find((branch) => branch.id === branchId)?.name ?? 'All branches';
-    // The real branches, shown by their short "Branch N" label. Their names carry the store
-    // name ("Gelo's Takoyaki · Branch 1"), so they are matched by their ending, not exactly.
+    // The real branches, shown by their short "Branch N" label (OM-07 c2). Their names carry the
+    // city ("Manila · Branch 1"), so they are matched by their ending, not exactly.
     const orderedBranches = orderBranchesForSales(branches);
     const branchSalesCards = (orderedBranches.length ? orderedBranches : [
       { id: 'branch-1', name: 'Branch 1' },

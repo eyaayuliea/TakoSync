@@ -1,4 +1,5 @@
 import { createIsolatedAuthClient, requireSupabase } from './supabase';
+import { formatBranchName } from './branchNames.ts';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
 import {
@@ -820,9 +821,8 @@ function formatDate(value: string | null): string | null {
   });
 }
 
-function branchLabel(city: string, code: string): string {
-  const number = Number(code.replace(/\D/g, '')) || code;
-  return `${city ? `${city} · ` : ''}Branch ${number}`;
+function branchLabel(city: string | null, code: string): string {
+  return formatBranchName({ city, code });
 }
 
 async function loadCurrentUser(clientOverride?: StaffServiceClient): Promise<AppUser | null> {
@@ -1339,7 +1339,8 @@ export async function loadBranches() {
     .eq('active', true)
     .order('code');
   assertNoError(error);
-  return data ?? [];
+  // Every screen and report shows the same branch name (not the stored store name).
+  return (data ?? []).map((branch) => ({ ...branch, name: formatBranchName(branch) }));
 }
 
 export async function loadOwnerSalesData(input: {

@@ -1,4 +1,5 @@
 import type { OwnerSalesConsumptionBundle } from '../services/takosync.ts';
+import { formatBranchName } from '../services/branchNames.ts';
 
 export const pageSize = 20;
 
@@ -43,14 +44,10 @@ export function getForcedSalesConsumptionState(): SalesConsumptionForcedState {
   return null;
 }
 
-function branchLabel(city: string, code: string): string {
-  const number = Number(code.replace(/\D/g, '')) || code;
-  return `${city ? `${city} · ` : ''}Branch ${number}`;
-}
 
 export function buildSalesConsumptionRecords(bundle: OwnerSalesConsumptionBundle): SalesConsumptionRecord[] {
   const ingredients = new Map(bundle.ingredients.map((ingredient) => [ingredient.id, ingredient.name]));
-  const branches = new Map(bundle.branches.map((branch) => [branch.id, branchLabel(branch.city, branch.code)]));
+  const branches = new Map(bundle.branches.map((branch) => [branch.id, formatBranchName(branch)]));
   const profiles = new Map(bundle.profiles.map((profile) => [profile.id, profile.full_name?.trim() || '']));
   const sales = new Map(bundle.sales.map((sale) => [sale.id, sale]));
   // One Void Reversal per sale and ingredient.
