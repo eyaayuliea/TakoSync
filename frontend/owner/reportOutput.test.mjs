@@ -7,6 +7,7 @@ import {
   reportMetaLines,
 } from './reportDocument.ts';
 import { buildReportPdf, pdfSafeText, wrapText } from './reportPdf.ts';
+import { REPORT_PDF_FONTS } from './reportPdfFonts.ts';
 
 const generatedAt = new Date('2026-11-23T08:14:00Z'); // 4:14 PM in Manila
 const doc = (rows = 2) => ({
@@ -51,12 +52,25 @@ test('OW-05 c7: the print view has only the report, escaped, and prints on load'
   assert.doesNotMatch(renderReportHtml({ ...doc(), title: '<script>x</script>' }), /<script>x/);
 });
 
-test('text the standard PDF fonts cannot show is replaced, and cells wrap', () => {
-  assert.equal(pdfSafeText('₱49.00 · 2 → 3'), 'PHP 49.00 · 2 -> 3');
+// The text a PDF reader shows: decode each Tj hex string with the font's glyph map.
+const glyphToText = (font) => new Map(Object.entries(font.cmap).map(([code, glyph]) => [glyph, String.fromCodePoint(Number(code))]));
+const decoders = { F1: glyphToText(REPORT_PDF_FONTS.regular), F2: glyphToText(REPORT_PDF_FONTS.bold) };
+const shownText = (file) => [...file.matchAll(/\/(F1|F2) [\d.]+ Tf [\d.\- ]+ Td <([0-9A-F]*)> Tj/g)]
+  .map(([, font, hex]) => (hex.match(/.{4}/g) ?? []).map((glyph) => decoders[font].get(parseInt(glyph, 16)) ?? '�').join(''));
+
+test('characters the embedded fonts lack are replaced, and cells wrap', () => {
+  assert.equal(pdfSafeText('₱49.00 · 2 → 3'), '₱49.00 · 2 -> 3');
   const lines = wrapText('Customer cancelled before cooking\nsecond line', 60, 7.5);
   assert.ok(lines.length >= 3);
   assert.equal(lines.at(-1), 'second line');
   assert.ok(wrapText('SALE-1795368410604-WCAAN5', 40, 7.5).length > 1);
+});
+
+test('the embedded fonts cover ₱, the minus sign, dashes, quotes and Filipino names', () => {
+  for (const font of [REPORT_PDF_FONTS.regular, REPORT_PDF_FONTS.bold]) {
+    for (const char of '₱−–—“”·×ñÑ€') assert.ok(font.cmap[String(char.codePointAt(0))] > 0, `${font.name} ${char}`);
+    assert.equal(font.widths.length > 300, true);
+  }
 });
 
 test('OW-05 c8: Export PDF builds a well-formed PDF with a valid cross-reference table', () => {
@@ -71,25 +85,30 @@ test('OW-05 c8: Export PDF builds a well-formed PDF with a valid cross-reference
     const offset = Number(entry.slice(0, 10));
     assert.ok(file.slice(offset).startsWith(`${index + 1} 0 obj`), `object ${index + 1} offset`);
   });
-  for (const match of file.matchAll(/<< \/Length (\d+) >>\nstream\n/g)) {
+  for (const match of file.matchAll(/<< \/Length (\d+)(?: \/Length1 \d+ \/Filter \/FlateDecode)? >>\nstream\n/g)) {
     const start = match.index + match[0].length;
     assert.equal(file.slice(start + Number(match[1]), start + Number(match[1]) + 10), '\nendstream');
   }
   assert.match(file, /\/Count 1 /);
-  assert.match(file, /\(Void Report\)/);
-  assert.match(file, /\(PHP 49.00\)/);
-  // Parentheses and backslashes are escaped; ·, — and curly quotes use WinAnsi codes.
-  assert.match(file, /Customer \\\(cancelled\\\)/);
-  assert.match(file, /\\227/);
-  assert.match(file, /\\223no stock\\224/);
-  assert.match(file, /\(Page 1 of 1\)/);
+  // Two embedded TrueType fonts with ToUnicode maps; no standard Helvetica.
+  assert.equal((file.match(/\/Subtype \/CIDFontType2/g) ?? []).length, 2);
+  assert.equal((file.match(/\/FontFile2 /g) ?? []).length, 2);
+  assert.equal((file.match(/\/ToUnicode /g) ?? []).length, 2);
+  assert.doesNotMatch(file, /\/Helvetica/);
+  const text = shownText(file);
+  assert.ok(text.includes('Void Report'));
+  assert.ok(text.includes('₱49.00'), 'the peso sign prints');
+  assert.ok(text.some((line) => line.includes('Customer (cancelled) before cooking — “no stock”')));
+  assert.ok(text.includes('Page 1 of 1'));
+  assert.ok(!text.some((line) => line.includes('�')));
 });
 
 test('OW-05 c8: long reports continue on more pages with the table header repeated', () => {
   const file = latin1(buildReportPdf(doc(120)));
   const pages = Number(file.match(/\/Count (\d+) /)[1]);
   assert.ok(pages >= 3, `pages: ${pages}`);
-  assert.equal((file.match(/\(REFERENCE\)/g) ?? []).length, pages);
-  assert.match(file, new RegExp(`\\(Page ${pages} of ${pages}\\)`));
-  assert.match(file, /\(Void Report \(continued\)\)|\(Void Report \\\(continued\\\)\)/);
+  const text = shownText(file);
+  assert.equal(text.filter((line) => line === 'REFERENCE').length, pages);
+  assert.ok(text.includes(`Page ${pages} of ${pages}`));
+  assert.ok(text.includes('Void Report (continued)'));
 });
