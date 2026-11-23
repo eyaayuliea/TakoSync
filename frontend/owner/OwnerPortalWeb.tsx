@@ -19,6 +19,15 @@ import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPor
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
 import {
+  BRANCH_COMPARISON_TAB,
+  BRANCH_INVENTORY_HEADERS,
+  branchInventoryRows,
+  filterInventoryRows,
+  inventoryCategories,
+  inventoryComparison,
+  inventoryTabLabel,
+} from './ownerPortalInventoryViews';
+import {
   buildWebSalesConsumptionReport,
   buildWebVoidReversalReport,
   buildWebWasteReport,
@@ -145,7 +154,7 @@ export default function OwnerPortalWeb() {
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({}); const [connectionFailed, setConnectionFailed] = useState(false);
   const [showPassword, setShowPassword] = useState(false); const [user, setUser] = useState<AppUser | null>(null);
   const [authBusy, setAuthBusy] = useState(true); const [busy, setBusy] = useState(false); const [logoutBusy, setLogoutBusy] = useState(false); const [error, setError] = useState('');
-  const [dataError, setDataError] = useState(''); const [query, setQuery] = useState(''); const [toast, setToast] = useState('');
+  const [dataError, setDataError] = useState(''); const [toast, setToast] = useState('');
   // OW-02 c9 / OW-31 c2, c8: each section shows loading, then its data or an error with Retry.
   const [loadErrors, setLoadErrors] = useState<Partial<Record<PortalDataset, string>>>({});
   const [loadingSets, setLoadingSets] = useState<ReadonlySet<PortalDataset>>(new Set());
@@ -280,9 +289,6 @@ export default function OwnerPortalWeb() {
     return () => { active = false; };
   }, [user, reloadKey]);
   const rows = useMemo(() => buildOwnerPortalInventoryRows(inventoryData), [inventoryData]);
-  const visibleRows = filterOwnerPortalInventory(rows, branch).filter((row) =>
-    row.name.toLowerCase().includes(query.toLowerCase()),
-  );
   // OW-01: the owner signs in with email and password, like the owner mobile app.
   const login = async () => {
     if (busy) return;
@@ -436,7 +442,7 @@ export default function OwnerPortalWeb() {
           )}
           {page === 'Branches' && <Branches rows={rows} sales={salesData} branches={inventoryData?.branches ?? []} />}
           {page === 'Sales Monitoring' && <SalesMonitoring branches={inventoryData?.branches ?? []} />}
-          {page === 'Inventory Monitoring' && <Inventory rows={visibleRows} branch={branch} setBranch={setBranch} branches={inventoryData?.branches ?? []} query={query} setQuery={setQuery} />}
+          {page === 'Inventory Monitoring' && <Inventory rows={rows} branches={inventoryData?.branches ?? []} />}
           {page === 'Inventory Movements' && <Movements activity={activityData?.transactions ?? []} branches={inventoryData?.branches ?? []} inventoryRows={rows} />}
           {page === 'Reconciliation' && <Checks reviews={reviews} notify={notify} onRefresh={refreshReviews} />}
           {page === 'Void & Reversal Review' && <VoidReversalReview height={Math.max(560, height - 200)} onBack={() => setPage('Dashboard')} />}
@@ -872,17 +878,52 @@ function Branches({ rows, sales, branches }: { rows: InventoryRow[]; sales: any;
   );
 }
 
-function Inventory({ rows, branch, setBranch, branches, query, setQuery }: { rows: InventoryRow[]; branch: string; setBranch: (value: string) => void; branches: OwnerPortalBranch[]; query: string; setQuery: (value: string) => void }) {
+/**
+ * OW-04 Multi-Branch Inventory Monitoring: a tab per branch (Branch 1 first)
+ * and a Branch Comparison tab; read-only.
+ */
+function Inventory({ rows, branches }: { rows: InventoryRow[]; branches: OwnerPortalBranch[] }) {
+  const orderedBranches = useMemo(
+    () => [...branches].sort((left, right) => inventoryTabLabel(left.name).localeCompare(inventoryTabLabel(right.name), 'en', { numeric: true })),
+    [branches],
+  );
+  const tabs = [...orderedBranches.map((branch) => branch.id), BRANCH_COMPARISON_TAB];
+  const [tab, setTab] = useState<string>(orderedBranches[0]?.id ?? BRANCH_COMPARISON_TAB);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('All categories');
+  const filtered = filterInventoryRows(rows, { query, category });
+  const comparing = tab === BRANCH_COMPARISON_TAB;
+  const branch = orderedBranches.find((item) => item.id === tab) ?? null;
+  const branchRows = branch ? branchInventoryRows(filtered, branch.id) : [];
+  const comparison = comparing ? inventoryComparison(filtered, orderedBranches) : null;
+  const shownCount = comparing ? comparison?.rows.length ?? 0 : branchRows.length;
   return (
     <>
-      <Toolbar branch={branch} setBranch={setBranch} branches={branches} />
-      <TextInput value={query} onChangeText={setQuery} placeholder="Search live ingredients..." style={styles.search} />
-      <Table
-        headers={['Ingredient', 'Category', 'Branch', 'Quantity', 'Status', 'Expiration', 'Active batches']}
-        rows={rows.map((row) => [row.name, row.category, row.branch, `${row.quantityLabel} ${row.unit}`, row.status, row.expiry, row.batches])}
-      />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }} accessibilityRole="tablist">
+        {tabs.map((id) => {
+          const label = id === BRANCH_COMPARISON_TAB ? BRANCH_COMPARISON_TAB : inventoryTabLabel(orderedBranches.find((item) => item.id === id)?.name ?? '');
+          const selected = tab === id;
+          return (
+            <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => setTab(id)} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
+              <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <TextInput value={query} onChangeText={setQuery} placeholder="Search items…" accessibilityLabel="Search items" style={styles.search} />
+        <Select value={category} options={inventoryCategories(rows)} onChange={setCategory} />
+      </View>
+      <Text style={styles.muted}>
+        {branch ? `${branch.name} · ` : 'All branches side by side · '}Read-only. Expected quantities come from the inventory ledger; statuses are shown as text.
+      </Text>
+      {comparing && comparison ? (
+        <Table headers={comparison.headers} rows={comparison.rows} />
+      ) : (
+        <Table headers={BRANCH_INVENTORY_HEADERS} rows={branchRows} />
+      )}
       {/* OW-04 c10 / OW-31 c9 */}
-      {rows.length === 0 ? <Text style={styles.empty}>{query.trim() ? `No ingredients match “${query.trim()}”.` : 'No inventory items for this branch yet.'}</Text> : null}
+      {shownCount === 0 ? <Text style={styles.empty}>{query.trim() || category !== 'All categories' ? 'No items match the search or category.' : 'No inventory items for this branch yet.'}</Text> : null}
     </>
   );
 }
