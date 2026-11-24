@@ -3935,12 +3935,27 @@ export async function saveSharedRecipe(input: {
   }
 }
 
+export type IngredientPurchaseUnit = { ingredient_id: string; package_quantity: number; package_unit: string; package_label: string };
+export type AddonRecipeRecord = { id: string; addon_id: string; ingredient_id: string; quantity_required: number; unit_of_measure: string };
+
 export async function loadIngredientRecipeConfiguration(): Promise<{
   ingredients: IngredientConfigurationRecord[];
   categories: IngredientCategoryRecord[];
   recipeIngredients: RecipeIngredientRecord[];
+  /** OW-22 c2: each ingredient's purchase unit (one package = package_quantity × its unit). */
+  purchaseUnits: IngredientPurchaseUnit[];
+  /** OW-22 c7: add-on recipes (empty before migration 202611240002). */
+  addonRecipes: AddonRecipeRecord[];
 }> {
   const client = requireSupabase();
+  const [packagesResult, addonRecipesResult] = await Promise.all([
+    client.from('ingredient_package_sizes').select('ingredient_id, package_quantity, package_unit, package_label'),
+    client.from('addon_recipes').select('id, addon_id, ingredient_id, quantity_required, unit_of_measure'),
+  ]);
+  assertNoError(packagesResult.error);
+  if (addonRecipesResult.error && !isMissingSchemaColumn(addonRecipesResult.error) && !/addon_recipes/.test(addonRecipesResult.error.message ?? '')) {
+    assertNoError(addonRecipesResult.error);
+  }
   const [ingredientsResult, categoriesResult, recipesResult] = await Promise.all([
     client.from('ingredients')
       .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active, created_at, updated_at')
@@ -3956,6 +3971,8 @@ export async function loadIngredientRecipeConfiguration(): Promise<{
   assertNoError(categoriesResult.error);
   assertNoError(recipesResult.error);
   return {
+    purchaseUnits: (packagesResult.data ?? []).map((row) => ({ ...row, package_quantity: Number(row.package_quantity) })),
+    addonRecipes: addonRecipesResult.error ? [] : (addonRecipesResult.data ?? []).map((row) => ({ ...row, quantity_required: Number(row.quantity_required) })),
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
     recipeIngredients: (recipesResult.data ?? []).map((line) => ({
@@ -4036,6 +4053,64 @@ export async function updateIngredient(
   assertUniqueNameError(error, 'ingredient');
   if (!data) throw new Error('The ingredient could not be updated.');
   return data;
+}
+
+/**
+ * OW-22 c2, c3: the ingredient's purchase unit: one package (e.g. "One bottle")
+ * holds `quantity` of the ingredient's unit. Null removes it. Stock-In converts
+ * purchase units with this factor (ST-09 c4).
+ */
+export async function saveIngredientPurchaseUnit(
+  ingredient: { id: string; unit: string },
+  purchaseUnit: { label: string; quantity: number } | null,
+): Promise<void> {
+  const client = requireSupabase();
+  if (!purchaseUnit) {
+    const { error } = await client.from('ingredient_package_sizes').delete().eq('ingredient_id', ingredient.id);
+    assertNoError(error);
+    return;
+  }
+  if (!purchaseUnit.label.trim()) throw new Error('Enter the purchase unit name, e.g. One bottle.');
+  if (!Number.isFinite(purchaseUnit.quantity) || purchaseUnit.quantity <= 0) {
+    throw new Error('The conversion factor must be greater than zero.');
+  }
+  const { error } = await client.from('ingredient_package_sizes').upsert({
+    ingredient_id: ingredient.id,
+    package_quantity: purchaseUnit.quantity,
+    package_unit: ingredient.unit,
+    package_label: purchaseUnit.label.trim(),
+  }, { onConflict: 'ingredient_id' });
+  assertNoError(error);
+}
+
+/** OW-22 c5, c7: replaces an add-on's recipe lines (quantities in each ingredient's unit). */
+export async function saveAddonRecipe(
+  addonId: string,
+  lines: { ingredient_id: string; quantity_required: number; unit_of_measure: string }[],
+): Promise<void> {
+  if (!addonId) throw new Error('Choose an add-on.');
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (!line.ingredient_id) throw new Error('Choose an ingredient for every recipe entry.');
+    if (!Number.isFinite(line.quantity_required) || line.quantity_required <= 0) throw new Error('Every recipe quantity must be greater than zero.');
+    if (seen.has(line.ingredient_id)) throw new Error('An ingredient can only appear once in a recipe.');
+    seen.add(line.ingredient_id);
+  }
+  const client = requireSupabase();
+  const { data: current, error: loadError } = await client.from('addon_recipes').select('id, ingredient_id').eq('addon_id', addonId);
+  assertNoError(loadError);
+  if (lines.length) {
+    const { error } = await client.from('addon_recipes').upsert(
+      lines.map((line) => ({ addon_id: addonId, ingredient_id: line.ingredient_id, quantity_required: line.quantity_required, unit_of_measure: line.unit_of_measure })),
+      { onConflict: 'addon_id,ingredient_id' },
+    );
+    assertNoError(error);
+  }
+  const removed = (current ?? []).filter((line) => !seen.has(line.ingredient_id)).map((line) => line.id);
+  if (removed.length) {
+    const { error } = await client.from('addon_recipes').delete().eq('addon_id', addonId).in('id', removed);
+    assertNoError(error);
+  }
 }
 
 export async function saveProductRecipe(
