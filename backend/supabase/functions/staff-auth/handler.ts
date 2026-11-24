@@ -67,8 +67,15 @@ function isEmployeeId(value: unknown): value is string {
   return typeof value === 'string' && /^EMP-[0-9]{4}-[0-9]{6}$/.test(value);
 }
 
-function temporaryPassword() {
-  return `TakoSync-${crypto.randomUUID()}-${crypto.randomUUID()}`;
+/**
+ * A throwaway password for the moment between creating the Auth user and setting
+ * the Employee ID as the initial password. Supabase Auth hashes with bcrypt,
+ * which refuses passwords over 72 bytes, so this stays at 62 characters
+ * (a UUID plus 16 random hex digits).
+ */
+export function temporaryPassword() {
+  const extra = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `TakoSync-${crypto.randomUUID()}-${extra}`;
 }
 
 function bearerToken(request: Request) {

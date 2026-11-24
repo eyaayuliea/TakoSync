@@ -4,7 +4,7 @@ import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 register('../../../../frontend/services/testTsLoader.mjs', import.meta.url);
-const { createStaffAuthHandler } = await import('./handler.ts');
+const { createStaffAuthHandler, temporaryPassword } = await import('./handler.ts');
 
 const staffAccount = {
   id: 'staff-id',
@@ -814,4 +814,12 @@ test('the lock screen check is only for active Staff', async () => {
   const fixture = createFixture({ callerUserId: 'owner-id' });
   const result = await invoke(fixture, 'verify-password', { password: 'x' }, 'Bearer valid-token');
   assert.equal(result.status, 403);
+});
+
+test('OW-27 c2: the temporary password fits bcrypt (at most 72 bytes) and is random', () => {
+  const first = temporaryPassword();
+  const second = temporaryPassword();
+  assert.ok(new TextEncoder().encode(first).length <= 72, `${first.length} bytes`);
+  assert.match(first, /^TakoSync-[0-9a-f-]{36}-[0-9a-f]{16}$/);
+  assert.notEqual(first, second);
 });
