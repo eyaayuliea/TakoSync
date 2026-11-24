@@ -1189,6 +1189,18 @@ export default function OwnerSalesWorkspace({
 
         {activeReport && (
           <>
+            {/* OM-03 c6: a back control returns from a report to the sales list, keeping the period, date and branch. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Back to Sales Summaries"
+              onPress={() => {
+                setActiveSalesTab(reportSubTab);
+                switchView(reportSubTab);
+              }}
+              style={({ pressed }) => [styles.omReportBack, pressed && styles.omPressed]}
+            >
+              <Text style={styles.omReportBackText}>‹ Back to Sales Summaries</Text>
+            </Pressable>
             <View style={styles.omBranchDivider} />
             <View style={styles.omBranchSubTabRow}>
               {(['Daily', 'Weekly', 'Monthly'] as const).map((subTab) => (
@@ -2240,6 +2252,8 @@ function useStyles() {
     omBranchOptionText: { color: '#343440', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
     omBranchOptionTextSelected: { color: '#FFFFFF' },
     omBranchCheck: { color: '#FFFFFF', fontFamily: 'Poppins_700Bold', fontSize: 12 },
+    omReportBack: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 4, marginTop: 4 },
+    omReportBackText: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
     omBranchDivider: { height: 1, width: '120%', marginLeft: '-10%', backgroundColor: DAILY_SALES_THEME.border, marginBottom: 8 },
     omBranchSubTabRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 10 },
     omBranchSubTab: { minHeight: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#F5F5F7' },
