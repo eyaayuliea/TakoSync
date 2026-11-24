@@ -79,6 +79,23 @@ const colors = {
   error: '#F52F2E',
 } as const;
 
+// Dark-mode overrides for the Cart and Order pages (the page itself is #13121A).
+const dark = StyleSheet.create({
+  page: { backgroundColor: '#13121A' },
+  text: { color: '#FFFFFF' },
+  muted: { color: '#B2B3C4' },
+  onLight: { color: '#0F1025' },
+  raised: { backgroundColor: '#2D2C40' },
+  divider: { borderBottomColor: '#3A394D' },
+  input: { backgroundColor: '#0F1025', borderColor: '#3A394D', color: '#FFFFFF' },
+  option: { backgroundColor: '#0F1025', borderColor: '#3A394D' },
+  optionSelected: { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
+  progressCircle: { backgroundColor: 'transparent', borderColor: '#5A5A70' },
+  progressCircleActive: { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
+  progressLine: { backgroundColor: '#3A394D' },
+  progressLineActive: { backgroundColor: '#FFFFFF' },
+});
+
 const REMOVE_BUTTON_SIZE = { width: 22, height: 23 } as const;
 // The visual "×" stays compact; the touch area is padded out to at least 44 x 44.
 const REMOVE_BUTTON_HIT_SLOP = hitSlopForTarget(REMOVE_BUTTON_SIZE.width, REMOVE_BUTTON_SIZE.height);
@@ -161,8 +178,9 @@ function ProductArtwork({ name }: { name: string }) {
 }
 
 function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
+  const { isDark } = useTheme();
   return (
-    <View style={styles.progress}>
+    <View style={[styles.progress, isDark && dark.page]}>
       {[
         { number: 1, label: 'Menu' },
         { number: 2, label: 'Cart' },
@@ -171,14 +189,14 @@ function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
         const complete = step.number <= active;
         return (
           <React.Fragment key={step.number}>
-            {index > 0 ? <View style={[styles.progressLine, step.number <= active && styles.progressLineActive]} /> : null}
+            {index > 0 ? <View style={[styles.progressLine, isDark && dark.progressLine, step.number <= active && styles.progressLineActive, isDark && step.number <= active && dark.progressLineActive]} /> : null}
             <View style={styles.progressStep}>
-              <View style={[styles.progressCircle, complete && styles.progressCircleActive]}>
-                <Text style={[styles.progressNumber, complete && styles.progressNumberActive]}>
-                  {step.number < active ? <AppIcon name="check" style={[styles.progressNumber, complete && styles.progressNumberActive]} /> : step.number}
+              <View style={[styles.progressCircle, isDark && dark.progressCircle, complete && styles.progressCircleActive, isDark && complete && dark.progressCircleActive]}>
+                <Text style={[styles.progressNumber, isDark && dark.muted, complete && styles.progressNumberActive, isDark && complete && dark.onLight]}>
+                  {step.number < active ? <AppIcon name="check" style={[styles.progressNumber, complete && styles.progressNumberActive, isDark && complete && dark.onLight]} /> : step.number}
                 </Text>
               </View>
-              <Text style={[styles.progressLabel, complete && styles.progressLabelActive]}>{step.label}</Text>
+              <Text style={[styles.progressLabel, isDark && dark.muted, complete && styles.progressLabelActive, isDark && complete && dark.text]}>{step.label}</Text>
             </View>
           </React.Fragment>
         );
@@ -191,8 +209,9 @@ function ScreenHeader({ title, onBack }: {
   title: string;
   onBack: () => void;
 }) {
+  const { isDark } = useTheme();
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, isDark && dark.page]}>
       <View style={styles.headerTitleRow}>
         <Pressable
           accessibilityRole="button"
@@ -200,9 +219,9 @@ function ScreenHeader({ title, onBack }: {
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <AppIcon name="back" style={styles.backGlyph} />
+          <AppIcon name="back" style={[styles.backGlyph, isDark && dark.text]} />
         </Pressable>
-        <Text style={styles.headerTitle}>{title}</Text>
+        <Text style={[styles.headerTitle, isDark && dark.text]}>{title}</Text>
       </View>
     </View>
   );
@@ -330,8 +349,8 @@ function CartItemCard({
         <Text style={[styles.cartItemPrice, isDark && { color: '#FFFFFF' }]}>{money(product.price)} each</Text>
       </View>
       <View style={styles.cartItemActions}>
-        <Text style={styles.cartLineTotal}>{money(product.price * quantity)}</Text>
-        <View style={styles.quantityControl}>
+        <Text style={[styles.cartLineTotal, isDark && dark.text]}>{money(product.price * quantity)}</Text>
+        <View style={[styles.quantityControl, isDark && dark.raised]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Decrease ${product.name} quantity`}
@@ -672,7 +691,7 @@ export default function MenuWorkspace({
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.bulkHeadingRow}>
-            <Text style={styles.sectionHeading}>Your items <Text style={styles.itemCount}>({totals.count})</Text></Text>
+            <Text style={[styles.sectionHeading, isDark && dark.text]}>Your items <Text style={[styles.itemCount, isDark && dark.muted]}>({totals.count})</Text></Text>
             {bulkOrder ? <BulkOrderBadge /> : null}
           </View>
           {cartProducts.map(({ product, quantity }) => (
@@ -688,43 +707,62 @@ export default function MenuWorkspace({
           ))}
           {cartProducts.length === 0 ? (
             <View style={[styles.emptyCard, darkSecondarySurface]}>
-              <Text style={styles.emptyTitle}>Your cart is empty</Text>
-              <Text style={styles.emptyCopy}>Add menu items to review a preview total.</Text>
+              <Text style={[styles.emptyTitle, isDark && dark.text]}>Your cart is empty</Text>
+              <Text style={[styles.emptyCopy, isDark && dark.muted]}>Add menu items to review a preview total.</Text>
             </View>
           ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={() => onSetPage('menu')}
-            style={styles.addMoreButton}
+            style={({ pressed }) => [
+              styles.addMoreButton,
+              { backgroundColor: actionColors.secondary.background, borderColor: actionColors.secondary.border },
+              pressed && styles.orderActionPressed,
+            ]}
           >
-            <Text style={styles.addMoreText}>＋  Add more items</Text>
+            <Text style={[styles.addMoreText, { color: actionColors.secondary.text }]}>＋  Add more items</Text>
           </Pressable>
-          <Text style={styles.previewNotice}>Cart is saved while you review checkout. No inventory changes occur yet.</Text>
+          <Text style={[styles.previewNotice, isDark && dark.muted]}>Cart is saved while you review checkout. No inventory changes occur yet.</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: emptyOrderMessage !== '' }}
+            onPress={() => {
+              if (emptyOrderMessage !== '') return;
+              onSetPage('checkout');
+            }}
+            style={({ pressed }) => [
+              styles.orderPrimaryButton,
+              { backgroundColor: emptyOrderMessage !== '' ? actionColors.primaryDisabled.background : actionColors.primary.background },
+              pressed && emptyOrderMessage === '' && styles.orderActionPressed,
+            ]}
+          >
+            <Text style={[styles.orderPrimaryText, { color: emptyOrderMessage !== '' ? actionColors.primaryDisabled.text : actionColors.primary.text }]}>Proceed to Payment</Text>
+          </Pressable>
+          {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => onSetPage('menu')}
+            style={({ pressed }) => [
+              styles.orderSecondaryButton,
+              { backgroundColor: actionColors.secondary.background, borderColor: actionColors.secondary.border },
+              pressed && styles.orderActionPressed,
+            ]}
+          >
+            <Text style={[styles.orderSecondaryText, { color: actionColors.secondary.text }]}>Go back to menu</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={cancelOrder}
+            style={({ pressed }) => [styles.orderDestructiveButton, pressed && styles.orderActionPressed]}
+          >
+            <Text style={[styles.orderDestructiveText, { color: actionColors.destructive.text }]}>Cancel order</Text>
+          </Pressable>
         </ScrollView>
         <View style={styles.totalFooter}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total</Text>
             <Text style={styles.totalValue}>{money(totals.total)}</Text>
           </View>
-          <View style={styles.footerActions}>
-            <Pressable accessibilityRole="button" onPress={() => onSetPage('menu')} style={styles.footerSecondary}>
-              <Text style={styles.footerSecondaryText}>Go back to menu</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                if (emptyOrderMessage !== '') return;
-                onSetPage('checkout');
-              }}
-              style={[styles.placeOrderButton, emptyOrderMessage !== '' && styles.disabledButton]}
-            >
-            <Text style={styles.placeOrderText}>Proceed to Payment</Text>
-            </Pressable>
-          </View>
-          {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
-          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.cartCancelButton}>
-            <Text style={styles.cartCancelText}>Cancel order</Text>
-          </Pressable>
         </View>
       </View>
     );
@@ -738,7 +776,7 @@ export default function MenuWorkspace({
         <ProgressSteps active={3} />
           <ScrollView style={styles.checkoutScroll} contentContainerStyle={styles.checkoutContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.bulkHeadingRow}>
-            <Text style={styles.checkoutTitle}>Review transaction</Text>
+            <Text style={[styles.checkoutTitle, isDark && dark.text]}>Review transaction</Text>
             {bulkOrder ? <BulkOrderBadge /> : null}
           </View>
           {stockWarningList}
@@ -748,16 +786,16 @@ export default function MenuWorkspace({
               <Text style={[styles.checkoutLineName, darkSecondaryText]}>{product.name}</Text>
               <Text style={[styles.checkoutLineMeta, darkSecondaryText]}>{quantity} × {money(product.price)}</Text>
               </View>
-              <Text style={styles.checkoutLineTotal}>{money(product.price * quantity)}</Text>
+              <Text style={[styles.checkoutLineTotal, isDark && dark.text]}>{money(product.price * quantity)}</Text>
             </View>
           ))}
-          <View style={styles.checkoutTotalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
+          <View style={[styles.checkoutTotalRow, isDark && dark.divider]}>
+            <Text style={[styles.totalLabel, styles.checkoutTotalText, isDark && dark.text]}>Total</Text>
+            <Text style={[styles.totalValue, styles.checkoutTotalText, isDark && dark.text]}>{money(checkoutTotal)}</Text>
           </View>
-          <Text style={styles.paymentLabel}>Add-ons</Text>
+          <Text style={[styles.paymentLabel, isDark && dark.text]}>Add-ons</Text>
           {displayAddons.length === 0 ? (
-            <Text style={styles.paymentMessage}>No add-ons are currently available.</Text>
+            <Text style={[styles.paymentMessage, isDark && dark.muted]}>No add-ons are currently available.</Text>
           ) : displayAddons.map((addon) => {
             const selected = selectedAddonIds.includes(addon.id);
             return (
@@ -776,13 +814,13 @@ export default function MenuWorkspace({
             );
           })}
           {selectedAddons.length > 0 ? (
-            <View style={styles.checkoutTotalRow}>
-              <Text style={styles.checkoutSummary}>Add-ons total</Text>
-              <Text style={styles.checkoutLineTotal}>{money(addonsTotal)}</Text>
+            <View style={[styles.checkoutTotalRow, isDark && dark.divider]}>
+              <Text style={[styles.checkoutSummary, isDark && dark.text]}>Add-ons total</Text>
+              <Text style={[styles.checkoutLineTotal, isDark && dark.text]}>{money(addonsTotal)}</Text>
             </View>
           ) : null}
-          <Text style={styles.paymentLabel}>Payment method</Text>
-          <Text style={styles.paymentMessage}>
+          <Text style={[styles.paymentLabel, isDark && dark.text]}>Payment method</Text>
+          <Text style={[styles.paymentMessage, isDark && dark.muted]}>
             The selected payment method is recorded with the sale after the transaction is saved.
           </Text>
           <View style={styles.paymentOptions}>
@@ -792,29 +830,29 @@ export default function MenuWorkspace({
                 accessibilityRole="button"
                 accessibilityState={{ selected: paymentMethod === method }}
                 onPress={() => setPaymentMethod(method)}
-                style={[styles.paymentOption, paymentMethod === method && styles.paymentOptionSelected]}
+                style={[styles.paymentOption, isDark && dark.option, paymentMethod === method && styles.paymentOptionSelected, isDark && paymentMethod === method && dark.optionSelected]}
               >
-                <Text style={[styles.paymentOptionText, paymentMethod === method && styles.paymentOptionTextSelected]}>{method}</Text>
+                <Text style={[styles.paymentOptionText, isDark && dark.muted, paymentMethod === method && styles.paymentOptionTextSelected, isDark && paymentMethod === method && dark.onLight]}>{method}</Text>
               </Pressable>
             ))}
           </View>
           {paymentMethod === 'Cash' ? (
             <View>
-              <Text style={styles.paymentLabel}>Cash received</Text>
+              <Text style={[styles.paymentLabel, isDark && dark.text]}>Cash received</Text>
               <TextInput
                 accessibilityLabel="Cash received"
                 value={cashReceived}
                 onChangeText={setCashReceived}
                 keyboardType="decimal-pad"
                 placeholder="Enter amount"
-                placeholderTextColor={colors.secondary}
-                style={[styles.paymentInput, cashReceived !== '' && !cashValid && styles.paymentInputError]}
+                placeholderTextColor={isDark ? '#B2B3C4' : colors.secondary}
+                style={[styles.paymentInput, isDark && dark.input, cashReceived !== '' && !cashValid && styles.paymentInputError]}
               />
               {cashReceived !== '' && !cashValid ? <Text style={styles.paymentError}>Cash received must cover the total.</Text> : null}
-              {cashValid && cashReceived !== '' ? <Text style={styles.changeText}>Change: {money(parsedCash - checkoutTotal)}</Text> : null}
+              {cashValid && cashReceived !== '' ? <Text style={[styles.changeText, isDark && dark.text]}>Change: {money(parsedCash - checkoutTotal)}</Text> : null}
             </View>
           ) : (
-            <Text style={styles.paymentMessage}>QR is recorded as the selected payment method; payment is not automatically verified.</Text>
+            <Text style={[styles.paymentMessage, isDark && dark.muted]}>QR is recorded as the selected payment method; payment is not automatically verified.</Text>
           )}
           {!checkoutValid && cartProducts.length > 0 ? (
             <Text style={styles.paymentError}>Complete the required payment information before confirming.</Text>
@@ -836,7 +874,7 @@ export default function MenuWorkspace({
           ) : null}
           <View style={styles.checkoutUnavailableBox}>
             <Text style={styles.checkoutUnavailableTitle}>Sale and inventory status</Text>
-            <Text style={styles.checkoutMessage}>
+            <Text style={[styles.checkoutMessage, styles.checkoutUnavailableCopy]}>
               A recorded sale may need inventory processing or recovery. The receipt keeps the sale details and inventory status separate.
             </Text>
           </View>
@@ -884,7 +922,7 @@ export default function MenuWorkspace({
             <Text style={styles.totalValue}>{money(checkoutTotal)}</Text>
           </View>
           <View style={styles.footerActions}>
-            <Text style={styles.previewNotice}>No order was placed</Text>
+            <Text style={[styles.previewNotice, styles.footerNotice]}>No order was placed</Text>
           </View>
         </View>
       </View>
@@ -1065,6 +1103,7 @@ export default function MenuWorkspace({
           >
             <Text style={[
               styles.clearOrderText,
+              { color: actionColors.destructive.text },
               totals.count === 0 && selectedAddonIds.length === 0 && styles.clearOrderDisabled,
             ]}>Clear</Text>
           </Pressable>
@@ -1152,9 +1191,9 @@ export default function MenuWorkspace({
                 accessibilityState={{ disabled: catalogLoading }}
                 disabled={catalogLoading}
                 onPress={onRetryCatalog}
-                style={[styles.infoModalRefresh, catalogLoading && styles.disabledButton]}
+                style={[styles.infoModalRefresh, { borderColor: actionColors.secondary.border }, catalogLoading && styles.disabledButton]}
               >
-                <Text style={styles.infoModalRefreshText}>Refresh</Text>
+                <Text style={[styles.infoModalRefreshText, { color: actionColors.secondary.text }]}>Refresh</Text>
               </Pressable>
             </View>
             <ScrollView
@@ -1351,7 +1390,7 @@ const styles = StyleSheet.create({
   confirmGoButton: { minHeight: 42, minWidth: 110, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   confirmGoText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   clearOrderButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 7 },
-  clearOrderText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+  clearOrderText: { color: '#C92F3C', fontFamily: font.semibold, fontSize: 8 },
   clearOrderDisabled: { color: '#B8B8C0' },
   currentOrderItems: { flexGrow: 0, maxHeight: 120 },
   currentOrderItemsContent: { gap: 3, paddingVertical: 1 },
@@ -1494,10 +1533,10 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
   emptyCopy: { color: colors.secondary, fontFamily: font.regular, fontSize: 8, textAlign: 'center', marginTop: 4 },
   addMoreButton: {
-    minHeight: 42, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: colors.pink, borderRadius: 13, backgroundColor: colors.white,
+    minHeight: 44, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: colors.navy, borderRadius: 13, backgroundColor: colors.white,
   },
-  addMoreText: { color: colors.pink, fontFamily: font.semibold, fontSize: 9 },
+  addMoreText: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   previewNotice: { color: colors.secondary, fontFamily: font.regular, fontSize: 7, textAlign: 'center' },
   totalFooter: {
     paddingHorizontal: 16, paddingTop: 11, paddingBottom: 13,
@@ -1507,14 +1546,7 @@ const styles = StyleSheet.create({
   totalLabel: { color: colors.white, fontFamily: font.medium, fontSize: 10 },
   totalValue: { color: colors.white, fontFamily: font.bold, fontSize: 17 },
   footerActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  footerSecondary: { paddingVertical: 8, paddingHorizontal: 3 },
-  footerSecondaryText: { color: colors.white, fontFamily: font.medium, fontSize: 8 },
-  placeOrderButton: {
-    minWidth: 132, minHeight: 40, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 16, borderRadius: 13, backgroundColor: colors.white,
-  },
   disabledButton: { opacity: 0.65 },
-  placeOrderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   checkoutContent: {
     paddingHorizontal: 16, paddingBottom: 20,
   },
@@ -1562,6 +1594,11 @@ const styles = StyleSheet.create({
     padding: 12, borderRadius: 13, backgroundColor: colors.warning, marginTop: 16,
   },
   checkoutUnavailableTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
+  // Readable on the yellow notice and on the pink footer (the grey used elsewhere is not).
+  checkoutUnavailableCopy: { color: '#4A4A57' },
+  footerNotice: { color: colors.white },
+  // The in-page Total sits on the page, not on the pink footer.
+  checkoutTotalText: { color: colors.navy },
   checkoutIcon: {
     width: 53, height: 53, alignItems: 'center', justifyContent: 'center',
     borderRadius: 27, backgroundColor: colors.warning, marginBottom: 14,
@@ -1573,13 +1610,7 @@ const styles = StyleSheet.create({
     fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 8,
   },
   checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 15 },
-  // The cart footer is pink, so this reads as a plain text action on it.
-  cartCancelButton: {
-    minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 13,
-    backgroundColor: colors.pink, marginTop: 17,
-  },
-  cartCancelText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-  // Order page actions (colours come from orderActionColors): one filled primary,
+  // Cart and Order page actions (colours come from orderActionColors): one filled primary,
   // an outlined secondary, and the destructive action as red text set apart.
   orderPrimaryButton: {
     minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,

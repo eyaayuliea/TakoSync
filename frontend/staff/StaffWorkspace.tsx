@@ -31,6 +31,7 @@ import {
 import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
+import { destructiveTextColor, secondaryOutline } from './orderActionColors';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
 import {
@@ -4607,9 +4608,9 @@ export default function StaffWorkspace({
           <Pressable
             accessibilityRole="button"
             onPress={() => setRoute('expirationInfo')}
-            style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.historySecondaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.historyButtonText}>Expiration information</Text>
+            <Text style={styles.historySecondaryButtonText}>Expiration information</Text>
           </Pressable>
         ) : null}
 
@@ -5564,9 +5565,9 @@ export default function StaffWorkspace({
           <Pressable
             accessibilityRole="button"
             onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
-            style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
+            style={({ pressed }) => [hasDiscrepancies ? styles.dailySecondaryButton : styles.dailyPrimaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
+            <Text style={hasDiscrepancies ? styles.dailySecondaryButtonText : styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
         </ScrollView>
       </>
@@ -9824,6 +9825,8 @@ function createStaffStyles(theme: AppTheme) {
   inventoryBatchTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 10, marginBottom: 3 },
   historyButton: { minHeight: 47, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
   historyButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
+  historySecondaryButton: { minHeight: 47, alignItems: 'center', justifyContent: 'center', borderRadius: 13, ...secondaryOutline(theme.isDark) },
+  historySecondaryButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
   detailDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', lineHeight: 13, marginTop: 13 },
   historyPlaceholderText: { color: colors.navy, fontFamily: font.semibold, fontSize: 13, marginBottom: 10 },
   historyPageContent: { paddingHorizontal: 17, paddingTop: 12, paddingBottom: 24, flexGrow: 1 },
@@ -9932,9 +9935,9 @@ function createStaffStyles(theme: AppTheme) {
   },
   historyDetailButton: {
     minHeight: 46, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 12, backgroundColor: colors.pink, marginTop: 4,
+    borderRadius: 12, marginTop: 4, ...secondaryOutline(theme.isDark),
   },
-  historyDetailButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
+  historyDetailButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   historyActivityCard: { flexDirection: 'row', alignItems: 'center', padding: 13, borderRadius: 15, backgroundColor: '#EEEEEF', marginBottom: 8 },
   historyActivityMarker: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFF1E2', marginRight: 10 },
   historyActivityGlyph: { color: colors.orange, fontFamily: font.semibold, fontSize: 18 },
@@ -10318,7 +10321,7 @@ function createStaffStyles(theme: AppTheme) {
   logoutModalActions: { alignItems: 'stretch', gap: 9, marginTop: 14 },
   logoutCancelAction: {
     minHeight: 39, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 10, backgroundColor: colors.pale,
+    borderRadius: 10, ...secondaryOutline(theme.isDark),
   },
   logoutCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 8 },
   logoutConfirmAction: {
@@ -10522,9 +10525,9 @@ function createStaffStyles(theme: AppTheme) {
   discrepancyEmptyState: { flexGrow: 1, minHeight: 360, alignItems: 'center', justifyContent: 'center' },
   discrepancyNeutralButton: {
     minHeight: 40, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, backgroundColor: '#F5F5F7', marginTop: 8,
+    borderRadius: 8, marginTop: 8, ...secondaryOutline(theme.isDark),
   },
-  discrepancyNeutralButtonText: { color: '#000000', fontFamily: font.semibold, fontSize: 9 },
+  discrepancyNeutralButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   discrepancyDetailContent: { flexGrow: 1 },
   discrepancyDetailMetadata: { color: '#000000', fontFamily: font.regular, fontSize: 8, lineHeight: 12, marginBottom: 8 },
   discrepancyDetailTitle: { color: '#000000', fontFamily: font.bold, fontSize: 12, lineHeight: 16 },
@@ -10823,9 +10826,9 @@ function createStaffStyles(theme: AppTheme) {
   dailyPrimaryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
   dailySecondaryButton: {
     minHeight: 43, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
-    backgroundColor: '#EEEEF0',
+    ...secondaryOutline(theme.isDark),
   },
-  dailySecondaryButtonText: { color: '#555560', fontFamily: font.semibold, fontSize: 10 },
+  dailySecondaryButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   dailyVerificationRow: { flexDirection: 'row', alignItems: 'center', minHeight: 42, marginBottom: 8 },
   dailyVerificationBox: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center', marginRight: 8, borderRadius: 5, borderWidth: 1.5, borderColor: colors.muted, backgroundColor: colors.white },
   dailyVerificationBoxChecked: { borderColor: colors.pink, backgroundColor: colors.pink },
@@ -10923,7 +10926,7 @@ function createStaffStyles(theme: AppTheme) {
   modalTitle: { color: colors.navy, fontFamily: font.semibold, fontSize: 15 },
   modalSubtitle: { color: colors.muted, fontFamily: font.regular, fontSize: 9, lineHeight: 14, marginTop: 5, marginBottom: 14 },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 15 },
-  secondaryButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
+  secondaryButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, ...secondaryOutline(theme.isDark) },
   secondaryButtonText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   primaryButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   primaryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
@@ -10986,8 +10989,8 @@ function createStaffStyles(theme: AppTheme) {
   wasteFormActionButton: { width: '50%', maxWidth: 180, minHeight: 44 },
   saveButton: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
   saveButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
-  cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#EEEEF0' },
-  cancelButtonText: { color: '#555560', fontFamily: font.semibold, fontSize: 11 },
+  cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, ...secondaryOutline(theme.isDark) },
+  cancelButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 11 },
   formDemoNote: { color: colors.muted, fontFamily: font.regular, fontSize: 8, textAlign: 'center', marginTop: 14 },
   receiptSuccessBanner: { flexDirection: 'row', alignItems: 'center', padding: 11, borderRadius: 11, backgroundColor: '#F0F6F0', marginTop: 14, marginBottom: 13 },
   receiptSuccessIcon: { color: colors.green, fontFamily: font.bold, fontSize: 16, marginRight: 8 },
@@ -11028,7 +11031,7 @@ function createStaffStyles(theme: AppTheme) {
   confirmActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 9, marginTop: 15 },
   stockInConfirmActions: { gap: 8, marginTop: 15 },
   stockInConfirmButton: { width: '100%', minHeight: 44 },
-  confirmCancelButton: { minWidth: 82, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
+  confirmCancelButton: { minWidth: 82, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, ...secondaryOutline(theme.isDark) },
   confirmCancelText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   confirmButton: { minWidth: 104, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   confirmButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
@@ -11055,7 +11058,7 @@ function createStaffStyles(theme: AppTheme) {
   lowStockAlertPrimaryText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
   lowStockAlertSecondary: {
     minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 11,
-    backgroundColor: '#EEEEF0',
+    ...secondaryOutline(theme.isDark),
   },
   lowStockAlertSecondaryText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   dailyModalBackdrop: {
@@ -11085,7 +11088,7 @@ function createStaffStyles(theme: AppTheme) {
   dailyModalActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 13 },
   dailyModalReviewButton: { minWidth: 56, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
   dailyModalLeaveLink: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 12, marginTop: 6 },
-  dailyModalLeaveLinkText: { color: colors.muted, fontFamily: font.semibold, fontSize: 12, textDecorationLine: 'underline' },
+  dailyModalLeaveLinkText: { color: destructiveTextColor(theme.isDark), fontFamily: font.semibold, fontSize: 12 },
   dailyModalReviewText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   dailyModalPrimaryButton: {
     minWidth: 100, minHeight: 39, alignItems: 'center', justifyContent: 'center',
@@ -11111,7 +11114,7 @@ function createStaffStyles(theme: AppTheme) {
   calendarCancelText: { color: colors.muted, fontFamily: font.medium, fontSize: 10 },
   calendarSelectedText: { color: colors.navy, fontFamily: font.medium, fontSize: 9, marginTop: 14 },
   calendarActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 13 },
-  calendarCancelButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: '#EEEEF0' },
+  calendarCancelButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, ...secondaryOutline(theme.isDark) },
   calendarUseButton: { minHeight: 40, paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.pink },
   calendarUseText: { color: colors.white, fontFamily: font.semibold, fontSize: 10 },
   stockAlertsUpdatedBanner: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 13, backgroundColor: colors.paleGreen, marginBottom: 14 },

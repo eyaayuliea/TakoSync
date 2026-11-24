@@ -209,7 +209,7 @@ export function ReasonRequestModal({
                 accessibilityRole="button"
                 disabled={submitting}
                 onPress={step === 'form' ? close : () => setStep('form')}
-                style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}
               >
                 <Text style={[styles.secondaryText, { color: colors.text }]}>{step === 'form' ? 'Cancel' : 'Back'}</Text>
               </Pressable>
