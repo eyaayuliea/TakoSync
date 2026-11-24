@@ -44,6 +44,8 @@ export type Database = {
         unit: string;
         quantity_precision: number;
         expiration_tracking: boolean;
+        shelf_life_days: number | null;
+        near_expiration_days: number | null;
         active: boolean;
         automatic_consumption_enabled: boolean;
         created_at: string;

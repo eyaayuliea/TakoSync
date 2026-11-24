@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
-import { resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
+import { itemNearExpirationDays, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import { lowStockThreshold } from '../services/reorderPoint.ts';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
 import OwnerBusinessDaySettings from './OwnerBusinessDaySettings';
@@ -448,6 +448,7 @@ export default function OwnerMobileWorkspace({
         name: ingredient.name,
         unit: ingredient.unit,
         expiration_tracking: ingredient.expiration_tracking,
+        near_expiration_days: ingredient.near_expiration_days ?? null,
       })),
       branches,
       nearExpirationDays: resolveNearExpirationDays(data?.nearExpirationDays),
@@ -481,7 +482,7 @@ export default function OwnerMobileWorkspace({
           0,
           batch.expiration_date,
           manilaDateKey(new Date()),
-          resolveNearExpirationDays(data?.nearExpirationDays),
+          itemNearExpirationDays(ingredient.near_expiration_days, data?.nearExpirationDays),
         )
         : null,
     }));

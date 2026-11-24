@@ -8,6 +8,8 @@ import {
   classifyStockLevel,
   manilaCalendarDate,
   resolveNearExpirationDays,
+  itemNearExpirationDays,
+  shelfLifeExpirationDate,
 } from './inventoryStatusRules.ts';
 import { classifyExpirationAlert, classifyStockAlert } from '../staff/inventoryAlerts.ts';
 import { inventoryExpirationStatus, inventoryStockStatus } from '../staff/inventoryReports.ts';
@@ -115,4 +117,32 @@ test('an owner-configured alert period overrides the default', () => {
   assert.equal(classifyExpirationLevel(5, 7), 'Near Expiration');
   assert.equal(classifyExpirationLevel(5, 3), null);
   assert.equal(inventoryExpirationStatus('2026-11-25', 7, TODAY), 'Near Expiry');
+});
+
+// Per-item expiry rules (owner decision of 2026-11-25, from the catalog's Thresholds tab).
+test('each item uses its own near-expiration window; the general setting is the fallback', () => {
+  assert.equal(itemNearExpirationDays(30, 3), 30);
+  assert.equal(itemNearExpirationDays(0, 3), 0);
+  assert.equal(itemNearExpirationDays(null, 7), 7);
+  assert.equal(itemNearExpirationDays(undefined, undefined), 3);
+  assert.equal(itemNearExpirationDays(-1, 7), 7);
+});
+
+test('the catalog examples: windows scaled to the shelf life', () => {
+  // Baking powder (30-day window): 20 days left is already Near Expiration.
+  assert.equal(classifyExpirationLevel(20, itemNearExpirationDays(30, 3)), 'Near Expiration');
+  // Cabbage (2-day window): 3 days left is still fine; a 7-day window would flag it on arrival.
+  assert.equal(classifyExpirationLevel(3, itemNearExpirationDays(2, 7)), null);
+  assert.equal(classifyExpirationLevel(2, itemNearExpirationDays(2, 7)), 'Near Expiration');
+  // Prepared batter (window 0): Near Expiration only on the day it is due, Expired the day after.
+  assert.equal(classifyExpirationLevel(1, itemNearExpirationDays(0, 3)), null);
+  assert.equal(classifyExpirationLevel(0, itemNearExpirationDays(0, 3)), 'Near Expiration');
+  assert.equal(classifyExpirationLevel(-1, itemNearExpirationDays(0, 3)), 'Expired');
+});
+
+test('expiration date used = date received + shelf life when no printed date is entered', () => {
+  assert.equal(shelfLifeExpirationDate('2026-11-24', 1), '2026-11-25');
+  assert.equal(shelfLifeExpirationDate('2026-11-18', 5), '2026-11-23');
+  assert.equal(shelfLifeExpirationDate('2026-11-10', null), null);
+  assert.equal(shelfLifeExpirationDate('not a date', 5), null);
 });

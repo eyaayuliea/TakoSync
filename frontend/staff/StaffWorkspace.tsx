@@ -261,6 +261,8 @@ type Ingredient = {
   unit: string;
   quantityPrecision: number;
   expirationTracking: boolean;
+  shelfLifeDays: number | null;
+  nearExpirationDays: number;
   threshold: number;
   lowStock: boolean;
   hasBranchInventory: boolean;
@@ -2361,7 +2363,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'nearExpiration'
+      return classifyExpirationAlert(daysRemaining, item.nearExpirationDays) === 'nearExpiration'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -2372,7 +2374,7 @@ export default function StaffWorkspace({
       const expirationDateValue = parseInventoryDate(batch.expirationDateIso ?? batch.expirationDate);
       if (!expirationDateValue) return [];
       const daysRemaining = daysBetweenDates(alertDate, expirationDateValue);
-      return classifyExpirationAlert(daysRemaining, resolveNearExpirationDays(nearExpirationDays)) === 'expired'
+      return classifyExpirationAlert(daysRemaining, item.nearExpirationDays) === 'expired'
         ? [{ item, batch, daysRemaining }]
         : [];
     });
@@ -5047,7 +5049,7 @@ export default function StaffWorkspace({
       : selectedAlertTab === 'outOfStock'
         ? 'Expected quantity is zero'
         : selectedAlertTab === 'nearExpiration'
-          ? `Owner setting: expiration within the next ${resolveNearExpirationDays(nearExpirationDays)} days`
+          ? `Each item's own alert window, set by the owner (${resolveNearExpirationDays(nearExpirationDays)} days when an item has none)`
           : `Recorded expiration date is before ${formatDate(alertDate)}`;
     const activeAlertsCopy = activeAlertCount === null
       ? '— active alerts'

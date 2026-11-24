@@ -7,7 +7,7 @@ import {
 } from './ownerPasswordChange.ts';
 import { formatBranchName } from './branchNames.ts';
 import { bulkOrderThreshold, setBulkOrderThreshold } from './bulkOrder.ts';
-import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
+import { NEAR_EXPIRATION_DEFAULT_DAYS, itemNearExpirationDays } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
 import { ingredientCategoryIcon, type AppIconName } from '../theme/appIcons.ts';
 import {
@@ -154,6 +154,10 @@ export type InventoryItem = {
   unit: string;
   quantityPrecision: number;
   expirationTracking: boolean;
+  /** Days an unopened item keeps; null = it never expires. Used to suggest the expiry date at Stock-In. */
+  shelfLifeDays: number | null;
+  /** This item's near-expiration window in days (its own, or the owner's general setting). */
+  nearExpirationDays: number;
   threshold: number;
   lowStock: boolean;
   expiration: string | null;
@@ -790,6 +794,8 @@ export type StockExpirationSettingsData = {
     unit: string;
     quantity_precision: number;
     expiration_tracking: boolean;
+    shelf_life_days: number | null;
+    near_expiration_days: number | null;
   }[];
   categories: { id: string; name: string }[];
   batches: ExpirationBatchRecord[];
@@ -2650,7 +2656,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       .select('ingredient_id, quantity, minimum_stock, updated_at, inventory_revision')
       .eq('branch_id', branchId),
     client.from('ingredients')
-      .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active')
+      .select('id, category_id, name, unit, quantity_precision, expiration_tracking, shelf_life_days, near_expiration_days, active')
       .order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
@@ -2696,8 +2702,10 @@ export async function loadInventory(branchId: string, businessDate = new Date())
     const nextBatch = itemBatches.find((batch) => batch.expiration_date && Number(batch.quantity_remaining) > 0) ??
       itemBatches.find((batch) => batch.expiration_date);
     const expirationDate = nextBatch?.expiration_date ?? null;
+    // Each item has its own near-expiration window; the general setting is the fallback.
+    const itemWindowDays = itemNearExpirationDays(ingredient.near_expiration_days, nearExpirationDays);
     const expirationStatus: InventoryItem['expirationStatus'] = ingredient.expiration_tracking
-      ? inventoryExpirationStatus(expirationDate, nearExpirationDays, businessDate)
+      ? inventoryExpirationStatus(expirationDate, itemWindowDays, businessDate)
       : null;
     const minimumStock = Number(stock?.minimum_stock ?? 0);
     const quantity = Number(stock?.quantity ?? 0);
@@ -2732,6 +2740,8 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       unit: approvedUnit,
       quantityPrecision: displayQuantityPrecision,
       expirationTracking: ingredient.expiration_tracking,
+      shelfLifeDays: ingredient.shelf_life_days ?? null,
+      nearExpirationDays: itemWindowDays,
       threshold: displayMinimumStock,
       lowStock: displayQuantity <= 0 || (displayThreshold > 0 && displayQuantity <= displayThreshold),
       stockThreshold: displayThreshold,
@@ -4265,7 +4275,7 @@ export async function loadOwnerInventory() {
   const pageSize = 500;
   const [inventoryResult, ingredientsResult, categoriesResult, batchesResult, settingsResult] = await Promise.all([
     client.from('inventory').select('branch_id, ingredient_id, quantity, minimum_stock, updated_at'),
-    client.from('ingredients').select('id, category_id, name, unit, expiration_tracking, active').eq('active', true).order('name'),
+    client.from('ingredients').select('id, category_id, name, unit, expiration_tracking, shelf_life_days, near_expiration_days, active').eq('active', true).order('name'),
     client.from('ingredient_categories').select('id, name'),
     client.from('ingredient_batches')
       .select('id, branch_id, ingredient_id, batch_reference, expiration_date, quantity_remaining')
@@ -4326,7 +4336,7 @@ export async function loadStockExpirationSettings(): Promise<StockExpirationSett
       .order('branch_id')
       .order('ingredient_id'),
     client.from('ingredients')
-      .select('id, category_id, name, unit, quantity_precision, expiration_tracking')
+      .select('id, category_id, name, unit, quantity_precision, expiration_tracking, shelf_life_days, near_expiration_days')
       .eq('active', true)
       .order('name'),
     client.from('ingredient_categories')
@@ -4482,6 +4492,36 @@ export async function updateNearExpirationDays(days: number): Promise<void> {
     .single();
   assertNoError(error);
   if (!data) throw new Error('The expiration alert setting could not be saved.');
+}
+
+/**
+ * Per-item expiry rules: the item's shelf life and near-expiration window. An item
+ * with a shelf life is date-tracked; one without never expires.
+ */
+export async function saveIngredientExpiryRules(input: {
+  ingredientId: string;
+  shelfLifeDays: number | null;
+  nearExpirationDays: number | null;
+}): Promise<void> {
+  const { shelfLifeDays, nearExpirationDays } = input;
+  if (shelfLifeDays !== null && (!Number.isInteger(shelfLifeDays) || shelfLifeDays < 1 || shelfLifeDays > 3650)) {
+    throw new Error('The shelf life must be a whole number of days from 1 to 3650, or blank.');
+  }
+  if (nearExpirationDays !== null && (!Number.isInteger(nearExpirationDays) || nearExpirationDays < 0 || nearExpirationDays > 365)) {
+    throw new Error('The alert window must be a whole number of days from 0 to 365, or blank.');
+  }
+  const { data, error } = await requireSupabase()
+    .from('ingredients')
+    .update({
+      shelf_life_days: shelfLifeDays,
+      near_expiration_days: nearExpirationDays,
+      expiration_tracking: shelfLifeDays !== null,
+    })
+    .eq('id', input.ingredientId)
+    .select('id')
+    .maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The expiry rule could not be saved. Refresh and try again.');
 }
 
 export async function loadOwnerActivityData(input: {

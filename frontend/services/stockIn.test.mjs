@@ -7,7 +7,9 @@ import {
   stockInBaseQuantity,
   stockInErrorMessage,
   stockInLineQuantityLabel,
+  suggestedExpirationDate,
   validateStockIn,
+  withSuggestedExpiration,
 } from './stockIn.ts';
 
 const octopus = { id: 'octopus', name: 'Octopus', category: 'Seafood', unit: 'kg', expirationTracking: true, packageQuantity: null, packageUnit: null, packageLabel: null };
@@ -88,4 +90,39 @@ test('server messages written for staff are shown as they are', () => {
   assert.match(stockInErrorMessage({ message: 'TypeError: Failed to fetch' }), /^No connection\./);
   assert.match(stockInErrorMessage({ code: 'PGRST202', message: 'Could not find the function public.record_stock_in' }), /not available yet/);
   assert.equal(stockInErrorMessage({ message: 'odd' }), 'Unable to save the Stock-In. Please try again.');
+});
+
+// Per-item expiry rules (owner decision of 2026-11-25).
+test('the suggested expiry date is date received + the item shelf life', () => {
+  assert.equal(suggestedExpirationDate({ shelfLifeDays: 28 }, '2026-11-01'), '2026-11-29');
+  assert.equal(suggestedExpirationDate({ shelfLifeDays: 1 }, '2026-11-24'), '2026-11-25');
+  assert.equal(suggestedExpirationDate({ shelfLifeDays: 180 }, '2026-11-10'), '2027-05-09');
+  // No shelf life (salt, packaging, picks), or no valid date received: nothing is suggested.
+  assert.equal(suggestedExpirationDate({ shelfLifeDays: null }, '2026-11-10'), '');
+  assert.equal(suggestedExpirationDate(undefined, '2026-11-10'), '');
+  assert.equal(suggestedExpirationDate({ shelfLifeDays: 28 }, ''), '');
+});
+
+test('the suggestion follows the ingredient and the date received until staff choose a date', () => {
+  const blank = { key: 'l1', ingredientId: 'eggs', quantity: '2', unit: 'pack', expirationDate: '' };
+  const suggested = withSuggestedExpiration(blank, { shelfLifeDays: 28 }, '2026-11-01');
+  assert.deepEqual([suggested.expirationDate, suggested.expirationSuggested], ['2026-11-29', true]);
+  // The date received moves: the suggestion moves with it.
+  assert.equal(withSuggestedExpiration(suggested, { shelfLifeDays: 28 }, '2026-11-03').expirationDate, '2026-12-01');
+  // Staff typed the printed date: it is kept.
+  const printed = { ...suggested, expirationDate: '2026-11-20', expirationSuggested: false };
+  assert.equal(withSuggestedExpiration(printed, { shelfLifeDays: 28 }, '2026-11-03').expirationDate, '2026-11-20');
+  // An item without a shelf life gets no date.
+  assert.deepEqual(
+    [withSuggestedExpiration(blank, { shelfLifeDays: null }, '2026-11-01').expirationDate, withSuggestedExpiration(blank, { shelfLifeDays: null }, '2026-11-01').expirationSuggested],
+    ['', false],
+  );
+});
+
+test('a date-tracked item needs a typed date only when it has no shelf life', () => {
+  const header = { supplierReference: '', datePurchased: '2026-11-25', dateReceived: '2026-11-25' };
+  const line = { key: 'l1', ingredientId: 'x', quantity: '1', unit: 'base', expirationDate: '' };
+  const item = { id: 'x', name: 'Eggs', category: 'Dairy & eggs', unit: 'pcs', expirationTracking: true, packageQuantity: null, packageUnit: null, packageLabel: null };
+  assert.match(validateStockIn(header, [line], [item], '2026-11-25').lines[0]?.expirationDate ?? '', /tracked for expiry/);
+  assert.equal(validateStockIn(header, [line], [{ ...item, shelfLifeDays: 28 }], '2026-11-25').lines[0]?.expirationDate, undefined);
 });

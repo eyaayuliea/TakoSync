@@ -46,10 +46,12 @@ select owner_id, 'authenticated', 'authenticated', 'unit-owner@test.invalid', ''
 update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from unit_fixture);
 
-delete from public.inventory_movements where ingredient_id = 'salt' and branch_id = (select b1 from unit_fixture);
-delete from public.ingredient_batches where ingredient_id = 'salt' and branch_id = (select b1 from unit_fixture);
+-- Whatever salt history this database already has is cancelled out by one fixture entry,
+-- so the ledger sums to 10 tsp, the balance used below.
 insert into public.inventory_movements (id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit, movement, before_quantity, after_quantity)
-select old_stock_in_id, 'UNIT-TEST-IN', b1, 'salt', owner_id, 'stock_in', 10, 'tsp', 10, 0, 10 from unit_fixture;
+select old_stock_in_id, 'UNIT-TEST-IN', b1, 'salt', owner_id, 'stock_in', 10, 'tsp',
+  10 - coalesce((select sum(m.movement) from public.inventory_movements m where m.ingredient_id = 'salt' and m.branch_id = b1), 0), 0, 10
+from unit_fixture;
 update public.branch_inventory set quantity = 10, minimum_stock = 2
 where ingredient_id = 'salt' and branch_id = (select b1 from unit_fixture);
 insert into public.ingredient_batches (branch_id, ingredient_id, batch_reference, quantity_received, quantity_remaining)
