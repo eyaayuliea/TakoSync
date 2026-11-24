@@ -30,6 +30,7 @@ import {
 } from '../services/batterRecipeQuantities';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from './shared/ownerTokens';
+import AppIcon from '../theme/AppIcon';
 
 type Props = {
   onManageProducts: () => void;
@@ -567,7 +568,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
 
   const renderSearch = (placeholder: string) => (
     <View style={styles.searchBox}>
-      <Text style={styles.searchGlyph}>⌕</Text>
+      <AppIcon name="search" style={styles.searchGlyph} />
       <TextInput
         value={search}
         onChangeText={setSearch}
@@ -963,7 +964,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                         <Text style={styles.cardTitle}>{product.product_name}</Text>
                         <Text style={styles.cardMeta}>{product.is_available ? 'Available' : 'Unavailable'}</Text>
                       </View>
-                      <Text style={styles.moreChevron}>{recipeProductId === product.id ? '✓' : '›'}</Text>
+                      <AppIcon name={recipeProductId === product.id ? 'check' : 'forward'} style={styles.moreChevron} />
                     </Pressable>
                   ))}
                   {products.every((product) => recipeCounts.has(product.id)) ? (
@@ -1003,7 +1004,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                     </View>
                     <Pressable accessibilityRole="button" accessibilityLabel={`Select ingredient for entry ${index + 1}`} onPress={() => setExpandedIngredientLine(expanded ? null : line.key)} style={styles.ingredientSelect}>
                       <Text style={ingredient ? styles.cardTitle : styles.placeholderText}>{ingredient?.name ?? 'Choose an ingredient'}</Text>
-                      <Text style={styles.moreChevron}>{expanded ? '⌃' : '⌄'}</Text>
+                      <AppIcon name={expanded ? 'dropdownOpen' : 'dropdown'} style={styles.moreChevron} />
                     </Pressable>
                     {expanded ? (
                       <View style={styles.ingredientChoices}>

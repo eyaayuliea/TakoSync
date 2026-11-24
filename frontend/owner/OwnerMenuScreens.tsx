@@ -1,7 +1,9 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { DimensionValue } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { OWNER_MENU_ICON_IMAGES } from '../theme/appIconImages';
+import AppIcon from '../theme/AppIcon';
 
 export type OwnerRecordRoute =
   | 'SalesTransactions'
@@ -265,7 +267,7 @@ export function MenuListTile({
         <Text numberOfLines={1} style={styles.tileTitle}>{title}</Text>
         <Text numberOfLines={1} ellipsizeMode="tail" style={styles.subtitle}>{subtitle}</Text>
       </View>
-      <Text style={styles.chevron}>›</Text>
+      <AppIcon name="forward" style={styles.chevron} />
     </Pressable>
   );
 }
@@ -282,6 +284,11 @@ export function OwnerMenuIcon({
   const { ownerMenu } = useTheme();
   const strokeWidth = ownerMenu.icon.strokeWidth;
   const frame = { width: size, height: size };
+  // The team's drawing for this icon, coloured like the hand-drawn one it replaces.
+  const teamImage = OWNER_MENU_ICON_IMAGES[name];
+  if (teamImage !== undefined) {
+    return <Image source={teamImage} resizeMode="contain" tintColor={color} style={frame} />;
+  }
   const line = (
     left: DimensionValue,
     top: DimensionValue,

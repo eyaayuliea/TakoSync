@@ -36,6 +36,7 @@ import {
 } from '../services/takosync';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from './shared/ownerTokens';
+import AppIcon from '../theme/AppIcon';
 
 const colors = {
   pink: ownerColors.primary,
@@ -645,7 +646,7 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
             </View>
           </View>
           <View style={styles.searchBox}>
-            <Text style={styles.searchGlyph}>⌕</Text>
+            <AppIcon name="search" style={styles.searchGlyph} />
             <TextInput
               value={search}
               onChangeText={setSearch}

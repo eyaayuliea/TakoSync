@@ -11,6 +11,7 @@ import {
   type SalesConsumptionRecord,
 } from './salesConsumptionRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
+import AppIcon from '../theme/AppIcon';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -204,7 +205,7 @@ export default function SalesConsumptionRecords({
     <View style={styles.screen}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
-          <Text style={styles.backChevron}>‹</Text>
+          <AppIcon name="back" style={styles.backChevron} />
         </Pressable>
         <Text style={styles.headerTitle}>{view === 'details' ? 'Sales Consumption Details' : 'Sales Consumption Records'}</Text>
       </View>
@@ -217,11 +218,11 @@ export default function SalesConsumptionRecords({
           </View>
         ) : detailError || !selected ? (
           <View style={styles.errorCenter}>
-            <Text style={styles.wifiIcon}>≋</Text>
+            <AppIcon name="noInternet" style={styles.wifiIcon} />
             <Text accessibilityRole="alert" style={styles.errorText}>{detailError?.message ?? 'Unable to load this record.'}</Text>
             {detailError?.detail ? <Text selectable style={styles.errorDetail}>Details: {detailError.detail}</Text> : null}
             <Pressable accessibilityRole="button" onPress={() => openDetails(selectedId || '')} style={styles.retryButton}>
-              <Text style={styles.retryIcon}>↻</Text>
+              <AppIcon name="refresh" style={styles.retryIcon} />
               <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           </View>
@@ -232,7 +233,7 @@ export default function SalesConsumptionRecords({
                 <Text style={styles.recordId}>{selected.recordReference}</Text>
                 {selected.updateFailed ? (
                   <View style={styles.failedBadge}>
-                    <Text style={styles.warningIcon}>▲</Text>
+                    <AppIcon name="warning" style={styles.warningIcon} />
                     <Text style={styles.failedBadgeText}>Update failed · Review</Text>
                   </View>
                 ) : selected.saleVoided ? (
@@ -281,7 +282,7 @@ export default function SalesConsumptionRecords({
               ) : null}
             </View>
             <View style={styles.readOnlyPill}>
-              <Text style={styles.lockIcon}>▣</Text>
+              <AppIcon name="lock" style={styles.lockIcon} />
               <Text style={styles.readOnlyText}>Read-only</Text>
             </View>
           </ScrollView>
@@ -293,17 +294,17 @@ export default function SalesConsumptionRecords({
         </View>
       ) : error ? (
         <View style={styles.errorCenter}>
-          <Text style={styles.wifiIcon}>≋</Text>
+          <AppIcon name="noInternet" style={styles.wifiIcon} />
           <Text accessibilityRole="alert" style={styles.errorText}>{errorInfo?.message ?? 'Unable to load records. Please try again.'}</Text>
           {errorInfo?.detail ? <Text selectable style={styles.errorDetail}>Details: {errorInfo.detail}</Text> : null}
           <Pressable accessibilityRole="button" onPress={loadFirst} style={styles.retryButton}>
-            <Text style={styles.retryIcon}>↻</Text>
+            <AppIcon name="refresh" style={styles.retryIcon} />
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
       ) : items.length === 0 ? (
         <View style={styles.emptyState}>
-          <View style={styles.emptyCircle}><Text style={styles.emptyIcon}>▣</Text></View>
+          <AppIcon name="ownerNoRecords" size={72} style={{ marginBottom: 10 }} />
           <Text style={styles.emptyTitle}>No records found.</Text>
           <Text style={styles.emptySubtext}>Records will appear here once saved.</Text>
         </View>
@@ -338,12 +339,12 @@ export default function SalesConsumptionRecords({
               <Text style={styles.tileSubtitle}>Sale {record.saleReference} · {tileDateTime(record.createdAt)}</Text>
               <View style={styles.tileBottom}>
                 <View style={styles.branchLine}>
-                  <Text style={styles.pinIcon}>⌖</Text>
+                  <AppIcon name="location" style={styles.pinIcon} />
                   <Text style={styles.tileBranch}>{record.branchName}</Text>
                 </View>
                 {record.updateFailed ? (
                   <View style={styles.failedBadge}>
-                    <Text style={styles.warningIcon}>▲</Text>
+                    <AppIcon name="warning" style={styles.warningIcon} />
                     <Text style={styles.failedBadgeText}>Update failed · Review</Text>
                   </View>
                 ) : record.saleVoided ? (

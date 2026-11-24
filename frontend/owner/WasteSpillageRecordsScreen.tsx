@@ -32,6 +32,7 @@ import {
   type WasteSpillageRecord,
 } from './wasteSpillageRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
+import AppIcon from '../theme/AppIcon';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -257,7 +258,7 @@ export default function WasteSpillageRecordsScreen({
               <Text style={styles.tileDate}>{formatWasteSpillageDateTime(record.createdAt)}</Text>
               <View style={styles.tileBottom}>
                 <View style={styles.branchLine}>
-                  <Text style={styles.pinIcon}>⌖</Text>
+                  <AppIcon name="location" style={styles.pinIcon} />
                   <Text style={styles.tileBranch}>{record.branchName}</Text>
                 </View>
                 <WasteCategoryTag category={`${WASTE_SPILLAGE_CATEGORY_LABELS[record.category]}${record.isReversed ? ' · Reversed' : ''}`} />

@@ -92,6 +92,7 @@ import {
   getInventoryStockStatus,
   type InventoryStockStatus,
 } from './ownerInventoryStatus';
+import AppIcon from '../theme/AppIcon';
 
 type OwnerPeriod = 'Today' | 'This Week' | 'This Month' | 'Custom';
 /** "+5", "-2.5" or "0": actual − expected, without float noise. */
@@ -214,8 +215,16 @@ function InventoryStatusBadge({ status }: { status: InventoryStockStatus }) {
         (status === 'Normal' || status === 'Out of Stock' || status === 'Expired') && styles.omInventoryBadgeTextWhite,
         status === 'Not tracked' && styles.omInventoryBadgeTextMuted,
       ]}>
-        {status === 'Normal' ? '✓ ' : status === 'Out of Stock' || status === 'Expired' ? '! ' : status === 'Near Expiration' ? '▣ ' : ''}
-        {status}
+        {status === 'Normal' || status === 'Out of Stock' || status === 'Expired' || status === 'Near Expiration' ? (
+          <AppIcon
+            name={status === 'Normal' ? 'check' : status === 'Out of Stock' ? 'outOfStock' : status === 'Expired' ? 'expired' : 'nearExpiration'}
+            style={[
+              styles.omInventoryBadgeText,
+              (status === 'Normal' || status === 'Out of Stock' || status === 'Expired') && styles.omInventoryBadgeTextWhite,
+            ]}
+          />
+        ) : null}
+        {status === 'Not tracked' ? '' : ' '}{status}
       </Text>
     </View>
   );
@@ -882,7 +891,7 @@ export default function OwnerMobileWorkspace({
       style={({ pressed }) => [styles.activityCard, pressed && styles.activityCardPressed]}
     >
       <View style={[styles.activityIcon, item.category === 'Sales' ? styles.activitySalesIcon : styles.activityInventoryIcon]}>
-        <Text style={styles.activityIconText}>{item.category === 'Sales' ? '₱' : item.category === 'Counts' ? '✓' : item.category === 'Audit' ? '•' : '↗'}</Text>
+        <AppIcon name={item.category === 'Sales' ? 'sales' : item.category === 'Counts' ? 'dailyCount' : item.category === 'Audit' ? 'history' : 'activity'} style={styles.activityIconText} />
       </View>
       <View style={styles.listCopy}>
         <Text style={styles.listTitle}>{item.type}</Text>
@@ -892,7 +901,7 @@ export default function OwnerMobileWorkspace({
           {item.reference ? ` · Ref ${item.reference}` : ''}
         </Text>
       </View>
-      <Text style={styles.activityChevron}>›</Text>
+      <AppIcon name="forward" style={styles.activityChevron} />
     </Pressable>
   );
 
@@ -943,7 +952,7 @@ export default function OwnerMobileWorkspace({
       </View>
 
       <View style={styles.searchBox}>
-        <Text style={styles.searchGlyph}>⌕</Text>
+        <AppIcon name="search" style={styles.searchGlyph} />
         <TextInput
           value={productSearch}
           onChangeText={setProductSearch}
@@ -1140,7 +1149,7 @@ export default function OwnerMobileWorkspace({
             style={styles.totalSalesPeriod}
           >
             <Text style={styles.totalSalesPeriodText}>{period === 'This Week' ? 'This week' : period === 'This Month' ? 'This month' : period}</Text>
-            <Text style={styles.totalSalesPeriodChevron}>⌄</Text>
+            <AppIcon name="dropdown" style={styles.totalSalesPeriodChevron} />
           </Pressable>
         </View>
         {salesError ? (
@@ -1176,13 +1185,13 @@ export default function OwnerMobileWorkspace({
                 }}
                 style={({ pressed }) => [styles.branchSalesCard, pressed && styles.branchSalesCardPressed]}
               >
-                <View style={styles.branchLocationIcon}><Text style={styles.branchLocationIconText}>⌖</Text></View>
+                <View style={styles.branchLocationIcon}><AppIcon name="location" style={styles.branchLocationIconText} /></View>
                 <View style={styles.branchSalesCopy}>
                   <Text style={styles.branchSalesName} numberOfLines={1}>{branch.name}</Text>
                   <Text style={styles.branchSalesSupporting}>View sales summary</Text>
                 </View>
                 <Text style={styles.branchSalesAmount}>{currency(branch.total)}</Text>
-                <Text style={styles.branchSalesChevron}>›</Text>
+                <AppIcon name="forward" style={styles.branchSalesChevron} />
               </Pressable>
             );
           })}
@@ -1318,7 +1327,7 @@ export default function OwnerMobileWorkspace({
   const renderInventory = () => (
     <>
       <View style={styles.omInventorySearch}>
-        <Text style={styles.omInventorySearchIcon}>⌕</Text>
+        <AppIcon name="search" style={styles.omInventorySearchIcon} />
         <TextInput
           value={inventorySearch}
           onChangeText={setInventorySearch}
@@ -1377,7 +1386,7 @@ export default function OwnerMobileWorkspace({
         onPress={() => setPage('CompareInventory')}
         style={styles.omCompareButton}
       >
-        <Text style={styles.omCompareButtonIcon}>▥</Text>
+        <AppIcon name="compare" style={styles.omCompareButtonIcon} />
         <Text style={styles.omCompareButtonText}>Compare Branches</Text>
       </Pressable>
 
@@ -1390,10 +1399,10 @@ export default function OwnerMobileWorkspace({
         </View>
       ) : inventoryError ? (
         <View style={styles.omInventoryErrorCenter}>
-          <Text style={styles.omWifiOffIcon}>≋</Text>
+          <AppIcon name="noInternet" style={styles.omWifiOffIcon} />
           <Text style={styles.omInventoryErrorText}>{inventoryError}</Text>
           <Pressable accessibilityRole="button" onPress={() => void onRefresh()} style={styles.omInventoryRetry}>
-            <Text style={styles.omInventoryRetryIcon}>↻</Text>
+            <AppIcon name="refresh" style={styles.omInventoryRetryIcon} />
             <Text style={styles.omInventoryRetryText}>Retry</Text>
           </Pressable>
         </View>
@@ -1477,7 +1486,7 @@ export default function OwnerMobileWorkspace({
             onPress={() => setPage('Inventory')}
             style={styles.omCompareBack}
           >
-            <Text style={styles.omCompareBackText}>‹</Text>
+            <AppIcon name="back" style={styles.omCompareBackText} />
           </Pressable>
           <Text style={styles.omCompareHeaderTitle}>Compare Branches</Text>
           <View style={styles.omCompareHeaderSpacer} />
@@ -1503,7 +1512,7 @@ export default function OwnerMobileWorkspace({
           ]}>
             {compareIngredient?.name ?? 'Select an ingredient.'}
           </Text>
-          <Text style={styles.omCompareDropdownChevron}>⌄</Text>
+          <AppIcon name="dropdown" style={styles.omCompareDropdownChevron} />
         </Pressable>
 
         {inventoryLoading ? (
@@ -1513,10 +1522,10 @@ export default function OwnerMobileWorkspace({
           </View>
         ) : inventoryError ? (
           <View style={styles.omInventoryErrorCenter}>
-            <Text style={styles.omWifiOffIcon}>≋</Text>
+            <AppIcon name="noInternet" style={styles.omWifiOffIcon} />
             <Text style={styles.omInventoryErrorText}>{inventoryError}</Text>
             <Pressable accessibilityRole="button" onPress={() => void onRefresh()} style={styles.omInventoryRetry}>
-              <Text style={styles.omInventoryRetryIcon}>↻</Text>
+              <AppIcon name="refresh" style={styles.omInventoryRetryIcon} />
               <Text style={styles.omInventoryRetryText}>Retry</Text>
             </Pressable>
           </View>
@@ -1535,7 +1544,7 @@ export default function OwnerMobileWorkspace({
                   </Text>
                   {row.batchCode ? (
                     <Text style={styles.omCompareBatchCode} numberOfLines={1} ellipsizeMode="tail">
-                      <Text style={styles.omCompareBatchIcon}>▣ </Text>{row.batchCode} · {row.batchCount} active
+                      <AppIcon name="box" style={styles.omCompareBatchIcon} />{' '}{row.batchCode} · {row.batchCount} active
                     </Text>
                   ) : row.batchCount > 0 ? (
                     <Text style={styles.omCompareBatchCode}>{row.batchCount} active batches</Text>
@@ -1545,7 +1554,7 @@ export default function OwnerMobileWorkspace({
               ))}
             </View>
             <View style={styles.omCompareInfoBanner}>
-              <Text style={styles.omCompareInfoIcon}>▣</Text>
+              <AppIcon name="info" style={styles.omCompareInfoIcon} />
               <View style={styles.omCompareInfoCopy}>
                 <Text style={styles.omCompareInfoTitle}>Read-only expected quantities.</Text>
                 <Text style={styles.omCompareInfoText}>Configuration is managed by the Owner.</Text>
@@ -1582,7 +1591,7 @@ export default function OwnerMobileWorkspace({
                 </Pressable>
               </View>
               <View style={styles.omIngredientSearch}>
-                <Text style={styles.omIngredientSearchIcon}>⌕</Text>
+                <AppIcon name="search" style={styles.omIngredientSearchIcon} />
                 <TextInput
                   value={ingredientSearch}
                   onChangeText={setIngredientSearch}
@@ -1614,10 +1623,10 @@ export default function OwnerMobileWorkspace({
                       selected && !ingredientSearch.trim() && styles.omIngredientRowTextSolidSelected,
                     ]}>{ingredient.name}</Text>
                     {selected && (
-                      <Text style={[
+                      <AppIcon name="check" style={[
                         styles.omIngredientCheck,
                         ingredientSearch.trim() && styles.omIngredientCheckSearch,
-                      ]}>✓</Text>
+                      ]} />
                     )}
                   </Pressable>
                 );
@@ -1706,22 +1715,20 @@ export default function OwnerMobileWorkspace({
           </View>
         ) : offlineError ? (
           <View style={styles.alertErrorCenter}>
-            <Text style={styles.alertWifiIcon}>≋</Text>
+            <AppIcon name="noInternet" style={styles.alertWifiIcon} />
             <Text style={styles.alertErrorText}>{OWNER_ALERT_LOAD_ERROR}</Text>
             <Pressable
               accessibilityRole="button"
               onPress={() => void onRefresh()}
               style={styles.alertRetryButton}
             >
-              <Text style={styles.alertRetryIcon}>↻</Text>
+              <AppIcon name="refresh" style={styles.alertRetryIcon} />
               <Text style={styles.alertRetryText}>Retry</Text>
             </Pressable>
           </View>
         ) : isEmpty ? (
           <View style={styles.alertEmptyState}>
-            <View style={styles.alertEmptyBellCircle}>
-              <Text style={styles.alertEmptyBell}>♧</Text>
-            </View>
+            <AppIcon name="ownerNoAlerts" size={72} style={{ marginBottom: 10 }} />
             <Text style={styles.alertEmptyTitle}>{OWNER_ALERT_EMPTY_MESSAGE}</Text>
             <Text style={styles.alertEmptySubtext}>
               {alertCategory === 'Low Stock'
@@ -1741,7 +1748,7 @@ export default function OwnerMobileWorkspace({
                   <View style={styles.alertCardIdentity}>
                     <Text style={styles.alertCardName} numberOfLines={1}>{item.name}</Text>
                     <View style={styles.alertBranchLine}>
-                      <Text style={styles.alertPinIcon}>⌖</Text>
+                      <AppIcon name="location" style={styles.alertPinIcon} />
                       <Text style={styles.alertBranchName}>{item.branch}</Text>
                     </View>
                   </View>
@@ -1757,7 +1764,7 @@ export default function OwnerMobileWorkspace({
                         item.status === 'Out of Stock' && styles.alertStatusTextLight,
                       ]}
                     >
-                      {item.status === 'Out of Stock' ? '! ' : '● '}{item.status}
+                      <AppIcon name={item.status === 'Out of Stock' ? 'outOfStock' : 'lowStock'} style={[styles.alertStatusText, item.status === 'Out of Stock' && styles.alertStatusTextLight]} />{' '}{item.status}
                     </Text>
                   </View>
                 </View>
@@ -1796,7 +1803,7 @@ export default function OwnerMobileWorkspace({
                   <View style={styles.alertCardIdentity}>
                     <Text style={styles.alertCardName} numberOfLines={1}>{item.name}</Text>
                     <View style={styles.alertBranchLine}>
-                      <Text style={styles.alertPinIcon}>⌖</Text>
+                      <AppIcon name="location" style={styles.alertPinIcon} />
                       <Text style={styles.alertBranchName}>{item.branch}</Text>
                     </View>
                   </View>
@@ -1812,7 +1819,7 @@ export default function OwnerMobileWorkspace({
                         item.status === 'Expired' && styles.alertStatusTextLight,
                       ]}
                     >
-                      {item.status === 'Expired' ? '! ' : '◷ '}{item.status}
+                      <AppIcon name={item.status === 'Expired' ? 'expired' : 'nearExpiration'} style={[styles.alertStatusText, item.status === 'Expired' && styles.alertStatusTextLight]} />{' '}{item.status}
                     </Text>
                   </View>
                 </View>
@@ -1908,7 +1915,7 @@ export default function OwnerMobileWorkspace({
               setSelectedDiscrepancyId(null);
               setDiscrepancyView('list');
             }} style={styles.omBackButton}>
-              <Text style={styles.omBackText}>‹</Text>
+              <AppIcon name="back" style={styles.omBackText} />
             </Pressable>
             <Text style={styles.omHeaderTitle}>Discrepancy Details</Text>
             <View style={styles.omHeaderSpacer} />
@@ -2042,10 +2049,10 @@ export default function OwnerMobileWorkspace({
     if (discrepancyError) {
       return (
         <View style={styles.alertErrorCenter}>
-          <Text style={styles.alertWifiIcon}>≋</Text>
+          <AppIcon name="noInternet" style={styles.alertWifiIcon} />
           <Text style={styles.alertErrorText}>{discrepancyError}</Text>
           <Pressable accessibilityRole="button" onPress={() => void refreshDiscrepancyReviews()} style={styles.alertRetryButton}>
-            <Text style={styles.alertRetryIcon}>↻</Text><Text style={styles.alertRetryText}>Retry</Text>
+            <AppIcon name="refresh" style={styles.alertRetryIcon} /><Text style={styles.alertRetryText}>Retry</Text>
           </Pressable>
         </View>
       );
@@ -2056,14 +2063,14 @@ export default function OwnerMobileWorkspace({
         <Text style={styles.omPageTitle}>Discrepancies</Text>
         <View style={styles.omFilterDropdownRow}>
           <Pressable accessibilityRole="button" onPress={() => { setDiscrepancyDraftBranch(discrepancyBranchFilter); setDiscrepancyDraftStatus(discrepancyStatusFilter); setDiscrepancyFilterVisible(true); }} style={styles.omFilterDropdown}>
-            <Text style={styles.omFilterDropdownIcon}>⌖</Text>
+            <AppIcon name="location" style={styles.omFilterDropdownIcon} />
             <Text style={styles.omFilterDropdownText}>{discrepancyBranchFilter ? branchNames.get(discrepancyBranchFilter) ?? 'Selected branch' : 'All branches'}</Text>
-            <Text style={styles.omFilterDropdownChevron}>⌄</Text>
+            <AppIcon name="dropdown" style={styles.omFilterDropdownChevron} />
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => { setDiscrepancyDraftBranch(discrepancyBranchFilter); setDiscrepancyDraftStatus(discrepancyStatusFilter); setDiscrepancyFilterVisible(true); }} style={styles.omFilterDropdown}>
-            <Text style={styles.omFilterDropdownIcon}>≡</Text>
+            <AppIcon name="filter" style={styles.omFilterDropdownIcon} />
             <Text style={styles.omFilterDropdownText}>{discrepancyStatusFilter}</Text>
-            <Text style={styles.omFilterDropdownChevron}>⌄</Text>
+            <AppIcon name="dropdown" style={styles.omFilterDropdownChevron} />
           </Pressable>
         </View>
         {discrepancyFeedback ? <Text style={styles.noticeText}>{discrepancyFeedback}</Text> : null}
@@ -2103,11 +2110,11 @@ export default function OwnerMobileWorkspace({
                 )}
               </View>
             </View>
-            <Text style={styles.omDiscrepancyChevron}>›</Text>
+            <AppIcon name="forward" style={styles.omDiscrepancyChevron} />
           </Pressable>
         )) : (
           <View style={styles.alertEmptyState}>
-            <View style={styles.alertEmptyBellCircle}><Text style={styles.alertEmptyBell}>▤</Text></View>
+            <AppIcon name="ownerNoRecords" size={72} style={{ marginBottom: 10 }} />
             <Text style={styles.alertEmptyTitle}>No discrepancy records match the selected filters.</Text>
           </View>
         )}
@@ -2240,10 +2247,10 @@ export default function OwnerMobileWorkspace({
           </View>
           <View style={styles.topActions}>
             <Pressable accessibilityRole="button" accessibilityLabel="Refresh owner information" disabled={refreshing || discrepancyLoading} onPress={() => void refreshOwnerData()} style={styles.headerButton}>
-              {refreshing ? <ActivityIndicator size="small" color={colors.navy} /> : <Text style={styles.headerButtonText}>↻</Text>}
+              {refreshing ? <ActivityIndicator size="small" color={colors.navy} /> : <AppIcon name="refresh" style={styles.headerButtonText} />}
             </Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="Open alerts" onPress={() => setPage('Alerts')} style={styles.headerButton}>
-              <Text style={styles.headerButtonText}>!</Text>
+              <AppIcon name="ownerBell" style={styles.headerButtonText} />
               {lowStock.length + sortedExpirationItems.length > 0 && <View style={styles.notificationDot} />}
             </Pressable>
             {page !== 'Dashboard' && (
@@ -2524,7 +2531,7 @@ export default function OwnerMobileWorkspace({
                 onPress={() => setCalendarCursor(new Date(calendarYear, calendarMonth - 1, 1))}
                 style={styles.calendarMonthButton}
               >
-                <Text style={styles.calendarMonthButtonText}>‹</Text>
+                <AppIcon name="back" style={styles.calendarMonthButtonText} />
               </Pressable>
               <Text style={styles.calendarMonthLabel}>{calendarMonthLabel}</Text>
               <Pressable
@@ -2533,7 +2540,7 @@ export default function OwnerMobileWorkspace({
                 onPress={() => setCalendarCursor(new Date(calendarYear, calendarMonth + 1, 1))}
                 style={styles.calendarMonthButton}
               >
-                <Text style={styles.calendarMonthButtonText}>›</Text>
+                <AppIcon name="forward" style={styles.calendarMonthButtonText} />
               </Pressable>
             </View>
             <View style={styles.calendarWeekRow}>
