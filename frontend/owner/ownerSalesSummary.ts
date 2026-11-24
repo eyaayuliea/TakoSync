@@ -1,7 +1,7 @@
 import type { OwnerSaleItem } from '../services/takosync';
 
 export const PRODUCTS_SOLD_EMPTY_MESSAGE = 'No sales recorded for this period.';
-export const PRODUCTS_SECTION_TITLE = 'Sales per branch';
+export const PRODUCTS_SECTION_TITLE = 'Products sold';
 
 export type OwnerProductSummary = {
   id: string;

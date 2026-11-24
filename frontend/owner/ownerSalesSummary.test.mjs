@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  PRODUCTS_SECTION_TITLE,
   PRODUCTS_SOLD_EMPTY_MESSAGE,
   summarizeOwnerProducts,
 } from './ownerSalesSummary.ts';
@@ -56,4 +57,8 @@ test('empty products sold state uses the exact required message', () => {
 test('product summary is read-only data with no mutation controls', () => {
   const summary = summarizeOwnerProducts([item()]);
   assert.deepEqual(Object.keys(summary[0]).sort(), ['id', 'name', 'quantity', 'total']);
+});
+
+test('OM-08: the Products tab is titled Products sold, not Sales per branch', () => {
+  assert.equal(PRODUCTS_SECTION_TITLE, 'Products sold');
 });
