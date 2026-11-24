@@ -385,7 +385,7 @@ export default function OwnerPortalWeb() {
       <View style={styles.center} accessibilityRole="alert">
         <Text style={styles.section}>Unable to connect</Text>
         <Text style={styles.muted}>{OWNER_PORTAL_CONNECTION_MESSAGE}</Text>
-        <Pressable accessibilityRole="button" onPress={() => setRestoreKey((key) => key + 1)} style={styles.outline}><Text style={styles.pinkText}>Retry</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setRestoreKey((key) => key + 1)} style={styles.outline}><Text style={styles.outlineText}>Retry</Text></Pressable>
       </View>
     );
   }
@@ -467,7 +467,7 @@ export default function OwnerPortalWeb() {
             <Panel title="Log out?">
               <Text style={styles.body}>You will need to log in again to use the Owner Web Portal.</Text>
               <View style={styles.line}>
-                <Pressable accessibilityRole="button" onPress={() => setConfirmingLogout(false)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" onPress={() => setConfirmingLogout(false)} style={styles.outline}><Text style={styles.outlineText}>Cancel</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="Confirm log out" onPress={() => void logout()} style={styles.loginButton}><Text style={styles.loginButtonText}>Log Out</Text></Pressable>
               </View>
             </Panel>
@@ -754,7 +754,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
           )) : <Text style={styles.empty}>No pending discrepancies require review.</Text>}
           {pendingReviews && pendingReviews.length ? (
             <Pressable accessibilityRole="link" onPress={onOpenReconciliation} style={[styles.outline, { alignSelf: 'flex-start' }]}>
-              <Text style={styles.pinkText}>Open Reconciliation{pendingReviews.length > visibleReviews.length ? ` (${pendingReviews.length} pending)` : ''} →</Text>
+              <Text style={styles.outlineText}>Open Reconciliation{pendingReviews.length > visibleReviews.length ? ` (${pendingReviews.length} pending)` : ''} →</Text>
             </Pressable>
           ) : null}
         </Panel>
@@ -786,7 +786,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
                   const count = category === 'All' ? alerts.length : alertCounts[category];
                   return (
                     <Pressable key={category} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${category} alerts, ${count}`} onPress={() => { setAlertCategory(category); setShowAllAlerts(false); }} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
-                      <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{category} · {count}</Text>
+                      <Text style={[styles.outlineText, selected && { color: '#FFFFFF' }]}>{category} · {count}</Text>
                     </Pressable>
                   );
                 })}
@@ -796,7 +796,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
                   <Table headers={['Ingredient', 'Branch', 'Alert', 'Details']} rows={shownAlerts.map((alert) => [alert.ingredient, alert.branch, alert.type, alert.detail])} />
                   {categoryAlerts.length > 10 ? (
                     <Pressable accessibilityRole="button" onPress={() => setShowAllAlerts((value) => !value)} style={[styles.outline, { alignSelf: 'flex-start' }]}>
-                      <Text style={styles.pinkText}>{showAllAlerts ? 'Show fewer' : `Show all ${categoryAlerts.length} alerts`}</Text>
+                      <Text style={styles.outlineText}>{showAllAlerts ? 'Show fewer' : `Show all ${categoryAlerts.length} alerts`}</Text>
                     </Pressable>
                   ) : null}
                 </>
@@ -871,7 +871,7 @@ function SalesMonitoring({ branches }: { branches: OwnerPortalBranch[] }) {
           <Text style={styles.loginButtonText}>Apply</Text>
         </Pressable>
         <Pressable accessibilityRole="button" disabled={loading} onPress={() => { setDraft(DEFAULT_FILTER); setApplied(DEFAULT_FILTER); setRetryKey((key) => key + 1); }} style={[styles.outline, { marginTop: 0 }]}>
-          <Text style={styles.pinkText}>Reset</Text>
+          <Text style={styles.outlineText}>Reset</Text>
         </Pressable>
       </View>
       {draft.period === 'Custom' ? (
@@ -930,7 +930,7 @@ function SalesMonitoring({ branches }: { branches: OwnerPortalBranch[] }) {
               </Text>
               <Table headers={SALE_DETAIL_HEADERS} rows={[...detail.rows, ['Total', '', '', peso(detail.total)]]} />
               <Text style={styles.muted}>{transactions.rows[selectedIndex][4].replace('\n', ' · ')}</Text>
-              <Pressable accessibilityRole="button" onPress={() => setSelectedSaleId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.pinkText}>Close details</Text></Pressable>
+              <Pressable accessibilityRole="button" onPress={() => setSelectedSaleId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.outlineText}>Close details</Text></Pressable>
             </Panel>
           ) : null}
         </>
@@ -990,7 +990,7 @@ function Inventory({ rows, branches }: { rows: InventoryRow[]; branches: OwnerPo
           const selected = tab === id;
           return (
             <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => setTab(id)} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
-              <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{label}</Text>
+              <Text style={[styles.outlineText, selected && { color: '#FFFFFF' }]}>{label}</Text>
             </Pressable>
           );
         })}
@@ -1121,7 +1121,7 @@ function Checks({ reviews, branches, notify, onRefresh }: ChecksProps) {
     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }} accessibilityRole="tablist">
       {(['Discrepancies', 'Adjustment History'] as const).map((name) => (
         <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: tab === name }} onPress={() => { setTab(name); setSelectedId(null); }} style={[styles.outline, { marginTop: 0 }, tab === name && { backgroundColor: C.pink, borderColor: C.pink }]}>
-          <Text style={[styles.pinkText, tab === name && { color: '#FFFFFF' }]}>{name}</Text>
+          <Text style={[styles.outlineText, tab === name && { color: '#FFFFFF' }]}>{name}</Text>
         </Pressable>
       ))}
     </View>
@@ -1200,7 +1200,7 @@ function Checks({ reviews, branches, notify, onRefresh }: ChecksProps) {
                 <View style={[reviewStyles.card, { marginTop: 8 }]} accessibilityRole="alert">
                   <Text style={styles.body}>{confirmText[confirming]}</Text>
                   <View style={reviewStyles.actions}>
-                    <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming(null)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                    <Pressable accessibilityRole="button" disabled={saving} onPress={() => setConfirming(null)} style={reviewStyles.cancel}><Text style={reviewStyles.cancelText}>Cancel</Text></Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel={`Confirm ${confirmLabel[confirming]}`} disabled={saving} onPress={() => void run(selected, confirming)} style={reviewStyles.approve}>
                       <Text style={reviewStyles.approveText}>{saving ? 'Saving…' : confirmLabel[confirming]}</Text>
                     </Pressable>
@@ -1228,7 +1228,7 @@ function Checks({ reviews, branches, notify, onRefresh }: ChecksProps) {
               {blocked ? <Text style={[styles.muted, { marginTop: 6 }]}>{VALIDATION_BLOCKED_MESSAGE}</Text> : null}
             </>
           ) : null}
-          <Pressable accessibilityRole="button" onPress={() => setSelectedId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.pinkText}>Close details</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setSelectedId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.outlineText}>Close details</Text></Pressable>
         </Panel>
       ) : null}
     </>
@@ -1845,9 +1845,9 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
               accessibilityRole="tab"
               accessibilityState={{ selected: inventoryView === view }}
               onPress={() => setInventoryView(view)}
-              style={[styles.outline, { marginTop: 0 }, inventoryView === view && { backgroundColor: C.pink }]}
+              style={[styles.outline, { marginTop: 0 }, inventoryView === view && { backgroundColor: C.pink, borderColor: C.pink }]}
             >
-              <Text style={[styles.pinkText, inventoryView === view && { color: '#fff' }]}>{view}</Text>
+              <Text style={[styles.outlineText, inventoryView === view && { color: '#fff' }]}>{view}</Text>
             </Pressable>
           ))}
         </View>
@@ -1857,8 +1857,8 @@ function InventoryReports({ branch, setBranch, branches, inventoryRows, inventor
   );
 }
 
-function StaffPage({ accounts }: any) { const [saving, setSaving] = useState<string | null>(null); const toggle = async (account: any) => { setSaving(account.id); try { await saveStaffAccount({ id: account.id, username: account.username, branchId: account.branch_id, active: !account.active }); } catch { /* the caller reloads accounts on the next session refresh */ } finally { setSaving(null); } }; return <><Text style={styles.section}>Staff accounts</Text><Text style={styles.muted}>Employee IDs are generated by Supabase and are also the initial passwords for new or explicitly reset Staff accounts.</Text><Table headers={['Employee ID', 'Name', 'Branch', 'Status', 'Created', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', new Date(account.created_at).toLocaleDateString(), saving === account.id ? 'Saving…' : 'Toggle status'])} /><View>{accounts.map((account: any) => <Pressable key={account.id} onPress={() => void toggle(account)} style={styles.outline}><Text style={styles.pinkText}>{account.active ? `Deactivate ${account.full_name}` : `Activate ${account.full_name}`}</Text></Pressable>)}</View></>; }
-function Settings({ products, configuration, stockSettings, onSaved }: any) { const [selected, setSelected] = useState<any>(null); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('0'); const [ingredientName, setIngredientName] = useState(''); const [unit, setUnit] = useState('kg'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false); const saveProduct = async () => { setSaving(true); try { const variants = selected?.variants?.map((variant: any) => ({ id: variant.id, price: Number(price) })) ?? [{ variant_code: '4pcs', size_label: '4 PCS', piece_count: 4, price: Number(price) }, { variant_code: '8pcs', size_label: '8 PCS', piece_count: 8, price: Number(price) }, { variant_code: '10plus1pcs', size_label: '10+1 PCS', piece_count: 11, price: Number(price) }]; if (selected) await updateProduct(selected.id, { product_name: name, description, is_available: true, variants }); else await createProduct({ product_name: name, description, is_available: true, variants }); onSaved('Product saved through the existing catalog service.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Product save failed.'); } finally { setSaving(false); } }; const saveIngredient = async () => { setSaving(true); try { if (selected?.ingredient) await updateIngredient(selected.ingredient.id, { name: ingredientName, category_id: selected.ingredient.category_id, unit }); else await createIngredient({ name: ingredientName, category_id: configuration?.categories?.[0]?.id ?? '', unit }); onSaved('Ingredient saved through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.'); } finally { setSaving(false); } }; const saveDays = async () => { setSaving(true); try { await updateNearExpirationDays(Number(days)); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Settings save failed.'); } finally { setSaving(false); } }; return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Live catalog, recipe, ingredient, and threshold configuration.</Text><View style={styles.grid}><Panel title="Products & Menu"><Text style={styles.muted}>Create or edit products without changing historical sales.</Text>{products.map((product: any) => <Pressable key={product.id} onPress={() => { setSelected(product); setName(product.product_name); setDescription(product.description); setPrice(String(product.price)); }}><Text style={styles.pinkText}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text></Pressable>)}<TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} /><TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} /><TextInput value={price} onChangeText={setPrice} placeholder="4 PCS selling price" keyboardType="decimal-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveProduct()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : selected ? 'Save product' : 'Add product'}</Text></Pressable></Panel><Panel title="Ingredients & Recipes"><Text style={styles.muted}>{configuration?.ingredients.length ?? 0} ingredients · {configuration?.recipeIngredients.length ?? 0} recipe lines</Text><TextInput value={ingredientName} onChangeText={setIngredientName} placeholder="Ingredient or supply name" style={styles.input} /><TextInput value={unit} onChangeText={setUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveIngredient()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Add ingredient'}</Text></Pressable><Text style={styles.muted}>Recipe edits use saveProductRecipe and affect future calculations only.</Text></Panel><Panel title="Prepared Batter"><Text style={styles.body}>5 bottles per batch · 25 pieces per bottle.</Text><Text style={styles.muted}>Raw ingredients are consumed during preparation; sales consume prepared batter only.</Text></Panel><Panel title="Stock thresholds & expiration"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day near-expiration alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>Save alert period</Text></Pressable><Text style={styles.muted}>{stockSettings?.inventory.length ?? 0} inventory thresholds loaded. Per-item minimum stock editing remains available through updateMinimumStock.</Text></Panel></View></>; }
+function StaffPage({ accounts }: any) { const [saving, setSaving] = useState<string | null>(null); const toggle = async (account: any) => { setSaving(account.id); try { await saveStaffAccount({ id: account.id, username: account.username, branchId: account.branch_id, active: !account.active }); } catch { /* the caller reloads accounts on the next session refresh */ } finally { setSaving(null); } }; return <><Text style={styles.section}>Staff accounts</Text><Text style={styles.muted}>Employee IDs are generated by Supabase and are also the initial passwords for new or explicitly reset Staff accounts.</Text><Table headers={['Employee ID', 'Name', 'Branch', 'Status', 'Created', 'Action']} rows={accounts.map((account: any) => [account.employee_id, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', new Date(account.created_at).toLocaleDateString(), saving === account.id ? 'Saving…' : 'Toggle status'])} /><View>{accounts.map((account: any) => <Pressable key={account.id} onPress={() => void toggle(account)} style={styles.outline}><Text style={styles.outlineText}>{account.active ? `Deactivate ${account.full_name}` : `Activate ${account.full_name}`}</Text></Pressable>)}</View></>; }
+function Settings({ products, configuration, stockSettings, onSaved }: any) { const [selected, setSelected] = useState<any>(null); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [price, setPrice] = useState('0'); const [ingredientName, setIngredientName] = useState(''); const [unit, setUnit] = useState('kg'); const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7)); const [saving, setSaving] = useState(false); const saveProduct = async () => { setSaving(true); try { const variants = selected?.variants?.map((variant: any) => ({ id: variant.id, price: Number(price) })) ?? [{ variant_code: '4pcs', size_label: '4 PCS', piece_count: 4, price: Number(price) }, { variant_code: '8pcs', size_label: '8 PCS', piece_count: 8, price: Number(price) }, { variant_code: '10plus1pcs', size_label: '10+1 PCS', piece_count: 11, price: Number(price) }]; if (selected) await updateProduct(selected.id, { product_name: name, description, is_available: true, variants }); else await createProduct({ product_name: name, description, is_available: true, variants }); onSaved('Product saved through the existing catalog service.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Product save failed.'); } finally { setSaving(false); } }; const saveIngredient = async () => { setSaving(true); try { if (selected?.ingredient) await updateIngredient(selected.ingredient.id, { name: ingredientName, category_id: selected.ingredient.category_id, unit }); else await createIngredient({ name: ingredientName, category_id: configuration?.categories?.[0]?.id ?? '', unit }); onSaved('Ingredient saved through Supabase.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Ingredient save failed.'); } finally { setSaving(false); } }; const saveDays = async () => { setSaving(true); try { await updateNearExpirationDays(Number(days)); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Settings save failed.'); } finally { setSaving(false); } }; return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Live catalog, recipe, ingredient, and threshold configuration.</Text><View style={styles.grid}><Panel title="Products & Menu"><Text style={styles.muted}>Create or edit products without changing historical sales.</Text>{products.map((product: any) => <Pressable key={product.id} onPress={() => { setSelected(product); setName(product.product_name); setDescription(product.description); setPrice(String(product.price)); }}><Text style={styles.pinkText}>{product.product_name} · {product.is_available ? 'Available' : 'Unavailable'}</Text></Pressable>)}<TextInput value={name} onChangeText={setName} placeholder="Product name" style={styles.input} /><TextInput value={description} onChangeText={setDescription} placeholder="Description" style={styles.input} /><TextInput value={price} onChangeText={setPrice} placeholder="4 PCS selling price" keyboardType="decimal-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveProduct()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : selected ? 'Save product' : 'Add product'}</Text></Pressable></Panel><Panel title="Ingredients & Recipes"><Text style={styles.muted}>{configuration?.ingredients.length ?? 0} ingredients · {configuration?.recipeIngredients.length ?? 0} recipe lines</Text><TextInput value={ingredientName} onChangeText={setIngredientName} placeholder="Ingredient or supply name" style={styles.input} /><TextInput value={unit} onChangeText={setUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveIngredient()} style={styles.outline}><Text style={styles.outlineText}>{saving ? 'Saving…' : 'Add ingredient'}</Text></Pressable><Text style={styles.muted}>Recipe edits use saveProductRecipe and affect future calculations only.</Text></Panel><Panel title="Prepared Batter"><Text style={styles.body}>5 bottles per batch · 25 pieces per bottle.</Text><Text style={styles.muted}>Raw ingredients are consumed during preparation; sales consume prepared batter only.</Text></Panel><Panel title="Stock thresholds & expiration"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day near-expiration alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.outlineText}>Save alert period</Text></Pressable><Text style={styles.muted}>{stockSettings?.inventory.length ?? 0} inventory thresholds loaded. Per-item minimum stock editing remains available through updateMinimumStock.</Text></Panel></View></>; }
 /**
  * OW-29 Inventory Audit History: every record of the applied period as one
  * read-only list with type, branch, date range and reference filters; a record
@@ -1931,7 +1931,7 @@ function Audit({ branches, inventoryRows }: { branches: OwnerPortalBranch[]; inv
           <Text style={styles.loginButtonText}>Apply</Text>
         </Pressable>
         <Pressable accessibilityRole="button" disabled={loading} onPress={() => { setDraft(DEFAULT_FILTER); setApplied(DEFAULT_FILTER); setSelectedId(null); }} style={[styles.outline, { marginTop: 0 }]}>
-          <Text style={styles.pinkText}>Reset</Text>
+          <Text style={styles.outlineText}>Reset</Text>
         </Pressable>
       </View>
       {draft.period === 'Custom' ? (
@@ -1968,7 +1968,7 @@ function Audit({ branches, inventoryRows }: { branches: OwnerPortalBranch[]; inv
               </Pressable>
             ) : null;
           }) : <Text style={styles.muted}>No related records.</Text>}
-          <Pressable accessibilityRole="button" onPress={() => setSelectedId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.pinkText}>Close details</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setSelectedId(null)} style={[styles.outline, { alignSelf: 'flex-start' }]}><Text style={styles.outlineText}>Close details</Text></Pressable>
         </Panel>
       ) : null}
     </>
@@ -1990,7 +1990,7 @@ function SectionError({ message, onRetry }: { message: string; onRetry: () => vo
     <View style={[styles.panel, { alignItems: 'flex-start', gap: 10 }]} accessibilityRole="alert">
       <Text style={styles.section}>This section could not be loaded</Text>
       <Text style={styles.body}>{message}</Text>
-      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Retry</Text></Pressable>
     </View>
   );
 }
@@ -2002,7 +2002,7 @@ function ReportErrorBanner({ message, onRetry }: { message: string; onRetry?: ()
   return (
     <View style={[styles.errorBanner, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }]} accessibilityRole="alert">
       <Text style={[styles.errorText, { flex: 1 }]}>{message}</Text>
-      {onRetry ? <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable> : null}
+      {onRetry ? <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Retry</Text></Pressable> : null}
     </View>
   );
 }
@@ -2055,7 +2055,7 @@ function ReportActions({ doc }: { doc: ReportDocument | null }) {
         onPress={() => { setMessage(''); if (doc && !openReportPrintView(doc)) onError('The print view was blocked. Allow pop-ups for this site, then select Print again.'); }}
         style={[styles.outline, { marginTop: 0 }, disabled && { opacity: 0.45 }]}
       >
-        <Text style={styles.pinkText}>Print</Text>
+        <Text style={styles.outlineText}>Print</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
@@ -2072,7 +2072,7 @@ function ReportActions({ doc }: { doc: ReportDocument | null }) {
         }}
         style={[styles.outline, { marginTop: 0 }, disabled && { opacity: 0.45 }]}
       >
-        <Text style={styles.pinkText}>Export PDF</Text>
+        <Text style={styles.outlineText}>Export PDF</Text>
       </Pressable>
     </View>
     {message ? <Text style={[styles.errorText, { maxWidth: 320, textAlign: 'right' }]}>{message}</Text> : null}
@@ -2202,7 +2202,7 @@ function StaffManager({ accounts, branches, onSaved }: {
     <TextInput value={username} onChangeText={setUsername} placeholder="Employee name / username" style={styles.input} />
     <Select value={branches.find((item: any) => item.id === branchId)?.name ?? 'Choose branch'} options={branches.map((item: any) => item.name)} onChange={(value) => setBranchId(branches.find((item: any) => item.name === value)?.id ?? '')} />
     <Pressable disabled={saving} onPress={() => void save()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : editing ? 'Save staff account' : 'Create staff account'}</Text></Pressable>
-    {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.pinkText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
+    {createdAccount?.employee_id ? <Panel title="New Staff credentials"><Text style={styles.muted}>Employee ID / initial password</Text><Text style={styles.metricValue} selectable>{createdAccount.employee_id}</Text><Pressable onPress={() => void copyEmployeeId()} style={styles.outline}><Text style={styles.outlineText}>Copy Employee ID</Text></Pressable>{copyMessage ? <Text style={styles.muted}>{copyMessage}</Text> : null}</Panel> : null}
     {/* OW-27 c1, c9: status (Active / Inactive) and lock status (Locked until … / Not locked). */}
     {accounts.length === 0 ? <Text style={styles.empty}>No staff accounts yet. Create the first one above.</Text> : null}
     <Table headers={['Employee ID', 'Username', 'Name', 'Branch', 'Status', 'Lock status']} rows={accounts.map((account) => [account.employee_id, account.username, account.full_name, account.branch_name ?? account.branch_id, account.active ? 'Active' : 'Inactive', staffLockStatus(account).label])} />
@@ -2210,12 +2210,12 @@ function StaffManager({ accounts, branches, onSaved }: {
       <Panel title="Reset password?">
         <Text style={styles.body}>{staffPasswordResetPrompt(resetTarget)}</Text>
         <View style={styles.line}>
-          <Pressable disabled={resetting} onPress={() => setResetTarget(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+          <Pressable disabled={resetting} onPress={() => setResetTarget(null)} style={styles.outline}><Text style={styles.outlineText}>Cancel</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Confirm password reset" disabled={resetting} onPress={() => void confirmReset()} style={styles.loginButton}><Text style={styles.loginButtonText}>{resetting ? 'Resetting…' : 'Reset password'}</Text></Pressable>
         </View>
       </Panel>
     ) : null}
-    {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable>{account.active ? <Pressable accessibilityRole="button" accessibilityLabel={`Reset password for ${account.full_name || account.username}`} disabled={savingAccountId !== null || saving || resetting} onPress={() => setResetTarget(account)}><Text style={styles.pinkText}>Reset password</Text></Pressable> : null}</View>)}
+    {accounts.map((account) => <View key={account.id} style={styles.line}><Text style={styles.body}>{account.full_name} · {account.employee_id}</Text><Pressable disabled={savingAccountId !== null || saving} onPress={() => { setEditing(account); setUsername(account.username); setBranchId(account.branch_id); }}><Text style={styles.pinkText}>Edit account</Text></Pressable><Pressable disabled={savingAccountId !== null || saving} onPress={() => void toggleAccount(account)}><Text style={account.active ? styles.dangerText : styles.pinkText}>{savingAccountId === account.id ? 'Saving…' : account.active ? 'Deactivate' : 'Activate'}</Text></Pressable>{account.active ? <Pressable accessibilityRole="button" accessibilityLabel={`Reset password for ${account.full_name || account.username}`} disabled={savingAccountId !== null || saving || resetting} onPress={() => setResetTarget(account)}><Text style={styles.pinkText}>Reset password</Text></Pressable> : null}</View>)}
   </>;
 }
 function LegacySettingsEditor({ products, configuration, stockSettings, onSaved }: any) {
@@ -2224,7 +2224,7 @@ function LegacySettingsEditor({ products, configuration, stockSettings, onSaved 
   const saveRecipe = async () => { if (!productId || !ingredientId) { onSaved('Choose a product and ingredient first.'); return; } setSaving(true); try { const existing = configuration.recipeIngredients.filter((line: any) => line.product_id === productId && line.ingredient_id !== ingredientId).map((line: any) => ({ ingredient_id: line.ingredient_id, quantity_required: Number(line.quantity_required), unit_of_measure: line.unit_of_measure })); await saveProductRecipe(productId, [...existing, { ingredient_id: ingredientId, quantity_required: Number(recipeQty), unit_of_measure: recipeUnit }]); onSaved('Recipe line saved for future sales calculations.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Recipe save failed.'); } finally { setSaving(false); } };
   const saveThreshold = async () => { if (!thresholdBranch || !thresholdId) { onSaved('Choose a branch inventory record first.'); return; } setSaving(true); try { await updateMinimumStock(thresholdBranch, thresholdId, Number(threshold)); onSaved('Minimum stock threshold updated. Refreshing live inventory is required to recalculate status.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Threshold save failed.'); } finally { setSaving(false); } };
   const saveDays = async () => { const parsed = Number(days); if (!Number.isInteger(parsed) || parsed < 0) { onSaved('Expiration alert period must be a non-negative whole number of days.'); return; } setSaving(true); try { await updateNearExpirationDays(parsed); onSaved('Expiration alert period updated.'); } catch (reason: unknown) { onSaved(reason instanceof Error ? reason.message : 'Expiration settings save failed.'); } finally { setSaving(false); } };
-  return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text><View style={styles.grid}><Panel title="Product recipes"><Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text><Select value={products.find((item: any) => item.id === productId)?.product_name ?? 'Choose product'} options={products.map((item: any) => item.product_name)} onChange={(value) => setProductId(products.find((item: any) => item.product_name === value)?.id ?? '')} /><Select value={configuration?.ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'} options={(configuration?.ingredients ?? []).map((item: any) => item.name)} onChange={(value) => setIngredientId(configuration.ingredients.find((item: any) => item.name === value)?.id ?? '')} /><TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} /><TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text></Pressable><Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text></Panel><Panel title="Minimum stock thresholds"><Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text><Select value={thresholdBranch ? 'Selected branch inventory' : 'Choose inventory record'} options={['Choose inventory record', ...(stockSettings?.inventory ?? []).map((item: any) => `${item.branch_id} · ${item.ingredient_id}`)]} onChange={(value) => { const match = (stockSettings?.inventory ?? []).find((item: any) => `${item.branch_id} · ${item.ingredient_id}` === value); if (match) { setThresholdBranch(match.branch_id); setThresholdId(match.ingredient_id); setThreshold(String(match.minimum_stock)); } }} /><TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save threshold'}</Text></Pressable></Panel><Panel title="Prepared batter rules"><Text style={styles.body}>1 batch = 5 bottles = 125 pieces.</Text><Text style={styles.muted}>Raw ingredients are deducted during preparation; completed sales consume prepared batter and do not deduct raw batter ingredients again.</Text></Panel><Panel title="Expiration alerts"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save alert period'}</Text></Pressable><Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text></Panel></View></>;
+  return <><Text style={styles.section}>Settings & configuration</Text><Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text><View style={styles.grid}><Panel title="Product recipes"><Text style={styles.muted}>Configure one ingredient line at a time; saved lines affect future calculations only.</Text><Select value={products.find((item: any) => item.id === productId)?.product_name ?? 'Choose product'} options={products.map((item: any) => item.product_name)} onChange={(value) => setProductId(products.find((item: any) => item.product_name === value)?.id ?? '')} /><Select value={configuration?.ingredients.find((item: any) => item.id === ingredientId)?.name ?? 'Choose ingredient'} options={(configuration?.ingredients ?? []).map((item: any) => item.name)} onChange={(value) => setIngredientId(configuration.ingredients.find((item: any) => item.name === value)?.id ?? '')} /><TextInput value={recipeQty} onChangeText={setRecipeQty} keyboardType="decimal-pad" placeholder="Required quantity" style={styles.input} /><TextInput value={recipeUnit} onChangeText={setRecipeUnit} placeholder="Unit of measurement" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveRecipe()} style={styles.loginButton}><Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe line'}</Text></Pressable><Text style={styles.muted}>Prepared batter remains a separate inventory item. Existing backend rules enforce 5 bottles × 25 pieces.</Text></Panel><Panel title="Minimum stock thresholds"><Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text><Select value={thresholdBranch ? 'Selected branch inventory' : 'Choose inventory record'} options={['Choose inventory record', ...(stockSettings?.inventory ?? []).map((item: any) => `${item.branch_id} · ${item.ingredient_id}`)]} onChange={(value) => { const match = (stockSettings?.inventory ?? []).find((item: any) => `${item.branch_id} · ${item.ingredient_id}` === value); if (match) { setThresholdBranch(match.branch_id); setThresholdId(match.ingredient_id); setThreshold(String(match.minimum_stock)); } }} /><TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.outlineText}>{saving ? 'Saving…' : 'Save threshold'}</Text></Pressable></Panel><Panel title="Prepared batter rules"><Text style={styles.body}>1 batch = 5 bottles = 125 pieces.</Text><Text style={styles.muted}>Raw ingredients are deducted during preparation; completed sales consume prepared batter and do not deduct raw batter ingredients again.</Text></Panel><Panel title="Expiration alerts"><Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text><TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days" style={styles.input} /><Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}><Text style={styles.outlineText}>{saving ? 'Saving…' : 'Save alert period'}</Text></Pressable><Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text></Panel></View></>;
 }
 
 /**
@@ -2373,8 +2373,8 @@ function OwnerProductEditor({ products, onSaved }: {
           <Text style={styles.label}>Portion type</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {PRODUCT_PORTION_TYPES.map((type) => (
-              <Pressable key={type} accessibilityRole="radio" accessibilityState={{ checked: portionType === type }} onPress={() => setPortionType(type)} style={[styles.outline, { marginTop: 0 }, portionType === type && { backgroundColor: C.pink }]}>
-                <Text style={[styles.pinkText, portionType === type && { color: '#FFFFFF' }]}>{type}</Text>
+              <Pressable key={type} accessibilityRole="radio" accessibilityState={{ checked: portionType === type }} onPress={() => setPortionType(type)} style={[styles.outline, { marginTop: 0 }, portionType === type && { backgroundColor: C.pink, borderColor: C.pink }]}>
+                <Text style={[styles.outlineText, portionType === type && { color: '#FFFFFF' }]}>{type}</Text>
               </Pressable>
             ))}
           </View>
@@ -2396,8 +2396,8 @@ function OwnerProductEditor({ products, onSaved }: {
               {menu.addons.filter((addon) => addon.active).map((addon) => {
                 const selected = addonIds.includes(addon.id);
                 return (
-                  <Pressable key={addon.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setAddonIds((current) => (selected ? current.filter((id) => id !== addon.id) : [...current, addon.id]))} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink }]}>
-                    <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{selected ? '✓ ' : ''}{addon.name} · ₱{addon.price.toFixed(2)}</Text>
+                  <Pressable key={addon.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setAddonIds((current) => (selected ? current.filter((id) => id !== addon.id) : [...current, addon.id]))} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
+                    <Text style={[styles.outlineText, selected && { color: '#FFFFFF' }]}>{selected ? '✓ ' : ''}{addon.name} · ₱{addon.price.toFixed(2)}</Text>
                   </Pressable>
                 );
               })}
@@ -2405,7 +2405,7 @@ function OwnerProductEditor({ products, onSaved }: {
           ) : <Text style={styles.muted}>{menuError || 'Loading add-ons…'}</Text>}
           <Text style={styles.muted}>A product with no add-ons selected offers every add-on, as before.</Text>
           <Pressable accessibilityRole="switch" accessibilityState={{ checked: available }} onPress={() => setAvailable((current) => !current)} style={styles.outline}>
-            <Text style={styles.pinkText}>{available ? 'Available on the staff menu' : 'Unavailable (greyed out on the staff menu)'} · select to change</Text>
+            <Text style={styles.outlineText}>{available ? 'Available on the staff menu' : 'Unavailable (greyed out on the staff menu)'} · select to change</Text>
           </Pressable>
           {formErrors.length ? (
             <View style={[styles.errorBanner, { marginTop: 12 }]} accessibilityRole="alert">
@@ -2413,7 +2413,7 @@ function OwnerProductEditor({ products, onSaved }: {
             </View>
           ) : null}
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Pressable accessibilityRole="button" disabled={saving} onPress={() => setEditing(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+            <Pressable accessibilityRole="button" disabled={saving} onPress={() => setEditing(null)} style={styles.outline}><Text style={styles.outlineText}>Cancel</Text></Pressable>
             <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
               <Text style={styles.loginButtonText}>{saving ? 'Saving…' : selectedProduct ? 'Save product' : 'Add product'}</Text>
             </Pressable>
@@ -2426,8 +2426,8 @@ function OwnerProductEditor({ products, onSaved }: {
             <View key={addon.id} style={[styles.line, { alignItems: 'center', gap: 8 }]}>
               <Text style={[styles.body, { flex: 1 }]}>{addon.name}{addon.active ? '' : ' (off)'}</Text>
               <TextInput value={addonPriceDrafts[addon.id] ?? ''} onChangeText={(value) => setAddonPriceDrafts((current) => ({ ...current, [addon.id]: value }))} keyboardType="decimal-pad" accessibilityLabel={`${addon.name} price`} style={[styles.input, { width: 90, padding: 8 }]} />
-              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save</Text></Pressable>
-              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, !addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>{addon.active ? 'Turn off' : 'Turn on'}</Text></Pressable>
+              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Save</Text></Pressable>
+              <Pressable accessibilityRole="button" onPress={() => void saveAddonPrice(addon, !addon.active)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>{addon.active ? 'Turn off' : 'Turn on'}</Text></Pressable>
             </View>
           )) : <Text style={styles.muted}>{menuError || 'Loading add-ons…'}</Text>}
         </Panel>
@@ -2437,7 +2437,7 @@ function OwnerProductEditor({ products, onSaved }: {
             <TextInput value={thresholdDraft} onChangeText={setThresholdDraft} keyboardType="number-pad" accessibilityLabel="Bulk Order threshold" style={[styles.input, { width: 90 }]} />
             <Text style={styles.body}>products or more · current {menu?.bulkOrderThreshold ?? '—'}</Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.pinkText}>Save Bulk Order threshold</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => void saveThreshold()} style={styles.outline}><Text style={styles.outlineText}>Save Bulk Order threshold</Text></Pressable>
         </Panel>
       </View>
     </>
@@ -2451,7 +2451,7 @@ function SaveErrorWithRetry({ message, onRetry }: { message: string; onRetry: ()
   return (
     <View style={[styles.errorBanner, { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }]} accessibilityRole="alert">
       <Text style={[styles.errorText, { flex: 1 }]}>{message}</Text>
-      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Retry</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Retry</Text></Pressable>
     </View>
   );
 }
@@ -2546,8 +2546,8 @@ function IngredientConfigurationEditor({ configuration, onSaved }: {
               <Text style={styles.label}>Base unit</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {BASE_UNITS.map((base) => (
-                  <Pressable key={base} accessibilityRole="radio" accessibilityState={{ checked: form.baseUnit === base }} onPress={() => set({ baseUnit: base, unit: UNITS_BY_BASE[base].includes(form.unit) ? form.unit : base })} style={[styles.outline, { marginTop: 0 }, form.baseUnit === base && { backgroundColor: C.pink }]}>
-                    <Text style={[styles.pinkText, form.baseUnit === base && { color: '#FFFFFF' }]}>{base}</Text>
+                  <Pressable key={base} accessibilityRole="radio" accessibilityState={{ checked: form.baseUnit === base }} onPress={() => set({ baseUnit: base, unit: UNITS_BY_BASE[base].includes(form.unit) ? form.unit : base })} style={[styles.outline, { marginTop: 0 }, form.baseUnit === base && { backgroundColor: C.pink, borderColor: C.pink }]}>
+                    <Text style={[styles.outlineText, form.baseUnit === base && { color: '#FFFFFF' }]}>{base}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -2568,7 +2568,7 @@ function IngredientConfigurationEditor({ configuration, onSaved }: {
               ) : null}
               {saveError ? <SaveErrorWithRetry message={saveError} onRetry={() => void save()} /> : null}
               <View style={{ flexDirection: 'row', gap: 10 }}>
-                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setForm(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setForm(null)} style={styles.outline}><Text style={styles.outlineText}>Cancel</Text></Pressable>
                 <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
                   <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
                 </Pressable>
@@ -2577,7 +2577,7 @@ function IngredientConfigurationEditor({ configuration, onSaved }: {
           ) : null}
           <View style={[styles.line, { marginTop: 12 }]}>
             <TextInput value={categoryName} onChangeText={setCategoryName} placeholder="New category name" accessibilityLabel="New category name" style={[styles.input, { flex: 1 }]} />
-            <Pressable accessibilityRole="button" onPress={() => void saveCategory()} style={styles.outline}><Text style={styles.pinkText}>Add category</Text></Pressable>
+            <Pressable accessibilityRole="button" onPress={() => void saveCategory()} style={styles.outline}><Text style={styles.outlineText}>Add category</Text></Pressable>
           </View>
         </>
       )}
@@ -2686,8 +2686,8 @@ function RecipesEditor({ products, configuration, onSaved }: {
                     </View>
                     <TextInput value={line.quantity} onChangeText={(quantity) => setLines((current) => current.map((item) => (item.key === line.key ? { ...item, quantity } : item)))} keyboardType="decimal-pad" accessibilityLabel={`Required quantity of ${ingredient?.name ?? 'ingredient'}`} placeholder="Quantity" style={[styles.input, { width: 100 }]} />
                     <Text style={[styles.body, { width: 50 }]}>{ingredient?.unit ?? ''}</Text>
-                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${ingredient?.name ?? 'line'}`} onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={[styles.outline, { marginTop: 0 }]}>
-                      <Text style={styles.pinkText}>Remove</Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${ingredient?.name ?? 'line'}`} onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={[styles.outline, styles.dangerOutline, { marginTop: 0 }]}>
+                      <Text style={styles.dangerText}>Remove</Text>
                     </Pressable>
                   </View>
                 );
@@ -2695,7 +2695,7 @@ function RecipesEditor({ products, configuration, onSaved }: {
               <Pressable accessibilityRole="button" onPress={() => {
                 const next = ingredients.find((item) => !lines.some((line) => line.ingredientId === item.id));
                 if (next) setLines((current) => [...current, { key: `${next.id}-${Date.now()}`, ingredientId: next.id, quantity: '' }]);
-              }} style={styles.outline}><Text style={styles.pinkText}>Add ingredient</Text></Pressable>
+              }} style={styles.outline}><Text style={styles.outlineText}>Add ingredient</Text></Pressable>
               <Text style={styles.muted}>Quantities are per unit sold, in the ingredient’s unit of measurement.</Text>
               {errors.length ? (
                 <View style={[styles.errorBanner, { marginTop: 10 }]} accessibilityRole="alert">
@@ -2704,7 +2704,7 @@ function RecipesEditor({ products, configuration, onSaved }: {
               ) : null}
               {saveError ? <SaveErrorWithRetry message={saveError} onRetry={() => void save()} /> : null}
               <View style={{ flexDirection: 'row', gap: 10 }}>
-                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setTarget(null)} style={styles.outline}><Text style={styles.pinkText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={saving} onPress={() => setTarget(null)} style={styles.outline}><Text style={styles.outlineText}>Cancel</Text></Pressable>
                 <Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.loginButton, { paddingHorizontal: 22 }]}>
                   <Text style={styles.loginButtonText}>{saving ? 'Saving…' : 'Save recipe'}</Text>
                 </Pressable>
@@ -2913,21 +2913,21 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
                 style={styles.input}
               />
             </View>
-            <Pressable onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={styles.outline}>
-              <Text style={styles.pinkText}>Remove</Text>
+            <Pressable onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={[styles.outline, styles.dangerOutline]}>
+              <Text style={styles.dangerText}>Remove</Text>
             </Pressable>
           </View>
         );
       })}
       <Pressable disabled={loading || ingredients.length === 0} onPress={addIngredientLine} style={styles.outline}>
-        <Text style={styles.pinkText}>Add raw ingredient</Text>
+        <Text style={styles.outlineText}>Add raw ingredient</Text>
       </Pressable>
       <View style={styles.line}>
         <Pressable onPress={() => setActive((current) => !current)} style={styles.outline}>
-          <Text style={styles.pinkText}>{active ? 'Active' : 'Inactive'} · tap to toggle</Text>
+          <Text style={styles.outlineText}>{active ? 'Active' : 'Inactive'} · tap to toggle</Text>
         </Pressable>
         <Pressable onPress={() => setAutomaticConsumption((current) => !current)} style={styles.outline}>
-          <Text style={styles.pinkText}>{automaticConsumption ? 'Automatic consumption on' : 'Automatic consumption off'}</Text>
+          <Text style={styles.outlineText}>{automaticConsumption ? 'Automatic consumption on' : 'Automatic consumption off'}</Text>
         </Pressable>
       </View>
       <Text style={styles.panelTitle}>Applicable products</Text>
@@ -2938,7 +2938,7 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
             <Pressable key={product.id} onPress={() => setProductIds((current) => selected
               ? current.filter((id) => id !== product.id)
               : [...current, product.id])} style={styles.outline}>
-              <Text style={styles.pinkText}>{selected ? '✓ ' : ''}{product.product_name}</Text>
+              <Text style={styles.outlineText}>{selected ? '✓ ' : ''}{product.product_name}</Text>
             </Pressable>
           );
         })}
@@ -3019,7 +3019,7 @@ function StockThresholdsEditor({ stockSettings, onSaved, part = 'all' }: { stock
             </View>
             <View style={{ flex: 1 }}>
               <Pressable accessibilityRole="button" accessibilityLabel={`Save minimum stock for ${row.name}`} disabled={savingId !== null} onPress={() => void saveRow(row)} style={[styles.outline, { marginTop: 0 }]}>
-                <Text style={styles.pinkText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
+                <Text style={styles.outlineText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
               </Pressable>
             </View>
           </View>
@@ -3032,7 +3032,7 @@ function StockThresholdsEditor({ stockSettings, onSaved, part = 'all' }: { stock
       <Text style={[styles.label, { marginTop: 18 }]}>General alert period (days before expiration shown as Near Expiration, for items without their own window)</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <TextInput value={days} onChangeText={(value) => { setDays(value); setDaysError(''); }} keyboardType="number-pad" accessibilityLabel="Expiration alert period" style={[styles.input, { width: 110 }]} />
-        <Pressable accessibilityRole="button" onPress={() => void saveDays()} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save alert period</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => void saveDays()} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Save alert period</Text></Pressable>
       </View>
       {daysError ? <Text style={styles.errorText} accessibilityRole="alert">{daysError}</Text> : null}
       <ExpiryRulesEditor stockSettings={stockSettings} onSaved={onSaved} />
@@ -3102,7 +3102,7 @@ function ExpiryRulesEditor({ stockSettings, onSaved }: { stockSettings: StockExp
               <Text style={styles.cell}>{preview ? expiryRuleSummary(preview, stockSettings.nearExpirationDays) : '—'}</Text>
               <View style={{ flex: 1 }}>
                 <Pressable accessibilityRole="button" accessibilityLabel={`Save expiry rule for ${row.name}`} disabled={savingId !== null} onPress={() => void saveRow(row)} style={[styles.outline, { marginTop: 0 }]}>
-                  <Text style={styles.pinkText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
+                  <Text style={styles.outlineText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
                 </Pressable>
               </View>
             </View>
@@ -3141,7 +3141,7 @@ function BranchInfoEditor({ business, onSaved }: { business: BusinessConfigurati
             <Text style={[styles.strong, { width: 90 }]}>{`Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`}</Text>
             <TextInput value={drafts[branch.id] ?? branch.city} onChangeText={(value) => setDrafts((current) => ({ ...current, [branch.id]: value }))} accessibilityLabel={`Name of Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`} placeholder="e.g. Manila" style={[styles.input, { flex: 1 }]} />
             <Text style={[styles.body, { width: 200 }]}>{branch.name}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Save name of ${branch.name}`} onPress={() => void save(branch)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Save name of ${branch.name}`} onPress={() => void save(branch)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Save</Text></Pressable>
           </View>
           {errors[branch.id] ? <Text style={styles.errorText} accessibilityRole="alert">{errors[branch.id]}</Text> : null}
         </View>
@@ -3226,7 +3226,7 @@ function OpeningStockEditor({ business, onSaved }: { business: BusinessConfigura
       <View style={{ flexDirection: 'row', gap: 8, marginVertical: 10 }} accessibilityRole="tablist">
         {business.branches.map((item) => (
           <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: item.id === branchId }} onPress={() => { setBranchId(item.id); setConfirming(null); setRowError(null); }} style={[styles.outline, { marginTop: 0 }, item.id === branchId && { backgroundColor: C.pink, borderColor: C.pink }]}>
-            <Text style={[styles.pinkText, item.id === branchId && { color: '#FFFFFF' }]}>{item.name}</Text>
+            <Text style={[styles.outlineText, item.id === branchId && { color: '#FFFFFF' }]}>{item.name}</Text>
           </Pressable>
         ))}
       </View>
@@ -3247,7 +3247,7 @@ function OpeningStockEditor({ business, onSaved }: { business: BusinessConfigura
             </View>
             <View style={{ flex: 1 }}>
               {row.entry ? <Text style={styles.muted}>Entered (once only)</Text> : locked ? null : (
-                <Pressable accessibilityRole="button" accessibilityLabel={`Enter opening stock of ${row.name}`} disabled={busy} onPress={() => ask(row)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Enter</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Enter opening stock of ${row.name}`} disabled={busy} onPress={() => ask(row)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.outlineText}>Enter</Text></Pressable>
               )}
             </View>
           </View>
@@ -3256,7 +3256,7 @@ function OpeningStockEditor({ business, onSaved }: { business: BusinessConfigura
             <View style={[reviewStyles.card, { margin: 8 }]} accessibilityRole="alert">
               <Text style={styles.body}>Record the opening stock of {row.name} at {branch?.name} as {confirming.value} {row.unit}? It can be entered only once.</Text>
               <View style={reviewStyles.actions}>
-                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirming(null)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirming(null)} style={reviewStyles.cancel}><Text style={reviewStyles.cancelText}>Cancel</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="Confirm opening stock" disabled={busy} onPress={() => void record()} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>{busy ? 'Saving…' : 'Record opening stock'}</Text></Pressable>
               </View>
             </View>
@@ -3276,7 +3276,7 @@ function OpeningStockEditor({ business, onSaved }: { business: BusinessConfigura
             <View style={[reviewStyles.card, { marginTop: 10 }]} accessibilityRole="alert">
               <Text style={styles.body}>Lock the opening stock with go-live on {goLiveDate.trim() || '—'}? It cannot be undone.{missing ? ` ${missing} item${missing === 1 ? '' : 's'} across the branches have no opening entry and keep their current balance.` : ''}</Text>
               <View style={reviewStyles.actions}>
-                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirmingGoLive(false)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirmingGoLive(false)} style={reviewStyles.cancel}><Text style={reviewStyles.cancelText}>Cancel</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="Confirm go-live" disabled={busy} onPress={() => void lock()} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>{busy ? 'Locking…' : 'Lock opening stock'}</Text></Pressable>
               </View>
             </View>
@@ -3447,7 +3447,7 @@ function ProfileEditor({ user, onSaved, onNameChanged }: {
           {nameError ? <Text style={styles.errorText} accessibilityRole="alert">{nameError}</Text> : null}
           <Text style={styles.muted}>The email address and role are managed by the system and cannot be changed here.</Text>
           <Pressable accessibilityRole="button" disabled={savingName} onPress={() => void saveName()} style={styles.outline}>
-            <Text style={styles.pinkText}>{savingName ? 'Saving…' : 'Save account settings'}</Text>
+            <Text style={styles.outlineText}>{savingName ? 'Saving…' : 'Save account settings'}</Text>
           </Pressable>
         </Panel>
       </View>
@@ -3465,5 +3465,5 @@ function ProfileEditor({ user, onSaved, onNameChanged }: {
   );
 }
 
-const C = { pink: '#EC1358', navy: '#0F1025', bg: '#F5F5F4', surface: '#FDFDFC', border: '#E3E3E6', muted: '#858591' };
-const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1, borderColor: C.pink, borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, variantFieldRow: { flexDirection: 'row', gap: 8 }, variantFieldWide: { flex: 2, minWidth: 0 }, variantFieldNarrow: { flex: 1, minWidth: 0 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });
+const C = { pink: '#EC1358', navy: '#0F1025', bg: '#F5F5F4', surface: '#FDFDFC', border: '#E3E3E6', muted: '#858591', danger: '#C92F3C' };
+const styles = StyleSheet.create({ app: { flex: 1, flexDirection: 'row', backgroundColor: C.bg }, dark: { backgroundColor: '#171722' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }, sidebar: { width: 250, backgroundColor: C.navy, padding: 24, paddingTop: 28 }, sidebarSmall: { width: 80, paddingHorizontal: 14 }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 42 }, logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.pink, color: '#fff', textAlign: 'center', paddingTop: 7, fontSize: 20, fontWeight: '800' }, brandName: { color: '#fff', fontSize: 19, fontWeight: '800' }, brandSub: { color: '#B2B3C4', fontSize: 8, letterSpacing: 1.3 }, menu: { color: '#777891', fontSize: 9, letterSpacing: 1.2, marginBottom: 12 }, nav: { minHeight: 42, borderRadius: 9, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 5 }, navActive: { backgroundColor: C.pink }, navIcon: { color: '#D1D1DB', width: 18, fontSize: 17, textAlign: 'center' }, navText: { color: '#D1D1DB', fontSize: 12, flex: 1 }, badge: { backgroundColor: '#FCA639', color: C.navy, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9 }, profile: { borderTopWidth: 1, borderTopColor: '#292A43', paddingTop: 15, marginTop: 'auto' as any, flexDirection: 'row', gap: 9, alignItems: 'center' }, avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCA639', color: C.navy, textAlign: 'center', paddingTop: 9, fontSize: 9, fontWeight: '800' }, profileName: { color: '#fff', fontSize: 11, fontWeight: '700' }, profileRole: { color: '#9999A5', fontSize: 8, maxWidth: 170 }, logout: { color: '#B2B3C4', paddingVertical: 12, fontSize: 11 }, main: { flex: 1, minWidth: 0 }, header: { minHeight: 100, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, paddingHorizontal: 38, paddingTop: 24, flexDirection: 'row', justifyContent: 'space-between' }, eyebrow: { color: '#9A9AA7', fontSize: 9, letterSpacing: 1.1 }, title: { color: C.navy, fontSize: 25, fontWeight: '800', marginTop: 5 }, headerActions: { flexDirection: 'row', gap: 10 }, livePill: { color: '#589144', backgroundColor: '#E8F6EC', borderRadius: 15, paddingHorizontal: 10, paddingVertical: 8, fontSize: 9, fontWeight: '800' }, iconButton: { backgroundColor: '#F5F5F4', width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, content: { padding: 38, paddingBottom: 70 }, loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 16 }, errorBanner: { backgroundColor: '#F9E4E8', padding: 13, borderRadius: 9, marginBottom: 16 }, errorText: { color: '#B9244C', fontSize: 11 }, toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }, section: { color: C.navy, fontSize: 19, fontWeight: '800', marginBottom: 5 }, muted: { color: C.muted, fontSize: 10, lineHeight: 18 }, select: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 13, paddingVertical: 10, minWidth: 150 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginVertical: 18 }, metric: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 18, minWidth: 180, flex: 1 }, metricLabel: { color: '#777783', fontSize: 10, fontWeight: '700' }, metricValue: { color: C.navy, fontSize: 25, fontWeight: '800', marginVertical: 5 }, two: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }, panel: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, padding: 20, flex: 1, minWidth: 290, marginBottom: 16 }, panelTitle: { color: C.navy, fontSize: 13, fontWeight: '800', marginBottom: 14 }, row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEEEF0' }, body: { color: '#525260', fontSize: 11 }, strong: { color: C.navy, fontWeight: '700', fontSize: 11 }, pinkText: { color: C.pink, fontSize: 10, fontWeight: '700' }, search: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 12, width: 280, marginBottom: 16, fontSize: 11 }, table: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 13, overflow: 'hidden', minWidth: 750 }, tableHead: { flexDirection: 'row', backgroundColor: '#F7F7F6', padding: 13 }, headCell: { flex: 1, color: '#858591', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' }, tableRow: { flexDirection: 'row', padding: 14, borderTopWidth: 1, borderTopColor: '#EEEEF0', minHeight: 48 }, cell: { flex: 1, color: '#525260', fontSize: 10 }, empty: { color: C.muted, textAlign: 'center', padding: 32 }, outline: { borderWidth: 1.5, borderColor: C.navy, backgroundColor: '#FFFFFF', borderRadius: 8, padding: 11, alignSelf: 'flex-start', marginTop: 16 }, outlineText: { color: C.navy, fontSize: 10, fontWeight: '700' }, dangerOutline: { borderColor: C.danger, backgroundColor: 'transparent' }, dangerText: { color: C.danger, fontSize: 10, fontWeight: '700' }, toast: { position: 'absolute', right: 24, bottom: 24, backgroundColor: C.navy, borderRadius: 9, padding: 13 }, toastText: { color: '#fff', fontSize: 11 }, login: { flex: 1, flexDirection: 'row', backgroundColor: C.navy }, loginPanel: { flex: 1, backgroundColor: C.bg, padding: 55, justifyContent: 'center' }, loginBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, position: 'absolute', top: 38, left: 55 }, kicker: { color: C.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 }, loginTitle: { color: C.navy, fontSize: 36, fontWeight: '800', marginTop: 17 }, loginSub: { color: C.muted, fontSize: 13, marginTop: 5 }, form: { maxWidth: 430, marginTop: 32 }, label: { color: '#525260', fontSize: 10, fontWeight: '700', marginTop: 14, marginBottom: 6 }, input: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 13, fontSize: 12 }, variantFieldRow: { flexDirection: 'row', gap: 8 }, variantFieldWide: { flex: 2, minWidth: 0 }, variantFieldNarrow: { flex: 1, minWidth: 0 }, password: { backgroundColor: '#fff', borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingLeft: 13, flexDirection: 'row', alignItems: 'center' }, passwordInput: { flex: 1, paddingVertical: 13, fontSize: 12 }, loginButton: { backgroundColor: C.pink, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 20 }, loginButtonText: { color: '#fff', fontSize: 12, fontWeight: '800' }, loginFooter: { color: C.muted, fontSize: 9, position: 'absolute', bottom: 35, left: 55 }, loginArt: { width: '38%', minWidth: 350, backgroundColor: C.pink, padding: 60, justifyContent: 'center' }, artEmoji: { fontSize: 76, marginBottom: 30 }, artTitle: { color: '#fff', fontSize: 31, fontWeight: '800', maxWidth: 300 }, artCopy: { color: '#FFD5E1', fontSize: 13, lineHeight: 21, maxWidth: 300 } });

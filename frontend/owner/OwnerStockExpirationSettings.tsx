@@ -36,6 +36,7 @@ import {
   type StockExpirationSettingsData,
 } from '../services/takosync';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { secondaryOutline } from '../theme/buttonRoles';
 import { ownerColors } from './shared/ownerTokens';
 import AppIcon from '../theme/AppIcon';
 
@@ -960,13 +961,13 @@ function useStyles() {
     measureLabel: { color: colors.muted, fontFamily: 'Poppins_400Regular', fontSize: 6 },
     measureValue: { color: colors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 8, marginTop: 3 },
     measureAction: { flex: 1, minWidth: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-    editButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 8, backgroundColor: colors.white },
-    editButtonText: { color: colors.pink, fontFamily: 'Poppins_600SemiBold', fontSize: 7 },
+    editButton: { minHeight: 28, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, ...secondaryOutline(theme.isDark) },
+    editButtonText: { fontFamily: 'Poppins_600SemiBold', fontSize: 7, color: colors.navy },
     thresholdEditor: { flex: 1, minWidth: '100%', flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
     thresholdInputWrap: { flex: 1 },
     smallPrimaryButton: { minHeight: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.pink },
-    cancelButton: { minHeight: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
-    cancelText: { color: colors.muted, fontFamily: 'Poppins_500Medium', fontSize: 7 },
+    cancelButton: { minHeight: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, ...secondaryOutline(theme.isDark), borderRadius: 8 },
+    cancelText: { fontFamily: 'Poppins_500Medium', fontSize: 7, color: colors.navy },
     batchCard: { padding: 10, marginBottom: 7, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.white },
     batchMark: { backgroundColor: colors.paleGreen },
     warningMark: { backgroundColor: colors.yellow },

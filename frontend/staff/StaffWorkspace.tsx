@@ -31,7 +31,7 @@ import {
 import BottomNavigation, { type StaffNavigationOrigin, type StaffRoute, type StaffTab } from '../navigation/BottomNavigation';
 import { isMoreFlowRoute, staffReturnTab } from '../navigation/staffNavigation';
 import { createThemedStyles, type AppTheme, useTheme } from '../theme/ThemeProvider';
-import { destructiveTextColor, secondaryOutline } from './orderActionColors';
+import { destructiveTextColor, secondaryOutline } from '../theme/buttonRoles';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import MenuWorkspace from './MenuWorkspace';
 import {

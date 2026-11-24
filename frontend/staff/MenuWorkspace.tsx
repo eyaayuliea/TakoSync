@@ -15,7 +15,7 @@ import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../se
 import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
-import { orderActionColors } from './orderActionColors';
+import { orderActionColors } from '../theme/buttonRoles';
 import type { MenuCartLine, MenuProduct } from './menuPreviewData';
 import { extraFlavorTabs } from './menuFlavorOptions';
 import { addonsForCart, resolveMenuAddons } from './menuAddons';

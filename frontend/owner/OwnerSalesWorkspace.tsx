@@ -23,6 +23,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { secondaryOutline } from '../theme/buttonRoles';
 import SalesTransactionRecords from './SalesTransactionRecords';
 import VoidReportScreen from './VoidReportScreen';
 import DailyClosingReportScreen from './DailyClosingReportScreen';
@@ -2207,9 +2208,9 @@ function useStyles() {
     omWifiOffIcon: { color: '#EC1358', fontFamily: 'Poppins_700Bold', fontSize: 32, lineHeight: 36, marginBottom: 10 },
     omErrorDetail: { maxWidth: 260, marginTop: 6, color: '#6B6B76', fontFamily: 'Poppins_400Regular', fontSize: 10, lineHeight: 14, textAlign: 'center' },
     omErrorText: { maxWidth: 260, color: '#343440', fontFamily: 'Poppins_400Regular', fontSize: 11, lineHeight: 16, textAlign: 'center' },
-    omRetryButton: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12, borderRadius: 8, borderWidth: 1, borderColor: '#EC1358', backgroundColor: '#FFFFFF' },
-    omRetryIcon: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 11, marginRight: 6 },
-    omRetryText: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
+    omRetryButton: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12, borderRadius: 8, ...secondaryOutline(theme.isDark) },
+    omRetryIcon: { fontFamily: 'Poppins_600SemiBold', fontSize: 11, marginRight: 6, color: ownerColors.navy },
+    omRetryText: { fontFamily: 'Poppins_600SemiBold', fontSize: 10, color: ownerColors.navy },
     omTransactionsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
     omTransactionsTitle: { color: '#0F1025', fontFamily: 'Poppins_700Bold', fontSize: 12 },
     omNewestText: { color: '#EC1358', fontFamily: 'Poppins_600SemiBold', fontSize: 8 },
@@ -2336,8 +2337,8 @@ function useStyles() {
     rangeHint: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 9, marginTop: 10 },
     primaryButton: { minHeight: 48, borderRadius: 8, backgroundColor: ownerColors.primary, alignItems: 'center', justifyContent: 'center', marginTop: 13, paddingHorizontal: 18 },
     primaryButtonText: { color: '#FFFFFF', fontFamily: 'Poppins_600SemiBold', fontSize: 10 },
-    secondaryButton: { minHeight: 40, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 8, borderWidth: 1, borderColor: ownerColors.primary, backgroundColor: '#FFFFFF' },
-    secondaryButtonText: { color: ownerColors.primary, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
+    secondaryButton: { minHeight: 40, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 8, ...secondaryOutline(theme.isDark) },
+    secondaryButtonText: { fontFamily: 'Poppins_600SemiBold', fontSize: 9, color: ownerColors.navy },
     pressed: { opacity: 0.76 },
     disabled: { opacity: 0.5 },
     errorBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: 12, marginBottom: 13, borderRadius: 12, backgroundColor: '#FCE9EB' },
