@@ -81,6 +81,7 @@ import {
   getMonthlySalesSampleData,
   getBranchVariantSampleData,
 } from './dailySalesRepository';
+import AppIcon from '../theme/AppIcon';
 
 type Branch = { id: string; name: string };
 type SalesMode = 'monitoring' | 'reports';
@@ -876,13 +877,13 @@ export default function OwnerSalesWorkspace({
               onPress={() => setBranchDrillDownId(null)}
               style={styles.omBackButton}
             >
-              <Text style={styles.omBackText}>‹</Text>
+              <AppIcon name="back" style={styles.omBackText} />
             </Pressable>
             <Text style={styles.omHeaderTitle}>{drillName} Transactions</Text>
             <View style={styles.omHeaderSpacer} />
           </View>
           <View style={styles.omSearchWrap}>
-            <Text style={styles.omSearchIcon}>⌕</Text>
+            <AppIcon name="search" style={styles.omSearchIcon} />
             <TextInput
               accessibilityLabel={`Search ${drillName} transactions`}
               value={search}
@@ -899,10 +900,10 @@ export default function OwnerSalesWorkspace({
             </View>
           ) : error ? (
             <View style={styles.omErrorCenter}>
-              <Text style={styles.omWifiOffIcon}>≋</Text>
+              <AppIcon name="noInternet" style={styles.omWifiOffIcon} />
               <Text style={styles.omErrorText}>Unable to load data. Please check your internet connection and try again.</Text>
               <Pressable accessibilityRole="button" onPress={refreshMonitoring} style={styles.omRetryButton}>
-                <Text style={styles.omRetryIcon}>↻</Text>
+                <AppIcon name="refresh" style={styles.omRetryIcon} />
                 <Text style={styles.omRetryText}>Retry</Text>
               </Pressable>
             </View>
@@ -911,7 +912,7 @@ export default function OwnerSalesWorkspace({
               <View style={styles.omSalesCard}>
                 <View style={styles.omSalesCardHeader}>
                   <Text style={styles.omSalesCardLabel}>Combined Total Recorded Sales</Text>
-                  <Text style={styles.omLockIcon}>▣</Text>
+                  <AppIcon name="lock" style={styles.omLockIcon} />
                 </View>
                 <Text style={styles.omSalesAmount}>{currency(drillTotal)}</Text>
               </View>
@@ -941,13 +942,13 @@ export default function OwnerSalesWorkspace({
                         <Text style={styles.omTransactionMeta}>{drillName}</Text>
                       </View>
                       <Text style={styles.omTransactionAmount}>{currency(Number(row.sale.total_amount))}</Text>
-                      <Text style={styles.omTransactionChevron}>›</Text>
+                      <AppIcon name="forward" style={styles.omTransactionChevron} />
                     </Pressable>
                   ))}
                 </>
               ) : (
                 <View style={styles.omEmptyCard}>
-                  <Text style={styles.omEmptyIcon}>▤</Text>
+                  <AppIcon name="ownerNoRecords" size={56} style={{ marginBottom: 8 }} />
                   <Text style={styles.omEmptyText}>No sales recorded for this period.</Text>
                 </View>
               )}
@@ -976,7 +977,7 @@ export default function OwnerSalesWorkspace({
               onPress={() => setSelectedSaleId(null)}
               style={styles.omBackButton}
             >
-              <Text style={styles.omBackText}>‹</Text>
+              <AppIcon name="back" style={styles.omBackText} />
             </Pressable>
             <Text style={styles.omHeaderTitle}>Transaction Details</Text>
             <View style={styles.omHeaderSpacer} />
@@ -985,7 +986,7 @@ export default function OwnerSalesWorkspace({
           <View style={styles.omDetailCard}>
             <View style={styles.omDetailTitleRow}>
               <Text style={styles.omDetailReference}>{selectedSale.transaction_reference}</Text>
-              <View style={styles.omRecordedBadge}><Text style={styles.omRecordedText}>✓ Completed</Text></View>
+              <View style={styles.omRecordedBadge}><Text style={styles.omRecordedText}><AppIcon name="check" style={styles.omRecordedText} /> Completed</Text></View>
             </View>
             {selectedSaleIsBulk ? (
               <View style={styles.omDetailRow}>
@@ -1056,7 +1057,7 @@ export default function OwnerSalesWorkspace({
           </View>
 
           <View style={styles.omReadOnly}>
-            <Text style={styles.omLockIcon}>▣</Text>
+            <AppIcon name="lock" style={styles.omLockIcon} />
             <Text style={styles.omReadOnlyText}>Read-only</Text>
           </View>
         </View>
@@ -1067,7 +1068,7 @@ export default function OwnerSalesWorkspace({
       <View style={styles.omWorkspace}>
         <Text style={styles.omPageTitle}>Sales Summaries</Text>
         <View style={styles.omSearchWrap}>
-          <Text style={styles.omSearchIcon}>⌕</Text>
+          <AppIcon name="search" style={styles.omSearchIcon} />
           <TextInput
             accessibilityLabel="Search sales transactions"
             value={search}
@@ -1249,9 +1250,9 @@ export default function OwnerSalesWorkspace({
             }}
             style={styles.omDateSelector}
           >
-            <Text style={styles.omSelectorIcon}>▣</Text>
+            <AppIcon name="calendar" style={styles.omSelectorIcon} />
             <Text style={styles.omSelectorText} numberOfLines={1}>{dateLabel}</Text>
-            <Text style={styles.omSelectorChevron}>⌄</Text>
+            <AppIcon name="dropdown" style={styles.omSelectorChevron} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -1260,9 +1261,9 @@ export default function OwnerSalesWorkspace({
             onPress={() => setBranchPickerVisible(true)}
             style={styles.omBranchSelector}
           >
-            <Text style={styles.omSelectorIcon}>⌖</Text>
+            <AppIcon name="location" style={styles.omSelectorIcon} />
             <Text style={styles.omSelectorText} numberOfLines={1}>{branchLabel}</Text>
-            <Text style={styles.omSelectorChevron}>⌄</Text>
+            <AppIcon name="dropdown" style={styles.omSelectorChevron} />
           </Pressable>
         </View>
 
@@ -1292,12 +1293,12 @@ export default function OwnerSalesWorkspace({
           </>
         ) : error ? (
           <View style={styles.omErrorCenter}>
-            <Text style={styles.omWifiOffIcon}>≋</Text>
+            <AppIcon name="noInternet" style={styles.omWifiOffIcon} />
             <Text accessibilityRole="alert" style={styles.omErrorText}>{salesErrorInfo.message}</Text>
             {salesErrorInfo.detail ? <Text selectable style={styles.omErrorDetail}>Details: {salesErrorInfo.detail}</Text> : null}
             {salesErrorInfo.kind === 'load' ? (
               <Pressable accessibilityRole="button" onPress={refreshMonitoring} style={styles.omRetryButton}>
-                <Text style={styles.omRetryIcon}>↻</Text>
+                <AppIcon name="refresh" style={styles.omRetryIcon} />
                 <Text style={styles.omRetryText}>Retry</Text>
               </Pressable>
             ) : null}
@@ -1310,7 +1311,7 @@ export default function OwnerSalesWorkspace({
                   <Text style={styles.omSalesCardLabel}>
                     {activeSalesTab === 'Branch' ? 'Combined Total Recorded Sales' : 'Total Recorded Sales'}
                   </Text>
-                  <Text style={styles.omLockIcon}>▣</Text>
+                  <AppIcon name="lock" style={styles.omLockIcon} />
                 </View>
                 <Text style={styles.omSalesAmount}>
                   {activeSalesTab === 'Branch'
@@ -1345,7 +1346,7 @@ export default function OwnerSalesWorkspace({
                     style={({ pressed }) => [styles.omBranchCard, pressed && styles.omPressed]}
                   >
                     <View style={styles.omBranchIconTile}>
-                      <Text style={styles.omBranchPin}>⌖</Text>
+                      <AppIcon name="location" style={styles.omBranchPin} />
                     </View>
                     <View style={styles.omBranchCopy}>
                       <Text style={styles.omBranchName}>{branch.name}</Text>
@@ -1354,7 +1355,7 @@ export default function OwnerSalesWorkspace({
                       </Text>
                     </View>
                     <Text style={styles.omBranchAmount}>{currency(branch.total)}</Text>
-                    <Text style={styles.omTransactionChevron}>›</Text>
+                    <AppIcon name="forward" style={styles.omTransactionChevron} />
                   </Pressable>
                 )) : (
                   <Text style={styles.omEmptyText}>No sales recorded for this period.</Text>
@@ -1400,7 +1401,7 @@ export default function OwnerSalesWorkspace({
                   );
                 }) : (
                   <View style={styles.omEmptyCard}>
-                    <Text style={styles.omEmptyIcon}>▤</Text>
+                    <AppIcon name="ownerNoRecords" size={56} style={{ marginBottom: 8 }} />
                     <Text style={styles.omEmptyText}>{PRODUCTS_SOLD_EMPTY_MESSAGE}</Text>
                   </View>
                 )}
@@ -1461,11 +1462,11 @@ export default function OwnerSalesWorkspace({
                       <Text style={styles.omTransactionMeta}>{row.branch}</Text>
                     </View>
                     <Text style={styles.omTransactionAmount}>{currency(Number(row.sale.total_amount))}</Text>
-                    <Text style={styles.omTransactionChevron}>›</Text>
+                    <AppIcon name="forward" style={styles.omTransactionChevron} />
                   </Pressable>
                 )) : (
                   <View style={styles.omEmptyCard}>
-                    <Text style={styles.omEmptyIcon}>▤</Text>
+                    <AppIcon name="ownerNoRecords" size={56} style={{ marginBottom: 8 }} />
                     <Text style={styles.omEmptyText}>No sales recorded for this period.</Text>
                   </View>
                 )}
@@ -1485,11 +1486,11 @@ export default function OwnerSalesWorkspace({
               <View style={styles.omSheetHandle} />
               <View style={styles.omCalendarHeader}>
                 <Pressable accessibilityRole="button" accessibilityLabel="Previous month" onPress={() => setCalendarCursor(new Date(calendarYear, calendarMonth - 1, 1))} style={styles.omCalendarArrow}>
-                  <Text style={styles.omCalendarArrowText}>‹</Text>
+                  <AppIcon name="back" style={styles.omCalendarArrowText} />
                 </Pressable>
                 <Text style={styles.omCalendarTitle}>{calendarMonthLabel}</Text>
                 <Pressable accessibilityRole="button" accessibilityLabel="Next month" onPress={() => setCalendarCursor(new Date(calendarYear, calendarMonth + 1, 1))} style={styles.omCalendarArrow}>
-                  <Text style={styles.omCalendarArrowText}>›</Text>
+                  <AppIcon name="forward" style={styles.omCalendarArrowText} />
                 </Pressable>
               </View>
               <View style={styles.omCalendarGrid}>
@@ -1557,7 +1558,7 @@ export default function OwnerSalesWorkspace({
                   onPress={() => setMonthPickerYear((current) => current - 1)}
                   style={styles.omMonthArrow}
                 >
-                  <Text style={styles.omMonthArrowText}>‹</Text>
+                  <AppIcon name="back" style={styles.omMonthArrowText} />
                 </Pressable>
                 <Text style={styles.omMonthYear}>{monthPickerYear}</Text>
                 <Pressable
@@ -1568,7 +1569,7 @@ export default function OwnerSalesWorkspace({
                   onPress={() => setMonthPickerYear((current) => current + 1)}
                   style={[styles.omMonthArrow, monthPickerYear >= Number(today.slice(0, 4)) && styles.omMonthArrowDisabled]}
                 >
-                  <Text style={styles.omMonthArrowText}>›</Text>
+                  <AppIcon name="forward" style={styles.omMonthArrowText} />
                 </Pressable>
               </View>
               <View style={styles.omMonthGrid}>
@@ -1649,7 +1650,7 @@ export default function OwnerSalesWorkspace({
                         Mon – Sun{week.current ? ' · Current week' : ''}
                       </Text>
                     </View>
-                    {selected && <Text style={styles.omWeekCheck}>✓</Text>}
+                    {selected && <AppIcon name="check" style={styles.omWeekCheck} />}
                   </Pressable>
                 );
               })}
@@ -1688,7 +1689,7 @@ export default function OwnerSalesWorkspace({
                     style={[styles.omBranchOption, selected && styles.omBranchOptionSelected]}
                   >
                     <Text style={[styles.omBranchOptionText, selected && styles.omBranchOptionTextSelected]}>{branch.name}</Text>
-                    {selected && <Text style={styles.omBranchCheck}>✓</Text>}
+                    {selected && <AppIcon name="check" style={styles.omBranchCheck} />}
                   </Pressable>
                 );
               })}

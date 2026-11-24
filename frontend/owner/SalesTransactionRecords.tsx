@@ -17,6 +17,7 @@ import {
   type SalesTransaction,
 } from './salesTransactionRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
+import AppIcon from '../theme/AppIcon';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -214,7 +215,7 @@ export default function SalesTransactionRecords({
       {embedded && !detailTitle ? null : (
         <View style={styles.header}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={back} style={styles.backButton}>
-            <Text style={styles.backChevron}>‹</Text>
+            <AppIcon name="back" style={styles.backChevron} />
           </Pressable>
           <Text style={styles.headerTitle}>{detailTitle ? 'Sales Transaction Details' : 'Transaction Summary'}</Text>
         </View>
@@ -228,11 +229,11 @@ export default function SalesTransactionRecords({
           </View>
         ) : detailError || !selected ? (
           <View style={styles.errorCenter}>
-            <Text style={styles.wifiIcon}>≋</Text>
+            <AppIcon name="noInternet" style={styles.wifiIcon} />
             <Text accessibilityRole="alert" style={styles.errorText}>{detailError?.message ?? 'Unable to load this transaction.'}</Text>
             {detailError?.detail ? <Text selectable style={styles.errorDetail}>Details: {detailError.detail}</Text> : null}
             <Pressable accessibilityRole="button" onPress={() => openDetails(selectedId || '')} style={styles.retryButton}>
-              <Text style={styles.retryIcon}>↻</Text>
+              <AppIcon name="refresh" style={styles.retryIcon} />
               <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           </View>
@@ -246,7 +247,7 @@ export default function SalesTransactionRecords({
               <View style={styles.summaryTop}>
                 <Text style={styles.transactionId}>{selected.transactionReference}</Text>
                 <View style={[styles.recordedBadge, selected.status === 'Voided' && styles.voidedBadge]}>
-                  {selected.status === 'Recorded' ? <Text style={styles.recordedCheck}>✓</Text> : null}
+                  {selected.status === 'Recorded' ? <AppIcon name="check" style={styles.recordedCheck} /> : null}
                   <Text style={styles.recordedText}>{selected.status === 'Recorded' ? 'Completed' : selected.status}</Text>
                 </View>
               </View>
@@ -301,7 +302,7 @@ export default function SalesTransactionRecords({
             </View>
 
             <View style={styles.readOnlyPill}>
-              <Text style={styles.lockIcon}>▣</Text>
+              <AppIcon name="lock" style={styles.lockIcon} />
               <Text style={styles.readOnlyText}>Read-only</Text>
             </View>
           </DetailBody>
@@ -313,11 +314,11 @@ export default function SalesTransactionRecords({
         </View>
       ) : error ? (
         <View style={styles.errorCenter}>
-          <Text style={styles.wifiIcon}>≋</Text>
+          <AppIcon name="noInternet" style={styles.wifiIcon} />
           <Text accessibilityRole="alert" style={styles.errorText}>{errorInfo?.message ?? 'Unable to load records. Please try again.'}</Text>
           {errorInfo?.detail ? <Text selectable style={styles.errorDetail}>Details: {errorInfo.detail}</Text> : null}
           <Pressable accessibilityRole="button" onPress={loadFirst} style={styles.retryButton}>
-            <Text style={styles.retryIcon}>↻</Text>
+            <AppIcon name="refresh" style={styles.retryIcon} />
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
@@ -334,7 +335,7 @@ export default function SalesTransactionRecords({
           )}
           {items.length === 0 ? (
         <View style={styles.emptyState}>
-          <View style={styles.emptyCircle}><Text style={styles.emptyIcon}>▣</Text></View>
+          <AppIcon name="ownerNoRecords" size={72} style={{ marginBottom: 10 }} />
           <Text style={styles.emptyTitle}>No transactions found.</Text>
           <Text style={styles.emptySubtext}>
             {!embedded && recordBranch === ALL_BRANCHES && recordPeriod === 'All dates'
@@ -385,7 +386,7 @@ export default function SalesTransactionRecords({
                 <Text style={styles.tileId}>{transaction.transactionReference}</Text>
                 <Text style={styles.tileDate}>{dateTime(transaction.createdAt)}</Text>
                 <View style={styles.branchLine}>
-                  <Text style={styles.pinIcon}>⌖</Text>
+                  <AppIcon name="location" style={styles.pinIcon} />
                   <Text style={styles.tileBranch}>{transaction.branchName}</Text>
                 </View>
                 <Text style={styles.tileDate}>
@@ -401,7 +402,7 @@ export default function SalesTransactionRecords({
               </View>
               <View style={styles.tileRight}>
                 <Text style={[styles.tileAmount, transaction.status === 'Voided' && styles.tileAmountVoided]}>{peso(transaction.total)}</Text>
-                <Text style={styles.tileChevron}>›</Text>
+                <AppIcon name="forward" style={styles.tileChevron} />
               </View>
             </Pressable>
           ))}

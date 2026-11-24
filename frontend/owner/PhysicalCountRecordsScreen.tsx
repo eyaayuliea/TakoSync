@@ -24,6 +24,7 @@ import {
   type PhysicalCountResult,
 } from './physicalCountRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
+import AppIcon from '../theme/AppIcon';
 
 const font = {
   regular: 'Poppins_400Regular',
@@ -249,7 +250,7 @@ export default function PhysicalCountRecordsScreen({
                 <CountResultBadge result={record.result} compact />
               </View>
               <View style={styles.cardMeta}>
-                <Text style={styles.pinIcon}>⌖</Text>
+                <AppIcon name="location" style={styles.pinIcon} />
                 <Text style={styles.dateText}>
                   {record.branchName} · {formatPhysicalCountDateTime(record.submittedAt)}
                 </Text>
@@ -264,7 +265,7 @@ export default function PhysicalCountRecordsScreen({
                   tone={record.result === 'Matches' ? 'success'
                     : record.result === 'Higher than Expected' ? 'warning' : 'critical'}
                 />
-                <Text style={styles.chevron}>›</Text>
+                <AppIcon name="forward" style={styles.chevron} />
               </View>
               <View style={styles.statusRow}>
                 <StatusChip label={record.countStatus} />
@@ -282,7 +283,7 @@ export default function PhysicalCountRecordsScreen({
 
 function CountResultBadge({ result, compact = false }: { result: PhysicalCountResult; compact?: boolean }) {
   const styles = useStyles();
-  const icon = result === 'Matches' ? '✓' : result === 'Higher than Expected' ? '↑' : '↓';
+  const icon = result === 'Matches' ? 'check' as const : result === 'Higher than Expected' ? 'higher' as const : 'lower' as const;
   return (
     <View style={[
       styles.resultBadge,
@@ -290,11 +291,14 @@ function CountResultBadge({ result, compact = false }: { result: PhysicalCountRe
         : result === 'Higher than Expected' ? styles.higherBadge : styles.lowerBadge,
       compact && styles.resultBadgeCompact,
     ]}>
-      <Text style={[
-        styles.resultIcon,
-        result === 'Higher than Expected' && styles.resultIconDark,
-        compact && styles.resultIconCompact,
-      ]}>{icon}</Text>
+      <AppIcon
+        name={icon}
+        style={[
+          styles.resultIcon,
+          result === 'Higher than Expected' && styles.resultIconDark,
+          compact && styles.resultIconCompact,
+        ]}
+      />
       <Text
         numberOfLines={1}
         style={[
@@ -344,10 +348,10 @@ function StatusChip({ label }: { label: 'Draft' | 'Submitted' | 'Validated' | 'C
       {label === 'Validated' ? (
         <OwnerMenuIcon name="check" color={colors.background} size={9} />
       ) : (
-        <Text style={[
-          styles.statusChipIcon,
-          label === 'Corrected' && styles.correctedIcon,
-        ]}>{label === 'Draft' ? '✎' : label === 'Submitted' ? '◷' : '↻'}</Text>
+        <AppIcon
+          name={label === 'Draft' ? 'edit' : label === 'Submitted' ? 'pending' : 'refresh'}
+          style={[styles.statusChipIcon, label === 'Corrected' && styles.correctedIcon]}
+        />
       )}
       <Text style={[
         styles.statusChipText,
@@ -408,7 +412,7 @@ function DiscrepancyLinkCard({
           {record.discrepancyReference ?? '—'} · {record.discrepancyStatus ?? 'Pending Review'}
         </Text>
       </View>
-      <Text style={styles.discrepancyChevron}>›</Text>
+      <AppIcon name="forward" style={styles.discrepancyChevron} />
     </Pressable>
   );
 }
@@ -421,7 +425,7 @@ function RevisionHistoryCard({ record }: { record: PhysicalCountRecord }) {
     <View style={styles.revisionCard}>
       <View style={styles.revisionHeader}>
         <View style={styles.revisionTitleLine}>
-          <Text style={styles.revisionClock}>◷</Text>
+          <AppIcon name="pending" style={styles.revisionClock} />
           <Text style={styles.revisionTitle}>Revision History</Text>
         </View>
         <StatusChip label="Corrected" />

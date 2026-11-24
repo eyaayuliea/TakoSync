@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { OwnerMenuIcon, type OwnerMenuIconName } from '../OwnerMenuScreens';
 import { ownerColors, ownerIcon, ownerRadii, ownerSpacing, ownerTypography } from './ownerTokens';
+import AppIcon from '../../theme/AppIcon';
 
 export function OwnerIcon({ name, color = ownerColors.navy, size = ownerIcon.control }: { name: OwnerMenuIconName; color?: string; size?: number }) {
   return <OwnerMenuIcon name={name} color={color} size={size} />;
@@ -10,7 +11,7 @@ export function OwnerIcon({ name, color = ownerColors.navy, size = ownerIcon.con
 export function OwnerHeader({ title, onBack, trailing }: { title: string; onBack?: () => void; trailing?: React.ReactNode }) {
   const styles = useStyles();
   return <View style={styles.header}>
-    {onBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} hitSlop={8} style={styles.headerAction}><OwnerIcon name="sync" size={ownerIcon.control} /></Pressable> : <View style={styles.headerAction} />}
+    {onBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} hitSlop={8} style={styles.headerAction}><AppIcon name="back" size={ownerIcon.control + 6} color={ownerColors.navy} /></Pressable> : <View style={styles.headerAction} />}
     <Text numberOfLines={1} style={styles.headerTitle}>{title}</Text>
     {trailing ?? <View style={styles.headerAction} />}
   </View>;

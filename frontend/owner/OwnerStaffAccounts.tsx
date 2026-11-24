@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Te
 import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAccountLock';
 import { loadBranches, loadStaffAccounts, provisionExistingStaffAccounts, resetStaffPasswordToEmployeeId, saveStaffAccount, type StaffAccount } from '../services/takosync';
 import { ownerColors } from './shared/ownerTokens';
+import AppIcon from '../theme/AppIcon';
 
 const colors = {
   pink: ownerColors.primary,
@@ -144,7 +145,7 @@ export default function OwnerStaffAccounts({ onBack }: { onBack: () => void }) {
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>‹</Text>
+          <AppIcon name="back" style={styles.backText} />
         </Pressable>
         <View>
           <Text style={styles.title}>Staff accounts</Text>

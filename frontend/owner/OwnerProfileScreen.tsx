@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import type { AppUser } from '../services/takosync';
+import AppIcon from '../theme/AppIcon';
 
 function ownerInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -185,7 +186,7 @@ export default function OwnerProfileScreen({
     <View style={styles.screen}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backChevron}>‹</Text>
+          <AppIcon name="back" style={styles.backChevron} />
         </Pressable>
         <Text style={styles.headerTitle}>Profile</Text>
       </View>

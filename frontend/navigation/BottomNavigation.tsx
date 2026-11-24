@@ -26,16 +26,16 @@ const colors = {
 export type OwnerTab = 'dashboard' | 'sales' | 'inventory' | 'discrepancies' | 'alerts' | 'more';
 export const OWNER_NAVIGATION_HEIGHT = 75;
 
-type Destination = { route: StaffTab | OwnerTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' | 'dashboardGrid' | 'salesChart' | 'sync' };
+type Destination = { route: StaffTab | OwnerTab; label: string; icon: 'home' | 'pos' | 'menu' | 'box' | 'stock' | 'bell' | 'more' | 'ownerDashboard' | 'ownerSales' | 'ownerInventory' | 'ownerSync' | 'ownerBell' | 'ownerMore' };
 
 const staffDestinationList: Destination[] = staffDestinations.map((destination) => ({ ...destination }));
 export const ownerDestinations: readonly Destination[] = [
-  { route: 'dashboard', label: 'Dashboard', icon: 'dashboardGrid' },
-  { route: 'sales', label: 'Sales', icon: 'salesChart' },
-  { route: 'inventory', label: 'Inventory', icon: 'box' },
-  { route: 'discrepancies', label: 'Discrepancies', icon: 'sync' },
-  { route: 'alerts', label: 'Alerts', icon: 'bell' },
-  { route: 'more', label: 'More', icon: 'more' },
+  { route: 'dashboard', label: 'Dashboard', icon: 'ownerDashboard' },
+  { route: 'sales', label: 'Sales', icon: 'ownerSales' },
+  { route: 'inventory', label: 'Inventory', icon: 'ownerInventory' },
+  { route: 'discrepancies', label: 'Discrepancies', icon: 'ownerSync' },
+  { route: 'alerts', label: 'Alerts', icon: 'ownerBell' },
+  { route: 'more', label: 'More', icon: 'ownerMore' },
 ];
 
 function NavigationIcon({

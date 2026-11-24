@@ -30,6 +30,19 @@ export const APP_ICON_IMAGES: Partial<Record<AppIconName, number>> = {
   noAlerts: require('../../assets/icons/staff/no-alerts.png'),
   noRecords: require('../../assets/icons/staff/no-records.png'),
   noInternet: require('../../assets/icons/staff/no-internet.png'),
+  refresh: require('../../assets/icons/owner/refresh.png'),
+  location: require('../../assets/icons/owner/location.png'),
+  filter: require('../../assets/icons/owner/filter.png'),
+  lock: require('../../assets/icons/owner/view-only.png'),
+  logout: require('../../assets/icons/owner/log-out.png'),
+  ownerNoAlerts: require('../../assets/icons/owner/no-alerts.png'),
+  ownerNoRecords: require('../../assets/icons/owner/no-records.png'),
+  ownerDashboard: require('../../assets/icons/owner/nav-dashboard.png'),
+  ownerSales: require('../../assets/icons/owner/nav-sales.png'),
+  ownerInventory: require('../../assets/icons/owner/nav-inventory.png'),
+  ownerSync: require('../../assets/icons/owner/nav-reconciliation.png'),
+  ownerBell: require('../../assets/icons/owner/nav-alerts.png'),
+  ownerMore: require('../../assets/icons/owner/nav-more.png'),
 };
 
 export const INGREDIENT_ICON_IMAGES: Record<string, number> = {
@@ -50,4 +63,21 @@ export const INGREDIENT_ICON_IMAGES: Record<string, number> = {
   'soy-sauce': require('../../assets/icons/ingredients/soy-sauce.png'),
   'prepared-batter': require('../../assets/icons/ingredients/prepared-batter.png'),
   sauces: require('../../assets/icons/ingredients/sauces.png'),
+};
+
+export const OWNER_MENU_ICON_IMAGES: Record<string, number> = {
+  receipt: require('../../assets/icons/owner/records.png'),
+  profile: require('../../assets/icons/owner/profile.png'),
+  clipboardCheck: require('../../assets/icons/owner/sales-consumption.png'),
+  stockIn: require('../../assets/icons/owner/stock-in.png'),
+  droplet: require('../../assets/icons/owner/waste-spillage.png'),
+  cube: require('../../assets/icons/owner/physical-inventory-count.png'),
+  check: require('../../assets/icons/owner/authorized-adjustment.png'),
+  mapPin: require('../../assets/icons/owner/location.png'),
+  dashboard: require('../../assets/icons/owner/nav-dashboard.png'),
+  salesChart: require('../../assets/icons/owner/nav-sales.png'),
+  inventory: require('../../assets/icons/owner/nav-inventory.png'),
+  sync: require('../../assets/icons/owner/nav-reconciliation.png'),
+  bell: require('../../assets/icons/owner/nav-alerts.png'),
+  more: require('../../assets/icons/owner/nav-more.png'),
 };

@@ -25,6 +25,7 @@ import {
   stockInListDate,
 } from './stockInRepository';
 import { describeOwnerRecordError, type OwnerRecordErrorInfo } from './shared/ownerRecordErrors';
+import AppIcon from '../theme/AppIcon';
 
 type StockInInventoryData = {
   branches: StockInBranch[];
@@ -238,7 +239,7 @@ export default function StockInRecordsScreen({
               <Text style={styles.recordDate}>Stock-In · {stockInListDate(record)}</Text>
               <View style={styles.cardBottom}>
                 <View style={styles.branchLine}>
-                  <Text style={styles.pinIcon}>⌖</Text>
+                  <AppIcon name="location" style={styles.pinIcon} />
                   <Text style={styles.branchName}>{record.branchName}</Text>
                 </View>
                 <StockInStatusBadge reversed={record.isReversed} />
@@ -258,7 +259,7 @@ function StockInStatusBadge({ reversed = false }: { reversed?: boolean }) {
   const styles = useStyles();
   return (
     <View style={styles.statusBadge} accessibilityLabel={reversed ? 'Stock-In, reversed' : 'Stock-In'}>
-      <Text style={styles.statusCheck}>{reversed ? '↺' : '✓'}</Text>
+      <AppIcon name={reversed ? 'reversed' : 'check'} style={styles.statusCheck} />
       <Text style={styles.statusText}>{reversed ? 'Stock-In · Reversed' : 'Stock-In'}</Text>
     </View>
   );
