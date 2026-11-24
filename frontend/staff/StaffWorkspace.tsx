@@ -4041,7 +4041,7 @@ export default function StaffWorkspace({
           { title: 'Stock-Out', icon: 'stockOut' as AppIconName, onPress: () => openForm('stockOut', 'menu') },
           { title: 'Waste', icon: 'waste' as AppIconName, onPress: () => openForm('waste', 'menu') },
           {
-            title: 'Daily Check',
+            title: 'Physical Inventory',
             icon: 'dailyCount' as AppIconName,
             onPress: startDailyInventoryCheck,
           },
@@ -5147,7 +5147,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily Inventory Check</Text>
+            <Text style={styles.formTitle}>Physical Inventory</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5216,7 +5216,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={styles.formTitle}>Physical Inventory</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5396,7 +5396,7 @@ export default function StaffWorkspace({
     if (!currentDailyCheck) {
       return (
         <View style={styles.dailySuccessFallback}>
-          <Text style={styles.dailyCheckIntro}>No submitted daily check is available.</Text>
+          <Text style={styles.dailyCheckIntro}>No submitted physical inventory count is available.</Text>
           <Pressable onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.dailyPrimaryButton}>
             <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
@@ -5422,7 +5422,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Daily inventory check'}</Text>
+            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Physical Inventory'}</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5434,7 +5434,7 @@ export default function StaffWorkspace({
           <View style={styles.dailySuccessBanner} accessibilityRole="alert">
             <AppIcon name="success" style={styles.dailySuccessIcon} />
             <Text style={styles.dailySuccessText}>
-              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Daily inventory check saved successfully.'}
+              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Physical inventory count saved successfully.'}
             </Text>
           </View>
           <View style={styles.dailySummaryCard}>
@@ -6802,7 +6802,7 @@ export default function StaffWorkspace({
           },
           {
             icon: 'dailyCount' as AppIconName,
-            title: 'Physical Inventory Check',
+            title: 'Physical Inventory',
             description: 'Count, compare and submit for review',
             onPress: () => {
               setNavigationOrigin('more');
@@ -6831,7 +6831,7 @@ export default function StaffWorkspace({
           <Pressable
             key={option.title}
             accessibilityRole="button"
-            disabled={option.title === 'Physical Inventory Check' && dailyCheckStarting}
+            disabled={option.title === 'Physical Inventory' && dailyCheckStarting}
             onPress={option.onPress}
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
@@ -9143,7 +9143,7 @@ export default function StaffWorkspace({
         <View style={styles.dailyModalBackdrop}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close daily inventory check dialog"
+            accessibilityLabel="Close physical inventory dialog"
             onPress={() => setDailyCheckModal(null)}
             style={StyleSheet.absoluteFill}
           />
@@ -9193,7 +9193,7 @@ export default function StaffWorkspace({
                 <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
                   <AppIcon name="success" style={styles.dailyModalIconText} />
                 </View>
-                <Text style={styles.dailyModalTitle}>Daily Inventory Check</Text>
+                <Text style={styles.dailyModalTitle}>Physical Inventory</Text>
                 <Text style={styles.dailyModalSubtitle}>
                   Submit the physical count for this branch?
                 </Text>
