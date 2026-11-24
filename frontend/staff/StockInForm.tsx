@@ -14,6 +14,8 @@ import {
   type StockInLineDraft,
   type StockInReceipt,
   type StockInValidation,
+  suggestedExpirationDate,
+  withSuggestedExpiration,
 } from '../services/stockIn';
 import AppIcon from '../theme/AppIcon';
 
@@ -121,7 +123,12 @@ export default function StockInForm({
     const next = { ...header, ...patch };
     setHeader(next);
     setSubmitError('');
-    revalidate(next, lines);
+    // A new date received moves the suggested expiry dates with it.
+    const nextLines = patch.dateReceived === undefined
+      ? lines
+      : lines.map((line) => withSuggestedExpiration(line, byId.get(line.ingredientId), next.dateReceived));
+    if (nextLines !== lines) setLines(nextLines);
+    revalidate(next, nextLines);
   };
   const changeLine = (key: string, patch: Partial<StockInLineDraft>) => {
     const next = lines.map((line) => (line.key === key ? { ...line, ...patch } : line));
@@ -335,12 +342,17 @@ export default function StockInForm({
               ) : null}
 
               <DateField
-                label={ingredient?.expirationTracking ? 'Expiration Date *' : 'Expiration Date'}
+                label={ingredient?.expirationTracking && !ingredient.shelfLifeDays ? 'Expiration Date *' : 'Expiration Date'}
                 value={fromIso(line.expirationDate)}
                 allowClear
                 error={errors.expirationDate}
-                onChange={(date) => changeLine(line.key, { expirationDate: toIso(date) })}
+                onChange={(date) => changeLine(line.key, { expirationDate: toIso(date), expirationSuggested: false })}
               />
+              {ingredient?.shelfLifeDays && line.expirationSuggested && line.expirationDate ? (
+                <Text style={[styles.hint, { color: colors.secondaryText }]}>
+                  Suggested: date received + {ingredient.shelfLifeDays} {ingredient.shelfLifeDays === 1 ? 'day' : 'days'} shelf life. Change it to the printed date if the pack shows one.
+                </Text>
+              ) : null}
             </View>
           );
         })}
@@ -387,7 +399,17 @@ export default function StockInForm({
                     accessibilityState={{ disabled: taken }}
                     disabled={taken}
                     onPress={() => {
-                      if (pickerLine) changeLine(pickerLine, { ingredientId: item.id, unit: 'base' });
+                      if (pickerLine) {
+                        // The expiry date starts as date received + the item's shelf life.
+                        const picked = lines.find((line) => line.key === pickerLine);
+                        const base = { ...(picked ?? newLine()), ingredientId: item.id, unit: 'base' as const };
+                        const cleared = picked?.expirationSuggested ? { ...base, expirationDate: '', expirationSuggested: false } : base;
+                        const suggested = withSuggestedExpiration(cleared, item, header.dateReceived);
+                        changeLine(pickerLine, {
+                          ingredientId: item.id, unit: 'base',
+                          expirationDate: suggested.expirationDate, expirationSuggested: suggested.expirationSuggested,
+                        });
+                      }
                       setPickerLine(null);
                     }}
                     style={({ pressed }) => [styles.pickerRow, { borderColor: colors.border }, pressed && styles.pressed, taken && styles.disabled]}
@@ -423,10 +445,12 @@ export default function StockInForm({
                 const ingredient = byId.get(line.ingredientId);
                 const base = stockInBaseQuantity(line, ingredient);
                 if (!ingredient || base === null) return null;
+                // No date typed: the server uses date received + the item's shelf life.
+                const expires = line.expirationDate || suggestedExpirationDate(ingredient, header.dateReceived);
                 return (
                   <Text key={line.key} style={[styles.copy, { color: colors.text }]}>
                     {ingredient.name} · +{line.unit === 'pack' ? `${line.quantity.trim()} pack = ` : ''}{trimNumber(base)} {ingredient.unit}
-                    {line.expirationDate ? ` · Expires ${displayDate(line.expirationDate)}` : ''}
+                    {expires ? ` · Expires ${displayDate(expires)}${line.expirationDate ? '' : ' (from shelf life)'}` : ''}
                   </Text>
                 );
               })}

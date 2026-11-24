@@ -26,6 +26,9 @@ insert into public.business_day_sessions (session_id, user_id, business_date) va
 
 update public.branch_inventory set quantity = 10
 where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id in ('octopus', 'sauces', 'flour', 'packaging');
+-- An item that is date-tracked but has no shelf life: the date must be typed (ST-09 c3).
+-- Items with a shelf life get date received + shelf life when no date is typed.
+update public.ingredients set expiration_tracking = true, shelf_life_days = null where id = 'dashi';
 
 create temporary table t on commit drop as
 select (clock_timestamp() at time zone 'Asia/Manila')::date as today,
@@ -58,8 +61,8 @@ select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L
   pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"flour","quantity":0}]'::jsonb),
   '22023', 'All-purpose flour: the quantity must be a number greater than 0.', 'ST-09 c2: the quantity must be greater than zero');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
-  pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"octopus","quantity":1}]'::jsonb),
-  '22023', 'Octopus: select the expiration date. It is tracked for expiry.', 'ST-09 c3: expiring items need an expiration date');
+  pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"dashi","quantity":1}]'::jsonb),
+  '22023', 'Dashi stock: select the expiration date. It is tracked for expiry.', 'ST-09 c3: a date-tracked item without a shelf life needs an expiration date');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)),
   jsonb_build_array(jsonb_build_object('ingredient_id', 'octopus', 'quantity', 1, 'expiration_date', (select today - 1 from t)))),
@@ -109,9 +112,9 @@ select results_eq(
   format($$select b.ingredient_id, b.quantity_received, b.expiration_date, b.received_date
     from public.stock_in_receipt_lines l join public.inventory_movements m on m.id = l.movement_id
     join public.ingredient_batches b on b.id = m.batch_id order by l.line_index$$),
-  format($$values ('octopus'::text, 2000.000::numeric(12,3), %L::date, %L::date), ('sauces', 3000.000, %L::date, %L::date), ('flour', 5.000, null::date, %L::date)$$,
-    (select today + 7 from t), (select today from t), (select today + 30 from t), (select today from t), (select today from t)),
-  'ST-09 c7: each line creates a lot with its expiration date and the date received');
+  format($$values ('octopus'::text, 2000.000::numeric(12,3), %L::date, %L::date), ('sauces', 3000.000, %L::date, %L::date), ('flour', 5.000, %L::date, %L::date)$$,
+    (select today + 7 from t), (select today from t), (select today + 30 from t), (select today from t), (select today + 180 from t), (select today from t)),
+  'ST-09 c7: each line creates a lot with its expiration date (flour, with no date typed, gets date received + its 180-day shelf life) and the date received');
 select is((select count(*)::int from public.inventory_movements m join public.stock_in_receipt_lines l on l.movement_id = m.id where m.type = 'stock_in'), 3,
   'each line is its own Stock-In ledger movement');
 select is((select jsonb_array_length(body -> 'lines') from saved), 3, 'the saved receipt is returned with its lines');

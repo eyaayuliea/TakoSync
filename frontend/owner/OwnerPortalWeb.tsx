@@ -20,6 +20,7 @@ import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPor
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { DASHBOARD_ALERT_CATEGORIES, dashboardAlertCounts, dashboardAlerts, dashboardStockCounts, filterDashboardAlerts, type DashboardAlertType } from './ownerPortalDashboard';
 import { branchNameError, CONFIG_SECTIONS, openingStockRows, parseOpeningQuantity, unitRows, type ConfigSectionKey, type OpeningStockRow } from './ownerPortalBusinessConfig';
+import { expiryRuleRows, expiryRuleSummary, expiryRuleWarning, parseItemAlertDays, parseShelfLifeDays, type ExpiryRuleRow } from './ownerPortalExpiryRules';
 import { BOTTLES_PER_BATCH, parseAlertDays, parseMinimumStock, parseYieldPerBottle, thresholdRows, yieldPerBottle, type ThresholdRow } from './ownerPortalBatterThresholds';
 import {
   BASE_UNITS,
@@ -117,6 +118,7 @@ import {
   signInOwnerWithEmail,
   signOut,
   updateIngredient,
+  saveIngredientExpiryRules,
   updateMinimumStock,
   updateNearExpirationDays,
   updateOwnerProfile,
@@ -3027,14 +3029,90 @@ function StockThresholdsEditor({ stockSettings, onSaved, part = 'all' }: { stock
       {rows.length === 0 ? <Text style={styles.empty}>No ingredients match the search or category.</Text> : null}
       </> : null}
       {part !== 'thresholds' ? <>
-      <Text style={[styles.label, { marginTop: 18 }]}>Expiration alert period (days before expiration shown as Near Expiration)</Text>
+      <Text style={[styles.label, { marginTop: 18 }]}>General alert period (days before expiration shown as Near Expiration, for items without their own window)</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <TextInput value={days} onChangeText={(value) => { setDays(value); setDaysError(''); }} keyboardType="number-pad" accessibilityLabel="Expiration alert period" style={[styles.input, { width: 110 }]} />
         <Pressable accessibilityRole="button" onPress={() => void saveDays()} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save alert period</Text></Pressable>
       </View>
       {daysError ? <Text style={styles.errorText} accessibilityRole="alert">{daysError}</Text> : null}
+      <ExpiryRulesEditor stockSettings={stockSettings} onSaved={onSaved} />
       </> : null}
     </Panel>
+  );
+}
+
+/**
+ * Per-item expiry rules (owner decision of 2026-11-25): each item's shelf life and
+ * near-expiration window. Stock received without a printed date expires on date
+ * received + shelf life.
+ */
+function ExpiryRulesEditor({ stockSettings, onSaved }: { stockSettings: StockExpirationSettingsData; onSaved: OwnerPortalNotify }) {
+  const [query, setQuery] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, { shelf?: string; window?: string }>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  const rows = expiryRuleRows({ ingredients: stockSettings.ingredients, categories: stockSettings.categories, query });
+  const shelfDraft = (row: ExpiryRuleRow) => drafts[row.ingredientId]?.shelf ?? (row.shelfLifeDays === null ? '' : String(row.shelfLifeDays));
+  const windowDraft = (row: ExpiryRuleRow) => drafts[row.ingredientId]?.window ?? (row.nearExpirationDays === null ? '' : String(row.nearExpirationDays));
+  const saveRow = async (row: ExpiryRuleRow) => {
+    const shelf = parseShelfLifeDays(shelfDraft(row), row.name);
+    if ('error' in shelf) { setRowError({ id: row.ingredientId, message: shelf.error }); return; }
+    const alertWindow = parseItemAlertDays(windowDraft(row), row.name);
+    if ('error' in alertWindow) { setRowError({ id: row.ingredientId, message: alertWindow.error }); return; }
+    setRowError(null);
+    setSavingId(row.ingredientId);
+    try {
+      // An item that never expires has no alert window.
+      const nearExpirationDays = shelf.value === null ? null : alertWindow.value;
+      await saveIngredientExpiryRules({ ingredientId: row.ingredientId, shelfLifeDays: shelf.value, nearExpirationDays });
+      setDrafts((current) => { const next = { ...current }; delete next[row.ingredientId]; return next; });
+      await onSaved(`${row.name}: ${expiryRuleSummary({ shelfLifeDays: shelf.value, nearExpirationDays }, stockSettings.nearExpirationDays).toLowerCase()}.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The expiry rule could not be saved.', true);
+    } finally {
+      setSavingId(null);
+    }
+  };
+  return (
+    <>
+      <Text style={[styles.label, { marginTop: 22 }]}>Shelf life and alert window per item</Text>
+      <Text style={styles.muted}>Stock received without a printed date expires on date received + shelf life. Leave the shelf life blank for items that never expire; leave the window blank to use the general period. Changes apply to stock received from now on.</Text>
+      <TextInput value={query} onChangeText={setQuery} placeholder="Search items…" accessibilityLabel="Search expiry rules" style={[styles.search, { marginTop: 10 }]} />
+      <View style={styles.tableHead}>
+        {['Item', 'Category', 'Shelf life (days)', 'Alert window (days)', 'Rule', ''].map((header) => <Text key={header} style={styles.headCell}>{header}</Text>)}
+      </View>
+      {rows.map((row) => {
+        const shelfValue = parseShelfLifeDays(shelfDraft(row), row.name);
+        const windowValue = parseItemAlertDays(windowDraft(row), row.name);
+        const preview = 'error' in shelfValue || 'error' in windowValue
+          ? null
+          : { shelfLifeDays: shelfValue.value, nearExpirationDays: shelfValue.value === null ? null : windowValue.value };
+        const warning = preview ? expiryRuleWarning(preview.shelfLifeDays, preview.nearExpirationDays) : null;
+        return (
+          <View key={row.ingredientId}>
+            <View style={[styles.tableRow, { alignItems: 'center' }]}>
+              <Text style={[styles.cell, styles.strong]}>{row.name}</Text>
+              <Text style={styles.cell}>{row.category}</Text>
+              <View style={{ flex: 1 }}>
+                <TextInput value={shelfDraft(row)} onChangeText={(value) => setDrafts((current) => ({ ...current, [row.ingredientId]: { ...current[row.ingredientId], shelf: value } }))} keyboardType="number-pad" placeholder="Never expires" accessibilityLabel={`Shelf life in days for ${row.name}`} style={[styles.input, { padding: 8, width: 120, marginBottom: 0 }]} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <TextInput value={windowDraft(row)} onChangeText={(value) => setDrafts((current) => ({ ...current, [row.ingredientId]: { ...current[row.ingredientId], window: value } }))} keyboardType="number-pad" placeholder={shelfDraft(row).trim() === '' ? 'Not used' : `General (${stockSettings.nearExpirationDays})`} accessibilityLabel={`Alert window in days for ${row.name}`} style={[styles.input, { padding: 8, width: 120, marginBottom: 0 }]} />
+              </View>
+              <Text style={styles.cell}>{preview ? expiryRuleSummary(preview, stockSettings.nearExpirationDays) : '—'}</Text>
+              <View style={{ flex: 1 }}>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Save expiry rule for ${row.name}`} disabled={savingId !== null} onPress={() => void saveRow(row)} style={[styles.outline, { marginTop: 0 }]}>
+                  <Text style={styles.pinkText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
+                </Pressable>
+              </View>
+            </View>
+            {rowError?.id === row.ingredientId ? <Text style={[styles.errorText, { paddingHorizontal: 14 }]} accessibilityRole="alert">{rowError.message}</Text> : null}
+            {warning && rowError?.id !== row.ingredientId ? <Text style={[styles.muted, { paddingHorizontal: 14 }]}>{warning}</Text> : null}
+          </View>
+        );
+      })}
+      {rows.length === 0 ? <Text style={styles.empty}>No items match the search.</Text> : null}
+    </>
   );
 }
 

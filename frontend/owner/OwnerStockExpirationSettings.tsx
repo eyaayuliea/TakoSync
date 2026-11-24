@@ -4,6 +4,7 @@ import {
   classifyExpirationLevel,
   classifyStockLevel,
   manilaCalendarDate,
+  itemNearExpirationDays,
   resolveNearExpirationDays,
 } from '../services/inventoryStatusRules.ts';
 import { describeLotsForDisplay, lotExpiryTone, type LotDisplay } from '../services/fefoAllocation.ts';
@@ -219,12 +220,17 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
   );
   const lowRows = rows.filter((item) => classifyStockLevel(item.quantity, thresholdFor(item)) !== 'In Stock');
   const thresholdKeys = useMemo(() => new Set(lowRows.map((item) => item.key)), [lowRows]);
+  // Each item has its own near-expiration window; the general setting is the fallback.
+  const windowByIngredient = new Map((data?.ingredients ?? []).map((ingredient) => [
+    ingredient.id, itemNearExpirationDays(ingredient.near_expiration_days, data?.nearExpirationDays),
+  ]));
+  const windowFor = (ingredientId: string) => windowByIngredient.get(ingredientId) ?? resolveNearExpirationDays(data?.nearExpirationDays);
   const batchStatuses = batches.flatMap((batch) => {
     if (!batch.expiration_date) return [];
     return [{ batch, days: daysUntil(batch.expiration_date) }];
   });
-  const expiredCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, resolveNearExpirationDays(data?.nearExpirationDays)) === 'Expired').length;
-  const nearingCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, resolveNearExpirationDays(data?.nearExpirationDays)) === 'Near Expiration').length;
+  const expiredCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, windowFor(item.batch.ingredient_id)) === 'Expired').length;
+  const nearingCount = batchStatuses.filter((item) => classifyExpirationLevel(item.days, windowFor(item.batch.ingredient_id)) === 'Near Expiration').length;
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleRows = rows.filter((item) => {
     const matchesSearch = `${item.ingredientName} ${item.category} ${item.branchName}`.toLocaleLowerCase().includes(normalizedSearch);
@@ -780,7 +786,7 @@ export default function OwnerStockExpirationSettings({ branchId, refreshing, onR
           {renderFilterChips(['All batches', 'With date', 'Missing date'] as const, expirationFilter, setExpirationFilter)}
           {visibleBatches.length ? visibleBatches.map((batch) => {
             const days = batch.expiration_date ? daysUntil(batch.expiration_date) : null;
-            const expirationLevel = days === null ? null : classifyExpirationLevel(days, resolveNearExpirationDays(data.nearExpirationDays));
+            const expirationLevel = days === null ? null : classifyExpirationLevel(days, windowFor(batch.ingredient_id));
             const expired = expirationLevel === 'Expired';
             const nearing = expirationLevel === 'Near Expiration';
             return (

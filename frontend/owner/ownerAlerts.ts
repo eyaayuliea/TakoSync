@@ -1,5 +1,5 @@
 import { daysUntilManilaExpiration } from './ownerInventoryStatus.ts';
-import { classifyExpirationLevel, classifyStockLevel } from '../services/inventoryStatusRules.ts';
+import { classifyExpirationLevel, classifyStockLevel, itemNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import { lowStockThreshold } from '../services/reorderPoint.ts';
 
 export const OWNER_ALERT_EMPTY_MESSAGE = 'No alerts at the moment.';
@@ -33,6 +33,8 @@ export type OwnerAlertIngredient = {
   name: string;
   unit: string;
   expiration_tracking: boolean;
+  /** The item's own near-expiration window in days; null or missing = the general setting. */
+  near_expiration_days?: number | null;
 };
 
 export type OwnerAlertBranch = { id: string; name: string };
@@ -159,7 +161,7 @@ export function buildOwnerAlertSnapshot(input: {
     const ingredient = ingredients.get(batch.ingredient_id);
     if (!ingredient?.expiration_tracking || !batch.expiration_date || Number(batch.quantity_remaining) <= 0) return [];
     const days = daysUntilOwnerExpiration(batch.expiration_date, input.now);
-    const status = classifyOwnerExpirationAlert(days, input.nearExpirationDays);
+    const status = classifyOwnerExpirationAlert(days, itemNearExpirationDays(ingredient.near_expiration_days, input.nearExpirationDays));
     if (!status) return [];
     return [{
       id: batch.id,

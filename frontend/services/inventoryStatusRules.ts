@@ -58,6 +58,27 @@ export function resolveNearExpirationDays(configured: number | null | undefined)
 }
 
 /**
+ * The near-expiration window of one item: its own when the owner set one (0 = only on
+ * the day it is due), otherwise the owner's general setting.
+ */
+export function itemNearExpirationDays(itemDays: number | null | undefined, generalDays?: number | null): number {
+  return typeof itemDays === 'number' && Number.isInteger(itemDays) && itemDays >= 0
+    ? itemDays
+    : resolveNearExpirationDays(generalDays);
+}
+
+/**
+ * The expiration date used when no printed date is entered: date received + the item's
+ * shelf life (YYYY-MM-DD). Null when the item has no shelf life (it never expires).
+ */
+export function shelfLifeExpirationDate(receivedDate: string, shelfLifeDays: number | null | undefined): string | null {
+  if (typeof shelfLifeDays !== 'number' || !Number.isInteger(shelfLifeDays) || shelfLifeDays < 1) return null;
+  const received = Date.parse(`${receivedDate.slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(received)) return null;
+  return new Date(received + shelfLifeDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
  * Item-level status. Out of Stock wins because an item with nothing available has no batch
  * left to expire; then Expired, Near Expiration, Low Stock, Normal.
  */

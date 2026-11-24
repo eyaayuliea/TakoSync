@@ -17,6 +17,8 @@ export type StockInIngredient = {
   category: string;
   unit: string;
   expirationTracking: boolean;
+  /** Days an unopened item keeps; null or missing = it never expires. */
+  shelfLifeDays?: number | null;
   packageQuantity: number | null;
   packageUnit: string | null;
   packageLabel: string | null;
@@ -31,7 +33,38 @@ export type StockInLineDraft = {
   unit: StockInUnit;
   /** YYYY-MM-DD, or '' when not entered. */
   expirationDate: string;
+  /** True while the date is the suggestion (date received + shelf life), not one the staff member chose. */
+  expirationSuggested?: boolean;
 };
+
+/**
+ * The expiry date suggested for a line: date received + the item's shelf life. Staff
+ * replace it with the printed date when the pack shows one. '' when the item has no
+ * shelf life or the date received is not valid.
+ */
+export function suggestedExpirationDate(
+  ingredient: Pick<StockInIngredient, 'shelfLifeDays'> | undefined,
+  dateReceived: string,
+): string {
+  const days = ingredient?.shelfLifeDays;
+  if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || !/^\d{4}-\d{2}-\d{2}$/.test(dateReceived)) return '';
+  const received = Date.parse(`${dateReceived}T00:00:00.000Z`);
+  return Number.isFinite(received) ? new Date(received + days * 86_400_000).toISOString().slice(0, 10) : '';
+}
+
+/**
+ * A line after its ingredient or the date received changed: the suggestion is
+ * (re)applied unless the staff member already chose a date for this line.
+ */
+export function withSuggestedExpiration(
+  line: StockInLineDraft,
+  ingredient: Pick<StockInIngredient, 'shelfLifeDays'> | undefined,
+  dateReceived: string,
+): StockInLineDraft {
+  if (line.expirationDate && !line.expirationSuggested) return line;
+  const suggestion = suggestedExpirationDate(ingredient, dateReceived);
+  return { ...line, expirationDate: suggestion, expirationSuggested: suggestion !== '' };
+}
 
 export type StockInHeaderDraft = {
   supplierReference: string;
@@ -136,7 +169,8 @@ export function validateStockIn(
     }
     if (line.expirationDate && !ISO_DATE.test(line.expirationDate)) {
       errors.expirationDate = 'Enter a valid expiration date.';
-    } else if (ingredient?.expirationTracking && !line.expirationDate) {
+    } else if (ingredient?.expirationTracking && !line.expirationDate && !ingredient.shelfLifeDays) {
+      // With a shelf life the server uses date received + shelf life when no date is typed.
       errors.expirationDate = `Select the expiration date. ${ingredient.name} is tracked for expiry.`;
     } else if (line.expirationDate && ISO_DATE.test(header.dateReceived) && line.expirationDate < header.dateReceived) {
       errors.expirationDate = 'Expiration date cannot be earlier than the date received.';
