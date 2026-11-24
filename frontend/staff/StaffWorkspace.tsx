@@ -195,6 +195,7 @@ import AppIcon, { type AppIconName } from '../theme/AppIcon';
 import { countEntriesSnapshot, hasUnsavedCountEntries } from './countLeaveGuard';
 import { countHistoryCorrectionAction, countHistoryStatusLabel, countLineIdOfHistoryRecord } from './countHistoryCorrection';
 import { stockAlertIcon } from '../theme/appIcons';
+import { INGREDIENT_ICON_IMAGES } from '../theme/appIconImages';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -598,14 +599,24 @@ function IngredientThumbnail({ item, large = false, small = false }: { item: Ing
         styles.ingredientThumbnail,
         large && styles.largeThumbnail,
         small && styles.smallThumbnail,
-        { backgroundColor: isDark ? themeColors.surfaceSecondary : item.tint },
+        // The team's pictures have dark outlines, so they keep their light tile in dark mode too.
+        { backgroundColor: isDark && INGREDIENT_ICON_IMAGES[item.id] === undefined ? themeColors.surfaceSecondary : item.tint },
       ]}
       accessibilityLabel={`${item.name} image placeholder`}
     >
-      <AppIcon
-        name={item.icon}
-        style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji, { color: themeColors.text }]}
-      />
+      {INGREDIENT_ICON_IMAGES[item.id] !== undefined ? (
+        // The team's picture of this ingredient; other ingredients show their category icon.
+        <Image
+          source={INGREDIENT_ICON_IMAGES[item.id]}
+          resizeMode="contain"
+          style={large ? styles.largeThumbnailImage : small ? styles.smallThumbnailImage : styles.thumbnailImage}
+        />
+      ) : (
+        <AppIcon
+          name={item.icon}
+          style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji, { color: themeColors.text }]}
+        />
+      )}
     </View>
   );
 }
@@ -5152,11 +5163,7 @@ export default function StaffWorkspace({
               </>
             ) : (
               <View style={styles.alertEmptyCard}>
-                <View style={styles.alertEmptyIconCircle}>
-                  <View style={styles.alertEmptyBellBody} />
-                  <View style={styles.alertEmptyBellBase} />
-                  <View style={styles.alertEmptyBellClapper} />
-                </View>
+                <AppIcon name="noAlerts" size={72} />
                 <Text style={styles.alertEmptyTitle}>{emptyCopy.title}</Text>
                 <Text style={styles.alertEmptyText}>{emptyCopy.message} for {assignedBranch}.</Text>
               </View>
@@ -8318,6 +8325,7 @@ export default function StaffWorkspace({
           </View>
         ) : backendError && historyTransactions.length === 0 ? (
           <View style={styles.historyStateCard}>
+            <AppIcon name="noInternet" size={44} />
             <Text style={styles.historyStateText}>Unable to load data. Please check your internet connection and try again.</Text>
             <Pressable accessibilityRole="button" onPress={() => void refreshBackendData()} style={styles.historyEmptyButton}>
               <Text style={styles.historyEmptyButtonText}>Retry</Text>
@@ -8378,7 +8386,7 @@ export default function StaffWorkspace({
           </>
         ) : (
           <View style={styles.historyEmptyState}>
-            <CubeOutlineIcon />
+            <AppIcon name="noRecords" size={68} />
             <Text style={styles.historyEmptyTitle}>No transactions found.</Text>
             <Text style={styles.historyEmptyText}>
               There are no transactions matching these filters. Change the date, type or search to see records.
@@ -10025,6 +10033,9 @@ function createStaffStyles(theme: AppTheme) {
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
   thumbnailEmoji: { fontSize: 24 },
+  thumbnailImage: { width: 34, height: 34 },
+  smallThumbnailImage: { width: 24, height: 24 },
+  largeThumbnailImage: { width: 40, height: 40 },
   smallThumbnailEmoji: { fontSize: 17 },
   largeThumbnail: { width: 70, height: 80 },
   largeThumbnailEmoji: { fontSize: 28 },

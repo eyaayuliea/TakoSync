@@ -13,6 +13,16 @@ export const APP_ICONS = {
   success: 'checkmark-circle',
   check: 'checkmark',
   warning: 'warning-outline',
+  error: 'alert-circle',
+  info: 'information-circle-outline',
+  noAlerts: 'notifications-off-outline',
+  noRecords: 'document-text-outline',
+  noInternet: 'cloud-offline-outline',
+  // forms
+  passwordVisible: 'eye-outline',
+  passwordHidden: 'eye-off-outline',
+  edit: 'create-outline',
+  remove: 'trash-bin-outline',
   // stock alerts (same four categories everywhere)
   lowStock: 'trending-down-outline',
   outOfStock: 'alert-circle-outline',
