@@ -3860,6 +3860,11 @@ export async function saveSharedRecipe(input: {
   if (!Number.isFinite(input.estimated_yield_pieces) || input.estimated_yield_pieces <= 0) {
     throw new Error('Estimated yield must be greater than zero.');
   }
+  // OW-23 c3, c4: one bottle yields 20 to 25 pieces.
+  const perBottle = input.prepared_quantity > 0 ? input.estimated_yield_pieces / input.prepared_quantity : 0;
+  if (!Number.isInteger(perBottle) || perBottle < 20 || perBottle > 25) {
+    throw new Error('The yield per bottle must be a whole number from 20 to 25 pieces.');
+  }
   const preparedUnit = input.prepared_unit.trim();
   const supportedUnits = new Set(['g', 'kg', 'ml', 'L', 'pcs', 'bottle', 'pack', 'tsp', 'tbsp', 'unknown']);
   if (!Number.isFinite(input.prepared_quantity) || input.prepared_quantity <= 0
