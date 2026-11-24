@@ -12,7 +12,7 @@ const {
   validateOwnerSubmittedInventoryCount,
   submitDailyStockCheck,
   submitSale,
-  requestSaleVoid,
+  voidSale,
   decideSaleVoid,
   requestEntryReversal,
   decideEntryReversal,
@@ -83,13 +83,13 @@ class RecordingSupabase {
         };
       case 'process_sale_inventory':
         return { data: { status: 'completed', sale_id: args.p_sale_id }, error: null };
-      case 'request_sale_void':
+      case 'void_sale':
         return {
           data: {
             id: 'void-1', reference: 'VOID-20261122-0001', client_request_id: args.p_client_request_id,
             sale_id: args.p_sale_id, branch_id: 'branch-1', requested_by: 'staff-1', reason: args.p_reason,
-            status: 'pending', requested_at: '2026-11-22T03:00:00Z', decided_by: null, decided_at: null,
-            decision_reason: null,
+            status: 'approved', requested_at: '2026-11-22T03:00:00Z', decided_by: 'staff-1', decided_at: '2026-11-22T03:00:00Z',
+            decision_reason: 'Automatic void (no owner approval required)',
           },
           error: null,
         };
@@ -494,32 +494,33 @@ test('real Staff sale service rejects an incomplete persisted-sale receipt respo
   );
 });
 
-test('ST-07: a void request sends the trimmed reason and the retry-safe request id', async () => {
+test('ST-07: voiding a sale sends the trimmed reason and the retry-safe request id', async () => {
   const client = new RecordingSupabase();
-  const saved = await requestSaleVoid({ saleId: 'sale-1', reason: '  Wrong flavor ', clientRequestId: 'c-1' }, client);
+  const saved = await voidSale({ saleId: 'sale-1', reason: '  Wrong flavor ', clientRequestId: 'c-1' }, client);
   assert.deepEqual(client.calls.at(-1), {
-    name: 'request_sale_void',
+    name: 'void_sale',
     args: { p_sale_id: 'sale-1', p_reason: 'Wrong flavor', p_client_request_id: 'c-1' },
   });
-  assert.equal(saved.status, 'pending');
+  assert.equal(saved.status, 'approved');
+  assert.equal(saved.decidedBy, saved.requestedBy);
   assert.equal(saved.reference, 'VOID-20261122-0001');
 });
 
 test('ST-07 c3: a blank void reason is rejected before calling Supabase', async () => {
   const client = new RecordingSupabase();
   await assert.rejects(
-    requestSaleVoid({ saleId: 'sale-1', reason: '  ', clientRequestId: 'c-1' }, client),
+    voidSale({ saleId: 'sale-1', reason: '  ', clientRequestId: 'c-1' }, client),
     { message: 'Enter the reason for voiding this sale.' },
   );
   assert.equal(client.calls.length, 0);
 });
 
-test('ST-07 c6: the server refusing a second pending request shows its message', async () => {
+test('ST-07: the server refusing to void a sale twice shows its message', async () => {
   const client = new RecordingSupabase();
-  client.failures.set('request_sale_void', 'A void request for this sale is already pending.');
+  client.failures.set('void_sale', 'This sale is already voided.');
   await assert.rejects(
-    requestSaleVoid({ saleId: 'sale-1', reason: 'Again', clientRequestId: 'c-2' }, client),
-    { message: 'A void request for this sale is already pending.' },
+    voidSale({ saleId: 'sale-1', reason: 'Again', clientRequestId: 'c-2' }, client),
+    { message: 'This sale is already voided.' },
   );
 });
 

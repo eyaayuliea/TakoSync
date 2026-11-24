@@ -18,8 +18,9 @@ export type SaleVoidRequestSale = {
 };
 
 /**
- * ST-07 c5, c7, c9: what happened to this sale's void, and the Request Void
- * action when it is still allowed (c1, c6).
+ * ST-07: whether this sale is voided, and the Void Sale action while it is
+ * still allowed. Pending and rejected states only exist for requests made
+ * under the earlier approval flow.
  */
 export function SaleVoidStatusPanel({
   state,
@@ -45,7 +46,7 @@ export function SaleVoidStatusPanel({
     message = `The owner rejected void request ${state.request.reference}`
       + `${state.request.decisionReason ? `: “${state.request.decisionReason}”` : ''}. The sale stays Completed.`;
   } else {
-    message = 'No void has been requested for this sale.';
+    message = 'This sale has not been voided.';
   }
   const showHint = !availability.allowed && (state.kind === 'none' || state.kind === 'rejected');
   return (
@@ -53,7 +54,7 @@ export function SaleVoidStatusPanel({
       title="Void"
       message={message}
       tone={tone}
-      actionLabel={availability.allowed ? 'Request Void' : undefined}
+      actionLabel={availability.allowed ? 'Void Sale' : undefined}
       onAction={availability.allowed ? onRequestVoid : undefined}
       hint={showHint && !availability.allowed ? availability.reason : undefined}
     />
@@ -61,8 +62,8 @@ export function SaleVoidStatusPanel({
 }
 
 /**
- * ST-07 c2–c4: the void request form. It shows the sale, requires a reason,
- * and asks for a confirmation before saving.
+ * ST-07: the void form. It shows the sale, requires a reason, and asks for a
+ * confirmation; the sale is then voided at once.
  */
 export function SaleVoidRequestModal({
   visible,
@@ -79,10 +80,10 @@ export function SaleVoidRequestModal({
   return (
     <ReasonRequestModal
       visible={visible}
-      title="Request Void"
-      intro="The owner reviews every void. The sale stays recorded and counted until it is approved."
-      confirmTitle="Send this void request?"
-      confirmIntro="The owner will be asked to approve or reject it. You cannot edit the request after sending it."
+      title="Void Sale"
+      intro="The sale is voided at once: it is removed from sales totals and its ingredients are returned to stock. The owner sees every void in the Void Report."
+      confirmTitle="Void this sale?"
+      confirmIntro="The sale will be marked Voided right away. This cannot be undone."
       heading={sale.transactionReference}
       lines={sale.lines.map((line) => ({
         id: line.id,
@@ -93,7 +94,7 @@ export function SaleVoidRequestModal({
       reasonPlaceholder="e.g. Wrong flavor entered"
       reasonAccessibilityLabel="Reason for the void, required"
       maxLength={SALE_VOID_REASON_MAX_LENGTH}
-      submitLabel="Send Request"
+      submitLabel="Void Sale"
       validateReason={validateSaleVoidReason}
       onClose={onClose}
       onSubmit={onSubmit}

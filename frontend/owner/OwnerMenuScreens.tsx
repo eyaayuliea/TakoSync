@@ -96,7 +96,7 @@ export function MoreMenuScreen({
         ...(onOpenVoidRequests ? [{
           icon: 'check' as const,
           title: 'Requests',
-          subtitle: 'Approve or reject staff void and entry reversal requests',
+          subtitle: 'Voids recorded by staff, and entry reversal requests to approve or reject',
           onTap: onOpenVoidRequests,
         }] : []),
         {

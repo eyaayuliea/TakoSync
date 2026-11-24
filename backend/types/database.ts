@@ -732,7 +732,7 @@ export type Database = {
         Args: { p_sale_id: string };
         Returns: Json;
       };
-      request_sale_void: {
+      void_sale: {
         Args: { p_sale_id: string; p_reason: string; p_client_request_id: string };
         Returns: Database['public']['Tables']['sale_void_requests']['Row'];
       };

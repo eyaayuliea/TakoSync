@@ -137,13 +137,13 @@ export type VoidReversalMovement = {
 };
 
 export const VOID_REVERSAL_REPORT_HEADERS = [
-  'Entry reference', 'Item', 'Quantity returned', 'Branch', 'Voided sale', 'Void request', 'Approved by · date & time',
+  'Entry reference', 'Item', 'Quantity returned', 'Branch', 'Voided sale', 'Void record', 'Voided by · date & time',
 ];
 
 /**
  * OW-12 c5: Void Reversal entries in their own report. Each entry returns the
- * ingredients a voided sale had consumed; it is posted when the owner approves
- * the void request (OW-26).
+ * ingredients a voided sale had consumed; it is posted when the sale is voided
+ * (by staff at once, or by the owner approving a request of the earlier flow).
  */
 export function buildWebVoidReversalReport(input: {
   movements: readonly VoidReversalMovement[];
@@ -170,7 +170,7 @@ export function buildWebVoidReversalReport(input: {
       input.branchName(movement),
       sale,
       request,
-      `${movement.actor_name ?? 'Owner'}\n${input.formatDateTime(movement.transaction_date)}`,
+      `${movement.actor_name ?? 'Staff account'}\n${input.formatDateTime(movement.transaction_date)}`,
     ];
   });
   return {

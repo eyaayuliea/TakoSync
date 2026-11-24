@@ -88,7 +88,7 @@ import {
   requestEntryReversal,
   loadStaffSalesForBusinessDay,
   loadStaffSaleReceipt,
-  requestSaleVoid,
+  voidSale,
   loadStaffDailyClosing,
   loadUnresolvedSales,
   loadStaffMenuCatalog,
@@ -2815,10 +2815,12 @@ export default function StaffWorkspace({
     };
   }, [route, user?.branchId]);
 
-  const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
+  const submitSaleVoid = async (reason: string, clientRequestId: string) => {
     if (!saleReceipt) return;
-    const saved = await requestSaleVoid({ saleId: saleReceipt.id, reason, clientRequestId });
+    const saved = await voidSale({ saleId: saleReceipt.id, reason, clientRequestId });
     setSaleVoidRequests((current) => [saved, ...current.filter((request) => request.id !== saved.id)]);
+    // The void is immediate: the open receipt shows VOID without a reload.
+    setSaleReceipt((current) => (current && current.id === saved.saleId ? { ...current, saleStatus: 'voided', isVoided: true } : current));
     setSaleVoidModalVisible(false);
   };
 
@@ -8763,7 +8765,7 @@ export default function StaffWorkspace({
                   })),
                 }}
                 onClose={() => setSaleVoidModalVisible(false)}
-                onSubmit={submitSaleVoidRequest}
+                onSubmit={submitSaleVoid}
               />
             </>
           );

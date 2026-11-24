@@ -2137,22 +2137,22 @@ export async function loadSaleVoidRequests(
 
 export class SaleVoidRequestError extends Error {}
 
-/** ST-07 c2–c4: saves a void request. A retry with the same request id is safe. */
-export async function requestSaleVoid(input: {
+/** ST-07: voids a sale at once (no owner approval). A retry with the same request id is safe. */
+export async function voidSale(input: {
   saleId: string;
   reason: string;
   clientRequestId: string;
 }, client?: StaffServiceClient): Promise<SaleVoidRequest> {
   const reasonError = validateSaleVoidReason(input.reason);
   if (reasonError) throw new SaleVoidRequestError(reasonError);
-  const { data, error } = await staffServiceClient(client).rpc('request_sale_void', {
+  const { data, error } = await staffServiceClient(client).rpc('void_sale', {
     p_sale_id: input.saleId,
     p_reason: input.reason.trim(),
     p_client_request_id: input.clientRequestId,
   });
   if (error) throw new SaleVoidRequestError(saleVoidErrorMessage(error));
   if (!data || data.sale_id !== input.saleId) {
-    throw new SaleVoidRequestError('The void request could not be confirmed. Please try again.');
+    throw new SaleVoidRequestError('The void could not be confirmed. Please try again.');
   }
   return mapSaleVoidRequestRow(data);
 }

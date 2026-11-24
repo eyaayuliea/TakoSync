@@ -1,11 +1,12 @@
--- ST-07 / OW-26 / OM-15 void request and owner decision (restored with migration 202611230001).
+-- ST-07 automatic void (migration 202611240005): staff void at once, no owner approval.
+-- Requests left pending by the earlier flow can still be decided by the owner.
 -- Runs inside one transaction that is rolled back.
 begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(25);
 
 create temporary table void_fixture on commit drop as
 select
@@ -18,6 +19,8 @@ select
   gen_random_uuid() as product_id,
   gen_random_uuid() as sale_id,
   gen_random_uuid() as old_sale_id,
+  gen_random_uuid() as pending_sale_id,
+  gen_random_uuid() as pending_request_id,
   '54000000-0000-4000-8000-000000000001'::uuid as client_request_id,
   '54000000-0000-4000-8000-000000000002'::uuid as second_client_request_id,
   ('VOID-TEST-' || gen_random_uuid()::text) as product_name;
@@ -60,7 +63,14 @@ select sale_id, 'VOID-TEST-SALE', '00000000-0000-4000-8000-000000000001'::uuid, 
   'completed', now() from void_fixture
 union all
 select old_sale_id, 'VOID-TEST-OLD-SALE', '00000000-0000-4000-8000-000000000001'::uuid, staff_1_id, 10, 'Cash', 'completed',
-  'completed', now() - interval '2 days' from void_fixture;
+  'completed', now() - interval '2 days' from void_fixture
+union all
+select pending_sale_id, 'VOID-TEST-PENDING-SALE', '00000000-0000-4000-8000-000000000001'::uuid, staff_1_id, 10, 'Cash', 'completed',
+  'completed', now() from void_fixture;
+-- A request left Pending by the earlier approval flow.
+insert into public.sale_void_requests (id, reference, client_request_id, sale_id, branch_id, requested_by, reason, status)
+select pending_request_id, 'VOID-TEST-PENDING', gen_random_uuid(), pending_sale_id, '00000000-0000-4000-8000-000000000001'::uuid,
+  staff_1_id, 'Asked before the change', 'pending' from void_fixture;
 insert into public.sale_items (sale_id, product_id, quantity, unit_price, subtotal)
 select sale_id, product_id, 2, 10, 20 from void_fixture;
 
@@ -74,7 +84,13 @@ select 'VOID-TEST-CONSUMPTION', '00000000-0000-4000-8000-000000000001'::uuid, 'f
 from void_fixture;
 delete from private.sales_processing_authorizations where backend_pid = pg_backend_pid();
 
-select ok(not has_table_privilege('authenticated', 'public.sale_void_requests', 'insert'), 'void requests are written only by RPC');
+create temporary table void_lots_before on commit drop as
+select sum(quantity_remaining) as lots_before from public.ingredient_batches
+where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour';
+grant select on void_lots_before to authenticated;
+
+select ok(not has_table_privilege('authenticated', 'public.sale_void_requests', 'insert'), 'voids are written only by RPC');
+select ok(to_regprocedure('public.request_sale_void(uuid, text, uuid)') is null, 'request_sale_void is gone');
 
 -- Staff, Branch 1 ------------------------------------------------------------
 set local role authenticated;
@@ -84,42 +100,65 @@ select set_config('request.jwt.claims', json_build_object(
   'session_id', (select staff_1_session_id from void_fixture))::text, true);
 
 select throws_ok(
-  format('select public.request_sale_void(%L, %L, %L)',
+  format('select public.void_sale(%L, %L, %L)',
     (select sale_id from void_fixture), '   ', (select client_request_id from void_fixture)),
-  'P0001', 'Enter the reason for voiding this sale.', 'ST-07 c3: the reason is required');
+  'P0001', 'Enter the reason for voiding this sale.', 'ST-07: the reason is required');
 
 select throws_ok(
-  format('select public.request_sale_void(%L, %L, %L)',
+  format('select public.void_sale(%L, %L, %L)',
     (select old_sale_id from void_fixture), 'Wrong flavor', gen_random_uuid()),
-  'P0001', 'Only sales from the current business day can be voided.', 'ST-07 c1: only current business day sales');
+  'P0001', 'Only sales from the current business day can be voided.', 'ST-07: only current business day sales');
 
 select is(
-  (select (public.request_sale_void(sale_id, '  Wrong flavor  ', client_request_id)).status from void_fixture),
-  'pending', 'ST-07 c4: the request is saved as Pending');
+  (select (public.void_sale(sale_id, '  Wrong flavor  ', client_request_id)).status from void_fixture),
+  'approved', 'the void is recorded at once, without owner approval');
+
+select is((select status from public.sales where id = (select sale_id from void_fixture)), 'voided',
+  'the sale is Voided immediately');
+
+select results_eq(
+  format($$select reason, decided_by = requested_by, decided_at is not null, decision_reason
+    from public.sale_void_requests where sale_id = %L$$, (select sale_id from void_fixture)),
+  $$values ('Wrong flavor'::text, true, true, 'Automatic void (no owner approval required)'::text)$$,
+  'the record keeps the trimmed reason and shows the staff member as the one who voided');
 
 select is(
-  (select reason from public.sale_void_requests where sale_id = (select sale_id from void_fixture)),
-  'Wrong flavor', 'the reason is stored trimmed');
+  (select quantity from public.branch_inventory
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
+  10.000::numeric(12, 3), 'the consumed flour is back in stock');
+
+select is(
+  (select sum(quantity_remaining) from public.ingredient_batches
+   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
+  (select lots_before + 2 from void_lots_before), 'the 2 kg is returned to the flour lots');
+
+select results_eq(
+  format($$select quantity, movement, notes, actor_id from public.inventory_movements
+    where sale_id = %L and type = 'void_reversal'$$, (select sale_id from void_fixture)),
+  format($$values (2.000::numeric(12, 3), 2.000::numeric(12, 3), 'void:' || %L, %L::uuid)$$,
+    (select reference from public.sale_void_requests where sale_id = (select sale_id from void_fixture)),
+    (select staff_1_id from void_fixture)),
+  'one Void Reversal entry per consumed ingredient, recorded under the staff member');
 
 select is(
   (select count(*)::int from (
-    select public.request_sale_void(sale_id, 'Wrong flavor', client_request_id) from void_fixture
-  ) retry), 1, 'a retried submission returns the same request');
+    select public.void_sale(sale_id, 'Wrong flavor', client_request_id) from void_fixture
+  ) retry), 1, 'a retried submission returns the same void');
 select is((select count(*)::int from public.sale_void_requests where sale_id = (select sale_id from void_fixture)), 1,
-  'a retry does not create a second request');
+  'a retry does not record a second void');
+select is(
+  (select count(*)::int from public.inventory_movements
+   where sale_id = (select sale_id from void_fixture) and type = 'void_reversal'), 1,
+  'a retry does not return the stock twice');
 
 select throws_ok(
-  format('select public.request_sale_void(%L, %L, %L)',
+  format('select public.void_sale(%L, %L, %L)',
     (select sale_id from void_fixture), 'Again', (select second_client_request_id from void_fixture)),
-  'P0001', 'A void request for this sale is already pending.', 'ST-07 c6: a second pending request is rejected');
-
-select is((select status from public.sales where id = (select sale_id from void_fixture)), 'completed',
-  'ST-07 c5: the sale is unchanged while the request is pending');
+  'P0001', 'This sale is already voided.', 'a sale is voided at most once');
 
 select throws_ok(
-  format('select public.decide_sale_void(%L, %L, null)',
-    (select id from public.sale_void_requests where sale_id = (select sale_id from void_fixture)), 'approve'),
-  '42501', 'Only the owner can decide void requests', 'staff cannot approve a void');
+  format('select public.decide_sale_void(%L, %L, null)', (select pending_request_id from void_fixture), 'approve'),
+  '42501', 'Only the owner can decide void requests', 'staff cannot decide a request left pending by the earlier flow');
 
 -- Staff, Branch 2 ------------------------------------------------------------
 select set_config('request.jwt.claim.sub', (select staff_2_id::text from void_fixture), true);
@@ -128,10 +167,10 @@ select set_config('request.jwt.claims', json_build_object(
   'session_id', (select staff_2_session_id from void_fixture))::text, true);
 
 select throws_ok(
-  format('select public.request_sale_void(%L, %L, %L)',
-    (select sale_id from void_fixture), 'Not my branch', gen_random_uuid()),
-  '42501', 'This sale is not available for your assigned branch.', 'ST-07 c1: only the assigned branch');
-select is((select count(*)::int from public.sale_void_requests), 0, 'Branch 2 staff cannot read Branch 1 requests');
+  format('select public.void_sale(%L, %L, %L)',
+    (select pending_sale_id from void_fixture), 'Not my branch', gen_random_uuid()),
+  '42501', 'This sale is not available for your assigned branch.', 'only the assigned branch can void a sale');
+select is((select count(*)::int from public.sale_void_requests), 0, 'Branch 2 staff cannot read Branch 1 voids');
 
 -- Owner ----------------------------------------------------------------------
 select set_config('request.jwt.claim.sub', (select owner_id::text from void_fixture), true);
@@ -140,39 +179,23 @@ select set_config('request.jwt.claims', json_build_object(
   'session_id', (select owner_session_id from void_fixture))::text, true);
 
 select throws_ok(
-  format('select public.decide_sale_void(%L, %L, %L)',
-    (select id from public.sale_void_requests where sale_id = (select sale_id from void_fixture)), 'reject', ' '),
-  'P0001', 'Enter the reason for rejecting this request.', 'OM-15 c8: rejecting needs a reason');
-
-select is(
-  (select (public.decide_sale_void(id, 'approve', null)).status
-   from public.sale_void_requests where sale_id = (select sale_id from void_fixture)),
-  'approved', 'OM-15 c6: the owner approves the void');
-
-select is((select status from public.sales where id = (select sale_id from void_fixture)), 'voided',
-  'ST-07 c7: the sale is Voided');
-
-select is(
-  (select quantity from public.branch_inventory
-   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
-  10.000::numeric(12, 3), 'ST-07 c8: the consumed flour is back in stock');
-
-select is(
-  (select quantity_remaining from public.ingredient_batches
-   where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and batch_reference = 'VOID-TEST-LOT'),
-  10.000::numeric(12, 3), 'the lot it came from is refilled');
-
-select results_eq(
-  format($$select quantity, movement, notes from public.inventory_movements
-    where sale_id = %L and type = 'void_reversal'$$, (select sale_id from void_fixture)),
-  format($$values (2.000::numeric(12, 3), 2.000::numeric(12, 3), 'void:' || %L)$$,
-    (select reference from public.sale_void_requests where sale_id = (select sale_id from void_fixture))),
-  'OW-26 c6: one Void Reversal entry per consumed ingredient');
+  format('select public.void_sale(%L, %L, %L)',
+    (select pending_sale_id from void_fixture), 'Owner tries', gen_random_uuid()),
+  '42501', 'Only branch staff can void a sale', 'the void action belongs to branch staff');
 
 select throws_ok(
-  format('select public.decide_sale_void(%L, %L, %L)',
-    (select id from public.sale_void_requests where sale_id = (select sale_id from void_fixture)), 'reject', 'Too late'),
-  'P0001', 'This request has already been approved.', 'OM-15 c9: a decided request can no longer be acted on');
+  format('select public.decide_sale_void(%L, %L, %L)', (select pending_request_id from void_fixture), 'reject', ' '),
+  'P0001', 'Enter the reason for rejecting this request.', 'rejecting an earlier pending request still needs a reason');
+
+select is(
+  (select (public.decide_sale_void(pending_request_id, 'approve', null)).status from void_fixture),
+  'approved', 'the owner can still approve a request left pending by the earlier flow');
+select is((select status from public.sales where id = (select pending_sale_id from void_fixture)), 'voided',
+  'approving it voids the sale');
+
+select throws_ok(
+  format('select public.decide_sale_void(%L, %L, %L)', (select pending_request_id from void_fixture), 'reject', 'Too late'),
+  'P0001', 'This request has already been approved.', 'a decided request can no longer be acted on');
 
 -- Database owner: the guards hold even outside the RPCs ------------------------
 reset role;
@@ -187,12 +210,12 @@ select throws_ok(
     values ('VOID-TEST-FORGED', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', %L, 'void_reversal', %L,
     1, 'kg', 1, 10, 11)$$, (select owner_id from void_fixture), (select old_sale_id from void_fixture)),
   'P0001', 'This movement type requires an approved atomic workflow',
-  'Void Reversal entries cannot be written outside an approved void');
+  'Void Reversal entries cannot be written outside the Void action');
 
 select throws_ok(
   format($$update public.sales set status = 'voided' where id = %L$$, (select old_sale_id from void_fixture)),
-  'P0001', 'A sale can only be voided through an approved void request',
-  'a sale cannot be voided without an approved request');
+  'P0001', 'A sale can only be voided through the Void action',
+  'a sale cannot be marked voided directly');
 
 select * from finish();
 rollback;

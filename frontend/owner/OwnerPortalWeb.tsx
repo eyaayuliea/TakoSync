@@ -1329,7 +1329,7 @@ function Reports({ sales: initialSales }: { sales?: Awaited<ReturnType<typeof lo
       formatDateTime: (iso) => dateFormatter.format(new Date(iso)),
     })
     : null;
-  // OW-10: the sales whose void request was approved in the period.
+  // OW-10: the sales voided in the period.
   const voidReport = voids && generated ? buildWebVoidReport(voids, { ...generated.range, branchId: generated.branchId }) : null;
   const voidRows = (voidReport?.rows ?? []).map((row) => [
     row.transactionReference,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWebVoidReport } from './ownerPortalVoidReport.ts';
+import { WEB_VOID_REPORT_HEADERS, buildWebVoidReport } from './ownerPortalVoidReport.ts';
 
 const base = { branchId: 'b1', branchName: 'Manila · Branch 1', reason: 'Customer cancelled', requestedByName: 'Ana Reyes', decidedByName: null, decidedAt: null };
 const requests = [
@@ -19,12 +19,22 @@ test('OW-10 c6, c7: only approved void requests in the period, with count and to
   assert.equal(report.total, 147.5);
 });
 
-test('OW-10 c2–c5: sale, reason, requester and request time, approving owner and time', () => {
+test('OW-10: a void approved under the earlier flow names the approving owner', () => {
   const [, first] = buildWebVoidReport(requests, november).rows;
   assert.deepEqual(first, {
     id: 'v1', transactionReference: 'SALE-1', branchName: 'Manila · Branch 1', saleCreatedAt: '2026-11-20T02:00:00Z', saleTotal: 49,
-    reason: 'Customer cancelled', requestedBy: 'Ana Reyes', requestedAt: '2026-11-20T02:10:00Z', approvedBy: 'Gelo', approvedAt: '2026-11-20T03:00:00Z',
+    reason: 'Customer cancelled', requestedBy: 'Ana Reyes', requestedAt: '2026-11-20T02:10:00Z', approvedBy: 'Approved by Gelo', approvedAt: '2026-11-20T03:00:00Z',
   });
+});
+
+test('automatic void: voided by the staff member, owner approval not required', () => {
+  const automatic = { ...base, id: 'a1', reference: 'VOID-9', status: 'approved', requestedBy: 'staff-1', decidedBy: 'staff-1', decidedByName: 'Ana Reyes',
+    requestedAt: '2026-11-22T02:10:00Z', decidedAt: '2026-11-22T02:10:00Z', sale: { transactionReference: 'SALE-9', totalAmount: 49, createdAt: '2026-11-22T02:00:00Z' } };
+  const [row] = buildWebVoidReport([automatic], november).rows;
+  assert.equal(row.requestedBy, 'Ana Reyes');
+  assert.equal(row.approvedBy, 'Not required');
+  assert.equal(row.approvedAt, null);
+  assert.deepEqual(WEB_VOID_REPORT_HEADERS.slice(-2), ['Voided by · date & time', 'Owner approval']);
 });
 
 test('OW-10: branch filter, and an empty period', () => {

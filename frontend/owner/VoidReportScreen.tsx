@@ -14,6 +14,7 @@ import {
 } from './ownerRecordFilters';
 import { approvedOnly, newestFirst, summarizeVoidReport } from './voidReversalReports';
 import { loadOwnerSaleVoidReviews, type OwnerSaleVoidReview } from '../services/takosync';
+import { isAutomaticSaleVoid, saleVoidApprovalLabel } from '../services/saleVoids';
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
@@ -94,11 +95,10 @@ export default function VoidReportScreen({ onBack, selection }: { onBack?: () =>
       ['Sale total', row.sale ? money(row.sale.totalAmount) : '—'],
       ['Sale recorded', dateTime(row.sale?.createdAt)],
       ['Reason', row.reason],
-      ['Requested by', row.requestedByName ?? 'Staff account'],
-      ['Requested', dateTime(row.requestedAt)],
-      ['Approved by', row.decidedByName ?? 'Owner'],
-      ['Approved', dateTime(row.decidedAt)],
-      ['Void request', row.reference],
+      ['Voided by', row.requestedByName ?? 'Staff account'],
+      ['Voided', dateTime(isAutomaticSaleVoid(row) ? row.decidedAt ?? row.requestedAt : row.decidedAt)],
+      ['Owner approval', saleVoidApprovalLabel(row)],
+      ['Void record', row.reference],
     ];
     const Body = selection ? View : ScrollView;
     const bodyProps = selection
@@ -175,7 +175,7 @@ export default function VoidReportScreen({ onBack, selection }: { onBack?: () =>
                 </View>
                 <Text style={styles.meta}>{row.branchName} · {dateTime(row.sale?.createdAt)}</Text>
                 <Text style={styles.reason} numberOfLines={2}>“{row.reason}” · {row.requestedByName ?? 'Staff'}</Text>
-                <Text style={styles.meta}>Approved by {row.decidedByName ?? 'Owner'} · {dateTime(row.decidedAt)}</Text>
+                <Text style={styles.meta}>{isAutomaticSaleVoid(row) ? `Voided by ${row.requestedByName ?? 'Staff'}` : saleVoidApprovalLabel(row)} · {dateTime(row.decidedAt)}</Text>
               </Pressable>
             ))}
           </List>
