@@ -235,16 +235,17 @@ function useNavigationStyles() {
     borderRadius: 24,
     backgroundColor: colors.staffPink,
   },
+  // Wide enough for the longest label ("Discrepancies") at phone width.
   ownerItemSelected: {
-    flex: 1.65,
+    flex: 2.8,
     flexDirection: 'row',
     gap: 5,
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     borderRadius: 24,
     backgroundColor: colors.staffPink,
   },
   ownerSelectedItem: {
-    maxWidth: 112,
+    maxWidth: 150,
   },
   iconWrap: {
     width: 42,
@@ -296,7 +297,7 @@ function useNavigationStyles() {
   },
   label: { color: colors.white, fontSize: 9, fontFamily: 'Poppins_500Medium', marginTop: 2 },
   staffLabel: { fontSize: 8, marginTop: 0 },
-  ownerLabel: { color: colors.white, fontSize: 12, lineHeight: 16, fontFamily: 'Poppins_500Medium', marginTop: 0 },
+  ownerLabel: { flexShrink: 1, color: colors.white, fontSize: 10, lineHeight: 14, fontFamily: 'Poppins_600SemiBold', marginTop: 0 },
   staffInactiveLabel: { display: 'none' },
   labelSelected: { color: colors.white },
   pressed: { opacity: 0.76 },

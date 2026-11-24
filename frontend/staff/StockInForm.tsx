@@ -29,6 +29,7 @@ export type StockInDateField = React.ComponentType<{
   error?: string;
   allowClear?: boolean;
   maxDate?: Date;
+  compact?: boolean;
 }>;
 
 function toIso(date: Date | null): string {
@@ -259,6 +260,7 @@ export default function StockInForm({
           />
           {validation?.header.supplierReference ? <Text style={[styles.error, { color: colors.error }]}>{validation.header.supplierReference}</Text> : null}
           <DateField
+            compact
             label="Date Purchased *"
             value={fromIso(header.datePurchased)}
             maxDate={today}
@@ -266,6 +268,7 @@ export default function StockInForm({
             onChange={(date) => changeHeader({ datePurchased: toIso(date) })}
           />
           <DateField
+            compact
             label="Date Received *"
             value={fromIso(header.dateReceived)}
             maxDate={today}
@@ -342,6 +345,7 @@ export default function StockInForm({
               ) : null}
 
               <DateField
+                compact
                 label={ingredient?.expirationTracking && !ingredient.shelfLifeDays ? 'Expiration Date *' : 'Expiration Date'}
                 value={fromIso(line.expirationDate)}
                 allowClear
@@ -478,17 +482,17 @@ export default function StockInForm({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  headerBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 8 },
+  headerBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 14 },
   back: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   backGlyph: { fontSize: 26, fontFamily: font.regular },
   title: { fontFamily: font.semibold, fontSize: 18 },
-  content: { paddingHorizontal: 18, paddingBottom: 140, gap: 10 },
-  card: { padding: 14, borderRadius: 16, borderWidth: 1, gap: 5 },
+  content: { paddingHorizontal: 18, paddingBottom: 140, gap: 14 },
+  card: { padding: 16, borderRadius: 16, borderWidth: 1, gap: 6 },
   section: { fontFamily: font.semibold, fontSize: 12 },
   lineHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   lineTitle: { fontFamily: font.semibold, fontSize: 12 },
   remove: { fontFamily: font.medium, fontSize: 10 },
-  fieldLabel: { fontFamily: font.medium, fontSize: 10, marginTop: 6 },
+  fieldLabel: { fontFamily: font.medium, fontSize: 10, marginTop: 8 },
   input: { minHeight: 42, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, fontFamily: font.regular, fontSize: 11 },
   picker: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pickerText: { fontFamily: font.regular, fontSize: 11 },
