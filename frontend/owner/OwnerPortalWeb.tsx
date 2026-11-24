@@ -19,6 +19,7 @@ import { OwnerPasswordChangeError, validateOwnerPasswordChange, type OwnerPasswo
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
+import { branchNameError, CONFIG_SECTIONS, openingStockRows, parseOpeningQuantity, unitRows, type ConfigSectionKey, type OpeningStockRow } from './ownerPortalBusinessConfig';
 import { BOTTLES_PER_BATCH, parseAlertDays, parseMinimumStock, parseYieldPerBottle, thresholdRows, yieldPerBottle, type ThresholdRow } from './ownerPortalBatterThresholds';
 import {
   BASE_UNITS,
@@ -129,6 +130,11 @@ import {
   updateBulkOrderThreshold,
   type MenuAddonConfiguration,
   type StockExpirationSettingsData,
+  type BusinessConfiguration,
+  loadBusinessConfiguration,
+  saveBranchName,
+  recordOpeningStock,
+  setBusinessGoLive,
   validateOwnerInventoryCountCorrection,
   validateOwnerSubmittedInventoryCount,
   type AppUser,
@@ -215,6 +221,8 @@ export default function OwnerPortalWeb() {
       setDataError(ownerPortalErrorText(message, 'The change could not be saved. Please try again.'));
       return;
     }
+    // A success replaces an earlier error message.
+    setDataError('');
     setToast(message);
     setTimeout(() => setToast(''), 2400);
   };
@@ -2908,7 +2916,7 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
  * ingredient (used for all three branches), with search and category filter,
  * and the expiration alert period.
  */
-function StockThresholdsEditor({ stockSettings, onSaved }: { stockSettings: StockExpirationSettingsData | null; onSaved: OwnerPortalNotify }) {
+function StockThresholdsEditor({ stockSettings, onSaved, part = 'all' }: { stockSettings: StockExpirationSettingsData | null; onSaved: OwnerPortalNotify; part?: 'all' | 'thresholds' | 'expiration' }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All categories');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -2949,8 +2957,9 @@ function StockThresholdsEditor({ stockSettings, onSaved }: { stockSettings: Stoc
     }
   };
   return (
-    <Panel title="Stock thresholds & expiration alerts">
+    <Panel title={part === 'expiration' ? 'Expiration alert settings' : part === 'thresholds' ? 'Stock thresholds' : 'Stock thresholds & expiration alerts'}>
       <Text style={styles.muted}>An item at or below its minimum stock is Low Stock; at zero it is Out of Stock. These alerts never create or place purchase orders. Changes do not alter past records.</Text>
+      {part !== 'expiration' ? <>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10 }}>
         <TextInput value={query} onChangeText={setQuery} placeholder="Search ingredients…" accessibilityLabel="Search thresholds" style={styles.search} />
         <View style={{ marginBottom: 16 }}><Select value={category} options={['All categories', ...categories.map((item) => item.name)]} onChange={setCategory} /></View>
@@ -2978,16 +2987,194 @@ function StockThresholdsEditor({ stockSettings, onSaved }: { stockSettings: Stoc
         </View>
       ))}
       {rows.length === 0 ? <Text style={styles.empty}>No ingredients match the search or category.</Text> : null}
+      </> : null}
+      {part !== 'thresholds' ? <>
       <Text style={[styles.label, { marginTop: 18 }]}>Expiration alert period (days before expiration shown as Near Expiration)</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <TextInput value={days} onChangeText={(value) => { setDays(value); setDaysError(''); }} keyboardType="number-pad" accessibilityLabel="Expiration alert period" style={[styles.input, { width: 110 }]} />
         <Pressable accessibilityRole="button" onPress={() => void saveDays()} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save alert period</Text></Pressable>
       </View>
       {daysError ? <Text style={styles.errorText} accessibilityRole="alert">{daysError}</Text> : null}
+      </> : null}
     </Panel>
   );
 }
 
+/** OW-28 c3: the three branches and their names. */
+function BranchInfoEditor({ business, onSaved }: { business: BusinessConfiguration; onSaved: (message: string, isError?: boolean) => Promise<void> }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const save = async (branch: BusinessConfiguration['branches'][number]) => {
+    const value = drafts[branch.id] ?? branch.city;
+    const error = branchNameError(value, branch.id, business.branches);
+    setErrors((current) => ({ ...current, [branch.id]: error ?? '' }));
+    if (error) return;
+    try {
+      await saveBranchName(branch.id, value);
+      await onSaved(`Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code} is now “${value.trim()} · Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}”.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The branch name could not be saved.', true);
+    }
+  };
+  return (
+    <Panel title="Branch information">
+      <Text style={styles.muted}>Each branch is shown everywhere as “name · Branch N”.</Text>
+      {business.branches.map((branch) => (
+        <View key={branch.id}>
+          <View style={[styles.line, { alignItems: 'center', gap: 10 }]}>
+            <Text style={[styles.strong, { width: 90 }]}>{`Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`}</Text>
+            <TextInput value={drafts[branch.id] ?? branch.city} onChangeText={(value) => setDrafts((current) => ({ ...current, [branch.id]: value }))} accessibilityLabel={`Name of Branch ${Number(branch.code.replace(/\D/g, '')) || branch.code}`} placeholder="e.g. Manila" style={[styles.input, { flex: 1 }]} />
+            <Text style={[styles.body, { width: 200 }]}>{branch.name}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Save name of ${branch.name}`} onPress={() => void save(branch)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save</Text></Pressable>
+          </View>
+          {errors[branch.id] ? <Text style={styles.errorText} accessibilityRole="alert">{errors[branch.id]}</Text> : null}
+        </View>
+      ))}
+    </Panel>
+  );
+}
+
+/** OW-28 c4: units, base units and conversion factors, and the purchase units. */
+function UnitsPanel({ business }: { business: BusinessConfiguration }) {
+  return (
+    <Panel title="Units of Measurement">
+      <Table headers={['Base Unit', 'Units', 'Conversion Factors']} rows={unitRows(business.units, business.conversions)} />
+      <Text style={[styles.panelTitle, { marginTop: 14 }]}>Purchase units</Text>
+      {business.purchaseUnits.length ? (
+        <Table headers={['Ingredient', 'Purchase Unit', 'Conversion Factor']} rows={business.purchaseUnits.map((unit) => [unit.ingredient, unit.label, `1 ${unit.label.replace(/^one\s+/i, '')} = ${unit.quantity} ${unit.unit}`])} />
+      ) : <Text style={styles.empty}>No purchase units yet. Set them in Ingredient information.</Text>}
+    </Panel>
+  );
+}
+
+/**
+ * OW-28 c5–c8: the opening stock of each item per branch (once), and the
+ * go-live lock after which stock changes only through recorded transactions.
+ */
+function OpeningStockEditor({ business, onSaved }: { business: BusinessConfiguration; onSaved: (message: string, isError?: boolean) => Promise<void> }) {
+  const [branchId, setBranchId] = useState(business.branches[0]?.id ?? '');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ row: OpeningStockRow; value: number } | null>(null);
+  const [goLiveDate, setGoLiveDate] = useState(manilaDateKey());
+  const [confirmingGoLive, setConfirmingGoLive] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!business.openingStockSupported) return <Panel title="Opening Stock"><Text style={styles.muted}>Opening stock needs the latest database update.</Text></Panel>;
+  const rows = openingStockRows({ branchId, ingredients: business.ingredients, inventory: business.inventory, entries: business.openingEntries });
+  const branch = business.branches.find((item) => item.id === branchId);
+  const missing = business.branches.reduce((count, item) => count + openingStockRows({ branchId: item.id, ingredients: business.ingredients, inventory: business.inventory, entries: business.openingEntries }).filter((row) => !row.entry).length, 0);
+  const locked = business.goLive;
+  const ask = (row: OpeningStockRow) => {
+    const parsed = parseOpeningQuantity(drafts[row.ingredientId] ?? (row.current === null ? '' : String(row.current)), row.name);
+    if ('error' in parsed) { setRowError({ id: row.ingredientId, message: parsed.error }); return; }
+    setRowError(null);
+    setConfirming({ row, value: parsed.value });
+  };
+  const record = async () => {
+    if (!confirming) return;
+    setBusy(true);
+    try {
+      await recordOpeningStock(branchId, confirming.row.ingredientId, confirming.value);
+      setConfirming(null);
+      await onSaved(`Opening stock of ${confirming.row.name} at ${branch?.name ?? 'the branch'}: ${confirming.value} ${confirming.row.unit}.`);
+    } catch (reason: unknown) {
+      setConfirming(null);
+      await onSaved(reason instanceof Error ? reason.message : 'The opening stock could not be saved.', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const lock = async () => {
+    setBusy(true);
+    try {
+      await setBusinessGoLive(goLiveDate.trim());
+      setConfirmingGoLive(false);
+      await onSaved(`Go-live set to ${goLiveDate.trim()}. The opening stock is locked.`);
+    } catch (reason: unknown) {
+      setConfirmingGoLive(false);
+      await onSaved(reason instanceof Error ? reason.message : 'The go-live date could not be set.', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel title="Opening Stock">
+      {locked ? (
+        <View style={[styles.errorBanner, { backgroundColor: '#EEF4FB' }]}>
+          <Text style={styles.strong}>Locked since go-live on {formatReportDate(new Date(`${locked.go_live_date}T12:00:00+08:00`))}.</Text>
+          <Text style={styles.body}>The opening stock can no longer be edited. Stock now changes only through recorded transactions (Stock-In, sales, batter batches, waste and authorized count adjustments), so every balance can be traced in the ledger.</Text>
+        </View>
+      ) : (
+        <Text style={styles.muted}>Enter the starting quantity of each item per branch. Each item can be entered once per branch; the field starts at the current balance. Items without an entry keep their current balance.</Text>
+      )}
+      <View style={{ flexDirection: 'row', gap: 8, marginVertical: 10 }} accessibilityRole="tablist">
+        {business.branches.map((item) => (
+          <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: item.id === branchId }} onPress={() => { setBranchId(item.id); setConfirming(null); setRowError(null); }} style={[styles.outline, { marginTop: 0 }, item.id === branchId && { backgroundColor: C.pink, borderColor: C.pink }]}>
+            <Text style={[styles.pinkText, item.id === branchId && { color: '#FFFFFF' }]}>{item.name}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={styles.tableHead}>
+        {['Item', 'Current balance', 'Opening stock', ''].map((header) => <Text key={header} style={styles.headCell}>{header}</Text>)}
+      </View>
+      {rows.map((row) => (
+        <View key={row.ingredientId}>
+          <View style={[styles.tableRow, { alignItems: 'center' }]}>
+            <Text style={[styles.cell, styles.strong]}>{row.name}</Text>
+            <Text style={styles.cell}>{row.current === null ? '—' : `${row.current} ${row.unit}`}</Text>
+            <View style={{ flex: 1 }}>
+              {row.entry ? (
+                <Text style={styles.body}>{row.entry.quantity} {row.unit} · entered {formatReportDateTime(new Date(row.entry.recordedAt))}</Text>
+              ) : locked ? <Text style={styles.muted}>No entry (kept {row.current ?? 0} {row.unit})</Text> : (
+                <TextInput value={drafts[row.ingredientId] ?? (row.current === null ? '' : String(row.current))} onChangeText={(value) => setDrafts((current) => ({ ...current, [row.ingredientId]: value }))} keyboardType="decimal-pad" accessibilityLabel={`Opening stock of ${row.name}`} style={[styles.input, { padding: 8, width: 120 }]} />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              {row.entry ? <Text style={styles.muted}>Entered (once only)</Text> : locked ? null : (
+                <Pressable accessibilityRole="button" accessibilityLabel={`Enter opening stock of ${row.name}`} disabled={busy} onPress={() => ask(row)} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Enter</Text></Pressable>
+              )}
+            </View>
+          </View>
+          {rowError?.id === row.ingredientId ? <Text style={[styles.errorText, { paddingHorizontal: 14 }]} accessibilityRole="alert">{rowError.message}</Text> : null}
+          {confirming?.row.ingredientId === row.ingredientId ? (
+            <View style={[reviewStyles.card, { margin: 8 }]} accessibilityRole="alert">
+              <Text style={styles.body}>Record the opening stock of {row.name} at {branch?.name} as {confirming.value} {row.unit}? It can be entered only once.</Text>
+              <View style={reviewStyles.actions}>
+                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirming(null)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="Confirm opening stock" disabled={busy} onPress={() => void record()} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>{busy ? 'Saving…' : 'Record opening stock'}</Text></Pressable>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      ))}
+      {rows.length === 0 ? <Text style={styles.empty}>No items are set up for this branch.</Text> : null}
+      {!locked ? (
+        <View style={{ marginTop: 18 }}>
+          <Text style={styles.panelTitle}>Go-live</Text>
+          <Text style={styles.body}>Setting the go-live date locks the opening stock. Afterwards stock changes only through recorded transactions.</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+            <TextInput value={goLiveDate} onChangeText={setGoLiveDate} accessibilityLabel="Go-live date" placeholder="YYYY-MM-DD" style={[styles.input, { width: 150 }]} />
+            <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirmingGoLive(true)} style={[styles.loginButton, { marginTop: 0, paddingHorizontal: 18 }]}><Text style={styles.loginButtonText}>Set go-live date</Text></Pressable>
+          </View>
+          {confirmingGoLive ? (
+            <View style={[reviewStyles.card, { marginTop: 10 }]} accessibilityRole="alert">
+              <Text style={styles.body}>Lock the opening stock with go-live on {goLiveDate.trim() || '—'}? It cannot be undone.{missing ? ` ${missing} item${missing === 1 ? '' : 's'} across the branches have no opening entry and keep their current balance.` : ''}</Text>
+              <View style={reviewStyles.actions}>
+                <Pressable accessibilityRole="button" disabled={busy} onPress={() => setConfirmingGoLive(false)} style={reviewStyles.reject}><Text style={reviewStyles.rejectText}>Cancel</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="Confirm go-live" disabled={busy} onPress={() => void lock()} style={reviewStyles.approve}><Text style={reviewStyles.approveText}>{busy ? 'Locking…' : 'Lock opening stock'}</Text></Pressable>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </Panel>
+  );
+}
+
+/**
+ * OW-28 Business and Inventory Configuration: the sections as cards (c1); each
+ * opens its configuration and returns here (c2).
+ */
 function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
   products: ProductManagementItem[];
   configuration: any;
@@ -2995,16 +3182,70 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
   onSaved: OwnerPortalNotify;
 }) {
   const ingredients = configuration?.ingredients ?? [];
+  const [section, setSection] = useState<ConfigSectionKey | null>(null);
+  const [business, setBusiness] = useState<BusinessConfiguration | null>(null);
+  const [businessError, setBusinessError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let active = true;
+    loadBusinessConfiguration()
+      .then((result) => { if (active) { setBusiness(result); setBusinessError(''); } })
+      .catch((reason: unknown) => { if (active) setBusinessError(ownerPortalErrorText(reason, 'The business configuration could not be loaded.')); });
+    return () => { active = false; };
+  }, [reloadKey]);
+  const savedAndReload = async (message: string, isError = false) => {
+    await onSaved(message, isError);
+    if (!isError) setReloadKey((key) => key + 1);
+  };
+  const summary: Record<ConfigSectionKey, string> = {
+    branches: business ? business.branches.map((branch) => branch.name).join(' · ') : '…',
+    products: `${products.length} products`,
+    ingredients: `${ingredients.length} ingredients`,
+    units: business ? `${business.units.length} units · ${business.purchaseUnits.length} purchase units` : '…',
+    recipes: `${(configuration?.recipeIngredients ?? []).length} recipe lines`,
+    batter: '5 bottles per batch',
+    thresholds: 'Per ingredient, all branches',
+    expiration: stockSettings ? `${stockSettings.nearExpirationDays} days` : '…',
+    opening: business ? (business.goLive ? `Locked since ${business.goLive.go_live_date}` : `${business.openingEntries.length} entries · not locked`) : '…',
+  };
+  if (!section) {
+    return (
+      <>
+        <Text style={styles.section}>Business configuration</Text>
+        <Text style={styles.muted}>Choose a section. Each opens its settings, with a link back here.</Text>
+        {businessError ? <ReportErrorBanner message={businessError} onRetry={() => setReloadKey((key) => key + 1)} /> : null}
+        <View style={styles.grid}>
+          {CONFIG_SECTIONS.map((item) => (
+            <Pressable key={item.key} accessibilityRole="link" accessibilityLabel={`Open ${item.title}`} onPress={() => setSection(item.key)} style={({ pressed }) => [styles.metric, { minWidth: 240 }, pressed && { opacity: 0.8 }]}>
+              <Text style={styles.metricLabel}>{item.title}</Text>
+              <Text style={[styles.body, { marginVertical: 6 }]}>{item.description}</Text>
+              <Text style={styles.muted}>{summary[item.key]}</Text>
+              <Text style={[styles.pinkText, { marginTop: 8 }]}>Open ›</Text>
+            </Pressable>
+          ))}
+        </View>
+      </>
+    );
+  }
+  const title = CONFIG_SECTIONS.find((item) => item.key === section)?.title ?? '';
+  const needsBusiness = section === 'branches' || section === 'units' || section === 'opening';
   return (
     <>
-      <Text style={styles.section}>Settings & configuration</Text>
-      <Text style={styles.muted}>Existing authorized operations only. No purchase orders are created.</Text>
+      <Pressable accessibilityRole="link" accessibilityLabel="Back to Business Configuration" onPress={() => setSection(null)} style={{ marginBottom: 12 }}>
+        <Text style={styles.pinkText}>‹ Business Configuration</Text>
+      </Pressable>
+      <Text style={styles.section}>{title}</Text>
+      {needsBusiness && !business ? (businessError ? <ReportErrorBanner message={businessError} onRetry={() => setReloadKey((key) => key + 1)} /> : <SectionLoading label="Loading…" />) : null}
       <View style={styles.grid}>
-        <OwnerProductEditor products={products} onSaved={onSaved} />
-        <IngredientConfigurationEditor configuration={configuration} onSaved={onSaved} />
-        <RecipesEditor products={products} configuration={configuration} onSaved={onSaved} />
-        <PreparedBatterEditor ingredients={ingredients} products={products} onSaved={onSaved} />
-        <StockThresholdsEditor stockSettings={stockSettings} onSaved={onSaved} />
+        {section === 'branches' && business ? <BranchInfoEditor business={business} onSaved={savedAndReload} /> : null}
+        {section === 'products' ? <OwnerProductEditor products={products} onSaved={onSaved} /> : null}
+        {section === 'ingredients' ? <IngredientConfigurationEditor configuration={configuration} onSaved={onSaved} /> : null}
+        {section === 'units' && business ? <UnitsPanel business={business} /> : null}
+        {section === 'recipes' ? <RecipesEditor products={products} configuration={configuration} onSaved={onSaved} /> : null}
+        {section === 'batter' ? <PreparedBatterEditor ingredients={ingredients} products={products} onSaved={onSaved} /> : null}
+        {section === 'thresholds' ? <StockThresholdsEditor stockSettings={stockSettings} onSaved={onSaved} part="thresholds" /> : null}
+        {section === 'expiration' ? <StockThresholdsEditor stockSettings={stockSettings} onSaved={onSaved} part="expiration" /> : null}
+        {section === 'opening' && business ? <OpeningStockEditor business={business} onSaved={savedAndReload} /> : null}
       </View>
     </>
   );

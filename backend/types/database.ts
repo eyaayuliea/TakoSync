@@ -205,6 +205,25 @@ export type Database = {
         created_at: string;
         updated_at: string;
       }>;
+      /** OW-28 c5, c6 (202611240003). */
+      opening_stock_entries: Table<{
+        id: string;
+        branch_id: string;
+        ingredient_id: string;
+        quantity: number;
+        unit: string;
+        previous_quantity: number;
+        inventory_movement_id: string | null;
+        recorded_by: string;
+        recorded_at: string;
+      }>;
+      /** OW-28 c7 (202611240003). */
+      business_go_live: Table<{
+        id: boolean;
+        go_live_date: string;
+        locked_by: string;
+        locked_at: string;
+      }>;
       /** OW-22 c7: ingredients consumed by an add-on (202611240002). */
       addon_recipes: Table<{
         id: string;
@@ -732,6 +751,14 @@ export type Database = {
       record_daily_closing: {
         Args: { p_branch_id: string; p_opening_float: number; p_closing_cash_count: number; p_client_request_id: string };
         Returns: Database['public']['Tables']['daily_closings']['Row'];
+      };
+      record_opening_stock: {
+        Args: { p_branch_id: string; p_ingredient_id: string; p_quantity: number };
+        Returns: Database['public']['Tables']['opening_stock_entries']['Row'];
+      };
+      set_business_go_live: {
+        Args: { p_go_live_date: string };
+        Returns: Database['public']['Tables']['business_go_live']['Row'];
       };
       list_owner_count_drafts: {
         Args: { p_branch_id?: string | null };
