@@ -22,7 +22,7 @@ function ingredientRows(sql, startMarker, endMarker) {
   assert.ok(start >= 0, `missing ${startMarker}`);
   const block = sql.slice(start, sql.indexOf(endMarker, start));
   return [...block.matchAll(/\(\s*'([a-z-]+)',\s*'?([a-z-]+)'?,\s*'([^']+)',\s*'([^']+)',\s*(\d)\s*\)/g)]
-    .map(([, id, category, name, unit]) => ({ id, category: CATEGORY_IDS[category], name, unit }));
+    .map(([, id, category, name, unit]) => ({ id, categoryId: category, category: CATEGORY_IDS[category], name, unit }));
 }
 
 function groupByCategory(rows) {
@@ -33,13 +33,62 @@ function groupByCategory(rows) {
 
 const sortValues = (value) => Object.fromEntries(Object.entries(value).map(([k, v]) => [k, [...v].sort()]));
 
-test('seed.sql seeds exactly the approved ingredient catalog', () => {
+// The team's inventory catalog of 2026-11-25 (migration 202611250001): Takoyaki picks is
+// added, the seafood items get their own categories, and units are g / ml / pcs. Salt,
+// baking powder, cheese and dashi keep their earlier units until the owner gives grams.
+const CATALOG = {
+  'Dry goods': ['All-purpose flour', 'Salt', 'Baking powder'],
+  'Dried seafood': ['Bonito flakes'],
+  'Frozen seafood': ['Octopus'],
+  'Chilled seafood': ['Crab stick'],
+  'Dairy & eggs': ['Eggs', 'Cheese'],
+  'Sauces & oils': ['Dashi stock', 'Soy sauce', 'Takoyaki sauce', 'Japanese mayonnaise'],
+  'Chilled meat': ['Bacon'],
+  'Fresh produce': ['Chopped cabbage'],
+  Supplies: ['Packaging', 'Takoyaki picks'],
+};
+const CATALOG_CATEGORY_IDS = {
+  'dry-goods': 'Dry goods', 'dried-seafood': 'Dried seafood', 'frozen-seafood': 'Frozen seafood',
+  'chilled-seafood': 'Chilled seafood', 'dairy-eggs': 'Dairy & eggs', condiments: 'Sauces & oils',
+  meat: 'Chilled meat', produce: 'Fresh produce', supplies: 'Supplies',
+};
+const CATALOG_UNITS = {
+  flour: 'g', octopus: 'g', 'bonito-flakes': 'g', 'bacon-bits': 'g', cabbage: 'g',
+  sauces: 'ml', 'japanese-mayonnaise': 'ml', 'soy-sauce': 'ml',
+  'crab-sticks': 'pcs', eggs: 'pcs', packaging: 'pcs', 'takoyaki-picks': 'pcs',
+  // waiting for the owner's amounts in grams
+  salt: 'tsp', 'baking-powder': 'tsp', 'cheese-cubes': 'pcs', dashi: 'L',
+};
+
+test('seed.sql seeds exactly the inventory catalog, in the catalog units', () => {
   const seed = readFileSync(new URL('../../backend/supabase/seed.sql', import.meta.url), 'utf8');
-  const rows = ingredientRows(seed, 'insert into public.ingredients', 'on conflict');
-  assert.equal(rows.length, 15);
-  assert.equal(new Set(rows.map((row) => row.id)).size, 15, 'no duplicate ids');
-  assert.equal(new Set(rows.map((row) => row.name)).size, 15, 'no duplicate names');
-  assert.deepEqual(sortValues(groupByCategory(rows)), sortValues(REQUIRED));
+  const rows = ingredientRows(seed, 'insert into public.ingredients', 'on conflict')
+    .map((row) => ({ ...row, category: CATALOG_CATEGORY_IDS[row.categoryId] }));
+  assert.equal(rows.length, 16);
+  assert.equal(new Set(rows.map((row) => row.id)).size, 16, 'no duplicate ids');
+  assert.equal(new Set(rows.map((row) => row.name)).size, 16, 'no duplicate names');
+  assert.deepEqual(sortValues(groupByCategory(rows)), sortValues(CATALOG));
+  assert.deepEqual(Object.fromEntries(rows.map((row) => [row.id, row.unit])), CATALOG_UNITS);
+});
+
+test('the catalog migration converts units through one recorded ledger entry and loads the sheet values', () => {
+  const sql = readFileSync(
+    new URL('../../backend/supabase/migrations/202611250001_inventory_catalog.sql', import.meta.url),
+    'utf8',
+  );
+  const changes = [...sql.matchAll(/select private\.change_ingredient_unit\('([a-z-]+)', '(\w+)', '(\w+)', (\d+)\);/g)]
+    .map(([, id, from, to, factor]) => `${id}:${from}>${to}x${factor}`);
+  assert.deepEqual(changes, [
+    'flour:kg>gx1000', 'octopus:kg>gx1000', 'sauces:L>mlx1000', 'japanese-mayonnaise:L>mlx1000', 'soy-sauce:tbsp>mlx15', 'packaging:pack>pcsx100',
+  ]);
+  assert.match(sql, /no stock was added or removed/);
+  // History is not rewritten: the ledger and decided counts are never updated or deleted.
+  assert.doesNotMatch(sql, /update public\.inventory_movements|delete from public\.inventory_movements/i);
+  assert.match(sql, /not exists \(select 1 from public\.inventory_count_validations/);
+  // Thresholds from the sheet, per branch, in the catalog units.
+  for (const row of ["('flour', 'g', 2000)", "('eggs', 'pcs', 30)", "('prepared-batter', 'bottle', 5)", "('takoyaki-picks', 'pcs', 200)"]) {
+    assert.ok(sql.includes(row), `missing threshold ${row}`);
+  }
 });
 
 test('the catalog migration enforces the same names and categories and never deletes rows', () => {

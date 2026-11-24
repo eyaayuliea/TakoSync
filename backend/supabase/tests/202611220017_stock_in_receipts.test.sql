@@ -71,8 +71,8 @@ select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L
   pg_temp.header((select today from t), (select today + 1 from t)), '[{"ingredient_id":"flour","quantity":1}]'::jsonb),
   '22023', 'The date received cannot be in the future.', 'the date received is not in the future');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
-  pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"flour","quantity":1,"unit":"pack"}]'::jsonb),
-  '22023', 'All-purpose flour has no purchase-unit conversion. Enter the quantity in kg.', 'ST-09 c4: no conversion without an owner-set package size');
+  pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"salt","quantity":1,"unit":"pack"}]'::jsonb),
+  '22023', 'Salt has no purchase-unit conversion. Enter the quantity in tsp.', 'ST-09 c4: no conversion without an owner-set package size');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"flour","quantity":1},{"ingredient_id":"flour","quantity":2}]'::jsonb),
   '22023', 'All-purpose flour is listed more than once. Combine it into one line.', 'an ingredient appears once per Stock-In');
@@ -84,7 +84,7 @@ select is((select count(*)::int from public.stock_in_receipts), 0, 'a refused St
 -- A valid three-line Stock-In (ST-09 c1, c4, c6, c7) ------------------------------------
 create temporary table saved on commit drop as
 select public.record_stock_in(b1, request_id, pg_temp.header(today - 1, today), jsonb_build_array(
-  jsonb_build_object('ingredient_id', 'octopus', 'quantity', 2, 'unit', 'kg', 'expiration_date', today + 7),
+  jsonb_build_object('ingredient_id', 'octopus', 'quantity', 2000, 'unit', 'g', 'expiration_date', today + 7),
   jsonb_build_object('ingredient_id', 'sauces', 'quantity', 3, 'unit', 'pack', 'expiration_date', today + 30),
   jsonb_build_object('ingredient_id', 'flour', 'quantity', 5)
 )) as body from t;
@@ -96,20 +96,20 @@ select results_eq(
   'ST-09 c1: the header keeps the supplier, date purchased, date received, and the employee account');
 select results_eq(
   $$select ingredient_id, entered_quantity, entered_unit, base_quantity, base_unit from public.stock_in_receipt_lines order by line_index$$,
-  $$values ('octopus'::text, 2.000::numeric(12,3), 'kg'::text, 2.000::numeric(12,3), 'kg'::text),
-           ('sauces', 3.000, 'pack', 1.080, 'L'),
-           ('flour', 5.000, 'kg', 5.000, 'kg')$$,
-  'ST-09 c4: three 360 ml packs of sauce become 1.08 L; base-unit lines are unchanged');
+  $$values ('octopus'::text, 2000.000::numeric(12,3), 'g'::text, 2000.000::numeric(12,3), 'g'::text),
+           ('sauces', 3.000, 'pack', 3000.000, 'ml'),
+           ('flour', 5.000, 'g', 5.000, 'g')$$,
+  'ST-09 c4: three 1000 ml bottles of sauce become 3000 ml; base-unit lines are unchanged');
 select results_eq(
   $$select ingredient_id, quantity from public.branch_inventory
     where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id in ('octopus','sauces','flour') order by 1$$,
-  $$values ('flour'::text, 15.000::numeric(12,3)), ('octopus', 12.000), ('sauces', 11.080)$$,
+  $$values ('flour'::text, 15.000::numeric(12,3)), ('octopus', 2010.000), ('sauces', 3010.000)$$,
   'ST-09 c6: expected quantities increase by the base-unit quantities');
 select results_eq(
   format($$select b.ingredient_id, b.quantity_received, b.expiration_date, b.received_date
     from public.stock_in_receipt_lines l join public.inventory_movements m on m.id = l.movement_id
     join public.ingredient_batches b on b.id = m.batch_id order by l.line_index$$),
-  format($$values ('octopus'::text, 2.000::numeric(12,3), %L::date, %L::date), ('sauces', 1.080, %L::date, %L::date), ('flour', 5.000, null::date, %L::date)$$,
+  format($$values ('octopus'::text, 2000.000::numeric(12,3), %L::date, %L::date), ('sauces', 3000.000, %L::date, %L::date), ('flour', 5.000, null::date, %L::date)$$,
     (select today + 7 from t), (select today from t), (select today + 30 from t), (select today from t), (select today from t)),
   'ST-09 c7: each line creates a lot with its expiration date and the date received');
 select is((select count(*)::int from public.inventory_movements m join public.stock_in_receipt_lines l on l.movement_id = m.id where m.type = 'stock_in'), 3,

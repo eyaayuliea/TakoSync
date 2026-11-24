@@ -73,6 +73,7 @@ export const INGREDIENT_ICON_FILES: Record<string, string> = {
   'soy-sauce': 'soy-sauce',
   'prepared-batter': 'prepared-batter',
   sauces: 'sauces',
+  'takoyaki-picks': 'takoyaki-pick',
 };
 
 /**
