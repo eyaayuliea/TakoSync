@@ -21,10 +21,15 @@ export function dashboardStockCounts(
   });
 }
 
-export type DashboardAlertType = 'Out of stock' | 'Low stock' | 'Expired' | 'Near expiry';
+/**
+ * The four alert categories, named as on the staff and owner mobile Alerts
+ * screens. The dashboard counts and lists each one separately.
+ */
+export const DASHBOARD_ALERT_CATEGORIES = ['Low Stock', 'Out of Stock', 'Near Expiration', 'Expired'] as const;
+export type DashboardAlertType = typeof DASHBOARD_ALERT_CATEGORIES[number];
 export type DashboardAlert = { ingredient: string; branch: string; type: DashboardAlertType; detail: string };
 
-const ORDER: Record<DashboardAlertType, number> = { 'Out of stock': 0, Expired: 1, 'Low stock': 2, 'Near expiry': 3 };
+const ORDER: Record<DashboardAlertType, number> = { 'Out of Stock': 0, Expired: 1, 'Low Stock': 2, 'Near Expiration': 3 };
 
 /**
  * OW-02 c6: each affected ingredient with its branch and alert type. An item can
@@ -34,14 +39,26 @@ export function dashboardAlerts(rows: readonly OwnerPortalInventoryRow[]): Dashb
   const alerts: DashboardAlert[] = [];
   for (const row of rows) {
     const quantity = `${row.quantityLabel} ${row.unit}`;
-    if (row.stockLevel === 'Out of Stock') alerts.push({ ingredient: row.name, branch: row.branch, type: 'Out of stock', detail: `${quantity} left` });
+    if (row.stockLevel === 'Out of Stock') alerts.push({ ingredient: row.name, branch: row.branch, type: 'Out of Stock', detail: `${quantity} left` });
     if (row.stockLevel === 'Low Stock') {
       const minimum = row.minimumStock === null || row.minimumStock === undefined ? '' : ` (minimum ${row.minimumStock} ${row.unit})`;
-      alerts.push({ ingredient: row.name, branch: row.branch, type: 'Low stock', detail: `${quantity} left${minimum}` });
+      alerts.push({ ingredient: row.name, branch: row.branch, type: 'Low Stock', detail: `${quantity} left${minimum}` });
     }
     if (row.expirationLevel === 'Expired') alerts.push({ ingredient: row.name, branch: row.branch, type: 'Expired', detail: `Expired ${row.expiry}` });
-    if (row.expirationLevel === 'Near Expiration') alerts.push({ ingredient: row.name, branch: row.branch, type: 'Near expiry', detail: `Expires ${row.expiry}` });
+    if (row.expirationLevel === 'Near Expiration') alerts.push({ ingredient: row.name, branch: row.branch, type: 'Near Expiration', detail: `Expires ${row.expiry}` });
   }
   return alerts.sort((left, right) =>
     ORDER[left.type] - ORDER[right.type] || left.branch.localeCompare(right.branch, 'en', { numeric: true }) || left.ingredient.localeCompare(right.ingredient));
+}
+
+/** The number of alerts in each category, zero included. */
+export function dashboardAlertCounts(alerts: readonly DashboardAlert[]): Record<DashboardAlertType, number> {
+  const counts = Object.fromEntries(DASHBOARD_ALERT_CATEGORIES.map((category) => [category, 0])) as Record<DashboardAlertType, number>;
+  for (const alert of alerts) counts[alert.type] += 1;
+  return counts;
+}
+
+/** The alerts of one category, or all of them. */
+export function filterDashboardAlerts(alerts: readonly DashboardAlert[], category: DashboardAlertType | 'All'): DashboardAlert[] {
+  return category === 'All' ? [...alerts] : alerts.filter((alert) => alert.type === category);
 }

@@ -18,7 +18,7 @@ import { staffLockStatus, staffPasswordResetPrompt } from '../services/staffAcco
 import { OwnerPasswordChangeError, validateOwnerPasswordChange, type OwnerPasswordErrors, type OwnerPasswordFields } from '../services/ownerPasswordChange';
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
-import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
+import { DASHBOARD_ALERT_CATEGORIES, dashboardAlertCounts, dashboardAlerts, dashboardStockCounts, filterDashboardAlerts, type DashboardAlertType } from './ownerPortalDashboard';
 import { branchNameError, CONFIG_SECTIONS, openingStockRows, parseOpeningQuantity, unitRows, type ConfigSectionKey, type OpeningStockRow } from './ownerPortalBusinessConfig';
 import { BOTTLES_PER_BATCH, parseAlertDays, parseMinimumStock, parseYieldPerBottle, thresholdRows, yieldPerBottle, type ThresholdRow } from './ownerPortalBatterThresholds';
 import {
@@ -614,6 +614,7 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const [alertCategory, setAlertCategory] = useState<DashboardAlertType | 'All'>('All');
   const range = useMemo(
     () => getManilaReportingRange(period, new Date(), startDate, endDate),
     [period, startDate, endDate],
@@ -683,7 +684,16 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
   const shownBranches = branchId ? branches.filter((item) => item.id === branchId) : branches;
   const stockCounts = dashboardStockCounts(rows, shownBranches);
   const alerts = dashboardAlerts(selectedRows);
-  const shownAlerts = showAllAlerts ? alerts : alerts.slice(0, 10);
+  // Team feedback (owner 6): Low Stock, Out of Stock, Near Expiration and Expired are counted and listed separately.
+  const alertCounts = dashboardAlertCounts(alerts);
+  const categoryAlerts = filterDashboardAlerts(alerts, alertCategory);
+  const shownAlerts = showAllAlerts ? categoryAlerts : categoryAlerts.slice(0, 10);
+  const ALERT_NOTES: Record<DashboardAlertType, string> = {
+    'Low Stock': 'At or below the minimum level',
+    'Out of Stock': 'Expected quantity is zero',
+    'Near Expiration': 'Lots expiring soon',
+    Expired: 'Lots past their expiration date',
+  };
 
   return (
     <>
@@ -704,14 +714,27 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
         {[
           ['Recorded Sales', confirmedSales ? peso(totalOwnerPortalSales(confirmedSales)) : '—', 'Confirmed sales in selected period'],
           ['Inventory Items', inventoryAvailable ? String(selectedRows.length) : '—', 'Current branch inventory'],
-          ['Low-Stock Alerts', inventoryAvailable ? String(alerts.filter((alert) => alert.type === 'Low stock' || alert.type === 'Out of stock').length) : '—', 'Low or out of stock'],
-          ['Expiration Alerts', inventoryAvailable ? String(alerts.filter((alert) => alert.type === 'Near expiry' || alert.type === 'Expired').length) : '—', 'Near expiry or expired'],
         ].map(([label, value, note]) => (
           <View style={styles.metric} key={label}>
             <Text style={styles.metricLabel}>{label}</Text>
             <Text style={styles.metricValue}>{value}</Text>
             <Text style={styles.muted}>{note}</Text>
           </View>
+        ))}
+      </View>
+      <View style={[styles.grid, { marginTop: 0 }]}>
+        {DASHBOARD_ALERT_CATEGORIES.map((category) => (
+          <Pressable
+            key={category}
+            accessibilityRole="button"
+            accessibilityLabel={`${category} alerts: ${inventoryAvailable ? alertCounts[category] : 'unavailable'}. Show them in the alerts list`}
+            onPress={() => { setAlertCategory(category); setShowAllAlerts(false); }}
+            style={[styles.metric, alertCategory === category && { borderColor: C.pink }]}
+          >
+            <Text style={styles.metricLabel}>{category}</Text>
+            <Text style={styles.metricValue}>{inventoryAvailable ? String(alertCounts[category]) : '—'}</Text>
+            <Text style={styles.muted}>{ALERT_NOTES[category]}</Text>
+          </Pressable>
         ))}
       </View>
       <View style={styles.two}>
@@ -752,17 +775,32 @@ function Dashboard({ rows, inventoryAvailable, branches, branch, setBranch, onOp
             <Table headers={['Branch', 'Normal', 'Low stock', 'Out of stock']} rows={stockCounts.map((item) => [item.branch, String(item.normal), String(item.low), String(item.out)])} />
           ) : <Text style={styles.empty}>No branch records returned.</Text>}
         </Panel>
-        <Panel title="Low-stock and expiration alerts">
-          {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : alerts.length ? (
+        <Panel title="Stock and expiration alerts">
+          {!inventoryAvailable ? <Text style={styles.muted}>Inventory data is unavailable.</Text> : (
             <>
-              <Table headers={['Ingredient', 'Branch', 'Alert', 'Details']} rows={shownAlerts.map((alert) => [alert.ingredient, alert.branch, alert.type, alert.detail])} />
-              {alerts.length > 10 ? (
-                <Pressable accessibilityRole="button" onPress={() => setShowAllAlerts((value) => !value)} style={[styles.outline, { alignSelf: 'flex-start' }]}>
-                  <Text style={styles.pinkText}>{showAllAlerts ? 'Show fewer' : `Show all ${alerts.length} alerts`}</Text>
-                </Pressable>
-              ) : null}
+              <View style={[styles.row, { flexWrap: 'wrap', gap: 8 }]}>
+                {(['All', ...DASHBOARD_ALERT_CATEGORIES] as const).map((category) => {
+                  const selected = alertCategory === category;
+                  const count = category === 'All' ? alerts.length : alertCounts[category];
+                  return (
+                    <Pressable key={category} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${category} alerts, ${count}`} onPress={() => { setAlertCategory(category); setShowAllAlerts(false); }} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
+                      <Text style={[styles.pinkText, selected && { color: '#FFFFFF' }]}>{category} · {count}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {categoryAlerts.length ? (
+                <>
+                  <Table headers={['Ingredient', 'Branch', 'Alert', 'Details']} rows={shownAlerts.map((alert) => [alert.ingredient, alert.branch, alert.type, alert.detail])} />
+                  {categoryAlerts.length > 10 ? (
+                    <Pressable accessibilityRole="button" onPress={() => setShowAllAlerts((value) => !value)} style={[styles.outline, { alignSelf: 'flex-start' }]}>
+                      <Text style={styles.pinkText}>{showAllAlerts ? 'Show fewer' : `Show all ${categoryAlerts.length} alerts`}</Text>
+                    </Pressable>
+                  ) : null}
+                </>
+              ) : <Text style={styles.empty}>{alertCategory === 'All' ? 'No stock or expiration alerts.' : `No ${alertCategory} alerts.`}</Text>}
             </>
-          ) : <Text style={styles.empty}>No low-stock or expiration alerts.</Text>}
+          )}
         </Panel>
       </View>
     </>
