@@ -15,6 +15,7 @@ import {
   type StockInReceipt,
   type StockInValidation,
 } from '../services/stockIn';
+import AppIcon from '../theme/AppIcon';
 
 const font = { regular: 'Poppins_400Regular', medium: 'Poppins_500Medium', semibold: 'Poppins_600SemiBold' } as const;
 
@@ -180,13 +181,13 @@ export default function StockInForm({
       <View style={styles.screen}>
         <View style={styles.headerBar}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={onBack} style={styles.back}>
-            <Text style={[styles.backGlyph, { color: colors.text }]}>‹</Text>
+            <AppIcon name="back" style={[styles.backGlyph, { color: colors.text }]} />
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>Stock-In</Text>
         </View>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={card}>
-            <Text style={[styles.success, { color: colors.text }]} accessibilityRole="alert">✓ Stock-In saved successfully.</Text>
+            <Text style={[styles.success, { color: colors.text }]} accessibilityRole="alert"><AppIcon name="success" style={[styles.success, { color: colors.text }]} /> Stock-In saved successfully.</Text>
             <Text style={[styles.copy, { color: colors.secondaryText }]}>
               {receipt.reference} · {branchLabel} · Expected stock and alerts are updated.
             </Text>
@@ -223,7 +224,7 @@ export default function StockInForm({
     <View style={styles.screen}>
       <View style={styles.headerBar}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back to Stocks" onPress={onBack} style={styles.back}>
-          <Text style={[styles.backGlyph, { color: colors.text }]}>‹</Text>
+          <AppIcon name="back" style={[styles.backGlyph, { color: colors.text }]} />
         </Pressable>
         <View>
           <Text style={[styles.title, { color: colors.text }]}>Stock-In</Text>
@@ -292,7 +293,7 @@ export default function StockInForm({
                 <Text style={[styles.pickerText, { color: ingredient ? colors.text : colors.secondaryText }]}>
                   {ingredient ? `${ingredient.name} · ${ingredient.category}` : 'Select an ingredient'}
                 </Text>
-                <Text style={{ color: colors.secondaryText }}>⌄</Text>
+                <AppIcon name="dropdown" style={{ color: colors.secondaryText, fontSize: 16 }} />
               </Pressable>
               {errors.ingredient ? <Text style={[styles.error, { color: colors.error }]}>{errors.ingredient}</Text> : null}
 

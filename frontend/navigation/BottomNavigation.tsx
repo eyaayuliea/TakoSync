@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import AppIcon from '../theme/AppIcon';
 import { ownerColors } from '../owner/shared/ownerTokens';
 import {
   activeStaffTab,
@@ -40,102 +41,11 @@ export const ownerDestinations: readonly Destination[] = [
 function NavigationIcon({
   name,
   color,
-  outlinedBell,
 }: {
   name: Destination['icon'];
   color: string;
-  outlinedBell: boolean;
 }) {
-  if (name === 'dashboardGrid') {
-    return (
-      <View style={iconStyles.dashboardGrid}>
-        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
-        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
-        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
-        <View style={[iconStyles.dashboardDot, { backgroundColor: color }]} />
-      </View>
-    );
-  }
-
-  if (name === 'salesChart') {
-    return (
-      <View style={iconStyles.salesChart}>
-        <View style={[iconStyles.salesBarSmall, { backgroundColor: color }]} />
-        <View style={[iconStyles.salesBarMedium, { backgroundColor: color }]} />
-        <View style={[iconStyles.salesBarTall, { backgroundColor: color }]} />
-      </View>
-    );
-  }
-
-  if (name === 'sync') {
-    return (
-      <View style={iconStyles.sync}>
-        <View style={[iconStyles.syncArrowTop, { borderColor: color }]} />
-        <View style={[iconStyles.syncArrowBottom, { borderColor: color }]} />
-      </View>
-    );
-  }
-
-  if (name === 'home') {
-    return <Text style={{ color, fontSize: 20 }}>⌂</Text>;
-  }
-
-  if (name === 'pos') {
-    return (
-      <View style={[iconStyles.pos, { borderColor: color }]}>
-        <View style={[iconStyles.posScreen, { borderColor: color }]}>
-          <View style={[iconStyles.posLine, { backgroundColor: color }]} />
-          <View style={[iconStyles.posLine, { backgroundColor: color }]} />
-          <View style={[iconStyles.posLineShort, { backgroundColor: color }]} />
-        </View>
-      </View>
-    );
-  }
-
-  if (name === 'menu') {
-    return <Text style={{ color, fontSize: 18 }}>☰</Text>;
-  }
-
-  if (name === 'box') {
-    return (
-      <View style={iconStyles.box}>
-        <View style={[iconStyles.boxTopLeft, { borderColor: color }]} />
-        <View style={[iconStyles.boxTopRight, { borderColor: color }]} />
-        <View style={[iconStyles.boxBody, { borderColor: color }]} />
-        <View style={[iconStyles.boxSeam, { backgroundColor: color }]} />
-      </View>
-    );
-  }
-
-  if (name === 'stock') {
-    return (
-      <View style={iconStyles.stock}>
-        <View style={[iconStyles.stockStem, { backgroundColor: color }]} />
-        <View style={[iconStyles.stockArrowLeft, { borderColor: color }]} />
-        <View style={[iconStyles.stockArrowRight, { borderColor: color }]} />
-        <View style={[iconStyles.stockTray, { borderColor: color }]} />
-      </View>
-    );
-  }
-
-  if (name === 'bell') {
-    if (!outlinedBell) return <Text style={{ color, fontSize: 18 }}>♧</Text>;
-    return (
-      <View style={iconStyles.bell}>
-        <View style={[iconStyles.bellBody, { borderColor: color }]} />
-        <View style={[iconStyles.bellBase, { backgroundColor: color }]} />
-        <View style={[iconStyles.bellClapper, { backgroundColor: color }]} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={iconStyles.more}>
-      <View style={[iconStyles.dot, { backgroundColor: color }]} />
-      <View style={[iconStyles.dot, { backgroundColor: color }]} />
-      <View style={[iconStyles.dot, { backgroundColor: color }]} />
-    </View>
-  );
+  return <AppIcon name={name} color={color} size={22} />;
 }
 
 export default function BottomNavigation({
@@ -190,7 +100,7 @@ export default function BottomNavigation({
             >
               <View style={[styles.iconWrap, staffOnly && styles.staffOuterIconWrap]}>
                 <View style={[staffOnly && styles.staffIconWrap, showAlertBadge && styles.staffBadgeAnchor]}>
-                  <NavigationIcon name={destination.icon} color={iconColor} outlinedBell={staffOnly} />
+                  <NavigationIcon name={destination.icon} color={iconColor} />
                   {showAlertBadge ? (
                     <View style={[styles.staffAlertBadge, selected && styles.staffAlertBadgeSelected]}>
                       <Text style={[styles.staffAlertBadgeText, selected && styles.staffAlertBadgeTextSelected]}>
@@ -243,7 +153,7 @@ export function OwnerBottomNav({
               ]}
             >
               <View style={[styles.iconWrap, styles.ownerOuterIconWrap]}>
-                <NavigationIcon name={destination.icon} color={colors.white} outlinedBell={false} />
+                <NavigationIcon name={destination.icon} color={colors.white} />
               </View>
               {selected ? (
                 <Text style={[styles.ownerLabel, styles.labelSelected]} numberOfLines={1}>
@@ -393,37 +303,3 @@ function useNavigationStyles() {
   }, theme)), [theme]);
 }
 
-const iconStyles = StyleSheet.create({
-  dashboardGrid: { width: 20, height: 20, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', padding: 2 },
-  dashboardDot: { width: 6, height: 6, borderRadius: 1 },
-  salesChart: { width: 20, height: 20, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: 2, paddingBottom: 2 },
-  salesBarSmall: { width: 4, height: 7, borderRadius: 1 },
-  salesBarMedium: { width: 4, height: 11, borderRadius: 1 },
-  salesBarTall: { width: 4, height: 16, borderRadius: 1 },
-  sync: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-  syncArrowTop: { position: 'absolute', top: 2, left: 4, width: 11, height: 6, borderTopWidth: 1.8, borderRightWidth: 1.8, borderTopRightRadius: 5, transform: [{ rotate: '-18deg' }] },
-  syncArrowBottom: { position: 'absolute', bottom: 2, right: 4, width: 11, height: 6, borderBottomWidth: 1.8, borderLeftWidth: 1.8, borderBottomLeftRadius: 5, transform: [{ rotate: '-18deg' }] },
-  pos: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-  posScreen: {
-    width: 13, height: 17, justifyContent: 'center', paddingHorizontal: 2,
-    borderWidth: 1.6, borderRadius: 2,
-  },
-  posLine: { width: 7, height: 1, marginBottom: 2 },
-  posLineShort: { width: 5, height: 1 },
-  box: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-  boxTopLeft: { position: 'absolute', top: 3, left: 3, width: 8, height: 8, borderLeftWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '45deg' }] },
-  boxTopRight: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRightWidth: 1.8, borderTopWidth: 1.8, transform: [{ rotate: '-45deg' }] },
-  boxBody: { width: 15, height: 11, marginTop: 5, borderWidth: 1.8, borderTopWidth: 0, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
-  boxSeam: { position: 'absolute', top: 7, width: 1.5, height: 10, opacity: 0.9 },
-  stock: { width: 20, height: 20, alignItems: 'center' },
-  stockStem: { position: 'absolute', top: 1, width: 1.8, height: 10, borderRadius: 1 },
-  stockArrowLeft: { position: 'absolute', top: 7, left: 3, width: 7, height: 7, borderLeftWidth: 1.8, borderBottomWidth: 1.8, transform: [{ rotate: '-45deg' }] },
-  stockArrowRight: { position: 'absolute', top: 7, right: 3, width: 7, height: 7, borderRightWidth: 1.8, borderBottomWidth: 1.8, transform: [{ rotate: '45deg' }] },
-  stockTray: { position: 'absolute', bottom: 1, width: 17, height: 5, borderBottomWidth: 1.8, borderLeftWidth: 1.8, borderRightWidth: 1.8, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
-  bell: { width: 20, height: 20, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 1 },
-  bellBody: { width: 13, height: 13, borderWidth: 1.7, borderTopLeftRadius: 7, borderTopRightRadius: 7, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
-  bellBase: { width: 17, height: 1.7, borderRadius: 1 },
-  bellClapper: { width: 4, height: 3, borderTopLeftRadius: 3, borderTopRightRadius: 3, marginTop: 1 },
-  more: { width: 20, height: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 1 },
-  dot: { width: 3.5, height: 3.5, borderRadius: 2 },
-});

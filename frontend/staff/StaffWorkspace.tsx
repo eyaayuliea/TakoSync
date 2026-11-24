@@ -188,6 +188,8 @@ import {
   saleVoidStatusLabel,
   type SaleVoidRequest,
 } from '../services/saleVoids';
+import AppIcon, { type AppIconName } from '../theme/AppIcon';
+import { stockAlertIcon } from '../theme/appIcons';
 
 type InventoryReportKey =
   | 'totalIngredientQuantity'
@@ -272,7 +274,7 @@ type Ingredient = {
   packageLabel: string | null;
   batches: IngredientBatch[];
   lastUpdated: string;
-  emoji: string;
+  icon: AppIconName;
   tint: string;
 };
 
@@ -563,7 +565,7 @@ function SearchBar({
   const { colors: themeColors } = useTheme();
   return (
     <View style={styles.searchBar}>
-      <Text style={styles.searchGlyph}>⌕</Text>
+      <AppIcon name="search" style={styles.searchGlyph} />
       <TextInput
         value={value}
         onChangeText={onChangeText}
@@ -575,7 +577,7 @@ function SearchBar({
       />
       {value !== '' && (
         <Pressable onPress={() => onChangeText('')} accessibilityRole="button" accessibilityLabel="Clear search">
-          <Text style={styles.clearSearch}>×</Text>
+          <AppIcon name="close" style={styles.clearSearch} />
         </Pressable>
       )}
     </View>
@@ -595,9 +597,10 @@ function IngredientThumbnail({ item, large = false, small = false }: { item: Ing
       ]}
       accessibilityLabel={`${item.name} image placeholder`}
     >
-      <Text style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji]}>
-        {item.emoji}
-      </Text>
+      <AppIcon
+        name={item.icon}
+        style={[styles.thumbnailEmoji, large && styles.largeThumbnailEmoji, small && styles.smallThumbnailEmoji, { color: themeColors.text }]}
+      />
     </View>
   );
 }
@@ -793,17 +796,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 function WasteTrashIcon({ color = colors.pink }: { color?: string }) {
-  const styles = useStaffStyles();
-  return (
-    <View style={styles.wasteTrashIcon} accessibilityLabel="Waste confirmation">
-      <View style={[styles.wasteTrashHandle, { backgroundColor: color }]} />
-      <View style={[styles.wasteTrashLid, { backgroundColor: color }]} />
-      <View style={[styles.wasteTrashBody, { borderColor: color }]}>
-        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />
-        <View style={[styles.wasteTrashLine, { backgroundColor: color }]} />
-      </View>
-    </View>
-  );
+  return <AppIcon name="waste" color={color} size={30} label="Waste confirmation" />;
 }
 
 function ActionCard({
@@ -832,7 +825,7 @@ function ActionCard({
         <Text style={styles.actionTitle}>{title}</Text>
         <Text style={styles.actionDescription}>{description}</Text>
       </View>
-      <Text style={styles.actionChevron}>›</Text>
+      <AppIcon name="forward" style={styles.actionChevron} />
     </Pressable>
   );
 }
@@ -989,7 +982,7 @@ function DatePickerField({
             onPress={openDatePicker}
             style={styles.calendarButton}
           >
-            <Text style={styles.calendarGlyph}>▦</Text>
+            <AppIcon name="calendar" style={styles.calendarGlyph} />
           </Pressable>
         </View>
         {error ? <InlineFieldError message={error} /> : null}
@@ -1000,7 +993,7 @@ function DatePickerField({
           <View style={styles.calendarModal}>
             <View style={styles.calendarHeader}>
               <Pressable accessibilityRole="button" accessibilityLabel="Previous month" onPress={() => changeMonth(-1)} style={styles.monthArrow}>
-                <Text style={styles.monthArrowText}>‹</Text>
+                <AppIcon name="back" style={styles.monthArrowText} />
               </Pressable>
               <Text style={styles.monthTitle}>
                 {month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
@@ -1013,7 +1006,7 @@ function DatePickerField({
                 onPress={() => changeMonth(1)}
                 style={[styles.monthArrow, nextMonthIsFuture && styles.buttonDisabled]}
               >
-                <Text style={styles.monthArrowText}>›</Text>
+                <AppIcon name="forward" style={styles.monthArrowText} />
               </Pressable>
             </View>
             <View style={styles.calendarGrid}>
@@ -3999,7 +3992,7 @@ export default function StaffWorkspace({
             style={({ pressed }) => [styles.checkNowButton, pressed && styles.pressed]}
           >
             <Text style={styles.checkNowText}>Check now</Text>
-            <Text style={styles.checkNowArrow}>›</Text>
+            <AppIcon name="forward" style={styles.checkNowArrow} />
           </Pressable>
         </View>
         <View style={styles.summaryPhoto}>
@@ -4018,17 +4011,17 @@ export default function StaffWorkspace({
       </View>
       <View style={styles.quickActions}>
         {[
-          { title: 'Stock-In', icon: '+', onPress: () => openForm('stockIn', 'menu') },
-          { title: 'Stock-Out', icon: '↗', onPress: () => openForm('stockOut', 'menu') },
-          { title: 'Waste', icon: '×', onPress: () => openForm('waste', 'menu') },
+          { title: 'Stock-In', icon: 'stockIn' as AppIconName, onPress: () => openForm('stockIn', 'menu') },
+          { title: 'Stock-Out', icon: 'stockOut' as AppIconName, onPress: () => openForm('stockOut', 'menu') },
+          { title: 'Waste', icon: 'waste' as AppIconName, onPress: () => openForm('waste', 'menu') },
           {
             title: 'Daily Check',
-            icon: '✓',
+            icon: 'dailyCount' as AppIconName,
             onPress: startDailyInventoryCheck,
           },
           {
             title: 'Prepare Batter',
-            icon: '＋',
+            icon: 'batter' as AppIconName,
             onPress: () => {
               const date = manilaBusinessDate();
               setBatterPreparationDate(date);
@@ -4045,7 +4038,7 @@ export default function StaffWorkspace({
             style={({ pressed }) => [styles.quickAction, pressed && styles.pressed]}
           >
             <View style={styles.quickActionIcon}>
-              <Text style={styles.quickActionGlyph}>{action.icon}</Text>
+              <AppIcon name={action.icon} style={styles.quickActionGlyph} />
             </View>
             <Text style={styles.quickActionTitle}>{action.title}</Text>
           </Pressable>
@@ -4269,7 +4262,7 @@ export default function StaffWorkspace({
           onPress={() => setRoute('inventory')}
           style={styles.detailBackButton}
         >
-          <Text style={styles.detailBackArrow}>‹</Text>
+          <AppIcon name="back" style={styles.detailBackArrow} />
         </Pressable>
         <View style={styles.detailHeaderCopy}>
           <Text style={styles.detailPageTitle}>Units &amp; pack sizes</Text>
@@ -4337,7 +4330,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('ingredientDetails')}
             style={styles.detailBackButton}
           >
-            <Text style={styles.detailBackArrow}>‹</Text>
+            <AppIcon name="back" style={styles.detailBackArrow} />
           </Pressable>
           <View style={styles.detailHeaderCopy}>
             <Text style={styles.detailPageTitle}>Expiration information</Text>
@@ -4427,7 +4420,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute(ingredientDetailReturnRoute)}
             style={styles.detailBackButton}
           >
-            <Text style={styles.detailBackArrow}>‹</Text>
+            <AppIcon name="back" style={styles.detailBackArrow} />
           </Pressable>
           <View style={styles.detailHeaderCopy}>
             <Text style={styles.detailPageTitle}>Ingredient details</Text>
@@ -4612,7 +4605,7 @@ export default function StaffWorkspace({
           onPress={() => setRoute('ingredientDetails')}
           style={styles.detailBackButton}
         >
-          <Text style={styles.detailBackArrow}>‹</Text>
+          <AppIcon name="back" style={styles.detailBackArrow} />
         </Pressable>
         <View style={styles.detailHeaderCopy}>
           <Text style={styles.detailPageTitle}>Stock history</Text>
@@ -4672,7 +4665,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('stocks')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Batter Batch</Text>
@@ -4745,7 +4738,7 @@ export default function StaffWorkspace({
             <Text style={styles.fieldError} accessibilityRole="alert">{batterPreparationError}</Text>
           ) : null}
           {batterPreparationNotice && !batterPreparationError ? (
-            <Text style={styles.batterOutputMeta} accessibilityRole="text" accessibilityLiveRegion="polite">✓ {batterPreparationNotice}</Text>
+            <Text style={styles.batterOutputMeta} accessibilityRole="text" accessibilityLiveRegion="polite"><AppIcon name="success" style={styles.batterOutputMeta} /> {batterPreparationNotice}</Text>
           ) : null}
 
           <View style={styles.wasteFormActions}>
@@ -4788,7 +4781,7 @@ export default function StaffWorkspace({
         <ActionCard
           title="Stock-In"
           description="Receive inventory"
-          icon={<Text style={styles.actionIcon}>↓</Text>}
+          icon={<AppIcon name="download" style={styles.actionIcon} />}
           onPress={() => openForm('stockIn', 'stocks')}
         />
         <ActionCard
@@ -4800,7 +4793,7 @@ export default function StaffWorkspace({
         <ActionCard
           title="Batter Batch Recording"
           description="Record a prepared batter batch"
-          icon={<Text style={styles.actionIcon}>◒</Text>}
+          icon={<AppIcon name="batter" style={styles.actionIcon} />}
           onPress={() => {
             const date = manilaBusinessDate();
             setBatterPreparationDate(date);
@@ -4865,9 +4858,7 @@ export default function StaffWorkspace({
                 key={kind}
                 style={[styles.alertDetailBadge, danger && styles.alertDetailDangerBadge]}
               >
-                <Text style={[styles.alertDetailBadgeIcon, danger && styles.alertDetailDangerText]}>
-                  {kind === 'nearExpiration' ? '◷' : danger ? '!' : '▲'}
-                </Text>
+                <AppIcon name={stockAlertIcon(kind)} style={[styles.alertDetailBadgeIcon, danger && styles.alertDetailDangerText]} />
                 <Text style={[styles.alertDetailBadgeText, danger && styles.alertDetailDangerText]}>
                   {inventoryAlertLabel(kind)}
                 </Text>
@@ -4948,10 +4939,7 @@ export default function StaffWorkspace({
         <View style={styles.inventoryAlertTopline}>
           <Text style={styles.inventoryAlertName}>{alert.title}</Text>
           <View style={[styles.inventoryAlertBadge, danger && styles.inventoryDangerBadge]}>
-            <Text style={[
-              styles.inventoryAlertBadgeIcon,
-              danger && styles.inventoryDangerBadgeText,
-            ]}>{alert.kind === 'nearExpiration' ? '◷' : danger ? '!' : '▲'}</Text>
+            <AppIcon name={stockAlertIcon(alert.kind)} style={[styles.inventoryAlertBadgeIcon, danger && styles.inventoryDangerBadgeText]} />
             <Text style={[styles.inventoryAlertBadgeText, danger && styles.inventoryDangerBadgeText]}>
               {alertLabel}
             </Text>
@@ -5130,7 +5118,7 @@ export default function StaffWorkspace({
       <>
         <View style={styles.formHeader}>
           <Pressable accessibilityRole="button" accessibilityLabel={navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'} onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.backButton}>
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Daily Inventory Check</Text>
@@ -5199,7 +5187,7 @@ export default function StaffWorkspace({
             onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Daily inventory check</Text>
@@ -5321,7 +5309,7 @@ export default function StaffWorkspace({
             style={styles.dailyVerificationRow}
           >
             <View style={[styles.dailyVerificationBox, dailyCheckVerified && styles.dailyVerificationBoxChecked]}>
-              {dailyCheckVerified ? <Text style={styles.dailyVerificationMark}>✓</Text> : null}
+              {dailyCheckVerified ? <AppIcon name="success" style={styles.dailyVerificationMark} /> : null}
             </View>
             <Text style={styles.dailyVerificationText}>I verified the physical count.</Text>
           </Pressable>
@@ -5405,7 +5393,7 @@ export default function StaffWorkspace({
             onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Daily inventory check'}</Text>
@@ -5418,7 +5406,7 @@ export default function StaffWorkspace({
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.dailySuccessBanner} accessibilityRole="alert">
-            <Text style={styles.dailySuccessIcon}>✓</Text>
+            <AppIcon name="success" style={styles.dailySuccessIcon} />
             <Text style={styles.dailySuccessText}>
               {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Daily inventory check saved successfully.'}
             </Text>
@@ -5691,7 +5679,7 @@ export default function StaffWorkspace({
         onPress={onBack}
         style={styles.backButton}
       >
-        <Text style={styles.backGlyph}>‹</Text>
+        <AppIcon name="back" style={styles.backGlyph} />
       </Pressable>
       <View style={styles.formHeaderCopy}>
         <Text style={[
@@ -6660,7 +6648,7 @@ export default function StaffWorkspace({
             </View>
           ) : null}
           {countCorrectionNotice?.countLineId === record.id ? (
-            <Text style={styles.inventoryReportRecordDetail} accessibilityRole="alert">✓ {countCorrectionNotice.text}</Text>
+            <Text style={styles.inventoryReportRecordDetail} accessibilityRole="alert"><AppIcon name="success" style={styles.inventoryReportRecordDetail} /> {countCorrectionNotice.text}</Text>
           ) : null}
           {countCorrectionStorageError ? (
             <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{countCorrectionStorageError}</Text>
@@ -6782,7 +6770,7 @@ export default function StaffWorkspace({
       <View style={styles.moreNavigationList}>
         {([
           {
-            icon: '₱',
+            icon: 'sales' as AppIconName,
             title: 'Daily Sales',
             description: 'Count, compare and submit for review',
             onPress: () => {
@@ -6791,7 +6779,7 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '☷',
+            icon: 'dailyCount' as AppIconName,
             title: 'Physical Inventory Check',
             description: 'Count, compare and submit for review',
             onPress: () => {
@@ -6800,7 +6788,7 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '⇩',
+            icon: 'history' as AppIconName,
             title: 'Transaction history',
             description: "Your branch's complete stock ledger",
             onPress: () => {
@@ -6809,7 +6797,7 @@ export default function StaffWorkspace({
             },
           },
           {
-            icon: '♙',
+            icon: 'profile' as AppIconName,
             title: 'Profile & settings',
             description: 'Account, access and secure logout',
             onPress: () => {
@@ -6826,13 +6814,13 @@ export default function StaffWorkspace({
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
             <View style={styles.moreNavigationIcon}>
-              <Text style={styles.moreNavigationIconText}>{option.icon}</Text>
+              <AppIcon name={option.icon} style={styles.moreNavigationIconText} />
             </View>
             <View style={styles.moreNavigationCopy}>
               <Text style={styles.moreNavigationTitle}>{option.title}</Text>
               <Text style={styles.moreNavigationDescription}>{option.description}</Text>
             </View>
-            <Text style={styles.moreNavigationChevron}>›</Text>
+            <AppIcon name="forward" style={styles.moreNavigationChevron} />
           </Pressable>
         ))}
       </View>
@@ -6852,7 +6840,7 @@ export default function StaffWorkspace({
       <ScrollView style={styles.scroll} contentContainerStyle={styles.dailySalesContent} showsVerticalScrollIndicator={false}>
         <View style={styles.formHeader}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back to More" onPress={() => setRoute('more')} style={styles.backButton}>
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Daily Sales</Text>
@@ -7014,7 +7002,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('more')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Profile &amp; settings</Text>
@@ -7046,7 +7034,7 @@ export default function StaffWorkspace({
           <Text style={styles.profileSectionTitle}>Assigned branch · Staff</Text>
           <View style={styles.assignedBranchField}>
             <Text style={styles.assignedBranchText}>{assignedBranch}</Text>
-            <Text style={styles.assignedBranchLock}>▣</Text>
+            <AppIcon name="lock" style={styles.assignedBranchLock} />
           </View>
           <Text style={styles.assignedBranchHint}>Read-only. Staff record for their assigned branch only.</Text>
           <View style={styles.profileInfoBanner}>
@@ -7093,9 +7081,7 @@ export default function StaffWorkspace({
                   onPress={() => theme.setMode(mode)}
                   style={[styles.themeOption, selected && styles.themeOptionSelected]}
                 >
-                  <Text style={[styles.themeOptionIcon, selected && styles.themeOptionIconSelected]}>
-                    {mode === 'dark' ? '☾' : '☼'}
-                  </Text>
+                  <AppIcon name={mode === 'dark' ? 'themeDark' : 'themeLight'} style={[styles.themeOptionIcon, selected && styles.themeOptionIconSelected]} />
                   <Text style={[styles.themeOptionText, selected && styles.themeOptionTextSelected]}>
                     {mode === 'dark' ? 'Dark' : 'Light'}
                   </Text>
@@ -7148,7 +7134,7 @@ export default function StaffWorkspace({
         {selectedIngredient && route !== 'stockIn' && route !== 'stockOut' ? (
           <Text style={styles.availableQuantity}>{selectedIngredient.quantity} {selectedIngredient.unit} available</Text>
         ) : null}
-        <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
+        <AppIcon name={ingredientListOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
       </Pressable>
       {route === 'stockIn' && stockInFieldErrors.ingredient ? (
         <InlineFieldError message={stockInFieldErrors.ingredient} />
@@ -7248,7 +7234,7 @@ export default function StaffWorkspace({
     <View style={styles.wasteFormSurface}>
       <View style={styles.formHeader}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
-          <Text style={styles.backGlyph}>‹</Text>
+          <AppIcon name="back" style={styles.backGlyph} />
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>Stock-In</Text>
@@ -7269,7 +7255,7 @@ export default function StaffWorkspace({
         {renderInventoryRecoveryControls('stock_in')}
         {successMessage !== '' ? (
           <View style={styles.successBanner} accessibilityRole="alert">
-            <Text style={styles.successIcon}>✓</Text>
+            <AppIcon name="success" style={styles.successIcon} />
             <Text style={styles.successText}>{successMessage}</Text>
           </View>
         ) : null}
@@ -7352,7 +7338,7 @@ export default function StaffWorkspace({
           }}
           style={styles.backButton}
         >
-          <Text style={styles.backGlyph}>‹</Text>
+          <AppIcon name="back" style={styles.backGlyph} />
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>Waste / Spoilage</Text>
@@ -7367,7 +7353,7 @@ export default function StaffWorkspace({
       >
         {successMessage !== '' ? (
           <View style={styles.successBanner} accessibilityRole="alert">
-            <Text style={styles.successIcon}>✓</Text>
+            <AppIcon name="success" style={styles.successIcon} />
             <Text style={styles.successText}>{successMessage}</Text>
           </View>
         ) : null}
@@ -7392,7 +7378,7 @@ export default function StaffWorkspace({
                 ? `${selectedIngredient.name} · ${formatUnitQuantity(selectedIngredient.quantity, selectedIngredient.unit)} available`
                 : 'Select an ingredient'}
             </Text>
-            <Text style={styles.selectChevron}>{ingredientListOpen ? '⌃' : '⌄'}</Text>
+            <AppIcon name={ingredientListOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
           </Pressable>
           {wasteFieldErrors.item ? <InlineFieldError message={wasteFieldErrors.item} /> : null}
           {ingredientListOpen ? (
@@ -7476,7 +7462,7 @@ export default function StaffWorkspace({
             style={[styles.selectInput, wasteFieldErrors.reason ? styles.textInputError : undefined]}
           >
             <Text style={styles.selectText}>{reason || 'Select a reason'}</Text>
-            <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>
+            <AppIcon name={reasonListOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
           </Pressable>
           <Text style={styles.wasteReasonHelper}>Waste · Spillage · Spoilage · Other</Text>
           {/* ST-10 c8: unexplained differences belong to the physical count, not here. */}
@@ -7572,7 +7558,7 @@ export default function StaffWorkspace({
     <View style={route === 'stockOut' ? styles.wasteFormSurface : styles.movementFormRoot}>
       <View style={styles.formHeader}>
         <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={returnFromForm} style={styles.backButton}>
-          <Text style={styles.backGlyph}>‹</Text>
+          <AppIcon name="back" style={styles.backGlyph} />
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>{formTitle}</Text>
@@ -7617,7 +7603,7 @@ export default function StaffWorkspace({
         )}
         {successMessage !== '' && (
           <View style={styles.successBanner} accessibilityRole="alert">
-            <Text style={styles.successIcon}>✓</Text>
+            <AppIcon name="success" style={styles.successIcon} />
             <Text style={styles.successText}>{successMessage}</Text>
             <Pressable onPress={() => setSuccessMessage('')} accessibilityRole="button" accessibilityLabel="Dismiss success message">
               <Text style={styles.bannerDismiss}>×</Text>
@@ -7643,7 +7629,7 @@ export default function StaffWorkspace({
                 style={styles.selectInput}
               >
                 <Text style={styles.selectText}>{batchPreset}</Text>
-                <Text style={styles.selectChevron}>{batchPresetOpen ? '⌃' : '⌄'}</Text>
+                <AppIcon name={batchPresetOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
               </Pressable>
               {batchPresetOpen && (
                 <View style={styles.reasonDropdown}>
@@ -7752,7 +7738,7 @@ export default function StaffWorkspace({
             <Text style={[styles.selectText, !reason && styles.placeholderText]}>
               {reason || 'Select a reason'}
             </Text>
-            <Text style={styles.selectChevron}>{reasonListOpen ? '⌃' : '⌄'}</Text>
+            <AppIcon name={reasonListOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
           </Pressable>
           {route === 'stockOut' && stockOutFieldErrors.reason ? (
             <InlineFieldError message={stockOutFieldErrors.reason} />
@@ -7834,7 +7820,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('stockOut')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Usage preview</Text>
@@ -7939,7 +7925,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('stocks')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Stock-Out / Usage</Text>
@@ -7948,7 +7934,7 @@ export default function StaffWorkspace({
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
           <View style={styles.successBanner} accessibilityRole="alert">
-            <Text style={styles.successIcon}>✓</Text>
+            <AppIcon name="success" style={styles.successIcon} />
             <Text style={styles.successText}>Stock-Out recorded successfully.</Text>
           </View>
           <View style={styles.receiptSummaryCard}>
@@ -8034,7 +8020,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('stocks')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Waste / Spoilage</Text>
@@ -8042,7 +8028,7 @@ export default function StaffWorkspace({
           </View>
         </View>
         <View style={styles.receiptSuccessBanner}>
-          <Text style={styles.receiptSuccessIcon}>✓</Text>
+          <AppIcon name="success" style={styles.receiptSuccessIcon} />
           <Text style={styles.receiptSuccessText}>Waste record saved successfully.</Text>
         </View>
         <View style={styles.receiptSummaryCard}>
@@ -8100,7 +8086,7 @@ export default function StaffWorkspace({
       <ScrollView style={styles.scroll} contentContainerStyle={styles.compactFormContent} showsVerticalScrollIndicator={false}>
         <View style={styles.formHeader}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back to Stock-In" onPress={() => setRoute('stockIn')} style={styles.backButton}>
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction History</Text>
@@ -8108,7 +8094,7 @@ export default function StaffWorkspace({
           </View>
         </View>
         <View style={styles.receiptSuccessBanner}>
-          <Text style={styles.receiptSuccessIcon}>✓</Text>
+          <AppIcon name="success" style={styles.receiptSuccessIcon} />
           <Text style={styles.receiptSuccessText}>Expected stock and low-stock alerts updated.</Text>
         </View>
         <View style={styles.receiptSummaryCard}>
@@ -8159,7 +8145,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute(staffReturnTab(navigationOrigin, 'stocks'))}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction History</Text>
@@ -8188,7 +8174,7 @@ export default function StaffWorkspace({
                   ? `Until ${formatDate(historyToDate)}`
                   : 'All business dates'}
           </Text>
-          <Text style={styles.historyDateSelectorIcon}>□</Text>
+          <AppIcon name="calendar" style={styles.historyDateSelectorIcon} />
         </Pressable>
         <View style={styles.historyMetadataRow}>
           <View style={styles.historyMetadataCopy}>
@@ -8355,7 +8341,7 @@ export default function StaffWorkspace({
           onPress={() => setRoute('stockHistory')}
           style={styles.backButton}
         >
-          <Text style={styles.backGlyph}>‹</Text>
+          <AppIcon name="back" style={styles.backGlyph} />
         </Pressable>
         <View style={styles.formHeaderCopy}>
           <Text style={styles.formTitle}>History filters</Text>
@@ -8407,7 +8393,7 @@ export default function StaffWorkspace({
           style={styles.selectInput}
         >
           <Text style={styles.selectText}>{draftHistoryStaffFilter}</Text>
-          <Text style={styles.selectChevron}>{historyStaffPickerOpen ? '⌃' : '⌄'}</Text>
+          <AppIcon name={historyStaffPickerOpen ? 'dropdownOpen' : 'dropdown'} style={styles.selectChevron} />
         </Pressable>
         {historyStaffPickerOpen ? (
           <View style={styles.reasonDropdown}>
@@ -8484,7 +8470,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute('stockHistory')}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Transaction details</Text>
@@ -8635,7 +8621,7 @@ export default function StaffWorkspace({
     return (
       <ScrollView style={styles.scroll} contentContainerStyle={styles.saleReceiptPage} showsVerticalScrollIndicator={false}>
         <View style={styles.saleReceiptHeader}>
-          <Text style={styles.saleCompletedCheck} accessibilityElementsHidden importantForAccessibility="no">✓</Text>
+          <AppIcon name="success" style={styles.saleCompletedCheck} />
           <Text style={styles.saleReceiptBusiness} accessibilityRole="header">Sale Completed</Text>
           <Text style={styles.saleReceiptReference}>{completedSale.reference}</Text>
           <Text style={styles.saleCompletedTotal}>{formatSaleMoney(completedSale.totalAmount)}</Text>
@@ -8705,7 +8691,7 @@ export default function StaffWorkspace({
             onPress={() => setRoute(saleReceiptReturnRoute)}
             style={styles.backButton}
           >
-            <Text style={styles.backGlyph}>‹</Text>
+            <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
             <Text style={styles.formTitle}>Sale receipt</Text>
@@ -9092,7 +9078,7 @@ export default function StaffWorkspace({
           />
           <View style={styles.logoutModalCard}>
             <View style={styles.logoutModalIcon}>
-              <Text style={styles.logoutModalIconText}>↪</Text>
+              <AppIcon name="logout" style={styles.logoutModalIconText} />
             </View>
             <Text style={styles.logoutModalTitle}>Do you want to Log out?</Text>
             <Text style={styles.logoutModalDescription}>
@@ -9183,7 +9169,7 @@ export default function StaffWorkspace({
             ) : (
               <>
                 <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
-                  <Text style={styles.dailyModalIconText}>✓</Text>
+                  <AppIcon name="success" style={styles.dailyModalIconText} />
                 </View>
                 <Text style={styles.dailyModalTitle}>Daily Inventory Check</Text>
                 <Text style={styles.dailyModalSubtitle}>
@@ -9299,7 +9285,7 @@ export default function StaffWorkspace({
           <View style={styles.confirmCard}>
             {route !== 'waste' ? (
               <View style={[styles.confirmIcon, route === 'usagePreview' && styles.usageConfirmIcon]}>
-                <Text style={styles.confirmIconText}>↓</Text>
+                <AppIcon name="download" style={styles.confirmIconText} />
               </View>
             ) : null}
             <Text style={styles.confirmTitle}>
@@ -9921,10 +9907,10 @@ function createStaffStyles(theme: AppTheme) {
   dashboardIngredientList: { gap: 8 },
   ingredientThumbnail: { width: 62, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   smallThumbnail: { width: 38, height: 38, flexShrink: 0, borderRadius: 11 },
-  thumbnailEmoji: { fontSize: 29 },
-  smallThumbnailEmoji: { fontSize: 20 },
+  thumbnailEmoji: { fontSize: 24 },
+  smallThumbnailEmoji: { fontSize: 17 },
   largeThumbnail: { width: 70, height: 80 },
-  largeThumbnailEmoji: { fontSize: 34 },
+  largeThumbnailEmoji: { fontSize: 28 },
   ingredientCopy: { flex: 1, minWidth: 0, justifyContent: 'center', marginLeft: 9 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 9, paddingHorizontal: 6, paddingVertical: 3, marginTop: 4 },
   lotBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
@@ -10893,15 +10879,6 @@ function createStaffStyles(theme: AppTheme) {
   usageWarningText: { color: colors.red, fontFamily: font.medium, fontSize: 9, lineHeight: 14 },
   usageConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
   wasteConfirmIcon: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.pink },
-  wasteTrashIcon: { width: 20, height: 22, alignItems: 'center', justifyContent: 'flex-end' },
-  wasteTrashHandle: { width: 7, height: 2, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: colors.pink, marginBottom: 2 },
-  wasteTrashLid: { width: 16, height: 2, borderRadius: 1, backgroundColor: colors.pink, marginBottom: 2 },
-  wasteTrashBody: {
-    width: 13, height: 14, flexDirection: 'row', justifyContent: 'space-evenly',
-    paddingTop: 3, borderWidth: 1.5, borderTopWidth: 0, borderColor: colors.pink,
-    borderBottomLeftRadius: 3, borderBottomRightRadius: 3,
-  },
-  wasteTrashLine: { width: 1, height: 6, backgroundColor: colors.pink },
   receiptSummaryCard: { paddingHorizontal: 16, paddingVertical: 15, borderRadius: 17, backgroundColor: colors.navy, marginBottom: 14 },
   receiptSummaryTitle: { color: colors.white, fontFamily: font.semibold, fontSize: 12 },
   receiptSummaryQuantity: { color: colors.orange, fontFamily: font.bold, fontSize: 31, lineHeight: 37, marginTop: 3 },
