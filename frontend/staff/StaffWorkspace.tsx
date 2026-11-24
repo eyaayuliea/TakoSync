@@ -193,6 +193,7 @@ import {
 } from '../services/saleVoids';
 import AppIcon, { type AppIconName } from '../theme/AppIcon';
 import { countEntriesSnapshot, hasUnsavedCountEntries } from './countLeaveGuard';
+import { countHistoryCorrectionAction, countHistoryStatusLabel, countLineIdOfHistoryRecord } from './countHistoryCorrection';
 import { stockAlertIcon } from '../theme/appIcons';
 
 type InventoryReportKey =
@@ -1173,7 +1174,9 @@ export default function StaffWorkspace({
   const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Set<string>>(() => new Set());
   // ST-06 c6 / #43: Daily Sales is the only staff report. Staff reach their own counts and
   // correction requests from the count section (ST-14 c6).
-  const [myCountsReturnRoute, setMyCountsReturnRoute] = useState<'dailyInventoryOverview' | 'dailyCheckSuccess' | 'inventory'>('dailyInventoryOverview');
+  // Where Back goes from the count's correction screen: the count's record in Transaction History.
+  const [sentCountCorrectionLineIds, setSentCountCorrectionLineIds] = useState<ReadonlySet<string>>(new Set());
+  const [countDetailsReturnRoute, setCountDetailsReturnRoute] = useState<'inventoryReport' | 'transactionDetails'>('inventoryReport');
   const [unresolvedSales, setUnresolvedSales] = useState<UnresolvedSale[]>([]);
   const [unresolvedSalesLoading, setUnresolvedSalesLoading] = useState(false);
   const [unresolvedSalesError, setUnresolvedSalesError] = useState('');
@@ -1361,6 +1364,8 @@ export default function StaffWorkspace({
       setPendingCountCorrections(await pendingInventoryCountCorrectionStore.resolve(request.requestId));
       setInventoryReportRefreshKey((current) => current + 1);
       setDashboardMessage('Count correction request submitted to the Owner.');
+      setSentCountCorrectionLineIds((current) => new Set(current).add(request.countLineId));
+      void refreshBackendData();
       // The count details stay open: show the request there as Pending and confirm it was sent.
       setInventoryReportData((current) => current && {
         ...current,
@@ -1743,7 +1748,9 @@ export default function StaffWorkspace({
   }, [route, user?.branchId, dailySalesDate, dailySalesRefreshKey]);
 
   useEffect(() => {
-    if (route !== 'inventoryReport') return;
+    if (route !== 'inventoryReport' && route !== 'inventoryCountDetails') return;
+    // Coming from the report list, the data is already loaded.
+    if (route === 'inventoryCountDetails' && countDetailsReturnRoute !== 'transactionDetails') return;
     let active = true;
     const branchId = user?.branchId;
     if (!branchId) {
@@ -1769,7 +1776,7 @@ export default function StaffWorkspace({
     return () => {
       active = false;
     };
-  }, [route, user?.branchId, user?.branch, inventoryReportRefreshKey]);
+  }, [route, countDetailsReturnRoute, user?.branchId, user?.branch, inventoryReportRefreshKey]);
 
   useEffect(() => {
     if (
@@ -2457,13 +2464,34 @@ export default function StaffWorkspace({
     setRoute('dailySales');
   };
 
-  const openMyCounts = (returnRoute: 'dailyInventoryOverview' | 'dailyCheckSuccess' | 'inventory') => {
+  /** ST-14 c6: staff see their counts in Transaction History, under the Physical Inventory Count type. */
+  const openCountHistory = () => {
+    setHistorySearch('');
+    setHistoryTypeFilter('Physical Inventory Count');
+    setDraftHistoryTypeFilter('Physical Inventory Count');
+    setHistoryFromDate(null);
+    setHistoryToDate(null);
+    setHistoryStaffFilter('All staff');
+    setHistoryDateError('');
+    setRoute('stockHistory');
+  };
+
+  /** ST-12 c9: a count is changed only through a correction request, started from its record in Transaction History. */
+  const openCountCorrectionFromHistory = (countLineId: string, startRequest: boolean, originalActualQuantity: number) => {
     setSelectedInventoryReport('physicalInventoryCount');
-    setSelectedInventoryCountId(null);
-    setInventoryReportData(null);
+    setSelectedInventoryCountId(countLineId);
     setInventoryReportError('');
-    setMyCountsReturnRoute(returnRoute);
-    setRoute('inventoryReport');
+    setCountCorrectionView(true);
+    setCountDetailsReturnRoute('transactionDetails');
+    if (startRequest) {
+      setSelectedCorrectionCountLineId(countLineId);
+      setCorrectionActualQuantity(String(originalActualQuantity));
+      setCorrectionReason('');
+      setCorrectionFormError('');
+    } else {
+      setSelectedCorrectionCountLineId(null);
+    }
+    setRoute('inventoryCountDetails');
   };
 
   const openInventoryReport = (report: InventoryReportKey) => {
@@ -2476,6 +2504,7 @@ export default function StaffWorkspace({
   };
 
   const openInventoryCountDetails = (count: InventoryCountRecord) => {
+    setCountDetailsReturnRoute('inventoryReport');
     setCountCorrectionView(false);
     setSelectedInventoryCountId(count.id);
     setRoute('inventoryCountDetails');
@@ -4186,14 +4215,6 @@ export default function StaffWorkspace({
           <View style={styles.inventoryHeaderActions}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="My counts and corrections"
-              onPress={() => openMyCounts('inventory')}
-              style={({ pressed }) => [styles.inventoryReportsButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.inventoryReportsButtonText}>My counts</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Units and pack sizes"
               onPress={() => setRoute('unitsPackSizes')}
               style={({ pressed }) => [styles.inventoryUnitsLink, pressed && styles.pressed]}
@@ -5203,10 +5224,10 @@ export default function StaffWorkspace({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            onPress={() => openMyCounts('dailyInventoryOverview')}
+            onPress={openCountHistory}
             style={({ pressed }) => [styles.dailySecondaryButton, pressed && styles.pressed]}
           >
-            <Text style={styles.dailySecondaryButtonText}>My counts &amp; corrections</Text>
+            <Text style={styles.dailySecondaryButtonText}>View my counts in Transaction History</Text>
           </Pressable>
         </ScrollView>
       </>
@@ -5495,7 +5516,7 @@ export default function StaffWorkspace({
               Staff remarks (read-only): {check.remarks || '—'}
             </Text>
             <Text style={styles.inventoryReportRecordDetail}>
-              Count changes require a correction request in My counts & corrections.
+              Count changes require a correction request, made from this count in Transaction History.
             </Text>
           </View>
 
@@ -5525,10 +5546,10 @@ export default function StaffWorkspace({
           {hasDiscrepancies ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => openMyCounts('dailyCheckSuccess')}
+              onPress={openCountHistory}
               style={({ pressed }) => [styles.dailyPrimaryButton, pressed && styles.pressed]}
             >
-              <Text style={styles.dailyPrimaryButtonText}>View my counts &amp; corrections</Text>
+              <Text style={styles.dailyPrimaryButtonText}>View my counts in Transaction History</Text>
             </Pressable>
           ) : null}
           <Pressable
@@ -5611,7 +5632,7 @@ export default function StaffWorkspace({
             style={[styles.dailyRemarksInput, styles.inventoryDiscrepancyRemarks]}
           />
           <Text style={styles.inventoryReportRecordDetail}>
-            Remarks lock after submission. Count changes require a correction request in My counts & corrections.
+            Remarks lock after submission. Count changes require a correction request, made from this count in Transaction History.
           </Text>
           {formError ? (
             <Text style={styles.inventoryReportErrorText} accessibilityRole="alert">{formError}</Text>
@@ -6213,12 +6234,10 @@ export default function StaffWorkspace({
 
   const renderInventoryReportDetail = () => {
     const data = inventoryReportData;
-    const title = selectedInventoryReport === 'physicalInventoryCount'
-      ? 'My counts & corrections'
-      : inventoryReportTitles[selectedInventoryReport];
+    const title = inventoryReportTitles[selectedInventoryReport];
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader(title, 'Back', () => setRoute(myCountsReturnRoute))}
+        {renderInventoryReportHeader(title, 'Back', () => setRoute('inventory'))}
         {selectedInventoryReport === 'totalIngredientQuantity' ? (
           renderTotalIngredientQuantityReport(data)
         ) : (
@@ -6311,15 +6330,28 @@ export default function StaffWorkspace({
 
   const renderInventoryCountDetails = () => {
     const record = inventoryReportData?.physicalCounts.find((count) => count.id === selectedInventoryCountId);
+    const fromHistory = countDetailsReturnRoute === 'transactionDetails';
+    const backLabel = fromHistory ? 'Back to transaction details' : 'Back to report';
     if (!record) {
       return (
         <View style={styles.inventoryReportPage}>
-          {renderInventoryReportHeader('Count details', 'Back to report', () => setRoute('inventoryReport'))}
+          {renderInventoryReportHeader('Count details', backLabel, () => setRoute(countDetailsReturnRoute))}
           <View style={styles.inventoryReportState}>
-            <Text style={styles.inventoryReportErrorText}>Count details are unavailable. Reload the report and try again.</Text>
-            <Pressable onPress={() => setRoute('inventoryReport')} style={styles.dailySalesRetryButton}>
-              <Text style={styles.dailySalesRetryText}>Back to report</Text>
-            </Pressable>
+            {inventoryReportLoading ? (
+              <>
+                <ActivityIndicator color={colors.pink} />
+                <Text style={styles.inventoryReportRecordDetail}>Loading the count…</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.inventoryReportErrorText}>
+                  {inventoryReportError || 'Count details are unavailable. Go back and try again.'}
+                </Text>
+                <Pressable onPress={() => setRoute(countDetailsReturnRoute)} style={styles.dailySalesRetryButton}>
+                  <Text style={styles.dailySalesRetryText}>{backLabel}</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         </View>
       );
@@ -6456,10 +6488,10 @@ export default function StaffWorkspace({
             )}
             <Text style={styles.physicalCountReadOnly}>
               {validated
-                ? 'Read-only · Count changes require a correction request in My counts & corrections.'
+                ? 'Read-only · Count changes require a correction request, made from this count in Transaction History.'
                 : record.revisedActualQuantity !== null
-                  ? 'No direct editing. Count changes require a correction request in My counts & corrections.'
-                  : 'Read-only · Count changes require a correction request in My counts & corrections.'}
+                  ? 'No direct editing. Count changes require a correction request, made from this count in Transaction History.'
+                  : 'Read-only · Count changes require a correction request, made from this count in Transaction History.'}
             </Text>
             {record.submittedBy === user.id && !validated &&
               // The server accepts corrections only for counts that differ from the expected quantity.
@@ -6576,7 +6608,7 @@ export default function StaffWorkspace({
                   Staff remarks: {record.remarks?.trim() ? record.remarks : 'None provided'}
                 </Text>
                 <Text style={styles.discrepancyReviewText}>
-                  Count changes require a correction request in My counts & corrections.
+                  Count changes require a correction request, made from this count in Transaction History.
                 </Text>
               </>
             ) : (
@@ -6614,8 +6646,8 @@ export default function StaffWorkspace({
     }
     return (
       <View style={styles.inventoryReportPage}>
-        {renderInventoryReportHeader('Physical count details', countCorrectionView ? 'Back to count details' : 'Back to report',
-          () => (countCorrectionView ? setCountCorrectionView(false) : setRoute('inventoryReport')))}
+        {renderInventoryReportHeader('Physical count details', fromHistory ? backLabel : countCorrectionView ? 'Back to count details' : 'Back to report',
+          () => (fromHistory ? setRoute('transactionDetails') : countCorrectionView ? setCountCorrectionView(false) : setRoute('inventoryReport')))}
         <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
           <View style={styles.inventoryReportMetadata}>
             <Text style={styles.inventoryReportMetadataText}>Branch: {record.branchName}</Text>
@@ -8560,7 +8592,17 @@ export default function StaffWorkspace({
               <DetailRow label="Expected quantity" value={formatUnitQuantity(transaction.physicalCount.expectedQuantity, transaction.unit)} />
               <DetailRow label="Original physical count" value={formatUnitQuantity(transaction.physicalCount.originalActualQuantity, transaction.unit)} />
               <DetailRow label="Difference" value={formatDailyDifference(transaction.physicalCount.difference, transaction.unit)} />
-              <DetailRow label="Count status" value={transaction.physicalCount.status} />
+              <DetailRow
+                label="Count status"
+                value={countHistoryStatusLabel({
+                  status: transaction.physicalCount.status,
+                  validated: Boolean(transaction.physicalCount.validation),
+                  correctionStatuses: [
+                    ...transaction.physicalCount.correctionHistory.map((correction) => correction.status),
+                    ...(sentCountCorrectionLineIds.has(countLineIdOfHistoryRecord(transaction.id) ?? '') ? ['pending'] : []),
+                  ],
+                })}
+              />
               <DetailRow label="Remarks" value={transaction.notes || '—'} />
               {transaction.physicalCount.revisedActualQuantity !== null ? (
                 <DetailRow label="Revised actual quantity" value={formatUnitQuantity(transaction.physicalCount.revisedActualQuantity, transaction.unit)} />
@@ -8597,6 +8639,46 @@ export default function StaffWorkspace({
           {transaction.batchReference ? <DetailRow label="Batch reference" value={transaction.batchReference} /> : null}
           <DetailRow label="Notes" value={transaction.notes || '—'} />
         </View>
+        {transaction.type === 'Physical Inventory Count' && transaction.physicalCount ? (() => {
+          const countLineId = countLineIdOfHistoryRecord(transaction.id);
+          if (!countLineId) return null;
+          const count = transaction.physicalCount;
+          const action = countHistoryCorrectionAction({
+            countedByUserId: transaction.staffId,
+            currentUserId: user.id,
+            expectedQuantity: count.expectedQuantity,
+            originalActualQuantity: count.originalActualQuantity,
+            validated: Boolean(count.validation),
+            correctionStatuses: count.correctionHistory.map((correction) => correction.status),
+            // A request sent a moment ago counts as waiting until the history reloads.
+            waitingOnDevice: pendingCountCorrections.some((request) => request.countLineId === countLineId)
+              || sentCountCorrectionLineIds.has(countLineId),
+          });
+          return (
+            <View style={styles.historyLedgerBanner}>
+              <Text style={styles.permissionIcon}>i</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.permissionText}>
+                  A submitted count cannot be edited. It is changed only through a correction request, which the owner decides.
+                </Text>
+                {action ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={action === 'request'
+                      ? `Request a correction for the ${transaction.ingredientName} count`
+                      : `View correction requests for the ${transaction.ingredientName} count`}
+                    onPress={() => openCountCorrectionFromHistory(countLineId, action === 'request', count.originalActualQuantity)}
+                    style={styles.discrepancyNeutralButton}
+                  >
+                    <Text style={styles.discrepancyNeutralButtonText}>
+                      {action === 'request' ? 'Request a correction' : 'View correction requests'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          );
+        })() : null}
         {entryReversalSupported ? (() => {
           const entry = reversibleEntryOf(transaction);
           if (!entry) return null;
