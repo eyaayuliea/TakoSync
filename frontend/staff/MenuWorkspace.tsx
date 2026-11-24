@@ -1308,10 +1308,11 @@ const styles = StyleSheet.create({
     flex: 1, minHeight: 0, backgroundColor: colors.pink,
     borderTopLeftRadius: 40, borderTopRightRadius: 40, overflow: 'hidden',
   },
-  flavorSelector: { flexGrow: 0, flexShrink: 0, maxHeight: 87 },
+  // The panel has 40 px rounded top corners: keep the flavor circles clear of the edge.
+  flavorSelector: { flexGrow: 0, flexShrink: 0, maxHeight: 104 },
   flavorSelectorContent: {
     minWidth: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-    paddingHorizontal: 22, paddingTop: 3, paddingBottom: 9,
+    paddingHorizontal: 28, paddingTop: 18, paddingBottom: 10,
   },
   flavorOption: { width: 62, alignItems: 'center' },
   flavorImageFrame: {

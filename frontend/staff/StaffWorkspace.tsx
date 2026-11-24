@@ -924,6 +924,7 @@ function DatePickerField({
   useConfirmation = false,
   confirmLabel = 'Use Date',
   triggerLabel,
+  compact = false,
 }: {
   label: string;
   value: Date | null;
@@ -934,6 +935,8 @@ function DatePickerField({
   useConfirmation?: boolean;
   confirmLabel?: string;
   triggerLabel?: string;
+  /** No bottom margin, for forms that space their own fields. */
+  compact?: boolean;
 }) {
   const styles = useStaffStyles();
   const [visible, setVisible] = useState(false);
@@ -972,7 +975,7 @@ function DatePickerField({
           {error ? <InlineFieldError message={error} /> : null}
         </View>
       ) : (
-      <View style={styles.fieldGroup}>
+      <View style={compact ? undefined : styles.fieldGroup}>
         <Text style={styles.fieldLabel}>{label}</Text>
         <View style={[styles.dateInput, error ? styles.textInputError : undefined]}>
           <Pressable
@@ -10716,10 +10719,10 @@ function createStaffStyles(theme: AppTheme) {
   },
   dailySalesDateButtonText: { color: colors.navy, fontFamily: font.semibold, fontSize: 9 },
   dailySalesRefreshButton: {
-    minHeight: 42, minWidth: 72, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 12, borderRadius: 11, backgroundColor: colors.pink,
+    minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
+    ...secondaryOutline(theme.isDark),
   },
-  dailySalesRefreshText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  dailySalesRefreshText: { color: colors.navy, fontFamily: font.semibold, fontSize: 10 },
   dailySalesFullButton: { alignSelf: 'stretch', marginHorizontal: 14, marginTop: 8 },
   dailySalesTotals: { marginHorizontal: 14, marginBottom: 14, padding: 14, borderRadius: 16, backgroundColor: colors.pale },
   dailySalesSummaryEyebrow: { color: colors.navy, fontFamily: font.semibold, fontSize: 12 },
@@ -10985,8 +10988,8 @@ function createStaffStyles(theme: AppTheme) {
   stockInFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },
   stockInFormButton: { width: '50%', maxWidth: 180, minHeight: 44 },
   formButtons: { gap: 9, marginTop: 7 },
-  wasteFormActions: { alignItems: 'flex-end', gap: 8, marginTop: 7 },
-  wasteFormActionButton: { width: '50%', maxWidth: 180, minHeight: 44 },
+  wasteFormActions: { alignItems: 'stretch', gap: 10, marginTop: 14 },
+  wasteFormActionButton: { minHeight: 48 },
   saveButton: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.pink },
   saveButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 11 },
   cancelButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, ...secondaryOutline(theme.isDark) },
