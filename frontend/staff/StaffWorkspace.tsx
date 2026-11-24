@@ -88,7 +88,7 @@ import {
   requestEntryReversal,
   loadStaffSalesForBusinessDay,
   loadStaffSaleReceipt,
-  requestSaleVoid,
+  voidSale,
   loadStaffDailyClosing,
   loadUnresolvedSales,
   loadStaffMenuCatalog,
@@ -2817,7 +2817,7 @@ export default function StaffWorkspace({
 
   const submitSaleVoidRequest = async (reason: string, clientRequestId: string) => {
     if (!saleReceipt) return;
-    const saved = await requestSaleVoid({ saleId: saleReceipt.id, reason, clientRequestId });
+    const saved = await voidSale({ saleId: saleReceipt.id, reason, clientRequestId });
     setSaleVoidRequests((current) => [saved, ...current.filter((request) => request.id !== saved.id)]);
     setSaleVoidModalVisible(false);
   };

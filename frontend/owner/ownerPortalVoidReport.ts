@@ -1,7 +1,9 @@
-// OW-10 Void Report on the Owner Web Portal: every sale whose void request the
-// owner approved (c6), with the staff reason and requester (c3, c4), the
-// approving owner and time (c5), newest sale first, with the count and total
-// amount (c7). Pending and rejected requests are not voids and are not listed.
+// OW-10 Void Report on the Owner Web Portal: every voided sale, with the staff
+// reason and who voided it and when, newest sale first, with the count and total
+// amount (c7). Voids are automatic since 2026-11-24, so "Owner approval" reads
+// "Not required"; a void approved under the earlier flow names the approving
+// owner. Pending and rejected requests of that flow are not voids and are not listed.
+import { isAutomaticSaleVoid } from '../services/saleVoids.ts';
 
 export type WebVoidReportSource = {
   id: string;
@@ -9,9 +11,11 @@ export type WebVoidReportSource = {
   branchId: string;
   branchName: string;
   reason: string;
+  requestedBy?: string | null;
   requestedByName: string | null;
   requestedAt: string;
   status: string;
+  decidedBy?: string | null;
   decidedByName: string | null;
   decidedAt: string | null;
   sale: { transactionReference: string; totalAmount: number; createdAt: string } | null;
@@ -32,7 +36,7 @@ export type WebVoidReportRow = {
 
 export const WEB_VOID_REPORT_HEADERS = [
   'Reference', 'Branch', 'Sale date & time', 'Sale total', 'Reason',
-  'Requested by · date & time', 'Approved by · date & time',
+  'Voided by · date & time', 'Owner approval',
 ];
 
 export function buildWebVoidReport(
@@ -59,8 +63,8 @@ export function buildWebVoidReport(
       reason: row.reason,
       requestedBy: row.requestedByName ?? 'Staff account',
       requestedAt: row.requestedAt,
-      approvedBy: row.decidedByName ?? 'Owner',
-      approvedAt: row.decidedAt,
+      approvedBy: isAutomaticSaleVoid(row) ? 'Not required' : `Approved by ${row.decidedByName ?? 'Owner'}`,
+      approvedAt: isAutomaticSaleVoid(row) ? null : row.decidedAt,
     }));
   let cents = 0;
   for (const row of rows) cents += Math.round(row.saleTotal * 100);

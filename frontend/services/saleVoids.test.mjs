@@ -11,6 +11,8 @@ import {
   sortSaleVoidRequestsForReview,
   validateSaleVoidReason,
   validateSaleVoidRejectionReason,
+  isAutomaticSaleVoid,
+  saleVoidApprovalLabel,
 } from './saleVoids.ts';
 
 const now = new Date('2026-11-25T06:00:00Z'); // 2:00 PM Manila, 25 Nov
@@ -55,9 +57,21 @@ test('a sale from an earlier business day cannot be voided (ST-07 c1)', () => {
   assert.deepEqual(saleVoidAvailability(afterMidnight, null, now), { allowed: true });
 });
 
-test('a pending request blocks a second one; a rejected one does not (ST-07 c6, c9)', () => {
-  assert.equal(saleVoidAvailability(todaySale, request(), now).allowed, false);
+test('automatic void: an earlier pending or rejected request does not block voiding the sale', () => {
+  assert.equal(saleVoidAvailability(todaySale, request(), now).allowed, true);
   assert.equal(saleVoidAvailability(todaySale, request({ status: 'rejected' }), now).allowed, true);
+});
+
+test('automatic void is told apart from an approval under the earlier flow', () => {
+  const automatic = request({ status: 'approved', requestedBy: 'staff-1', decidedBy: 'staff-1', decidedByName: 'Ana Reyes' });
+  const approved = request({ status: 'approved', requestedBy: 'staff-1', decidedBy: 'owner-1', decidedByName: 'Gelo' });
+  assert.equal(isAutomaticSaleVoid(automatic), true);
+  assert.equal(isAutomaticSaleVoid(approved), false);
+  assert.equal(isAutomaticSaleVoid(request()), false);
+  assert.equal(saleVoidApprovalLabel(automatic), 'Not required');
+  assert.equal(saleVoidApprovalLabel(approved), 'Approved by Gelo');
+  assert.equal(saleVoidApprovalLabel(request({ status: 'rejected', decidedBy: 'owner-1', decidedByName: 'Gelo' })), 'Rejected by Gelo');
+  assert.equal(saleVoidApprovalLabel(request()), 'Pending');
 });
 
 test('voided, cancelled, and unprocessed sales cannot be voided', () => {
@@ -65,7 +79,7 @@ test('voided, cancelled, and unprocessed sales cannot be voided', () => {
   assert.equal(saleVoidAvailability({ ...todaySale, status: 'cancelled' }, null, now).allowed, false);
   assert.deepEqual(saleVoidAvailability({ ...todaySale, inventory_processing_status: 'failed' }, null, now), {
     allowed: false,
-    reason: 'Finish inventory processing for this sale before requesting a void.',
+    reason: 'Finish inventory processing for this sale before voiding it.',
   });
 });
 
@@ -109,21 +123,21 @@ test('server errors become specific messages', () => {
   );
   assert.equal(
     saleVoidErrorMessage({ code: '23505', message: 'duplicate key value violates unique constraint' }),
-    'A void request for this sale is already pending.',
+    'This sale is already voided.',
   );
   assert.equal(
     saleVoidErrorMessage({ message: 'This request has already been approved.' }),
     'This request has already been approved and can no longer be changed.',
   );
   assert.equal(saleVoidErrorMessage({ message: 'TypeError: Failed to fetch' }), 'No connection. Check the internet connection and try again.');
-  assert.equal(saleVoidErrorMessage({ message: 'something odd' }), 'Unable to save the void request. Please try again.');
+  assert.equal(saleVoidErrorMessage({ message: 'something odd' }), 'Unable to void the sale. Please try again.');
 });
 
 test('a database without the void tables is recognised', () => {
   assert.equal(isMissingSaleVoidSupport({ code: 'PGRST205', message: 'Could not find the table' }), true);
   assert.equal(isMissingSaleVoidSupport({ code: '42P01', message: 'relation does not exist' }), true);
   assert.equal(
-    isMissingSaleVoidSupport({ message: 'Could not find the function public.request_sale_void in the schema cache' }),
+    isMissingSaleVoidSupport({ message: 'Could not find the function public.void_sale in the schema cache' }),
     true,
   );
   assert.equal(isMissingSaleVoidSupport({ code: '42501', message: 'permission denied' }), false);

@@ -21,6 +21,7 @@ import {
 } from '../services/takosync';
 import {
   SALE_VOID_REASON_MAX_LENGTH,
+  isAutomaticSaleVoid,
   saleVoidRequestStatusLabel,
   sortSaleVoidRequestsForReview,
   validateSaleVoidRejectionReason,
@@ -29,13 +30,13 @@ import {
 
 const font = { regular: 'Poppins_400Regular', semibold: 'Poppins_600SemiBold', bold: 'Poppins_700Bold' } as const;
 
-// OM-15 c1 / OW-26 c1: status filters Pending, Approved, Rejected (an approved
-// void shows a "Voided" indicator, OW-26 c10).
-const STATUS_FILTERS = ['All', 'Pending', 'Approved', 'Rejected'] as const;
+// Status filters: Voided (every void), plus Pending and Rejected for requests
+// made under the earlier approval flow.
+const STATUS_FILTERS = ['All', 'Voided', 'Pending', 'Rejected'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 const STATUS_BY_FILTER: Record<Exclude<StatusFilter, 'All'>, SaleVoidRequestStatus> = {
+  Voided: 'approved',
   Pending: 'pending',
-  Approved: 'approved',
   Rejected: 'rejected',
 };
 const ALL_BRANCHES = 'All branches';
@@ -91,8 +92,8 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
       })
       .catch((reason: unknown) => {
         if (generation !== loadGeneration.current) return;
-        console.error('Unable to load void requests.', reason);
-        setLoadError('Unable to load void requests. Please check your internet connection and try again.');
+        console.error('Unable to load voids.', reason);
+        setLoadError('Unable to load voids. Please check your internet connection and try again.');
       })
       .finally(() => {
         if (generation === loadGeneration.current) setLoading(false);
@@ -169,13 +170,13 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
   };
 
   const renderList = () => {
-    if (loading) return <OwnerLoadingState label="Loading void requests…" />;
+    if (loading) return <OwnerLoadingState label="Loading voids…" />;
     if (loadError) return <OwnerErrorState message={loadError} onRetry={load} />;
     if (!supported) {
       return (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>
-            Void requests are not available yet. The database needs the latest update before staff can request voids.
+            Voids are not available yet. The database needs the latest update before staff can void sales.
           </Text>
         </View>
       );
@@ -183,7 +184,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
     return (
       <ScrollView style={styles.flex} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         <Text style={styles.summary}>
-          {pendingCount === 0 ? 'No requests are waiting for you.' : `${pendingCount} ${pendingCount === 1 ? 'request is' : 'requests are'} waiting for your decision.`}
+          {pendingCount === 0 ? 'Staff void sales at once; no approval is needed. Every void is listed here.' : `${pendingCount} earlier ${pendingCount === 1 ? 'request is' : 'requests are'} still waiting for your decision.`}
         </Text>
         <OwnerTabs items={STATUS_FILTERS} selected={statusFilter} onSelect={(item) => setStatusFilter(item as StatusFilter)} />
         {branchOptions.length > 2 ? (
@@ -221,14 +222,16 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
       ['Request', request.reference],
       ['Status', saleVoidRequestStatusLabel(request.status)],
       ['Branch', request.branchName],
-      ['Requested by', request.requestedByName ?? 'Staff account'],
-      ['Requested', dateTime(request.requestedAt)],
+      [isAutomaticSaleVoid(request) ? 'Voided by' : 'Requested by', request.requestedByName ?? 'Staff account'],
+      [isAutomaticSaleVoid(request) ? 'Voided' : 'Requested', dateTime(request.requestedAt)],
       ['Reason', request.reason],
       ['Sale', request.sale?.transactionReference ?? 'Sale not found'],
       ['Sale recorded', dateTime(request.sale?.createdAt)],
       ['Sale total', request.sale ? money(request.sale.totalAmount) : '—'],
     ];
-    if (request.status !== 'pending') {
+    if (isAutomaticSaleVoid(request)) {
+      rows.push(['Owner approval', 'Not required']);
+    } else if (request.status !== 'pending') {
       rows.push(
         ['Decided by', request.decidedByName ?? 'Owner'],
         ['Decided', dateTime(request.decidedAt)],
