@@ -5,6 +5,7 @@ import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import { brandLogoLayout, openingLogoWidth } from './theme/brandLogo';
+import AppIcon from './theme/AppIcon';
 import {
   calendarDaysUntil,
   classifyExpirationLevel,
@@ -896,9 +897,7 @@ function AppContent() {
                         <Text style={styles.loginHeading}>Log In</Text>
                         {loginError !== '' && (
                           <View style={styles.errorBanner} accessibilityRole="alert">
-                            <View style={styles.errorIcon}>
-                              <Text style={styles.errorIconText}>!</Text>
-                            </View>
+                            <AppIcon name="error" size={20} style={{ marginRight: 9 }} />
                             <Text style={styles.errorText}>{loginError}</Text>
                           </View>
                         )}
@@ -952,10 +951,7 @@ function AppContent() {
                             hitSlop={8}
                             style={styles.passwordVisibilityButton}
                           >
-                            <View style={styles.passwordEye}>
-                              <View style={styles.passwordEyePupil} />
-                              {passwordVisible && <View style={styles.passwordEyeSlash} />}
-                            </View>
+                            <AppIcon name={passwordVisible ? 'passwordVisible' : 'passwordHidden'} size={22} color="#777783" />
                           </Pressable>
                         </View>
                         {passwordError !== '' && <Text style={styles.fieldError}>{passwordError}</Text>}

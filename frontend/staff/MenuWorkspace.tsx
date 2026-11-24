@@ -431,7 +431,7 @@ function CurrentOrderLine({
         onPress={onRemove}
         style={styles.currentOrderRemove}
       >
-        <Text style={styles.currentOrderRemoveText}>×</Text>
+        <AppIcon name="remove" style={styles.currentOrderRemoveText} />
       </Pressable>
     </View>
   );
@@ -1069,7 +1069,7 @@ export default function MenuWorkspace({
                   onPress={() => setSelectedAddonIds((current) => current.filter((id) => id !== addon.id))}
                   style={styles.currentOrderRemove}
                 >
-                  <Text style={styles.currentOrderRemoveText}>×</Text>
+                  <AppIcon name="remove" style={styles.currentOrderRemoveText} />
                 </Pressable>
               </View>
             ))}
@@ -1339,7 +1339,7 @@ const styles = StyleSheet.create({
   currentOrderQuantityText: { color: colors.pink, fontFamily: font.semibold, fontSize: 12 },
   currentOrderQuantityValue: { minWidth: 13, color: colors.text, fontFamily: font.semibold, fontSize: 7, textAlign: 'center' },
   currentOrderRemove: { width: REMOVE_BUTTON_SIZE.width, height: REMOVE_BUTTON_SIZE.height, alignItems: 'center', justifyContent: 'center' },
-  currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 15 },
+  currentOrderRemoveText: { color: colors.error, fontFamily: font.medium, fontSize: 18 },
   currentAddonLine: {
     minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingVertical: 2, borderBottomWidth: 1, borderBottomColor: '#F0F0F3',
