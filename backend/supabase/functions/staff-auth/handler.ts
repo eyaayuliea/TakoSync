@@ -73,6 +73,16 @@ function isEmployeeId(value: unknown): value is string {
  * which refuses passwords over 72 bytes, so this stays at 62 characters
  * (a UUID plus 16 random hex digits).
  */
+/**
+ * The branch label used everywhere in the apps ("Manila · Branch 1", or "Branch 2"
+ * without a city). Mirrors frontend/services/branchNames.ts formatBranchName.
+ */
+export function branchDisplayName(branch: { code: string; city?: string | null }) {
+  const city = branch.city?.trim();
+  const number = Number(String(branch.code).replace(/\D/g, '')) || branch.code;
+  return `${city ? `${city} · ` : ''}Branch ${number}`;
+}
+
 export function temporaryPassword() {
   const extra = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, '0')).join('');
   return `TakoSync-${crypto.randomUUID()}-${extra}`;
@@ -533,11 +543,11 @@ async function accountList(admin: ReturnType<HandlerOptions['createClient']>) {
   const [{ data: profiles, error: profileError }, { data: branches, error: branchError }] = await Promise.all([
     // OW-27 c1, c9: the lock status comes from the ST-01 lockout fields.
     admin.from('profiles').select('id, employee_id, username, full_name, branch_id, active, must_change_password, created_at, failed_login_attempts, locked_until').eq('role', 'staff').order('created_at'),
-    admin.from('branches').select('id, name').eq('active', true).order('created_at'),
+    admin.from('branches').select('id, code, city').eq('active', true).order('created_at'),
   ]);
   if (profileError) throw profileError;
   if (branchError) throw branchError;
-  const branchNames = new Map((branches ?? []).map((branch) => [branch.id, branch.name]));
+  const branchNames = new Map((branches ?? []).map((branch) => [branch.id, branchDisplayName(branch)]));
   return response({
     ok: true,
     accounts: (profiles ?? []).map((profile) => ({ ...profile, branch_name: branchNames.get(profile.branch_id) ?? 'Branch unavailable' })),
