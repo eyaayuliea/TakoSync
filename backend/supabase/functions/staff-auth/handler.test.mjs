@@ -4,7 +4,7 @@ import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 register('../../../../frontend/services/testTsLoader.mjs', import.meta.url);
-const { createStaffAuthHandler, temporaryPassword } = await import('./handler.ts');
+const { createStaffAuthHandler, temporaryPassword, branchDisplayName } = await import('./handler.ts');
 
 const staffAccount = {
   id: 'staff-id',
@@ -822,4 +822,10 @@ test('OW-27 c2: the temporary password fits bcrypt (at most 72 bytes) and is ran
   assert.ok(new TextEncoder().encode(first).length <= 72, `${first.length} bytes`);
   assert.match(first, /^TakoSync-[0-9a-f-]{36}-[0-9a-f]{16}$/);
   assert.notEqual(first, second);
+});
+
+test('Staff Accounts use the same branch label as the rest of the apps', () => {
+  assert.equal(branchDisplayName({ code: 'BR-001', city: 'Manila' }), 'Manila · Branch 1');
+  assert.equal(branchDisplayName({ code: 'BR-002', city: null }), 'Branch 2');
+  assert.equal(branchDisplayName({ code: 'BR-003', city: '  ' }), 'Branch 3');
 });
