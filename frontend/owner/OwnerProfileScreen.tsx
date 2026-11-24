@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { secondaryOutline } from '../theme/buttonRoles';
 import type { AppUser } from '../services/takosync';
 import AppIcon from '../theme/AppIcon';
 
@@ -250,7 +251,7 @@ function useStyles() {
     dialogMessage: { color: colors.secondaryText, fontFamily: ownerMenu.fonts.regular, fontSize: 8, lineHeight: 13, textAlign: 'center', marginTop: 7 },
     dialogError: { color: colors.error, fontFamily: ownerMenu.fonts.regular, fontSize: 8, textAlign: 'center', marginTop: 6 },
     dialogActions: { flexDirection: 'row', gap: 8, marginTop: 15 },
-    cancelButton: { flex: 1, height: 31, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: ownerMenu.colors.navy, borderRadius: 16, backgroundColor: ownerMenu.colors.white },
+    cancelButton: { flex: 1, height: 31, alignItems: 'center', justifyContent: 'center', borderRadius: 16, ...secondaryOutline(theme.isDark) },
     confirmButton: { flex: 1, height: 31, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: ownerMenu.colors.crimson },
     cancelText: { color: ownerMenu.colors.navy, fontFamily: ownerMenu.fonts.bold, fontSize: 9 },
     confirmText: { color: ownerMenu.colors.white, fontFamily: ownerMenu.fonts.bold, fontSize: 9 },

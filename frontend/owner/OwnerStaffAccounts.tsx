@@ -257,7 +257,7 @@ function useStyles() {
     actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 15 },
     primaryButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, borderRadius: 11, backgroundColor: colors.pink },
     primaryText: { color: colors.white, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
-    secondaryButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, borderRadius: 11, borderWidth: 1, borderColor: colors.line },
+    secondaryButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, borderRadius: 11, borderWidth: 1.5, borderColor: colors.navy },
     secondaryText: { color: colors.navy, fontFamily: 'Poppins_600SemiBold', fontSize: 9 },
     disabled: { opacity: 0.6 },
     error: { color: colors.red, fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 15, marginBottom: 12 },

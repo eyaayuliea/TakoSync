@@ -29,6 +29,7 @@ import {
   getPerBottleRecipeQuantity,
 } from '../services/batterRecipeQuantities';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
+import { secondaryOutline } from '../theme/buttonRoles';
 import { ownerColors } from './shared/ownerTokens';
 import AppIcon from '../theme/AppIcon';
 
@@ -1092,8 +1093,8 @@ function useStyles() {
     clearSearch: { color: colors.muted, fontFamily: font.semibold, fontSize: 17, paddingLeft: 8 },
     primaryButton: { minHeight: 38, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 13, marginBottom: 9, borderRadius: 11, backgroundColor: colors.pink },
     primaryButtonText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
-    secondaryButton: { minHeight: 33, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 11, borderWidth: 1, borderColor: colors.pink, borderRadius: 10, backgroundColor: colors.white },
-    secondaryButtonText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+    secondaryButton: { minHeight: 33, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 11, borderRadius: 10, ...secondaryOutline(theme.isDark) },
+    secondaryButtonText: { fontFamily: font.semibold, fontSize: 8, color: colors.navy },
     ingredientCard: { padding: 10, marginBottom: 8, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: colors.white, elevation: 1, shadowColor: '#000000', shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
     ingredientCardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     ingredientMark: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.paleOrange },
@@ -1150,8 +1151,8 @@ function useStyles() {
     optionTextSelected: { color: colors.pink, fontFamily: font.semibold },
     addCategoryRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7 },
     categoryInput: { flex: 1, minWidth: 0, minHeight: 34 },
-    addCategoryButton: { minHeight: 34, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 9, backgroundColor: colors.navy },
-    addCategoryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },
+    addCategoryButton: { minHeight: 34, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 9, ...secondaryOutline(theme.isDark) },
+    addCategoryText: { fontFamily: font.semibold, fontSize: 8, color: colors.navy },
     helperText: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, marginTop: 4 },
     detailName: { color: colors.navy, fontFamily: font.bold, fontSize: 15, marginTop: 3 },
     detailStats: { flexDirection: 'row', gap: 7, marginVertical: 10 },
@@ -1173,8 +1174,8 @@ function useStyles() {
     quantityRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7 },
     quantityInput: { flex: 1, minHeight: 36, paddingHorizontal: 9, borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.white, color: colors.ink, fontFamily: font.regular, fontSize: 9 },
     unitValue: { minWidth: 49, color: colors.navy, fontFamily: font.semibold, fontSize: 8, textAlign: 'right' },
-    addEntryButton: { minHeight: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.pink, borderRadius: 9 },
-    addEntryText: { color: colors.pink, fontFamily: font.semibold, fontSize: 8 },
+    addEntryButton: { minHeight: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 8, borderRadius: 9, ...secondaryOutline(theme.isDark) },
+    addEntryText: { fontFamily: font.semibold, fontSize: 8, color: colors.navy },
     workflowNote: { color: colors.muted, fontFamily: font.regular, fontSize: 7, lineHeight: 11, padding: 8, marginBottom: 8, borderRadius: 9, backgroundColor: colors.pale },
     buttonDisabled: { opacity: 0.6 },
   }, theme)), [theme]);

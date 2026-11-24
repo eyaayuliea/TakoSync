@@ -3,8 +3,11 @@ import { StyleSheet } from 'react-native';
 export const reviewStyles = StyleSheet.create({
   card: { backgroundColor: '#FDFDFC', borderWidth: 1, borderColor: '#E3E3E6', borderRadius: 12, padding: 16, marginTop: 12 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  approve: { backgroundColor: '#589144', borderRadius: 7, paddingHorizontal: 12, paddingVertical: 8 },
+  // The main decision is the one filled brand button; Reject is red and unfilled; Cancel is neutral.
+  approve: { backgroundColor: '#EC1358', borderRadius: 7, paddingHorizontal: 12, paddingVertical: 8 },
   approveText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
   reject: { borderWidth: 1, borderColor: '#B9244C', borderRadius: 7, paddingHorizontal: 12, paddingVertical: 8 },
   rejectText: { color: '#B9244C', fontSize: 10, fontWeight: '700' },
+  cancel: { borderWidth: 1.5, borderColor: '#0F1025', backgroundColor: '#FFFFFF', borderRadius: 7, paddingHorizontal: 12, paddingVertical: 8 },
+  cancelText: { color: '#0F1025', fontSize: 10, fontWeight: '700' },
 });

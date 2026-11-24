@@ -1,4 +1,4 @@
-// Colours of the three actions at the end of the Order (payment) page, by role:
+// Button roles for the whole app, first set on the Order (payment) page:
 //   primary     – Confirm Transaction: the one filled, brand-coloured button;
 //   secondary   – Return to cart: outlined, neutral;
 //   destructive – Cancel order: red text, no fill, set apart from the other two.
@@ -45,6 +45,14 @@ export function orderActionColors(isDark: boolean): OrderActionColors {
 export function secondaryOutline(isDark: boolean): { backgroundColor: string; borderWidth: number; borderColor: string } {
   const { secondary } = orderActionColors(isDark);
   return { backgroundColor: secondary.background, borderWidth: 1.5, borderColor: secondary.border };
+}
+
+/**
+ * A destructive action that sits in a row of buttons (Reject, Remove): red text
+ * and a red outline, never filled.
+ */
+export function destructiveOutline(isDark: boolean): { backgroundColor: string; borderWidth: number; borderColor: string } {
+  return { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: orderActionColors(isDark).destructive.text };
 }
 
 /** Text colour of a destructive text action (discard, leave without saving, clear). */

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { contrastRatio, destructiveTextColor, orderActionColors, secondaryOutline } from './orderActionColors.ts';
+import { contrastRatio, destructiveTextColor, orderActionColors, secondaryOutline } from './buttonRoles.ts';
 
 test('contrast ratio follows WCAG', () => {
   assert.equal(Math.round(contrastRatio('#000000', '#FFFFFF')), 21);
