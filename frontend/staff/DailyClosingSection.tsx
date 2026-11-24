@@ -200,7 +200,7 @@ export default function DailyClosingSection({
                 accessibilityRole="button"
                 disabled={submitting}
                 onPress={() => setConfirming(null)}
-                style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}
               >
                 <Text style={[styles.secondaryText, { color: colors.text }]}>Back</Text>
               </Pressable>

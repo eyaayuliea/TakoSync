@@ -24,7 +24,7 @@ export function orderActionColors(isDark: boolean): OrderActionColors {
       pageBackground: '#13121A',
       primary: { background: BRAND, text: '#FFFFFF' },
       primaryDisabled: { background: '#2D2C40', text: '#9A9BB0' },
-      secondary: { background: 'transparent', border: '#F5F4FA', text: '#F5F4FA' },
+      secondary: { background: 'transparent', border: '#D6D5E0', text: '#F5F4FA' },
       destructive: { text: RED_ON_DARK },
       destructiveFill: { background: RED_ON_LIGHT, text: '#FFFFFF' },
     }
@@ -36,6 +36,20 @@ export function orderActionColors(isDark: boolean): OrderActionColors {
       destructive: { text: RED_ON_LIGHT },
       destructiveFill: { background: RED_ON_LIGHT, text: '#FFFFFF' },
     };
+}
+
+/**
+ * The outlined look of a secondary button, for style sheets elsewhere in the
+ * staff app, so every "Cancel", "Back" and "Close" matches the Order page.
+ */
+export function secondaryOutline(isDark: boolean): { backgroundColor: string; borderWidth: number; borderColor: string } {
+  const { secondary } = orderActionColors(isDark);
+  return { backgroundColor: secondary.background, borderWidth: 1.5, borderColor: secondary.border };
+}
+
+/** Text colour of a destructive text action (discard, leave without saving, clear). */
+export function destructiveTextColor(isDark: boolean): string {
+  return orderActionColors(isDark).destructive.text;
 }
 
 function luminance(hex: string): number {

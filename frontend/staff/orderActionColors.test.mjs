@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { contrastRatio, orderActionColors } from './orderActionColors.ts';
+import { contrastRatio, destructiveTextColor, orderActionColors, secondaryOutline } from './orderActionColors.ts';
 
 test('contrast ratio follows WCAG', () => {
   assert.equal(Math.round(contrastRatio('#000000', '#FFFFFF')), 21);
@@ -36,3 +36,13 @@ for (const [mode, isDark] of [['light', false], ['dark', true]]) {
     assert.ok(contrastRatio(c.primaryDisabled.text, c.primaryDisabled.background) >= 3);
   });
 }
+
+test('other staff screens get the same outlined secondary and red destructive text', () => {
+  for (const isDark of [false, true]) {
+    const c = orderActionColors(isDark);
+    assert.deepEqual(secondaryOutline(isDark), { backgroundColor: c.secondary.background, borderWidth: 1.5, borderColor: c.secondary.border });
+    assert.equal(destructiveTextColor(isDark), c.destructive.text);
+  }
+  // In dark mode the staff style sheet recolours borders that start with #E or #F; the outline must not be one of them.
+  assert.doesNotMatch(secondaryOutline(true).borderColor, /^#[EF]/i);
+});

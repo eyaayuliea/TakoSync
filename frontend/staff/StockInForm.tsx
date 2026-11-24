@@ -217,7 +217,7 @@ export default function StockInForm({
           <Pressable accessibilityRole="button" onPress={startAnother} style={({ pressed }) => [styles.primary, { backgroundColor: colors.accent }, pressed && styles.pressed]}>
             <Text style={styles.primaryText}>Record Another Stock-In</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}>
+          <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}>
             <Text style={[styles.secondaryText, { color: colors.text }]}>Back to Stocks</Text>
           </Pressable>
         </ScrollView>
@@ -361,7 +361,7 @@ export default function StockInForm({
           <Pressable
             accessibilityRole="button"
             onPress={() => setLines((current) => [...current, newLine()])}
-            style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}
           >
             <Text style={[styles.secondaryText, { color: colors.text }]}>+ Add Another Item</Text>
           </Pressable>
@@ -371,7 +371,7 @@ export default function StockInForm({
         <Pressable accessibilityRole="button" onPress={review} style={({ pressed }) => [styles.primary, { backgroundColor: colors.accent }, pressed && styles.pressed]}>
           <Text style={styles.primaryText}>Save</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}>
           <Text style={[styles.secondaryText, { color: colors.text }]}>Cancel</Text>
         </Pressable>
       </ScrollView>
@@ -423,7 +423,7 @@ export default function StockInForm({
               })}
               {pickerItems.length === 0 ? <Text style={[styles.copy, { color: colors.secondaryText }]}>No items match your search.</Text> : null}
             </ScrollView>
-            <Pressable accessibilityRole="button" onPress={() => setPickerLine(null)} style={({ pressed }) => [styles.secondary, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}>
+            <Pressable accessibilityRole="button" onPress={() => setPickerLine(null)} style={({ pressed }) => [styles.secondary, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}>
               <Text style={[styles.secondaryText, { color: colors.text }]}>Close</Text>
             </Pressable>
           </View>
@@ -456,7 +456,7 @@ export default function StockInForm({
               })}
             </ScrollView>
             <View style={styles.actions}>
-              <Pressable accessibilityRole="button" disabled={submitting} onPress={() => setConfirming(false)} style={({ pressed }) => [styles.secondaryCompact, { backgroundColor: colors.surfaceSecondary }, pressed && styles.pressed]}>
+              <Pressable accessibilityRole="button" disabled={submitting} onPress={() => setConfirming(false)} style={({ pressed }) => [styles.secondaryCompact, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.text }, pressed && styles.pressed]}>
                 <Text style={[styles.secondaryText, { color: colors.text }]}>Cancel</Text>
               </Pressable>
               <Pressable
