@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   isVariantOutOfStock,
+  lowStockWarningMessage,
+  orderLowStockWarnings,
   orderStockShortage,
   parseSaleStockSnapshot,
   stockShortageMessage,
@@ -56,4 +58,44 @@ test('withLineQuantity replaces one line', () => {
   assert.deepEqual(withLineQuantity([{ productId: 'a', quantity: 1 }, { productId: 'b', quantity: 2 }], 'a', 3),
     [{ productId: 'b', quantity: 2 }, { productId: 'a', quantity: 3 }]);
   assert.deepEqual(withLineQuantity([{ productId: 'a', quantity: 1 }], 'a', 0), []);
+});
+
+// Low-stock alert while adding orders (owner list of 2026-11-24).
+const roomy = parseSaleStockSnapshot({
+  requirements: [
+    { variant_id: 'v4', ingredient_id: 'prepared-batter', ingredient_name: 'Prepared Takoyaki Batter', unit: 'bottle', per_unit: 0.16 },
+    { variant_id: 'v8', ingredient_id: 'prepared-batter', ingredient_name: 'Prepared Takoyaki Batter', unit: 'bottle', per_unit: 0.32 },
+    { variant_id: 'v8', ingredient_id: 'octobits', ingredient_name: 'Octobits', unit: 'pcs', per_unit: 8 },
+  ],
+  stock: { 'prepared-batter': 5.4, octobits: 100 },
+});
+const minimums = { 'prepared-batter': 5, octobits: 20 };
+
+test('no warning while the order leaves every ingredient above its minimum', () => {
+  assert.deepEqual(orderLowStockWarnings([{ productId: 'v4', quantity: 2 }], roomy, minimums), []); // 5.08 left > 5
+  assert.deepEqual(orderLowStockWarnings([], roomy, minimums), []);
+  assert.deepEqual(orderLowStockWarnings([{ productId: 'v4', quantity: 2 }], null, minimums), []);
+});
+
+test('warns when the order would leave an ingredient at or below its minimum', () => {
+  const warnings = orderLowStockWarnings([{ productId: 'v4', quantity: 1 }, { productId: 'v8', quantity: 1 }], roomy, minimums);
+  assert.deepEqual(warnings, [{ ingredientId: 'prepared-batter', ingredientName: 'Prepared Takoyaki Batter', unit: 'bottle', remaining: 4.92, minimum: 5 }]);
+  assert.equal(lowStockWarningMessage(warnings[0]), 'Low stock: Prepared Takoyaki Batter will be at 4.92 bottle after this order (minimum 5 bottle).');
+});
+
+test('an ingredient already low before the order is still reported; one that runs out says so', () => {
+  const low = { ...roomy, stock: { 'prepared-batter': 0.32, octobits: 100 } };
+  const [warning] = orderLowStockWarnings([{ productId: 'v8', quantity: 1 }], low, minimums);
+  assert.equal(warning.remaining, 0);
+  assert.equal(lowStockWarningMessage(warning), 'Low stock: this order uses the last Prepared Takoyaki Batter (minimum 5 bottle).');
+});
+
+test('ingredients without a minimum level, or not used by the order, never warn', () => {
+  assert.deepEqual(orderLowStockWarnings([{ productId: 'v8', quantity: 12 }], roomy, { octobits: 0 }), []);
+  assert.deepEqual(orderLowStockWarnings([{ productId: 'v4', quantity: 3 }], roomy, { octobits: 500 }), []);
+});
+
+test('an order the stock cannot make is a shortage, not a low-stock warning', () => {
+  const short = { ...roomy, stock: { 'prepared-batter': 0.1, octobits: 100 } };
+  assert.deepEqual(orderLowStockWarnings([{ productId: 'v4', quantity: 1 }], short, minimums), []);
 });

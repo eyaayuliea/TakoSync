@@ -60,6 +60,8 @@ type MenuWorkspaceProps = {
   catalogError: string;
   onRetryCatalog: () => void;
   feedbackMessage?: string;
+  /** Low-stock alerts for the current order (the order is still allowed). */
+  stockWarnings?: string[];
   onDismissFeedback?: () => void;
   onRetryInventory?: () => void;
 };
@@ -457,6 +459,7 @@ export default function MenuWorkspace({
   catalogError,
   onRetryCatalog,
   feedbackMessage = '',
+  stockWarnings = [],
   onDismissFeedback,
   onRetryInventory,
 }: MenuWorkspaceProps) {
@@ -464,6 +467,16 @@ export default function MenuWorkspace({
   const darkSecondarySurface = isDark ? { backgroundColor: '#0F1025' } : undefined;
   const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
   const darkWarningText = isDark ? { color: '#0F1025' } : undefined;
+  const stockWarningList = stockWarnings.length > 0 ? (
+    <View style={styles.stockWarningBox} accessibilityRole="alert">
+      {stockWarnings.map((warning) => (
+        <View key={warning} style={styles.stockWarningRow}>
+          <AppIcon name="lowStock" style={[styles.stockWarningText, darkWarningText, { fontSize: 12 }]} />
+          <Text style={[styles.stockWarningText, darkWarningText]}>{warning}</Text>
+        </View>
+      ))}
+    </View>
+  ) : null;
   const [selectedFlavorId, setSelectedFlavorId] = useState('octobits');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'QR'>('Cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -721,6 +734,7 @@ export default function MenuWorkspace({
             <Text style={styles.checkoutTitle}>Review transaction</Text>
             {bulkOrder ? <BulkOrderBadge /> : null}
           </View>
+          {stockWarningList}
           {cartProducts.map(({ product, quantity }) => (
             <View key={product.id} style={[styles.checkoutLine, darkSecondarySurface]}>
               <View style={styles.checkoutLineCopy}>
@@ -1026,6 +1040,7 @@ export default function MenuWorkspace({
             ]}>Clear</Text>
           </Pressable>
         </View>
+        {stockWarningList}
         {cartProducts.length > 0 || selectedAddons.length > 0 ? (
           <ScrollView
             style={styles.currentOrderItems}
@@ -1348,6 +1363,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', marginHorizontal: 11, marginBottom: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.warning,
   },
+  stockWarningBox: { marginHorizontal: 11, marginBottom: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: colors.warning, gap: 4 },
+  stockWarningRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  stockWarningText: { flexShrink: 1, color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   feedbackMessagePressable: { flexDirection: 'row', alignItems: 'flex-start', flex: 1, gap: 8 },
   retryInventoryButton: { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.pink },
   retryInventoryText: { color: colors.white, fontFamily: font.semibold, fontSize: 8 },

@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot } from '../services/saleStock';
+import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot,
+  lowStockWarningMessage,
+  orderLowStockWarnings,
+} from '../services/saleStock';
 import { classifyStockLevel, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import {
   describeLotsForDisplay,
@@ -2512,6 +2515,16 @@ export default function StaffWorkspace({
 
   const menuMaxQuantity = (productId: string) =>
     menuCatalog.find((item) => item.id === productId)?.maxQuantity ?? null;
+
+  // Low-stock alert while adding orders: ingredients this order would leave at or below
+  // their minimum level. Minimums come from the staff inventory, in the units the stock
+  // check uses (the prepared batter in bottles).
+  const menuStockWarnings = useMemo(() => {
+    if (menuCart.length === 0 || !menuStock) return [];
+    const minimums: Record<string, number> = {};
+    for (const item of ingredients) minimums[item.id] = inventoryDisplayItem(item).minimumStock;
+    return orderLowStockWarnings(menuCart, menuStock, minimums).map(lowStockWarningMessage);
+  }, [menuCart, menuStock, ingredients]);
 
   /** ST-02 c6 (decision #11): refuse a quantity the branch stock cannot make, with the reason. */
   const blockedByStock = (productId: string, quantity: number) => {
@@ -8962,6 +8975,7 @@ export default function StaffWorkspace({
           catalogError={menuCatalogError}
           onRetryCatalog={retryMenuCatalog}
           feedbackMessage={dashboardMessage}
+          stockWarnings={menuStockWarnings}
           onDismissFeedback={() => setDashboardMessage('')}
           onRetryInventory={menuInventoryRetrySale ? () => void retryMenuSaleInventory() : undefined}
         />

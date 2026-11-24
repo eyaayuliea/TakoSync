@@ -104,3 +104,56 @@ export function stockShortageMessage(productLabel: string, shortage: StockShorta
   return `${productLabel}: not enough ${shortage.ingredientName} in stock `
     + `(needs ${amount(shortage.required)} ${shortage.unit}, ${amount(shortage.available)} ${shortage.unit} available).`;
 }
+
+export type LowStockWarning = {
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  /** What the branch would have left after this order. */
+  remaining: number;
+  minimum: number;
+};
+
+/**
+ * Low-stock alert while adding orders: the ingredients this order would leave at
+ * or below their minimum stock level (the owner's Low Stock rule). The order is
+ * still allowed; an order the stock cannot make at all is a shortage instead.
+ * `minimums` maps ingredient id to its minimum level in the snapshot's unit;
+ * an ingredient without a minimum (0) never warns.
+ */
+export function orderLowStockWarnings(
+  order: OrderLine[],
+  snapshot: SaleStockSnapshot | null,
+  minimums: Record<string, number>,
+): LowStockWarning[] {
+  if (!snapshot) return [];
+  const required = new Map<string, { name: string; unit: string; quantity: number }>();
+  for (const line of order) {
+    if (!(line.quantity > 0)) continue;
+    for (const req of snapshot.requirements) {
+      if (req.variantId !== line.productId) continue;
+      const entry = required.get(req.ingredientId) ?? { name: req.ingredientName, unit: req.unit, quantity: 0 };
+      entry.quantity += req.perUnit * line.quantity;
+      required.set(req.ingredientId, entry);
+    }
+  }
+  const warnings: LowStockWarning[] = [];
+  for (const [ingredientId, entry] of [...required.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const minimum = minimums[ingredientId] ?? 0;
+    if (!(minimum > 0)) continue;
+    const available = Math.max(0, snapshot.stock[ingredientId] ?? 0);
+    const remaining = Math.round((available - entry.quantity) * 1000) / 1000;
+    if (remaining < -EPSILON) continue; // a shortage; reported by orderStockShortage
+    if (remaining <= minimum + EPSILON) {
+      warnings.push({ ingredientId, ingredientName: entry.name, unit: entry.unit, remaining: Math.max(0, remaining), minimum });
+    }
+  }
+  return warnings;
+}
+
+export function lowStockWarningMessage(warning: LowStockWarning): string {
+  const minimum = `minimum ${amount(warning.minimum)} ${warning.unit}`;
+  return warning.remaining <= EPSILON
+    ? `Low stock: this order uses the last ${warning.ingredientName} (${minimum}).`
+    : `Low stock: ${warning.ingredientName} will be at ${amount(warning.remaining)} ${warning.unit} after this order (${minimum}).`;
+}
