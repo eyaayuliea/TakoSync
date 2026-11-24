@@ -1392,6 +1392,67 @@ export async function loadBranches() {
   return (data ?? []).map((branch) => ({ ...branch, name: formatBranchName(branch) }));
 }
 
+export type BusinessConfiguration = {
+  branches: Array<{ id: string; code: string; city: string; name: string }>;
+  units: Array<{ code: string; name: string; dimension: string }>;
+  conversions: Array<{ from_unit: string; to_unit: string; factor: number }>;
+  purchaseUnits: Array<{ ingredient: string; label: string; quantity: number; unit: string }>;
+  ingredients: Array<{ id: string; name: string; unit: string }>;
+  inventory: Array<{ branch_id: string; ingredient_id: string; quantity: number }>;
+  openingEntries: Array<{ branch_id: string; ingredient_id: string; quantity: number; unit: string; previous_quantity: number; recorded_at: string }>;
+  /** null until the go-live date is set; null entries also before migration 202611240003. */
+  goLive: { go_live_date: string; locked_at: string } | null;
+  openingStockSupported: boolean;
+};
+
+/** OW-28: the data of the Business Configuration page. */
+export async function loadBusinessConfiguration(): Promise<BusinessConfiguration> {
+  const client = requireSupabase();
+  const [branches, units, conversions, packages, ingredients, inventory, entries, goLive] = await Promise.all([
+    client.from('branches').select('id, code, city, active').eq('active', true).order('code'),
+    client.from('units_of_measure').select('code, name, dimension').order('code'),
+    client.from('unit_conversions').select('from_unit, to_unit, factor'),
+    client.from('ingredient_package_sizes').select('ingredient_id, package_quantity, package_unit, package_label'),
+    client.from('ingredients').select('id, name, unit').eq('active', true).order('name'),
+    client.from('branch_inventory').select('branch_id, ingredient_id, quantity'),
+    client.from('opening_stock_entries').select('branch_id, ingredient_id, quantity, unit, previous_quantity, recorded_at'),
+    client.from('business_go_live').select('go_live_date, locked_at').eq('id', true).maybeSingle(),
+  ]);
+  for (const result of [branches, units, conversions, packages, ingredients, inventory]) assertNoError(result.error);
+  const supported = !entries.error && !goLive.error;
+  const names = new Map((ingredients.data ?? []).map((item) => [item.id, item.name]));
+  return {
+    branches: (branches.data ?? []).map((branch) => ({ id: branch.id, code: branch.code, city: branch.city ?? '', name: formatBranchName(branch) })),
+    units: units.data ?? [],
+    conversions: (conversions.data ?? []).map((row) => ({ ...row, factor: Number(row.factor) })),
+    purchaseUnits: (packages.data ?? []).map((row) => ({ ingredient: names.get(row.ingredient_id) ?? row.ingredient_id, label: row.package_label, quantity: Number(row.package_quantity), unit: row.package_unit })),
+    ingredients: ingredients.data ?? [],
+    inventory: (inventory.data ?? []).map((row) => ({ ...row, quantity: Number(row.quantity) })),
+    openingEntries: supported ? (entries.data ?? []).map((row) => ({ ...row, quantity: Number(row.quantity), previous_quantity: Number(row.previous_quantity) })) : [],
+    goLive: supported ? goLive.data ?? null : null,
+    openingStockSupported: supported,
+  };
+}
+
+/** OW-28 c3: the branch name shown as "<name> · Branch N". */
+export async function saveBranchName(branchId: string, name: string): Promise<void> {
+  const { data, error } = await requireSupabase().from('branches').update({ city: name.trim() }).eq('id', branchId).select('id').maybeSingle();
+  assertNoError(error);
+  if (!data) throw new Error('The branch name could not be saved.');
+}
+
+/** OW-28 c5, c6: the opening stock of an item at a branch (once). */
+export async function recordOpeningStock(branchId: string, ingredientId: string, quantity: number): Promise<void> {
+  const { error } = await requireSupabase().rpc('record_opening_stock', { p_branch_id: branchId, p_ingredient_id: ingredientId, p_quantity: quantity });
+  assertNoError(error);
+}
+
+/** OW-28 c7: sets the go-live date and locks the opening stock. */
+export async function setBusinessGoLive(goLiveDate: string): Promise<void> {
+  const { error } = await requireSupabase().rpc('set_business_go_live', { p_go_live_date: goLiveDate });
+  assertNoError(error);
+}
+
 export async function loadOwnerSalesData(input: {
   start: Date;
   end: Date;
