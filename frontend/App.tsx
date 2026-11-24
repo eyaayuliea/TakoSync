@@ -4,6 +4,7 @@ import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
+import { brandLogoLayout, openingLogoWidth } from './theme/brandLogo';
 import {
   calendarDaysUntil,
   classifyExpirationLevel,
@@ -120,6 +121,21 @@ export default function App() {
     <ThemeProvider>
       <AppContent />
     </ThemeProvider>
+  );
+}
+
+/** The logo artwork at `width`, with the transparent margins of the file cropped away. */
+function BrandLogo({ source, width }: { source: number; width: number }) {
+  const layout = brandLogoLayout(width);
+  return (
+    <View style={{ width: layout.boxWidth, height: layout.boxHeight, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+      <Image
+        source={source}
+        style={{ width: layout.imageSize, height: layout.imageSize }}
+        resizeMode="contain"
+        accessibilityLabel="TakoSync logo"
+      />
+    </View>
   );
 }
 
@@ -788,12 +804,7 @@ function AppContent() {
           <View style={[styles.appFrame, isWideScreen && styles.desktopFrame]}>
             {visibleScreen === 'loading' && (!fontsLoaded || !sessionInitialized) && (
               <View style={styles.loadingScreen}>
-                <Image
-                  source={themedLogo}
-                  style={[styles.loadingLogo, { width: Math.min(frameWidth * 0.68, 280), height: Math.min(frameWidth * 0.48, 190) }]}
-                  resizeMode="contain"
-                  accessibilityLabel="TakoSync logo"
-                />
+                <BrandLogo source={themedLogo} width={openingLogoWidth(frameWidth)} />
               </View>
             )}
 
@@ -805,12 +816,10 @@ function AppContent() {
                 imageStyle={styles.welcomeBackgroundImage}
               >
                 <View style={styles.whiteHeader}>
-                  <Image
-                    source={themedLogo}
-                    style={[styles.headerLogo, { width: logoWidth, height: logoWidth * 0.64 }]}
-                    resizeMode="contain"
-                    accessibilityLabel="TakoSync logo"
-                  />
+                  {/* A light backdrop keeps the logo readable over the photo. */}
+                  <View style={styles.welcomeLogoBackdrop}>
+                    <BrandLogo source={require('../assets/LIGHT THEME (LOGO).png')} width={openingLogoWidth(frameWidth)} />
+                  </View>
                 </View>
 
                 <View style={[styles.pinkPanel, { height: frameHeight * (frameHeight < 700 ? 0.65 : 0.53) }]}>
@@ -1692,10 +1701,10 @@ function useAppStyles() {
   appFrame: { flex: 1, overflow: 'hidden', backgroundColor: '#FFFFFF' },
   desktopFrame: { borderRadius: 28 },
   loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  loadingLogo: { alignSelf: 'center', marginTop: '14%' },
   welcomeScreen: { flex: 1, backgroundColor: '#FFFFFF', overflow: 'hidden' },
   welcomeBackgroundImage: { width: '100%', height: '100%' },
-  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '5%', backgroundColor: 'transparent' },
+  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '9%', backgroundColor: 'transparent' },
+  welcomeLogoBackdrop: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 26, backgroundColor: 'rgba(255, 255, 255, 0.92)' },
   headerLogo: { alignSelf: 'center', marginTop: 0 },
   pinkPanel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
