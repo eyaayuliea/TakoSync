@@ -1,5 +1,5 @@
 import type { InventoryItem } from '../services/takosync';
-import { staffInventorySort } from './staffInventoryCatalog.ts';
+import { STAFF_INVENTORY_CATEGORY_ORDER, staffInventoryCategoryName, staffInventorySort } from './staffInventoryCatalog.ts';
 import {
   calendarDaysUntil,
   classifyExpirationLevel,
@@ -14,17 +14,8 @@ export type InventoryReportItem = Pick<
 export type InventoryStockStatus = 'Normal' | 'Low Stock' | 'Out of Stock';
 export type InventoryExpirationStatus = 'Near Expiry' | 'Expired' | null;
 
-export const STAFF_INVENTORY_CATEGORIES = [
-  'All',
-  'Seafood',
-  'Dairy',
-  'Meat',
-  'Vegetables',
-  'Condiments',
-  'Dry Goods',
-  'Supplies',
-  'Prepared',
-] as const;
+/** "All" plus the catalog's categories; the Inventory screen shows the ones the branch has (staffInventoryCategoryFilters). */
+export const STAFF_INVENTORY_CATEGORIES = ['All', ...STAFF_INVENTORY_CATEGORY_ORDER.filter((name) => name !== 'Seafood')] as const;
 
 export type InventoryCategorySummary = {
   category: string;
@@ -175,11 +166,7 @@ export function inventoryExpirationStatus(
 }
 
 export function displayInventoryCategory(category: string): string {
-  const normalized = category.trim().toLowerCase();
-  if (normalized === 'dairy' || normalized === 'dairy & eggs') return 'Dairy';
-  if (normalized === 'produce' || normalized === 'vegetables') return 'Vegetables';
-  if (normalized === 'prepared inventory' || normalized === 'prepared') return 'Prepared';
-  return category.trim() || 'Other';
+  return staffInventoryCategoryName(category);
 }
 
 export function filterStaffInventoryItems<T extends {

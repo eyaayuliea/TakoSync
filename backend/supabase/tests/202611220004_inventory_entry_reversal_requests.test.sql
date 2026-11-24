@@ -43,8 +43,8 @@ insert into auth.sessions (id, user_id, created_at, updated_at)
 select owner_session_id, owner_id, now(), now() from rev_fixture
 union all select staff_session_id, staff_id, now(), now() from rev_fixture;
 
--- Branch 1 flour: 10 kg on an older lot, then today's 3 kg Stock-In on its own
--- lot, then 1 kg spilled from the older lot. 12 kg on hand.
+-- Branch 1 flour: 10 g on an older lot, then today's 3 g Stock-In on its own
+-- lot, then 1 g spilled from the older lot. 12 g on hand.
 update public.branch_inventory set quantity = 12
 where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour';
 insert into public.ingredient_batches (id, branch_id, ingredient_id, batch_reference, received_date, quantity_received, quantity_remaining)
@@ -57,19 +57,19 @@ select used_lot_id, '00000000-0000-4000-8000-000000000001'::uuid, 'flour', 'REV-
 insert into public.inventory_movements (id, reference, branch_id, ingredient_id, actor_id, type, quantity, unit,
   movement, before_quantity, after_quantity, reason, notes, batch_id, created_at)
 select stock_in_id, 'REV-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
-  3, 'kg', 3, 10, 13, '', '', stock_lot_id, now() from rev_fixture
+  3, 'g', 3, 10, 13, '', '', stock_lot_id, now() from rev_fixture
 union all
 select spillage_id, 'REV-SPILL', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'waste'::public.inventory_transaction_type,
-  1, 'kg', -1, 13, 12, 'Spillage', 'Dropped a bag', null, now() from rev_fixture
+  1, 'g', -1, 13, 12, 'Spillage', 'Dropped a bag', null, now() from rev_fixture
 union all
 select old_stock_in_id, 'REV-OLD-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
-  1, 'kg', 1, 9, 10, '', '', null, now() - interval '2 days' from rev_fixture
+  1, 'g', 1, 9, 10, '', '', null, now() - interval '2 days' from rev_fixture
 union all
 select other_stock_in_id, 'REV-OTHER-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', other_staff_id, 'stock_in'::public.inventory_transaction_type,
-  1, 'kg', 1, 9, 10, '', '', null, now() from rev_fixture
+  1, 'g', 1, 9, 10, '', '', null, now() from rev_fixture
 union all
 select used_stock_in_id, 'REV-USED-STOCK-IN', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_id, 'stock_in'::public.inventory_transaction_type,
-  2, 'kg', 2, 8, 10, '', '', used_lot_id, now() from rev_fixture;
+  2, 'g', 2, 8, 10, '', '', used_lot_id, now() from rev_fixture;
 
 select ok(not has_table_privilege('authenticated', 'public.inventory_entry_reversal_requests', 'insert'),
   'reversal requests are written only by RPC');
@@ -99,7 +99,7 @@ select throws_ok(
   'a Stock-In whose lot was partly used cannot be reversed');
 
 select is(
-  (select (public.request_inventory_entry_reversal(stock_in_id, 'Entered 3 kg instead of 0', gen_random_uuid())).entry_type from rev_fixture),
+  (select (public.request_inventory_entry_reversal(stock_in_id, 'Entered 3 g instead of 0', gen_random_uuid())).entry_type from rev_fixture),
   'stock_in', 'ST-13 c4: a Stock-In reversal is requested');
 
 select throws_ok(
@@ -139,7 +139,7 @@ select is(
 select is(
   (select quantity from public.branch_inventory
    where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
-  9.000::numeric(12, 3), 'the 3 kg Stock-In is taken back out of stock');
+  9.000::numeric(12, 3), 'the 3 g Stock-In is taken back out of stock');
 
 select is(
   (select quantity_remaining from public.ingredient_batches where id = (select stock_lot_id from rev_fixture)),
@@ -171,7 +171,7 @@ select throws_ok(
   format($$insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type,
     reverses_movement_id, quantity, unit, movement, before_quantity, after_quantity)
     values ('REV-FORGED', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', %L, 'entry_reversal', %L,
-    1, 'kg', 1, 9, 10)$$, (select owner_id from rev_fixture), (select spillage_id from rev_fixture)),
+    1, 'g', 1, 9, 10)$$, (select owner_id from rev_fixture), (select spillage_id from rev_fixture)),
   'P0001', 'This movement type requires an approved atomic workflow',
   'Entry Reversal movements cannot be written outside an approved request');
 

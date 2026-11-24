@@ -15,13 +15,37 @@ import {
 } from './inventoryReports.ts';
 import {
   STAFF_INVENTORY_CATEGORY_ORDER,
+  staffInventoryCategoryFilters,
   staffInventorySort,
 } from './staffInventoryCatalog.ts';
 
 test('staff inventory is database-driven: categories sort in the approved order, then by name', () => {
   assert.deepEqual([...STAFF_INVENTORY_CATEGORY_ORDER], [
-    'Seafood', 'Dairy', 'Meat', 'Vegetables', 'Condiments', 'Dry Goods', 'Supplies', 'Prepared',
+    'Frozen seafood', 'Chilled seafood', 'Dried seafood', 'Seafood', 'Dairy & eggs', 'Chilled meat', 'Fresh produce',
+    'Sauces & oils', 'Dry goods', 'Supplies', 'Prepared batter',
   ]);
+  // The catalog's categories (2026-11-25), in catalog order.
+  const catalogRows = [
+    { name: 'Packaging', category: 'Supplies' },
+    { name: 'Prepared Takoyaki Batter', category: 'Prepared batter' },
+    { name: 'Salt', category: 'Dry goods' },
+    { name: 'Soy sauce', category: 'Sauces & oils' },
+    { name: 'Chopped cabbage', category: 'Fresh produce' },
+    { name: 'Bacon', category: 'Chilled meat' },
+    { name: 'Eggs', category: 'Dairy & eggs' },
+    { name: 'Bonito flakes', category: 'Dried seafood' },
+    { name: 'Crab stick', category: 'Chilled seafood' },
+    { name: 'Octopus', category: 'Frozen seafood' },
+  ];
+  assert.deepEqual([...catalogRows].sort(staffInventorySort).map((row) => row.name), [
+    'Octopus', 'Crab stick', 'Bonito flakes', 'Eggs', 'Bacon', 'Chopped cabbage', 'Soy sauce', 'Salt', 'Packaging', 'Prepared Takoyaki Batter',
+  ]);
+  // The filter chips are the categories the branch's items have, in the same order.
+  assert.deepEqual(staffInventoryCategoryFilters(catalogRows), [
+    'All', 'Frozen seafood', 'Chilled seafood', 'Dried seafood', 'Dairy & eggs', 'Chilled meat', 'Fresh produce', 'Sauces & oils', 'Dry goods', 'Supplies', 'Prepared batter',
+  ]);
+  assert.deepEqual(staffInventoryCategoryFilters([{ category: 'Dairy' }, { category: 'Party supplies' }, { category: 'Dairy & eggs' }]), ['All', 'Dairy & eggs', 'Party supplies']);
+  // Data saved under the names used before the catalog sorts as the same categories.
   const rows = [
     { name: 'Packaging', category: 'Supplies' },
     { name: 'Salt', category: 'Dry Goods' },
@@ -131,20 +155,22 @@ test('Staff inventory filters are branch-scoped and combine normalized categorie
     { id: 'other-branch', name: 'Cheese', category: 'Dairy & eggs', hasBranchInventory: false },
   ];
 
-  assert.deepEqual(STAFF_INVENTORY_CATEGORIES, [
-    'All', 'Seafood', 'Dairy', 'Meat', 'Vegetables', 'Condiments', 'Dry Goods', 'Supplies', 'Prepared',
+  assert.deepEqual([...STAFF_INVENTORY_CATEGORIES], [
+    'All', 'Frozen seafood', 'Chilled seafood', 'Dried seafood', 'Dairy & eggs', 'Chilled meat', 'Fresh produce',
+    'Sauces & oils', 'Dry goods', 'Supplies', 'Prepared batter',
   ]);
-  assert.equal(displayInventoryCategory('Prepared Inventory'), 'Prepared');
-  assert.equal(displayInventoryCategory('Produce'), 'Vegetables');
+  assert.equal(displayInventoryCategory('Prepared Inventory'), 'Prepared batter');
+  assert.equal(displayInventoryCategory('Produce'), 'Fresh produce');
+  assert.equal(displayInventoryCategory('Dry Goods'), 'Dry goods');
   assert.deepEqual(
-    filterStaffInventoryItems(items, 'Dairy', 'cheese').map((item) => item.id),
+    filterStaffInventoryItems(items, 'Dairy & eggs', 'cheese').map((item) => item.id),
     ['cheese'],
   );
   assert.deepEqual(
-    filterStaffInventoryItems(items, 'Prepared', 'batter').map((item) => item.id),
+    filterStaffInventoryItems(items, 'Prepared batter', 'batter').map((item) => item.id),
     ['batter'],
   );
-  assert.deepEqual(filterStaffInventoryItems(items, 'Meat', 'cheese'), []);
+  assert.deepEqual(filterStaffInventoryItems(items, 'Chilled meat', 'cheese'), []);
 });
 
 test('counts and discrepancies are branch-scoped, newest-first, and exclude drafts', () => {

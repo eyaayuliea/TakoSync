@@ -94,6 +94,9 @@ export function stockAlertIcon(kind: 'lowStock' | 'outOfStock' | 'nearExpiration
 
 const CATEGORY_ICONS: Record<string, AppIconName> = {
   seafood: 'categorySeafood',
+  'dried-seafood': 'categorySeafood',
+  'frozen-seafood': 'categorySeafood',
+  'chilled-seafood': 'categorySeafood',
   'dairy-eggs': 'categoryDairy',
   meat: 'categoryMeat',
   produce: 'categoryVegetables',

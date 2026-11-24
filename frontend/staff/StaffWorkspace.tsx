@@ -158,7 +158,6 @@ import {
   inventoryStockStatus,
   runDiscrepancySubmissionOnce,
   runInventoryReportLoad,
-  STAFF_INVENTORY_CATEGORIES,
   type InventoryCountRecord,
   type InventoryReportData,
 } from './inventoryReports';
@@ -193,6 +192,7 @@ import {
 } from '../services/saleVoids';
 import AppIcon, { type AppIconName } from '../theme/AppIcon';
 import { countEntriesSnapshot, hasUnsavedCountEntries } from './countLeaveGuard';
+import { staffInventoryCategoryFilters } from './staffInventoryCatalog';
 import { countHistoryCorrectionAction, countHistoryStatusLabel, countLineIdOfHistoryRecord } from './countHistoryCorrection';
 import { stockAlertIcon } from '../theme/appIcons';
 import { INGREDIENT_ICON_IMAGES } from '../theme/appIconImages';
@@ -4280,7 +4280,7 @@ export default function StaffWorkspace({
               style={styles.inventoryFilterScroll}
               contentContainerStyle={styles.inventoryFilters}
             >
-              {STAFF_INVENTORY_CATEGORIES.map((filter) => (
+              {staffInventoryCategoryFilters(ingredients.filter((item) => item.hasBranchInventory)).map((filter) => (
                 <FilterChip
                   key={filter}
                   label={filter}

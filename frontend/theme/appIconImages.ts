@@ -63,6 +63,7 @@ export const INGREDIENT_ICON_IMAGES: Record<string, number> = {
   'soy-sauce': require('../../assets/icons/ingredients/soy-sauce.png'),
   'prepared-batter': require('../../assets/icons/ingredients/prepared-batter.png'),
   sauces: require('../../assets/icons/ingredients/sauces.png'),
+  'takoyaki-picks': require('../../assets/icons/ingredients/takoyaki-pick.png'),
 };
 
 export const OWNER_MENU_ICON_IMAGES: Record<string, number> = {

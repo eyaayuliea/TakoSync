@@ -38,7 +38,7 @@ update public.menu_addons set active = true where id = (select addon_id from add
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', (select owner_id from addon_fixture), 'role', 'authenticated',
   'session_id', (select owner_session_id from addon_fixture))::text, true);
-select lives_ok(format($$ insert into public.addon_recipes (addon_id, ingredient_id, quantity_required, unit_of_measure) values (%L, 'sauces', 0.02, 'L') $$,
+select lives_ok(format($$ insert into public.addon_recipes (addon_id, ingredient_id, quantity_required, unit_of_measure) values (%L, 'sauces', 20, 'ml') $$,
   (select addon_id from addon_fixture)), 'c7: the owner gives an add-on a recipe');
 select throws_ok(format($$ insert into public.addon_recipes (addon_id, ingredient_id, quantity_required, unit_of_measure) values (%L, 'salt', 0, 'tsp') $$,
   (select addon_id from addon_fixture)), '23514', null, 'the required quantity is greater than zero');
@@ -59,8 +59,8 @@ select lives_ok(format($$ select public.submit_sale('ADDON-RECIPE-TEST', '000000
 
 reset role;
 select is((select quantity_consumed from public.sale_consumption_snapshots s join public.sales x on x.id = s.sale_id
-  where x.transaction_reference = 'ADDON-RECIPE-TEST' and s.recipe_type = 'addon' and s.ingredient_id = 'sauces'), 0.04::numeric,
-  'c7: two add-ons consume twice the recipe quantity (0.04 L)');
+  where x.transaction_reference = 'ADDON-RECIPE-TEST' and s.recipe_type = 'addon' and s.ingredient_id = 'sauces'), 40::numeric,
+  'c7: two add-ons consume twice the recipe quantity (40 ml)');
 select ok(exists (select 1 from public.inventory_movements m join public.sales x on x.id = m.sale_id
   where x.transaction_reference = 'ADDON-RECIPE-TEST' and m.ingredient_id = 'sauces' and m.type = 'sales_consumption'),
   'the add-on consumption is posted as Sales Consumption');

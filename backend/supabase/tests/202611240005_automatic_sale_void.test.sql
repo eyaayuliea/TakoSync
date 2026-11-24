@@ -49,7 +49,7 @@ select owner_session_id, owner_id, now(), now() from void_fixture
 union all select staff_1_session_id, staff_1_id, now(), now() from void_fixture
 union all select staff_2_session_id, staff_2_id, now(), now() from void_fixture;
 
--- Branch 1 had 10 kg of flour; the sale below consumed 2 kg.
+-- Branch 1 had 10 g of flour; the sale below consumed 2 g.
 update public.branch_inventory set quantity = 8
 where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour';
 insert into public.ingredient_batches (branch_id, ingredient_id, batch_reference, quantity_received, quantity_remaining)
@@ -80,7 +80,7 @@ select pg_backend_pid(), txid_current(), sale_id from void_fixture;
 insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type, sale_id, quantity, unit,
   movement, before_quantity, after_quantity, reason, notes)
 select 'VOID-TEST-CONSUMPTION', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', staff_1_id, 'sales_consumption',
-  sale_id, 2, 'kg', -2, 10, 8, 'Sale fixture', 'sale:' || sale_id::text
+  sale_id, 2, 'g', -2, 10, 8, 'Sale fixture', 'sale:' || sale_id::text
 from void_fixture;
 delete from private.sales_processing_authorizations where backend_pid = pg_backend_pid();
 
@@ -130,7 +130,7 @@ select is(
 select is(
   (select sum(quantity_remaining) from public.ingredient_batches
    where branch_id = '00000000-0000-4000-8000-000000000001'::uuid and ingredient_id = 'flour'),
-  (select lots_before + 2 from void_lots_before), 'the 2 kg is returned to the flour lots');
+  (select lots_before + 2 from void_lots_before), 'the 2 g is returned to the flour lots');
 
 select results_eq(
   format($$select quantity, movement, notes, actor_id from public.inventory_movements
@@ -208,7 +208,7 @@ select throws_ok(
   format($$insert into public.inventory_movements (reference, branch_id, ingredient_id, actor_id, type, sale_id,
     quantity, unit, movement, before_quantity, after_quantity)
     values ('VOID-TEST-FORGED', '00000000-0000-4000-8000-000000000001'::uuid, 'flour', %L, 'void_reversal', %L,
-    1, 'kg', 1, 10, 11)$$, (select owner_id from void_fixture), (select old_sale_id from void_fixture)),
+    1, 'g', 1, 10, 11)$$, (select owner_id from void_fixture), (select old_sale_id from void_fixture)),
   'P0001', 'This movement type requires an approved atomic workflow',
   'Void Reversal entries cannot be written outside the Void action');
 
