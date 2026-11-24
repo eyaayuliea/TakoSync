@@ -15,6 +15,7 @@ import type { SaleSubmission, StaffMenuAddon, StaffMenuCatalogItem } from '../se
 import { isRetryableSaleSubmissionError } from '../services/ownerSalesStatus';
 import { useTheme } from '../theme/ThemeProvider';
 import { ownerColors } from '../owner/shared/ownerTokens';
+import { orderActionColors } from './orderActionColors';
 import type { MenuCartLine, MenuProduct } from './menuPreviewData';
 import { extraFlavorTabs } from './menuFlavorOptions';
 import { addonsForCart, resolveMenuAddons } from './menuAddons';
@@ -467,6 +468,7 @@ export default function MenuWorkspace({
   const darkSecondarySurface = isDark ? { backgroundColor: '#0F1025' } : undefined;
   const darkSecondaryText = isDark ? { color: '#FFFFFF' } : undefined;
   const darkWarningText = isDark ? { color: '#0F1025' } : undefined;
+  const actionColors = orderActionColors(isDark);
   const stockWarningList = stockWarnings.length > 0 ? (
     <View style={styles.stockWarningBox} accessibilityRole="alert">
       {stockWarnings.map((warning) => (
@@ -642,8 +644,13 @@ export default function MenuWorkspace({
             <Pressable accessibilityRole="button" onPress={() => setConfirmAction(null)} style={styles.confirmKeepButton}>
               <Text style={styles.confirmKeepText}>{confirmCopy.keep}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={confirmCopy.confirm} onPress={runConfirmedAction} style={styles.confirmGoButton}>
-              <Text style={styles.confirmGoText}>{confirmCopy.confirm}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={confirmCopy.confirm}
+              onPress={runConfirmedAction}
+              style={[styles.confirmGoButton, (confirmAction === 'cancel' || confirmAction === 'clear') && { backgroundColor: actionColors.destructiveFill.background }]}
+            >
+              <Text style={[styles.confirmGoText, (confirmAction === 'cancel' || confirmAction === 'clear') && { color: actionColors.destructiveFill.text }]}>{confirmCopy.confirm}</Text>
             </Pressable>
           </View>
         </View>
@@ -715,8 +722,8 @@ export default function MenuWorkspace({
             </Pressable>
           </View>
           {emptyOrderMessage !== '' ? <Text style={styles.paymentError}>{emptyOrderMessage}</Text> : null}
-          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.checkoutBackButton}>
-            <Text style={styles.checkoutBackText}>Cancel order</Text>
+          <Pressable accessibilityRole="button" onPress={cancelOrder} style={styles.cartCancelButton}>
+            <Text style={styles.cartCancelText}>Cancel order</Text>
           </Pressable>
         </View>
       </View>
@@ -833,20 +840,42 @@ export default function MenuWorkspace({
               A recorded sale may need inventory processing or recovery. The receipt keeps the sale details and inventory status separate.
             </Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={() => onSetPage('cart')} style={styles.checkoutBackButton}>
-            <Text style={styles.checkoutBackText}>Return to cart</Text>
-          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Confirm transaction"
+            accessibilityState={{ disabled: !checkoutValid || saleSubmitting }}
             disabled={!checkoutValid || saleSubmitting}
             onPress={() => setConfirmAction('sale')}
-            style={[styles.placeOrderButton, (!checkoutValid || saleSubmitting) && styles.disabledButton]}
+            style={({ pressed }) => [
+              styles.orderPrimaryButton,
+              { backgroundColor: (!checkoutValid || saleSubmitting) ? actionColors.primaryDisabled.background : actionColors.primary.background },
+              pressed && styles.orderActionPressed,
+            ]}
           >
-            <Text style={styles.placeOrderText}>{saleSubmitting ? 'Saving…' : 'Confirm Transaction'}</Text>
+            <Text style={[styles.orderPrimaryText, { color: (!checkoutValid || saleSubmitting) ? actionColors.primaryDisabled.text : actionColors.primary.text }]}>
+              {saleSubmitting ? 'Saving…' : 'Confirm Transaction'}
+            </Text>
           </Pressable>
-          <Pressable accessibilityRole="button" disabled={saleSubmitting} onPress={cancelOrder} style={styles.checkoutBackButton}>
-            <Text style={styles.checkoutBackText}>Cancel order</Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={saleSubmitting}
+            onPress={() => onSetPage('cart')}
+            style={({ pressed }) => [
+              styles.orderSecondaryButton,
+              { backgroundColor: actionColors.secondary.background, borderColor: actionColors.secondary.border },
+              pressed && styles.orderActionPressed,
+              saleSubmitting && styles.disabledButton,
+            ]}
+          >
+            <Text style={[styles.orderSecondaryText, { color: actionColors.secondary.text }]}>Return to cart</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={saleSubmitting}
+            onPress={cancelOrder}
+            style={({ pressed }) => [styles.orderDestructiveButton, pressed && styles.orderActionPressed, saleSubmitting && styles.disabledButton]}
+          >
+            <Text style={[styles.orderDestructiveText, { color: actionColors.destructive.text }]}>Cancel order</Text>
           </Pressable>
         </ScrollView>
         <View style={styles.totalFooter}>
@@ -1544,9 +1573,28 @@ const styles = StyleSheet.create({
     fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 8,
   },
   checkoutSummary: { color: colors.navy, fontFamily: font.semibold, fontSize: 9, marginTop: 15 },
-  checkoutBackButton: {
+  // The cart footer is pink, so this reads as a plain text action on it.
+  cartCancelButton: {
     minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 13,
     backgroundColor: colors.pink, marginTop: 17,
   },
-  checkoutBackText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  cartCancelText: { color: colors.white, fontFamily: font.semibold, fontSize: 9 },
+  // Order page actions (colours come from orderActionColors): one filled primary,
+  // an outlined secondary, and the destructive action as red text set apart.
+  orderPrimaryButton: {
+    minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+    borderRadius: 13, marginTop: 18,
+  },
+  orderPrimaryText: { fontFamily: font.semibold, fontSize: 12 },
+  orderSecondaryButton: {
+    minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+    borderRadius: 13, borderWidth: 1.5, marginTop: 10,
+  },
+  orderSecondaryText: { fontFamily: font.semibold, fontSize: 11 },
+  orderDestructiveButton: {
+    minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+    borderRadius: 13, marginTop: 18,
+  },
+  orderDestructiveText: { fontFamily: font.semibold, fontSize: 11 },
+  orderActionPressed: { opacity: 0.8 },
 });
