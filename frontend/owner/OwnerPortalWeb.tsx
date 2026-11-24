@@ -19,6 +19,7 @@ import { OwnerPasswordChangeError, validateOwnerPasswordChange, type OwnerPasswo
 import { isOwnerPortalConnectionError, OWNER_PORTAL_CONNECTION_MESSAGE, ownerPortalErrorText } from './ownerPortalErrors';
 import { portalPageState, type PortalDataset } from './ownerPortalPageState';
 import { dashboardAlerts, dashboardStockCounts } from './ownerPortalDashboard';
+import { BOTTLES_PER_BATCH, parseAlertDays, parseMinimumStock, parseYieldPerBottle, thresholdRows, yieldPerBottle, type ThresholdRow } from './ownerPortalBatterThresholds';
 import {
   BASE_UNITS,
   baseUnitOf,
@@ -127,6 +128,7 @@ import {
   saveProductAddons,
   updateBulkOrderThreshold,
   type MenuAddonConfiguration,
+  type StockExpirationSettingsData,
   validateOwnerInventoryCountCorrection,
   validateOwnerSubmittedInventoryCount,
   type AppUser,
@@ -134,7 +136,6 @@ import {
   type ProductManagementItem,
   type SharedRecipeRecord,
 } from '../services/takosync';
-import { getConfiguredRecipeQuantity, getPerBottleRecipeQuantity } from '../services/batterRecipeQuantities';
 import { PRODUCT_PORTION_TYPES, standardProductVariants, type ProductPortionType } from '../services/productCatalog';
 import { getManilaReportingRange, manilaDateKey, type ReportingPeriod } from '../services/businessDaySettings';
 import {
@@ -2687,6 +2688,8 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
   const [automaticConsumption, setAutomaticConsumption] = useState(false);
   const [productIds, setProductIds] = useState<string[]>([]);
   const [lines, setLines] = useState<PreparedBatterDraftLine[]>([]);
+  // OW-23 c3: pieces one bottle yields (20–25).
+  const [yieldDraft, setYieldDraft] = useState('25');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -2713,16 +2716,17 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
       setActive(selectedRecipe.active);
       setAutomaticConsumption(selectedRecipe.automatic_consumption_enabled);
       setProductIds(selectedRecipe.productIds);
-      try {
-        setLines(selectedRecipe.ingredientLines.map((line, index) => ({
+      setYieldDraft(String(yieldPerBottle(selectedRecipe)));
+      // OW-23 c1: raw ingredient quantities per batch (as saved). The prepared-batter
+      // output line is not a raw ingredient and is kept as it is.
+      setLines(selectedRecipe.ingredientLines
+        .filter((line) => line.ingredient_id !== 'prepared-batter')
+        .map((line, index) => ({
           key: `${selectedRecipe.id}-${index}`,
           ingredientId: line.ingredient_id,
-          quantity: String(getPerBottleRecipeQuantity(line.quantity_required, selectedRecipe.prepared_quantity)),
+          quantity: String(line.quantity_required),
         })));
-        setError('');
-      } catch (reason: unknown) {
-        setError(reason instanceof Error ? reason.message : 'The saved batter recipe has invalid quantities.');
-      }
+      setError('');
     } else {
       setRecipeCode('shared-batter');
       setRecipeName('Shared Takoyaki Batter');
@@ -2730,6 +2734,7 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
       setAutomaticConsumption(false);
       setProductIds([]);
       setLines([]);
+      setYieldDraft('25');
     }
   }, [selectedRecipe]);
 
@@ -2738,6 +2743,11 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
     setError('');
     if (!recipeCode.trim() || !recipeName.trim() || lines.length === 0) {
       setError('Enter a recipe code and name and add at least one raw ingredient.');
+      return;
+    }
+    const parsedYield = parseYieldPerBottle(yieldDraft);
+    if ('error' in parsedYield) {
+      setError(parsedYield.error);
       return;
     }
     const usedIngredients = new Set<string>();
@@ -2749,18 +2759,20 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
         setError('Choose a different configured ingredient for every recipe line.');
         return;
       }
-      if (!Number.isFinite(quantity) || quantity <= 0) {
-        setError(`Enter a positive per-bottle quantity for ${ingredient.name}.`);
+      if (!line.quantity.trim() || !Number.isFinite(quantity) || quantity <= 0) {
+        setError(`Enter a quantity per batch greater than zero for ${ingredient.name}.`);
         return;
       }
       usedIngredients.add(line.ingredientId);
       ingredientLines.push({
         ingredient_id: ingredient.id,
-        quantity_required: getConfiguredRecipeQuantity(quantity, 5),
+        quantity_required: quantity,
         unit_of_measure: ingredient.unit,
         automatic_consumption_enabled: automaticConsumption,
       });
     }
+    // Keep the prepared-batter output line of the saved recipe.
+    ingredientLines.push(...(selectedRecipe?.ingredientLines ?? []).filter((line) => line.ingredient_id === 'prepared-batter'));
 
     setSaving(true);
     try {
@@ -2768,15 +2780,15 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
         id: selectedRecipe?.id,
         recipe_code: recipeCode,
         name: recipeName,
-        estimated_yield_pieces: 125,
-        prepared_quantity: 5,
+        estimated_yield_pieces: parsedYield.value * BOTTLES_PER_BATCH,
+        prepared_quantity: BOTTLES_PER_BATCH,
         prepared_unit: 'bottle',
         active,
         automatic_consumption_enabled: automaticConsumption,
         ingredientLines,
         productIds,
       });
-      await onSaved('Prepared-batter recipe saved as a new version; historical sales are unchanged.');
+      await onSaved(`Prepared batter saved: ${parsedYield.value} pieces per bottle. The new settings apply to future batches and sales only.`);
       const updatedRecipes = await loadSharedRecipes();
       setRecipes(updatedRecipes);
       const saved = updatedRecipes.find((recipe) => recipe.id === selectedRecipe?.id)
@@ -2806,8 +2818,13 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
   };
 
   return (
-    <Panel title="Prepared-batter recipe">
-      <Text style={styles.muted}>A batch is fixed at 5 bottles; yield is fixed at 25 takoyaki pieces per bottle (125 per batch).</Text>
+    <Panel title="Prepared batter">
+      {/* OW-23 c2, c5–c8 */}
+      <Text style={styles.body}>Bottles per batch: <Text style={styles.strong}>{BOTTLES_PER_BATCH}</Text></Text>
+      <Text style={styles.muted}>The batter recipe is configured here, separately from the Prepared Takoyaki Batter inventory item.</Text>
+      <Text style={styles.muted}>Raw ingredients are deducted when staff record a batch; completed sales consume prepared batter and never deduct the raw ingredients again.</Text>
+      <Text style={styles.muted}>The system does not measure the exact batter dispensed from a bottle; sales use the yield per bottle set here.</Text>
+      <Text style={styles.muted}>Saved settings apply only to future batches and sales.</Text>
       {loading ? <View style={styles.loadingRow}><ActivityIndicator color={C.pink} /><Text style={styles.muted}>Loading shared recipe…</Text></View> : null}
       {!loading && recipes.length ? (
         <Select
@@ -2819,6 +2836,9 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
       {!loading && !recipes.length ? <Text style={styles.muted}>No shared recipe was returned; a new one can be configured from the existing recipe service.</Text> : null}
       <TextInput value={recipeCode} onChangeText={setRecipeCode} placeholder="Recipe code" style={styles.input} />
       <TextInput value={recipeName} onChangeText={setRecipeName} placeholder="Recipe name" style={styles.input} />
+      <Text style={styles.label}>Yield per bottle (20–25 pieces)</Text>
+      <TextInput value={yieldDraft} onChangeText={setYieldDraft} keyboardType="number-pad" accessibilityLabel="Yield per bottle" style={[styles.input, { width: 120 }]} />
+      <Text style={styles.panelTitle}>Raw ingredients per batch</Text>
       {lines.map((line) => {
         const ingredient = ingredients.find((item) => item.id === line.ingredientId);
         return (
@@ -2840,7 +2860,8 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
                   item.key === line.key ? { ...item, quantity } : item,
                 ))}
                 keyboardType="decimal-pad"
-                placeholder={`Quantity per bottle (${ingredient?.unit ?? 'unit'})`}
+                placeholder={`Quantity per batch (${ingredient?.unit ?? 'unit'})`}
+                accessibilityLabel={`Quantity per batch of ${ingredient?.name ?? 'ingredient'}`}
                 style={styles.input}
               />
             </View>
@@ -2861,7 +2882,6 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
           <Text style={styles.pinkText}>{automaticConsumption ? 'Automatic consumption on' : 'Automatic consumption off'}</Text>
         </Pressable>
       </View>
-      <Text style={styles.muted}>Raw ingredients are deducted during preparation. Completed sales consume prepared batter only, preventing a second raw-ingredient deduction.</Text>
       <Text style={styles.panelTitle}>Applicable products</Text>
       <View style={styles.line}>
         {products.filter((product) => product.is_available).map((product) => {
@@ -2883,65 +2903,98 @@ function PreparedBatterEditor({ ingredients, products, onSaved }: {
   );
 }
 
+/**
+ * OW-24 Stock Threshold and Expiration Settings: the minimum stock level of each
+ * ingredient (used for all three branches), with search and category filter,
+ * and the expiration alert period.
+ */
+function StockThresholdsEditor({ stockSettings, onSaved }: { stockSettings: StockExpirationSettingsData | null; onSaved: OwnerPortalNotify }) {
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('All categories');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? ''));
+  const [daysError, setDaysError] = useState('');
+  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  useEffect(() => { setDays(String(stockSettings?.nearExpirationDays ?? '')); }, [stockSettings?.nearExpirationDays]);
+  if (!stockSettings) return <Panel title="Stock thresholds"><Text style={styles.muted}>Stock settings are unavailable.</Text></Panel>;
+  const categories = stockSettings.categories;
+  const categoryId = categories.find((item) => item.name === category)?.id ?? null;
+  const rows = thresholdRows({ ingredients: stockSettings.ingredients, categories, inventory: stockSettings.inventory, query, categoryId });
+  const saveRow = async (row: ThresholdRow) => {
+    const parsed = parseMinimumStock(drafts[row.ingredientId] ?? (row.minimum === null ? '' : String(row.minimum)), row.name);
+    if ('error' in parsed) { setRowError({ id: row.ingredientId, message: parsed.error }); return; }
+    setRowError(null);
+    setSavingId(row.ingredientId);
+    try {
+      // OW-24 c4: the same level for all three branches.
+      for (const branch of stockSettings.branches) await updateMinimumStock(branch.id, row.ingredientId, parsed.value);
+      setDrafts((current) => { const next = { ...current }; delete next[row.ingredientId]; return next; });
+      await onSaved(`Minimum stock for ${row.name} set to ${parsed.value} ${row.unit} for all branches.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The minimum stock level could not be saved.', true);
+    } finally {
+      setSavingId(null);
+    }
+  };
+  const saveDays = async () => {
+    const parsed = parseAlertDays(days);
+    if ('error' in parsed) { setDaysError(parsed.error); return; }
+    setDaysError('');
+    try {
+      await updateNearExpirationDays(parsed.value);
+      await onSaved(`Expiration alert period set to ${parsed.value} days for all branches.`);
+    } catch (reason: unknown) {
+      await onSaved(reason instanceof Error ? reason.message : 'The expiration alert period could not be saved.', true);
+    }
+  };
+  return (
+    <Panel title="Stock thresholds & expiration alerts">
+      <Text style={styles.muted}>An item at or below its minimum stock is Low Stock; at zero it is Out of Stock. These alerts never create or place purchase orders. Changes do not alter past records.</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10 }}>
+        <TextInput value={query} onChangeText={setQuery} placeholder="Search ingredients…" accessibilityLabel="Search thresholds" style={styles.search} />
+        <View style={{ marginBottom: 16 }}><Select value={category} options={['All categories', ...categories.map((item) => item.name)]} onChange={setCategory} /></View>
+      </View>
+      <View style={styles.tableHead}>
+        {['Ingredient', 'Category', 'Unit', 'Minimum stock (all branches)', ''].map((header) => <Text key={header} style={styles.headCell}>{header}</Text>)}
+      </View>
+      {rows.map((row) => (
+        <View key={row.ingredientId}>
+          <View style={[styles.tableRow, { alignItems: 'center' }]}>
+            <Text style={[styles.cell, styles.strong]}>{row.name}</Text>
+            <Text style={styles.cell}>{row.category}</Text>
+            <Text style={styles.cell}>{row.unit}</Text>
+            <View style={{ flex: 1 }}>
+              <TextInput value={drafts[row.ingredientId] ?? (row.minimum === null ? '' : String(row.minimum))} onChangeText={(value) => setDrafts((current) => ({ ...current, [row.ingredientId]: value }))} keyboardType="decimal-pad" accessibilityLabel={`Minimum stock for ${row.name}`} style={[styles.input, { padding: 8, width: 110 }]} />
+              {row.varies ? <Text style={styles.muted}>Differs by branch; saving sets it for all.</Text> : null}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Save minimum stock for ${row.name}`} disabled={savingId !== null} onPress={() => void saveRow(row)} style={[styles.outline, { marginTop: 0 }]}>
+                <Text style={styles.pinkText}>{savingId === row.ingredientId ? 'Saving…' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+          {rowError?.id === row.ingredientId ? <Text style={[styles.errorText, { paddingHorizontal: 14 }]} accessibilityRole="alert">{rowError.message}</Text> : null}
+        </View>
+      ))}
+      {rows.length === 0 ? <Text style={styles.empty}>No ingredients match the search or category.</Text> : null}
+      <Text style={[styles.label, { marginTop: 18 }]}>Expiration alert period (days before expiration shown as Near Expiration)</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <TextInput value={days} onChangeText={(value) => { setDays(value); setDaysError(''); }} keyboardType="number-pad" accessibilityLabel="Expiration alert period" style={[styles.input, { width: 110 }]} />
+        <Pressable accessibilityRole="button" onPress={() => void saveDays()} style={[styles.outline, { marginTop: 0 }]}><Text style={styles.pinkText}>Save alert period</Text></Pressable>
+      </View>
+      {daysError ? <Text style={styles.errorText} accessibilityRole="alert">{daysError}</Text> : null}
+    </Panel>
+  );
+}
+
 function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
   products: ProductManagementItem[];
   configuration: any;
   stockSettings: any;
   onSaved: OwnerPortalNotify;
 }) {
-  const [thresholdId, setThresholdId] = useState(stockSettings?.inventory?.[0]?.ingredient_id ?? '');
-  const [thresholdBranch, setThresholdBranch] = useState(stockSettings?.inventory?.[0]?.branch_id ?? '');
-  const [threshold, setThreshold] = useState('0');
-  const [days, setDays] = useState(String(stockSettings?.nearExpirationDays ?? 7));
-  const [saving, setSaving] = useState(false);
   const ingredients = configuration?.ingredients ?? [];
-  const inventorySettings = stockSettings?.inventory ?? [];
-  const selectedThreshold = inventorySettings.find((item: any) =>
-    item.branch_id === thresholdBranch && item.ingredient_id === thresholdId,
-  );
-  const thresholdOptions = [
-    'Choose inventory record',
-    ...inventorySettings.map((item: any) => `${item.branch_id} · ${item.ingredient_id}`),
-  ];
-
-  const saveThreshold = async () => {
-    const minimumStock = Number(threshold);
-    if (!thresholdBranch || !thresholdId) {
-      await onSaved('Choose a branch inventory record first.', true);
-      return;
-    }
-    if (!Number.isFinite(minimumStock) || minimumStock < 0) {
-      await onSaved('Minimum stock must be a non-negative number.', true);
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateMinimumStock(thresholdBranch, thresholdId, minimumStock);
-      await onSaved('Minimum stock threshold updated.');
-    } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Threshold save failed.', true);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveDays = async () => {
-    const parsed = Number(days);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
-      await onSaved('Expiration alert period must be a whole number from 1 to 365 days.', true);
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateNearExpirationDays(parsed);
-      await onSaved('Expiration alert period updated.');
-    } catch (reason: unknown) {
-      await onSaved(reason instanceof Error ? reason.message : 'Expiration settings save failed.', true);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <>
       <Text style={styles.section}>Settings & configuration</Text>
@@ -2950,38 +3003,8 @@ function SettingsEditor({ products, configuration, stockSettings, onSaved }: {
         <OwnerProductEditor products={products} onSaved={onSaved} />
         <IngredientConfigurationEditor configuration={configuration} onSaved={onSaved} />
         <RecipesEditor products={products} configuration={configuration} onSaved={onSaved} />
-        <Panel title="Minimum stock thresholds">
-          <Text style={styles.muted}>Update the threshold for a specific branch and ingredient.</Text>
-          <Select
-            value={selectedThreshold
-              ? `${selectedThreshold.branch_id} · ${selectedThreshold.ingredient_id}`
-              : 'Choose inventory record'}
-            options={thresholdOptions}
-            onChange={(value) => {
-              const match = inventorySettings.find((item: any) =>
-                `${item.branch_id} · ${item.ingredient_id}` === value,
-              );
-              if (match) {
-                setThresholdBranch(match.branch_id);
-                setThresholdId(match.ingredient_id);
-                setThreshold(String(match.minimum_stock));
-              }
-            }}
-          />
-          <TextInput value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" placeholder="Minimum stock" style={styles.input} />
-          <Pressable disabled={saving} onPress={() => void saveThreshold()} style={styles.outline}>
-            <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save threshold'}</Text>
-          </Pressable>
-        </Panel>
         <PreparedBatterEditor ingredients={ingredients} products={products} onSaved={onSaved} />
-        <Panel title="Expiration alerts">
-          <Text style={styles.body}>{stockSettings?.nearExpirationDays ?? '—'} day alert period</Text>
-          <TextInput value={days} onChangeText={setDays} keyboardType="number-pad" placeholder="Alert days (1–365)" style={styles.input} />
-          <Pressable disabled={saving} onPress={() => void saveDays()} style={styles.outline}>
-            <Text style={styles.pinkText}>{saving ? 'Saving…' : 'Save alert period'}</Text>
-          </Pressable>
-          <Text style={styles.muted}>Uses the existing owner-authorized inventory settings operation. Purchase orders are never created automatically.</Text>
-        </Panel>
+        <StockThresholdsEditor stockSettings={stockSettings} onSaved={onSaved} />
       </View>
     </>
   );
