@@ -189,6 +189,7 @@ import {
   type SaleVoidRequest,
 } from '../services/saleVoids';
 import AppIcon, { type AppIconName } from '../theme/AppIcon';
+import { countEntriesSnapshot, hasUnsavedCountEntries } from './countLeaveGuard';
 import { stockAlertIcon } from '../theme/appIcons';
 
 type InventoryReportKey =
@@ -1232,6 +1233,10 @@ export default function StaffWorkspace({
   const [dailyCheckRetryErrors, setDailyCheckRetryErrors] = useState<Record<string, string>>({});
   const dailyCheckRetryLocks = useRef(new Set<string>());
   const [dailyCheckLeavePromptVisible, setDailyCheckLeavePromptVisible] = useState(false);
+  // Where the staff member was going when the "Leave the count?" prompt opened, and
+  // what was last saved or loaded (to know whether anything typed is unsaved).
+  const [dailyCheckLeaveTarget, setDailyCheckLeaveTarget] = useState<StaffTab | null>(null);
+  const [dailyCheckSavedSnapshot, setDailyCheckSavedSnapshot] = useState<string | null>(null);
   const dailyCheckSubmissionLock = useRef(false);
   const [pendingCountCorrections, setPendingCountCorrections] = useState<PendingInventoryCountCorrection[]>([]);
   const [countCorrectionStorageError, setCountCorrectionStorageError] = useState('');
@@ -2283,19 +2288,19 @@ export default function StaffWorkspace({
   const dailyCheckValid =
     dailyCheckResults.length > 0 &&
     dailyCheckResults.every((line) => line.valid);
+  const dailyCheckHasUnsavedEntries = hasUnsavedCountEntries(
+    countEntriesSnapshot(dailyCheckLines, dailyCheckRemarks, dailyCheckVerified),
+    dailyCheckSavedSnapshot,
+  );
   useEffect(() => {
-    if (
-      (route !== 'dailyInventoryCheck' && route !== 'inventoryDiscrepancySubmission') ||
-      dailyDiscrepancies.length === 0 ||
-      dailyCheckSubmitting ||
-      Platform.OS === 'web'
-    ) return;
+    if (route !== 'dailyInventoryCheck' || !dailyCheckHasUnsavedEntries || dailyCheckSubmitting || Platform.OS === 'web') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setDailyCheckLeaveTarget(staffReturnTab(navigationOrigin, 'inventory'));
       setDailyCheckLeavePromptVisible(true);
       return true;
     });
     return () => subscription.remove();
-  }, [route, dailyDiscrepancies.length, dailyCheckSubmitting]);
+  }, [route, dailyCheckHasUnsavedEntries, dailyCheckSubmitting, navigationOrigin]);
   const selectedBatch = stockOutBatchPresets.find((preset) => preset.name === batchPreset) ?? stockOutBatchPresets[0];
   const parsedBatchCount = Number(batchCount);
   const usageDeductions: UsageDeduction[] = usageMode === 'manual'
@@ -2430,11 +2435,9 @@ export default function StaffWorkspace({
   }, [route]);
 
   const navigate = (nextRoute: StaffTab) => {
-    if (
-      (route === 'dailyInventoryCheck' || route === 'inventoryDiscrepancySubmission') &&
-      dailyDiscrepancies.length > 0 &&
-      !dailyCheckSubmitting
-    ) {
+    // Leaving the count with unsaved entries asks first; staff can always leave.
+    if (route === 'dailyInventoryCheck' && dailyCheckHasUnsavedEntries && !dailyCheckSubmitting) {
+      setDailyCheckLeaveTarget(nextRoute);
       setDailyCheckLeavePromptVisible(true);
       return;
     }
@@ -2933,12 +2936,16 @@ export default function StaffWorkspace({
         });
       const draft = await loadStaffDailyStockCheckDraft(user.branchId);
       const draftLines = draft?.lines ?? [];
-      setDailyCheckLines(lines.map((line) => {
+      const startingLines = lines.map((line) => {
         const savedLine = draftLines.find((entry) => entry.ingredientId === line.ingredientId);
         return savedLine && savedLine.recordedQuantity === line.recordedQuantity && savedLine.inventoryRevision === line.inventoryRevision
           ? { ...line, physicalQuantity: savedLine.physicalQuantity }
           : line;
-      }));
+      });
+      setDailyCheckLines(startingLines);
+      setDailyCheckSavedSnapshot(countEntriesSnapshot(startingLines, draft?.remarks ?? '', draft?.verified ?? false));
+      setDailyCheckLeaveTarget(null);
+      setDailyCheckLeavePromptVisible(false);
       setDailyCheckSearch('');
       setDailyCheckRemarks(draft?.remarks ?? '');
       setDailyCheckVerified(draft?.verified ?? false);
@@ -2971,8 +2978,9 @@ export default function StaffWorkspace({
     return true;
   };
 
-  const saveDailyInventoryDraft = async () => {
-    if (dailyCheckDraftSaving || !user.branchId || dailyCheckLines.length === 0) return;
+  /** Saves the count as a draft. Returns true when it was saved. */
+  const saveDailyInventoryDraft = async (): Promise<boolean> => {
+    if (dailyCheckDraftSaving || !user.branchId || dailyCheckLines.length === 0) return false;
     setDailyCheckDraftSaving(true);
     setFormError('');
     try {
@@ -2993,13 +3001,31 @@ export default function StaffWorkspace({
         lines,
       });
       setDailyCheckDraftId(saved.draftId);
+      setDailyCheckSavedSnapshot(countEntriesSnapshot(dailyCheckLines, dailyCheckRemarks, dailyCheckVerified));
       // Blind count (ST-12 c2): nothing about the expected quantity is said before submission.
       setDailyCheckDraftMessage('Draft saved. You can keep editing it until you submit.');
+      return true;
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Unable to save the count draft.');
+      return false;
     } finally {
       setDailyCheckDraftSaving(false);
     }
+  };
+
+  const leaveDailyInventoryCheck = () => {
+    const target = dailyCheckLeaveTarget ?? staffReturnTab(navigationOrigin, 'inventory');
+    setDailyCheckLeavePromptVisible(false);
+    setDailyCheckLeaveTarget(null);
+    setDailyCheckModal(null);
+    setLogoutConfirmationVisible(false);
+    setRoute(target);
+    setDashboardMessage('');
+  };
+
+  const saveDraftAndLeaveDailyInventoryCheck = async () => {
+    if (await saveDailyInventoryDraft()) leaveDailyInventoryCheck();
+    else setDailyCheckLeavePromptVisible(false);
   };
 
   const openDailyCheckReview = () => {
@@ -4017,7 +4043,7 @@ export default function StaffWorkspace({
           { title: 'Stock-Out', icon: 'stockOut' as AppIconName, onPress: () => openForm('stockOut', 'menu') },
           { title: 'Waste', icon: 'waste' as AppIconName, onPress: () => openForm('waste', 'menu') },
           {
-            title: 'Daily Check',
+            title: 'Physical Inventory',
             icon: 'dailyCount' as AppIconName,
             onPress: startDailyInventoryCheck,
           },
@@ -5123,7 +5149,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily Inventory Check</Text>
+            <Text style={styles.formTitle}>Physical Inventory</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5192,7 +5218,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>Daily inventory check</Text>
+            <Text style={styles.formTitle}>Physical Inventory</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5372,7 +5398,7 @@ export default function StaffWorkspace({
     if (!currentDailyCheck) {
       return (
         <View style={styles.dailySuccessFallback}>
-          <Text style={styles.dailyCheckIntro}>No submitted daily check is available.</Text>
+          <Text style={styles.dailyCheckIntro}>No submitted physical inventory count is available.</Text>
           <Pressable onPress={() => navigate(staffReturnTab(navigationOrigin, 'inventory'))} style={styles.dailyPrimaryButton}>
             <Text style={styles.dailyPrimaryButtonText}>{navigationOrigin === 'more' ? 'Back to More' : 'Back to Inventory'}</Text>
           </Pressable>
@@ -5398,7 +5424,7 @@ export default function StaffWorkspace({
             <AppIcon name="back" style={styles.backGlyph} />
           </Pressable>
           <View style={styles.formHeaderCopy}>
-            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Daily inventory check'}</Text>
+            <Text style={styles.formTitle}>{hasDiscrepancies ? 'Inventory Discrepancy' : 'Physical Inventory'}</Text>
             <Text style={styles.formSubtitle}>{assignedBranch} / Staff</Text>
           </View>
         </View>
@@ -5410,7 +5436,7 @@ export default function StaffWorkspace({
           <View style={styles.dailySuccessBanner} accessibilityRole="alert">
             <AppIcon name="success" style={styles.dailySuccessIcon} />
             <Text style={styles.dailySuccessText}>
-              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Daily inventory check saved successfully.'}
+              {hasDiscrepancies ? 'Submitted for Owner Review.' : 'Physical inventory count saved successfully.'}
             </Text>
           </View>
           <View style={styles.dailySummaryCard}>
@@ -5509,11 +5535,7 @@ export default function StaffWorkspace({
     return (
       <View style={styles.inventoryReportPage}>
         {renderInventoryReportHeader('Inventory Discrepancy', 'Back to physical count', () => {
-          if (dailyDiscrepancies.length > 0 && !dailyCheckSubmitting) {
-            setDailyCheckLeavePromptVisible(true);
-          } else {
-            setRoute('dailyInventoryCheck');
-          }
+          setRoute('dailyInventoryCheck');
         })}
         <ScrollView contentContainerStyle={styles.inventoryReportContent} showsVerticalScrollIndicator={false}>
           <View style={styles.inventoryReportMetadata}>
@@ -6782,7 +6804,7 @@ export default function StaffWorkspace({
           },
           {
             icon: 'dailyCount' as AppIconName,
-            title: 'Physical Inventory Check',
+            title: 'Physical Inventory',
             description: 'Count, compare and submit for review',
             onPress: () => {
               setNavigationOrigin('more');
@@ -6811,7 +6833,7 @@ export default function StaffWorkspace({
           <Pressable
             key={option.title}
             accessibilityRole="button"
-            disabled={option.title === 'Physical Inventory Check' && dailyCheckStarting}
+            disabled={option.title === 'Physical Inventory' && dailyCheckStarting}
             onPress={option.onPress}
             style={({ pressed }) => [styles.moreNavigationCard, pressed && styles.pressed]}
           >
@@ -9123,7 +9145,7 @@ export default function StaffWorkspace({
         <View style={styles.dailyModalBackdrop}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close daily inventory check dialog"
+            accessibilityLabel="Close physical inventory dialog"
             onPress={() => setDailyCheckModal(null)}
             style={StyleSheet.absoluteFill}
           />
@@ -9173,7 +9195,7 @@ export default function StaffWorkspace({
                 <View style={[styles.dailyModalIcon, styles.dailyConfirmIcon]}>
                   <AppIcon name="success" style={styles.dailyModalIconText} />
                 </View>
-                <Text style={styles.dailyModalTitle}>Daily Inventory Check</Text>
+                <Text style={styles.dailyModalTitle}>Physical Inventory</Text>
                 <Text style={styles.dailyModalSubtitle}>
                   Submit the physical count for this branch?
                 </Text>
@@ -9231,47 +9253,44 @@ export default function StaffWorkspace({
         onRequestClose={() => setDailyCheckLeavePromptVisible(false)}
       >
         <View style={styles.dailyModalBackdrop}>
-          <View style={styles.dailyModalCard}>
+          <View style={styles.dailyModalCard} accessibilityRole="alert">
             <View style={styles.dailyModalIcon}><Text style={styles.dailyModalIconText}>!</Text></View>
-            <Text style={styles.dailyModalTitle}>Unsubmitted discrepancy</Text>
+            <Text style={styles.dailyModalTitle}>Leave the count?</Text>
             <Text style={styles.dailyModalSubtitle}>
-              You have {dailyDiscrepancies.length} unsubmitted {dailyDiscrepancies.length === 1 ? 'discrepancy' : 'discrepancies'}.
-              Submit {dailyDiscrepancies.length === 1 ? 'it' : 'them'} for Owner Review now?
+              Your entries are not saved yet. Save them as a draft to continue later, or leave without saving.
             </Text>
-            <View style={styles.dailyModalSummary}>
-              {dailyDiscrepancies.map((line) => (
-                <Text key={line.ingredientId} style={styles.dailyModalSummaryText}>
-                  {line.name}: {formatDailyUnitQuantity(line.recordedQuantity, line.unit)} expected ·{' '}
-                  {formatDailyUnitQuantity(line.parsedQuantity, line.unit)} counted ·{' '}
-                  {formatDailyDifference(line.difference ?? 0, line.unit)}
-                </Text>
-              ))}
-              <Text style={styles.dailyModalSummaryText}>Remarks: {dailyCheckRemarks.trim() || '—'}</Text>
-            </View>
             <View style={styles.dailyModalActions}>
               <Pressable
                 accessibilityRole="button"
-                disabled={dailyCheckSubmitting}
+                disabled={dailyCheckDraftSaving}
                 onPress={() => setDailyCheckLeavePromptVisible(false)}
                 style={({ pressed }) => [styles.dailyModalReviewButton, pressed && styles.pressed]}
               >
-                <Text style={styles.dailyModalReviewText}>Keep reviewing</Text>
+                <Text style={styles.dailyModalReviewText}>Keep counting</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                disabled={dailyCheckSubmitting}
-                onPress={() => void saveOrRetryDailyInventoryCheck()}
+                disabled={dailyCheckDraftSaving}
+                onPress={() => void saveDraftAndLeaveDailyInventoryCheck()}
                 style={({ pressed }) => [
                   styles.dailyModalPrimaryButton,
                   pressed && styles.pressed,
-                  dailyCheckSubmitting && styles.confirmButtonDisabled,
+                  dailyCheckDraftSaving && styles.confirmButtonDisabled,
                 ]}
               >
                 <Text style={styles.dailyModalPrimaryText}>
-                  {dailyCheckSubmitting ? 'Saving…' : 'Submit for Owner Review'}
+                  {dailyCheckDraftSaving ? 'Saving…' : 'Save Draft and Leave'}
                 </Text>
               </Pressable>
             </View>
+            <Pressable
+              accessibilityRole="button"
+              disabled={dailyCheckDraftSaving}
+              onPress={leaveDailyInventoryCheck}
+              style={({ pressed }) => [styles.dailyModalLeaveLink, pressed && styles.pressed]}
+            >
+              <Text style={styles.dailyModalLeaveLinkText}>Leave without saving</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -10956,6 +10975,8 @@ function createStaffStyles(theme: AppTheme) {
   dailyModalSummaryEmphasis: { color: colors.navy, fontFamily: font.semibold, fontSize: 7, lineHeight: 11 },
   dailyModalActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 13 },
   dailyModalReviewButton: { minWidth: 56, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
+  dailyModalLeaveLink: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 12, marginTop: 6 },
+  dailyModalLeaveLinkText: { color: colors.muted, fontFamily: font.semibold, fontSize: 12, textDecorationLine: 'underline' },
   dailyModalReviewText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
   dailyModalPrimaryButton: {
     minWidth: 100, minHeight: 39, alignItems: 'center', justifyContent: 'center',

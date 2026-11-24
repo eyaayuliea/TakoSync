@@ -2970,7 +2970,7 @@ export async function submitDailyStockCheck(input: {
   });
   assertNoError(error);
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('The saved daily check returned an invalid receipt.');
+    throw new Error('The saved physical inventory count returned an invalid receipt.');
   }
   const receipt = data as Record<string, Json>;
   if (
@@ -2978,10 +2978,10 @@ export async function submitDailyStockCheck(input: {
     typeof receipt.reference !== 'string' ||
     (receipt.status !== 'submitted' && receipt.status !== 'pending_owner_review')
   ) {
-    throw new Error('The saved daily check returned an incomplete receipt.');
+    throw new Error('The saved physical inventory count returned an incomplete receipt.');
   }
   if (!Array.isArray(receipt.lines)) {
-    throw new Error('The saved daily check returned no count-line details.');
+    throw new Error('The saved physical inventory count returned no count-line details.');
   }
   const lines = receipt.lines.map((value) => {
     if (
@@ -2995,7 +2995,7 @@ export async function submitDailyStockCheck(input: {
       typeof value.unit !== 'string' ||
       typeof value.inventory_revision !== 'number'
     ) {
-      throw new Error('The saved daily check returned invalid count-line details.');
+      throw new Error('The saved physical inventory count returned invalid count-line details.');
     }
     return {
       ingredientId: value.ingredient_id,
