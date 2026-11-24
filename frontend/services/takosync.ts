@@ -9,6 +9,7 @@ import { formatBranchName } from './branchNames.ts';
 import { bulkOrderThreshold, setBulkOrderThreshold } from './bulkOrder.ts';
 import { NEAR_EXPIRATION_DEFAULT_DAYS } from './inventoryStatusRules.ts';
 import { resolveLotExpiryWindow } from './fefoAllocation.ts';
+import { ingredientCategoryIcon, type AppIconName } from '../theme/appIcons.ts';
 import {
   DEFAULT_REPLENISHMENT_SETTINGS,
   validateReplenishmentSettings,
@@ -184,7 +185,8 @@ export type InventoryItem = {
     usable: boolean;
   }[];
   lastUpdated: string;
-  emoji: string;
+  /** The ingredient's picture: its category icon. */
+  icon: AppIconName;
   tint: string;
 };
 
@@ -800,15 +802,15 @@ export type StockExpirationSettingsData = {
   replenishmentSettings: IngredientReplenishmentSettings[] | null;
 };
 
-const ingredientVisuals: Record<string, { emoji: string; tint: string; type: string }> = {
-  octopus: { emoji: '🐙', tint: '#FCE9DE', type: 'Frozen seafood' },
-  flour: { emoji: '🌾', tint: '#FFF1D8', type: 'Dry goods' },
-  eggs: { emoji: '🥚', tint: '#FFF4D8', type: 'Fresh eggs' },
-  sauces: { emoji: '🧴', tint: '#FBE7E9', type: 'Takoyaki sauce' },
-  'japanese-mayonnaise': { emoji: '🥫', tint: '#FFF4D8', type: 'Japanese mayonnaise' },
-  'bonito-flakes': { emoji: '🐟', tint: '#FFF1D8', type: 'Dried fish flakes' },
-  'spring-onions': { emoji: '🌱', tint: '#E8F6EC', type: 'Fresh produce' },
-  'cooking-oil': { emoji: '🫗', tint: '#FFF4D8', type: 'Cooking oil' },
+const ingredientVisuals: Record<string, { tint: string; type: string }> = {
+  octopus: { tint: '#FCE9DE', type: 'Frozen seafood' },
+  flour: { tint: '#FFF1D8', type: 'Dry goods' },
+  eggs: { tint: '#FFF4D8', type: 'Fresh eggs' },
+  sauces: { tint: '#FBE7E9', type: 'Takoyaki sauce' },
+  'japanese-mayonnaise': { tint: '#FFF4D8', type: 'Japanese mayonnaise' },
+  'bonito-flakes': { tint: '#FFF1D8', type: 'Dried fish flakes' },
+  'spring-onions': { tint: '#E8F6EC', type: 'Fresh produce' },
+  'cooking-oil': { tint: '#FFF4D8', type: 'Cooking oil' },
 };
 
 /** True when PostgREST cannot find this database function (migration not applied yet). */
@@ -2699,7 +2701,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
       : null;
     const minimumStock = Number(stock?.minimum_stock ?? 0);
     const quantity = Number(stock?.quantity ?? 0);
-    const visual = ingredientVisuals[ingredient.id] ?? { emoji: '📦', tint: '#F2F2F4', type: categories.get(ingredient.category_id) ?? 'Ingredient' };
+    const visual = ingredientVisuals[ingredient.id] ?? { tint: '#F2F2F4', type: categories.get(ingredient.category_id) ?? 'Ingredient' };
     const formattedExpiration = formatDate(expirationDate);
     const firstBatch = itemBatches[0];
     const packageSize = packageSizes.get(ingredient.id);
@@ -2760,7 +2762,7 @@ export async function loadInventory(branchId: string, businessDate = new Date())
         usable: !heldLotIds.has(batch.id),
       })),
       lastUpdated: stock ? new Date(stock.updated_at).toLocaleString('en-GB') : 'Not yet stocked',
-      emoji: visual.emoji,
+      icon: ingredientCategoryIcon(ingredient.category_id),
       tint: visual.tint,
     }];
   });

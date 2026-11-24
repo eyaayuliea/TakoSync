@@ -34,6 +34,7 @@ import {
   selectFlavorMenuProducts,
   shouldOfferCheckoutRetry,
 } from './menuPreviewData';
+import AppIcon from '../theme/AppIcon';
 
 type MenuPage = 'menu' | 'cart' | 'checkout';
 
@@ -171,7 +172,7 @@ function ProgressSteps({ active }: { active: 1 | 2 | 3 }) {
             <View style={styles.progressStep}>
               <View style={[styles.progressCircle, complete && styles.progressCircleActive]}>
                 <Text style={[styles.progressNumber, complete && styles.progressNumberActive]}>
-                  {step.number < active ? '✓' : step.number}
+                  {step.number < active ? <AppIcon name="check" style={[styles.progressNumber, complete && styles.progressNumberActive]} /> : step.number}
                 </Text>
               </View>
               <Text style={[styles.progressLabel, complete && styles.progressLabelActive]}>{step.label}</Text>
@@ -196,7 +197,7 @@ function ScreenHeader({ title, onBack }: {
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
         >
-          <Text style={styles.backGlyph}>‹</Text>
+          <AppIcon name="back" style={styles.backGlyph} />
         </Pressable>
         <Text style={styles.headerTitle}>{title}</Text>
       </View>
@@ -748,7 +749,7 @@ export default function MenuWorkspace({
                   : [...current, addon.id])}
                 style={[styles.addonOption, darkSecondarySurface]}
               >
-                <Text style={[styles.addonOptionText, darkSecondaryText]}>{selected ? '✓ ' : ''}{addon.name}</Text>
+                <Text style={[styles.addonOptionText, darkSecondaryText]}>{selected ? <AppIcon name="check" style={[styles.addonOptionText, darkSecondaryText]} /> : null}{selected ? ' ' : ''}{addon.name}</Text>
                 <Text style={[styles.addonOptionPrice, darkSecondaryText]}>{money(addon.price)}</Text>
               </Pressable>
             );
