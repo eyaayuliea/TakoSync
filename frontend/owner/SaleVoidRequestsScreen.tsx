@@ -219,7 +219,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
 
   const renderDetails = (request: OwnerSaleVoidReview) => {
     const rows: Array<[string, string]> = [
-      ['Request', request.reference],
+      [isAutomaticSaleVoid(request) ? 'Void record' : 'Request', request.reference],
       ['Status', saleVoidRequestStatusLabel(request.status)],
       ['Branch', request.branchName],
       [isAutomaticSaleVoid(request) ? 'Voided by' : 'Requested by', request.requestedByName ?? 'Staff account'],
@@ -274,7 +274,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
             <OwnerButton label="Reject" variant="outline" onPress={() => { setDecisionError(''); setRejectReason(''); setRejectOpen(true); }} disabled={deciding} />
           </View>
         ) : (
-          <Text style={styles.readOnly}>This request has been decided and can no longer be changed.</Text>
+          <Text style={styles.readOnly}>{isAutomaticSaleVoid(request) ? 'Voided by staff. No owner decision is needed, and a void cannot be undone.' : 'This request has been decided and can no longer be changed.'}</Text>
         )}
       </ScrollView>
     );
@@ -282,7 +282,7 @@ export default function SaleVoidRequestsScreen({ onBack, switcher }: { onBack: (
 
   return (
     <View style={styles.screen}>
-      <OwnerHeader title={selected ? 'Void Request' : 'Requests'} onBack={back} />
+      <OwnerHeader title={selected ? (isAutomaticSaleVoid(selected) ? 'Void' : 'Void Request') : 'Voids & Requests'} onBack={back} />
       {!selected && switcher ? <View style={styles.switcher}>{switcher}</View> : null}
       {selected ? renderDetails(selected) : renderList()}
 

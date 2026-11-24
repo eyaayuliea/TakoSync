@@ -62,6 +62,12 @@ test('automatic void: an earlier pending or rejected request does not block void
   assert.equal(saleVoidAvailability(todaySale, request({ status: 'rejected' }), now).allowed, true);
 });
 
+test('right after voiding, the sale shows Voided and cannot be voided again, even before it is reloaded', () => {
+  const recorded = request({ status: 'approved', requestedBy: 'staff-1', decidedBy: 'staff-1' });
+  assert.equal(saleVoidState(todaySale, recorded).kind, 'voided');
+  assert.deepEqual(saleVoidAvailability(todaySale, recorded, now), { allowed: false, reason: 'This sale is already voided.' });
+});
+
 test('automatic void is told apart from an approval under the earlier flow', () => {
   const automatic = request({ status: 'approved', requestedBy: 'staff-1', decidedBy: 'staff-1', decidedByName: 'Ana Reyes' });
   const approved = request({ status: 'approved', requestedBy: 'staff-1', decidedBy: 'owner-1', decidedByName: 'Gelo' });

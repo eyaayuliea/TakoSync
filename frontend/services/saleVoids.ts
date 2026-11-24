@@ -58,10 +58,11 @@ export type SaleVoidAvailability =
  */
 export function saleVoidAvailability(
   sale: VoidableSale,
-  _latestRequest: SaleVoidRequest | null = null,
+  latestRequest: SaleVoidRequest | null = null,
   now: Date = new Date(),
 ): SaleVoidAvailability {
-  if (sale.status === 'voided') return { allowed: false, reason: 'This sale is already voided.' };
+  // The record of a void counts even before the sale is reloaded.
+  if (sale.status === 'voided' || latestRequest?.status === 'approved') return { allowed: false, reason: 'This sale is already voided.' };
   if (sale.status !== 'completed') return { allowed: false, reason: 'Only a completed sale can be voided.' };
   if (sale.inventory_processing_status !== 'completed') {
     return { allowed: false, reason: 'Finish inventory processing for this sale before voiding it.' };
@@ -84,7 +85,8 @@ export function saleVoidState(
   sale: { status: string },
   latestRequest: SaleVoidRequest | null,
 ): SaleVoidState {
-  if (sale.status === 'voided') {
+  // A recorded void shows at once, before the sale itself is reloaded.
+  if (sale.status === 'voided' || latestRequest?.status === 'approved') {
     return { kind: 'voided', request: latestRequest?.status === 'approved' ? latestRequest : null };
   }
   if (latestRequest?.status === 'pending') return { kind: 'pending', request: latestRequest };
