@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import OwnerRecordFilterBar, { OwnerLoadOlderButton, useOwnerBranchFilterOptions } from './OwnerRecordFilterBar';
 import {
@@ -25,9 +26,7 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
-function peso(value: number) {
-  return `₱${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 0 }).format(value)}`;
-}
+const peso = formatPeso;
 
 function dateTime(value: string) {
   const date = new Date(value);

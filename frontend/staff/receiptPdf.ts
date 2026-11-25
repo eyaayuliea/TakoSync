@@ -1,6 +1,7 @@
 // ST-05 c7: the receipt as a PDF file (80 mm roll width, one page as long as
 // the receipt). It is drawn from the same saved values as the screen and the
 // printed HTML receipt, with the embedded fonts the reports use, so ₱ prints.
+import { formatPeso } from '../services/money.ts';
 import { BULK_ORDER_LABEL } from '../services/bulkOrder.ts';
 import { assemblePdf, pdfGlyphs, textWidth, wrapText } from '../owner/reportPdf.ts';
 import { formatReceiptDatePurchased, SALE_RECEIPT_FOOTER, type StaffSaleReceipt } from './saleReceipt.ts';
@@ -17,9 +18,7 @@ const RED: Color = [0.788, 0.184, 0.235];
 const n = (value: number) => (Math.round(value * 100) / 100).toString();
 const rgb = (color: Color) => color.map(n).join(' ');
 
-export function formatReceiptPeso(value: number): string {
-  return `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+export const formatReceiptPeso = formatPeso;
 
 /** Draw operations measured from the top of the page, placed once the height is known. */
 type Op = (height: number) => string;

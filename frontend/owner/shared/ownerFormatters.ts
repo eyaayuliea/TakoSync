@@ -1,3 +1,4 @@
+import { formatPeso } from '../../services/money.ts';
 const manilaTimeZone = 'Asia/Manila';
 
 function dateParts(value: string | Date, options: Intl.DateTimeFormatOptions) {
@@ -18,9 +19,7 @@ export function formatDate(value: string | Date): string {
   return `${part(parts, 'day')} ${part(parts, 'month')} ${part(parts, 'year')}`;
 }
 
-export function formatPeso(value: number): string {
-  return `₱${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(value)}`;
-}
+export { formatPeso };
 
 function numberText(value: number): string {
   return new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(Math.abs(value));

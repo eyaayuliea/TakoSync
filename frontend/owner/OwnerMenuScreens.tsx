@@ -86,7 +86,7 @@ export function MoreMenuScreen({
 }: {
   onOpenRecords: () => void;
   onOpenProfile: () => void;
-  /** S3: verify the hash-chained audit log and export a checkpoint. */
+  /** S3: verify the hash-chained audit log. */
   onOpenAuditIntegrity?: () => void;
   /** OM-15: void and entry reversal review. The screen explains when the database is not updated yet. */
   onOpenVoidRequests?: () => void;

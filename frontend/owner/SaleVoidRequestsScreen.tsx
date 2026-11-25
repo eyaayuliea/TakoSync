@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
@@ -41,9 +42,7 @@ const STATUS_BY_FILTER: Record<Exclude<StatusFilter, 'All'>, SaleVoidRequestStat
 };
 const ALL_BRANCHES = 'All branches';
 
-function money(value: number): string {
-  return `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+const money = formatPeso;
 
 function dateTime(value: string | null | undefined): string {
   if (!value) return '—';

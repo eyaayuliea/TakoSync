@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot,
   lowStockWarningMessage,
@@ -469,10 +470,7 @@ function formatHistoryDateTime(date: Date) {
 }
 
 const wasteReasons: WasteReason[] = ['Waste', 'Spillage', 'Spoilage', 'Other'];
-const formatSaleMoney = (amount: number) => `₱${amount.toLocaleString('en-PH', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})}`;
+const formatSaleMoney = formatPeso;
 
 const stockOutBatchPresets = [
   {
@@ -3856,7 +3854,7 @@ export default function StaffWorkspace({
               <View style={styles.unresolvedSaleCopy}>
                 <Text style={styles.unresolvedSaleReference}>{request.transactionReference}</Text>
                 <Text style={styles.unresolvedSaleDate}>
-                  Saved {new Date(request.createdAt).toLocaleString('en-PH')} · {request.paymentMethod} · ₱{request.totalAmount.toLocaleString('en-PH')}
+                  Saved {new Date(request.createdAt).toLocaleString('en-PH')} · {request.paymentMethod} · {formatPeso(request.totalAmount)}
                 </Text>
                 <Text style={styles.unresolvedSaleStatus}>Confirmation not received; the original checkout is preserved.</Text>
                 {pendingSaleCheckoutErrors[request.requestId] ? (
@@ -8902,37 +8900,39 @@ export default function StaffWorkspace({
           );
         })() : null}
         <Text style={styles.saleReceiptFooter}>{SALE_RECEIPT_FOOTER}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'print' }}
-          disabled={saleReceiptOutputBusy !== null}
-          onPress={() => void outputSaleReceipt('print')}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
-        >
-          <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'print' ? 'Preparing…' : 'Print Receipt'}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'pdf' }}
-          disabled={saleReceiptOutputBusy !== null}
-          onPress={() => void outputSaleReceipt('pdf')}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
-        >
-          <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'pdf' ? 'Preparing…' : 'Download PDF'}</Text>
-        </Pressable>
-        {saleReceiptOutputNotice ? <Text style={styles.saleReceiptFooter}>{saleReceiptOutputNotice}</Text> : null}
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setSaleReceipt(null);
-            setSaleReceiptError('');
-            setSaleReceiptShareError('');
-            setRoute('menu');
-          }}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.saveButtonText}>New Order</Text>
-        </Pressable>
+        <View style={styles.saleReceiptActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'print' }}
+            disabled={saleReceiptOutputBusy !== null}
+            onPress={() => void outputSaleReceipt('print')}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
+          >
+            <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'print' ? 'Preparing…' : 'Print Receipt'}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: saleReceiptOutputBusy !== null, busy: saleReceiptOutputBusy === 'pdf' }}
+            disabled={saleReceiptOutputBusy !== null}
+            onPress={() => void outputSaleReceipt('pdf')}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, saleReceiptOutputBusy !== null && styles.buttonDisabled]}
+          >
+            <Text style={styles.saveButtonText}>{saleReceiptOutputBusy === 'pdf' ? 'Preparing…' : 'Download PDF'}</Text>
+          </Pressable>
+          {saleReceiptOutputNotice ? <Text style={styles.saleReceiptFooter}>{saleReceiptOutputNotice}</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setSaleReceipt(null);
+              setSaleReceiptError('');
+              setSaleReceiptShareError('');
+              setRoute('menu');
+            }}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.saveButtonText}>New Order</Text>
+          </Pressable>
+        </View>
         {saleReceiptShareError ? <Text style={styles.receiptErrorText}>{saleReceiptShareError}</Text> : null}
       </ScrollView>
     );
@@ -9845,6 +9845,8 @@ function createStaffStyles(theme: AppTheme) {
   saleReceiptBulk: { color: colors.pink, fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, marginTop: 8 },
   dailySalesVoidedAmount: { textDecorationLine: 'line-through', color: colors.muted },
   saleReceiptFooter: { color: colors.muted, fontFamily: font.regular, fontSize: 9, textAlign: 'center', marginTop: 10 },
+  // Print, Download and New Order: spaced apart, never touching each other or the Void panel.
+  saleReceiptActions: { gap: 12, marginTop: 18 },
   saleReceiptVoid: {
     color: colors.red, fontFamily: font.bold, fontSize: 16, letterSpacing: 3, marginTop: 8,
     paddingHorizontal: 14, paddingVertical: 2, borderWidth: 2, borderColor: colors.red, borderRadius: 6,

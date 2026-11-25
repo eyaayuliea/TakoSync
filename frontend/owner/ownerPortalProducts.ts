@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money.ts';
 import type { ProductVariantPriceInput } from '../services/productCatalog';
 
 type ProductVariantDefinition = Pick<
@@ -73,7 +74,7 @@ export function productTableRows<T extends TableProduct>(products: readonly T[],
       product.portion_type || '—',
       [...product.variants]
         .sort((left, right) => order.indexOf(left.variant_code) - order.indexOf(right.variant_code))
-        .map((variant) => `${variant.size_label} ₱${variant.price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+        .map((variant) => `${variant.size_label} ${formatPeso(variant.price)}`)
         .join('\n') || '—',
       product.is_available ? 'Available' : 'Unavailable',
       product.description || '—',
