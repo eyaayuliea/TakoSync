@@ -1,5 +1,6 @@
 // OW-07 Branch Sales, OW-08 Products Sold and OW-09 Transaction Summary reports
 // on the Owner Web Portal. Totals are summed in centavos.
+import { formatPeso } from '../services/money.ts';
 import { recordedSaleIsBulkOrder, BULK_ORDER_LABEL } from '../services/bulkOrder.ts';
 import { summarizeAddons, summarizeProductVariants } from './ownerSalesBreakdowns.ts';
 
@@ -20,8 +21,7 @@ type Item = { sale_id: string; product_id: string; product_name: string; variant
 type Addon = { sale_id: string; addon_id: string; addon_name: string; quantity: number | string; subtotal: number | string };
 
 const cents = (value: number | string) => Math.round(Number(value) * 100);
-export const pesoText = (amount: number) =>
-  `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const pesoText = formatPeso;
 
 /** A sale counted in sales totals: completed and fully recorded. */
 export function isCountedSale(sale: Pick<Sale, 'status' | 'inventory_processing_status'>): boolean {

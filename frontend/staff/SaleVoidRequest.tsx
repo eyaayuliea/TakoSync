@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React from 'react';
 import {
   SALE_VOID_REASON_MAX_LENGTH,
@@ -7,9 +8,7 @@ import {
 } from '../services/saleVoids';
 import { ApprovalStatusPanel, ReasonRequestModal, approvalDateTime } from './OwnerApprovalRequest';
 
-function money(value: number): string {
-  return `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+const money = formatPeso;
 
 export type SaleVoidRequestSale = {
   transactionReference: string;

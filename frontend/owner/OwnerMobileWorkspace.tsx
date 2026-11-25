@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import OwnerSalesWorkspace from './OwnerSalesWorkspace';
 import OwnerIngredientsRecipes from './OwnerIngredientsRecipes';
+import { usePhoneFrameInsets } from '../theme/usePhoneFrame';
 import { itemNearExpirationDays, resolveNearExpirationDays } from '../services/inventoryStatusRules.ts';
 import { lowStockThreshold } from '../services/reorderPoint.ts';
 import OwnerStockExpirationSettings from './OwnerStockExpirationSettings';
@@ -162,13 +164,7 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
-function currency(value: number) {
-  return new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+const currency = formatPeso;
 
 function compactDate(value: string) {
   return new Date(value).toLocaleString('en-PH', {
@@ -337,6 +333,8 @@ export default function OwnerMobileWorkspace({
   const styles = useStyles();
   const { colors: themeColors, ownerMenu } = useTheme();
   const contentWidth = availableWidth;
+  // Pop-ups are drawn over the whole window; this keeps them the size of the phone screen.
+  const frameInsets = usePhoneFrameInsets();
   const [page, setPage] = useState<OwnerPage>('Dashboard');
   const [initialSalesTransactionId, setInitialSalesTransactionId] = useState<string | null>(null);
   const menuHistory = useRef<OwnerPage[]>([]);
@@ -1160,7 +1158,7 @@ export default function OwnerMobileWorkspace({
           <SkeletonCard label="Loading total recorded sales" lines={2} />
         ) : (
           <>
-            <Text style={styles.totalSalesAmount} numberOfLines={1} adjustsFontSizeToFit>{selectedSales.length ? currency(totalSelectedSales) : '₱0'}</Text>
+            <Text style={styles.totalSalesAmount} numberOfLines={1} adjustsFontSizeToFit>{selectedSales.length ? currency(totalSelectedSales) : currency(0)}</Text>
             <Text style={styles.totalSalesUpdated}>Updated {new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}</Text>
           </>
         )}
@@ -1577,9 +1575,9 @@ export default function OwnerMobileWorkspace({
             accessibilityRole="button"
             accessibilityLabel="Close ingredient selector"
             onPress={() => setIngredientSheetVisible(false)}
-            style={styles.omModalBackdrop}
+            style={[styles.omModalBackdrop, frameInsets]}
           >
-            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omIngredientSheet, { width: Math.min(contentWidth, 390) }]}>
+            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omIngredientSheet]}>
               <View style={styles.omSheetHandle} />
               <View style={styles.omIngredientSheetHeader}>
                 <Text style={styles.omIngredientSheetTitle}>Select ingredient</Text>
@@ -2122,7 +2120,7 @@ export default function OwnerMobileWorkspace({
         )}
 
         <Modal visible={discrepancyFilterVisible} transparent animationType="fade" onRequestClose={() => setDiscrepancyFilterVisible(false)}>
-          <View style={styles.omModalBackdrop}>
+          <View style={[styles.omModalBackdrop, frameInsets]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setDiscrepancyFilterVisible(false)} />
             <View style={styles.omFilterSheet}>
               <View style={styles.omSheetHandle} />
@@ -2411,7 +2409,7 @@ export default function OwnerMobileWorkspace({
           accessibilityRole="button"
           accessibilityLabel="Close activity details"
           onPress={() => setActivityDetailModalVisible(false)}
-          style={styles.activityDetailBackdrop}
+          style={[styles.activityDetailBackdrop, frameInsets]}
         >
           {selectedActivity && (
             <Pressable onPress={() => undefined} style={styles.activityDetailModalCard}>
@@ -2478,7 +2476,7 @@ export default function OwnerMobileWorkspace({
           accessibilityRole="button"
           accessibilityLabel="Close period selector"
           onPress={() => setPeriodSheetVisible(false)}
-          style={styles.periodSheetBackdrop}
+          style={[styles.periodSheetBackdrop, frameInsets]}
         >
           <Pressable onPress={() => undefined} style={styles.periodSheet}>
             <View style={styles.periodSheetHandle} />
@@ -2522,7 +2520,7 @@ export default function OwnerMobileWorkspace({
           accessibilityRole="button"
           accessibilityLabel="Close calendar"
           onPress={() => setCalendarVisible(false)}
-          style={styles.periodSheetBackdrop}
+          style={[styles.periodSheetBackdrop, frameInsets]}
         >
           <Pressable onPress={() => undefined} style={[styles.periodSheet, styles.calendarSheet]}>
             <View style={styles.periodSheetHandle} />
@@ -3016,7 +3014,7 @@ function useStyles() {
     omCorrectionRejectText: { fontFamily: font.bold, fontSize: 11, color: destructiveTextColor(theme.isDark) },
     omCorrectionValidateButton: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.alertNavy },
     omModalBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', backgroundColor: 'rgba(15,16,37,0.50)' },
-    omBottomSheet: { width: '100%', maxWidth: 390, alignSelf: 'center', paddingHorizontal: 18, paddingTop: 8, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: colors.white },
+    omBottomSheet: { width: '100%', alignSelf: 'center', paddingHorizontal: 18, paddingTop: 8, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: colors.white },
     omFilterSheet: { width: '100%', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: colors.white },
     omSheetHandle: { width: 42, height: 4, alignSelf: 'center', borderRadius: 2, marginBottom: 12, backgroundColor: '#D8D8DE' },
     omFilterSheetTitle: { color: colors.alertNavy, fontFamily: font.bold, fontSize: 13, marginBottom: 12 },

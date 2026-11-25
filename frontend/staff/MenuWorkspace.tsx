@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -107,7 +108,7 @@ const font = {
   bold: 'Poppins_700Bold',
 } as const;
 
-const money = (value: number) => `₱${value.toLocaleString('en-PH')}`;
+const money = formatPeso;
 
 type FlavorOption = {
   id: string;

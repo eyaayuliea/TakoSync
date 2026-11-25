@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
@@ -189,7 +190,7 @@ const PAGE_DATA: Record<Page, PortalDataset[]> = {
   'Audit History': ['inventory'],
   Profile: [],
 };
-const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+const peso = formatPeso;
 
 export default function OwnerPortalWeb() {
   const { width, height } = useWindowDimensions(); const compact = width < 1050; const narrow = width < 720;
@@ -2397,7 +2398,7 @@ function OwnerProductEditor({ products, onSaved }: {
                 const selected = addonIds.includes(addon.id);
                 return (
                   <Pressable key={addon.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => setAddonIds((current) => (selected ? current.filter((id) => id !== addon.id) : [...current, addon.id]))} style={[styles.outline, { marginTop: 0 }, selected && { backgroundColor: C.pink, borderColor: C.pink }]}>
-                    <Text style={[styles.outlineText, selected && { color: '#FFFFFF' }]}>{selected ? '✓ ' : ''}{addon.name} · ₱{addon.price.toFixed(2)}</Text>
+                    <Text style={[styles.outlineText, selected && { color: '#FFFFFF' }]}>{selected ? '✓ ' : ''}{addon.name} · {formatPeso(addon.price)}</Text>
                   </Pressable>
                 );
               })}

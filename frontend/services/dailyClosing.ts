@@ -2,6 +2,7 @@
 // Rev 8 BR-S8). The server (record_daily_closing) computes and stores the
 // cash comparison; these helpers parse input and build the report.
 
+import { formatPeso as formatPesoAmount } from './money.ts';
 import { manilaBusinessDate } from './staffDailySession.ts';
 
 export type DailyClosing = {
@@ -84,8 +85,9 @@ export function validateDailyClosingInput(openingFloatText: string, closingCashC
   return { valid: true, openingFloat, closingCashCount };
 }
 
+/** The amount without its sign; Over and Short say which way it goes. */
 export function formatPeso(value: number): string {
-  return `₱${Math.abs(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatPesoAmount(Math.abs(value));
 }
 
 export type OverShort = { kind: 'over' | 'short' | 'balanced'; text: string };

@@ -1,12 +1,10 @@
-// S3 / US-AUDIT-02: owner screen to verify the SHA-256 audit chains and to export a checkpoint.
+// S3 / US-AUDIT-02: owner screen to verify the SHA-256 audit chains.
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { OWNER_NAVIGATION_HEIGHT } from '../navigation/BottomNavigation';
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { OwnerButton, OwnerErrorState, OwnerHeader, OwnerLoadingState } from './shared/ownerComponents';
-import { formatAuditCheckpointExport } from '../services/auditChain.ts';
 import {
-  createAuditCheckpoint,
   loadBranches,
   verifyAuditChains,
   type AuditVerificationResult,
@@ -35,18 +33,15 @@ export default function AuditIntegrityScreen({ onBack }: { onBack: () => void })
   const [result, setResult] = useState<AuditVerificationResult | null>(null);
   const [verifying, setVerifying] = useState(true);
   const [error, setError] = useState('');
-  const [checkpointText, setCheckpointText] = useState('');
-  const [checkpointBusy, setCheckpointBusy] = useState(false);
-  const [checkpointError, setCheckpointError] = useState('');
   const generation = useRef(0);
 
   const chainName = (scope: string) => (scope === 'global' ? 'Accounts & settings' : branchNames.get(scope) ?? 'Branch');
 
-  const verify = (fromLastCheckpoint = false) => {
+  const verify = () => {
     const current = ++generation.current;
     setVerifying(true);
     setError('');
-    Promise.all([verifyAuditChains(fromLastCheckpoint), loadBranches()])
+    Promise.all([verifyAuditChains(false), loadBranches()])
       .then(([verification, branches]) => {
         if (current !== generation.current) return;
         setBranchNames(new Map(branches.map((branch) => [branch.id, branch.name])));
@@ -68,22 +63,6 @@ export default function AuditIntegrityScreen({ onBack }: { onBack: () => void })
       generation.current += 1;
     };
   }, []);
-
-  const exportCheckpoint = async () => {
-    setCheckpointBusy(true);
-    setCheckpointError('');
-    try {
-      const checkpoints = await createAuditCheckpoint();
-      const text = formatAuditCheckpointExport(checkpoints, chainName);
-      setCheckpointText(text);
-      // Keep a copy outside the database: e-mail it to yourself or save it in a chat.
-      if (Platform.OS !== 'web') await Share.share({ title: 'TakoSync audit checkpoint', message: text });
-    } catch (reason) {
-      setCheckpointError(reason instanceof Error ? reason.message : 'Unable to create a checkpoint.');
-    } finally {
-      setCheckpointBusy(false);
-    }
-  };
 
   const renderBody = () => {
     if (verifying && !result) return <OwnerLoadingState label="Checking the audit log…" />;
@@ -133,17 +112,6 @@ export default function AuditIntegrityScreen({ onBack }: { onBack: () => void })
 
         <View style={styles.actions}>
           <OwnerButton label={verifying ? 'Checking…' : 'Check again'} disabled={verifying} icon="sync" onPress={() => verify()} />
-          <OwnerButton label="Check since last checkpoint" variant="outline" disabled={verifying} onPress={() => verify(true)} />
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Checkpoint</Text>
-          <Text style={styles.meta}>
-            Someone with full control of the database could rewrite the whole log. Create a checkpoint regularly and keep it outside TakoSync, for example by e-mailing it to yourself. If a later check does not match it, the history was rewritten.
-          </Text>
-          <OwnerButton label={checkpointBusy ? 'Creating…' : Platform.OS === 'web' ? 'Create checkpoint' : 'Create and share checkpoint'} variant="outline" disabled={checkpointBusy} onPress={() => void exportCheckpoint()} />
-          {checkpointError ? <Text style={[styles.meta, { color: colors.error }]}>{checkpointError}</Text> : null}
-          {checkpointText ? <Text selectable style={styles.hash}>{checkpointText}</Text> : null}
         </View>
       </ScrollView>
     );

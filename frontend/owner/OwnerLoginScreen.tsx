@@ -1,8 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
-  ImageBackground,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,7 +13,10 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { isSupabaseConfigured, supabaseConfigurationError } from '../services/supabase';
-import { useTheme } from '../theme/ThemeProvider';
+import BrandLogo from '../theme/TakoSyncLogo';
+import { openingLogoWidth } from '../theme/brandLogo';
+import { LoginBackButton, LoginBackground } from '../theme/loginScreenParts';
+import { phoneFrameSize } from '../theme/phoneFrame';
 import { OwnerLoginError } from '../services/ownerAuthentication';
 
 type FieldErrors = {
@@ -38,7 +39,6 @@ export default function OwnerLoginScreen({
   onLogin: (email: string, password: string) => Promise<void>;
 }) {
   const { height, width } = useWindowDimensions();
-  const { isDark } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -48,7 +48,8 @@ export default function OwnerLoginScreen({
   const submissionLock = useRef(false);
   const passwordInput = useRef<TextInput>(null);
   const isShortScreen = height < 700;
-  const logoWidth = Math.min(width * 0.44, 190);
+  // The app is drawn in a phone-sized frame on tablets and in a browser.
+  const frame = phoneFrameSize(width, height);
   const displayedError = loginError || (!isSupabaseConfigured ? supabaseConfigurationError : '');
 
   const clearFeedback = () => {
@@ -94,13 +95,7 @@ export default function OwnerLoginScreen({
   };
 
   return (
-    <ImageBackground
-      source={require('../../assets/WELCOME PAGE.jpg')}
-      resizeMode="cover"
-      style={styles.background}
-      imageStyle={styles.backgroundImage}
-    >
-      <View style={styles.backgroundOverlay}>
+    <LoginBackground>
         <KeyboardAvoidingView
           style={styles.keyboardRoot}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -111,14 +106,10 @@ export default function OwnerLoginScreen({
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.content, { maxWidth: Math.min(width - 40, 330) }]}>
-              <View style={[styles.logoFrame, { width: logoWidth, height: logoWidth * 0.64 }]}>
-                <Image
-                  source={isDark ? require('../../assets/DARK THEME (LOGO).png') : require('../../assets/LIGHT THEME (LOGO).png')}
-                  style={styles.logo}
-                  resizeMode="contain"
-                  accessibilityLabel="Gelo's Takoyaki logo"
-                />
+            <View style={[styles.content, { maxWidth: Math.min(frame.width - 40, 380) }]}>
+              {/* Same logo, same size as on the Welcome screen and the Staff login. */}
+              <View style={styles.logoFrame}>
+                <BrandLogo source={require('../../assets/LIGHT THEME (LOGO).png')} width={openingLogoWidth(frame.width)} />
               </View>
 
               <View style={[styles.card, isShortScreen && styles.compactCard]}>
@@ -211,22 +202,11 @@ export default function OwnerLoginScreen({
                 >
                   <Text style={styles.loginButtonText}>{submitting ? 'Logging in...' : 'Log In'}</Text>
                 </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Back to welcome screen"
-                  onPress={onBack}
-                  style={({ pressed }) => [
-                    styles.backButton,
-                    pressed && styles.backButtonPressed,
-                  ]}
-                >
-                  <Text style={styles.backButtonText}>Back</Text>
-                </Pressable>
+                <LoginBackButton radius={8} disabled={submitting} onPress={onBack} />
               </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-      </View>
       <Modal
         visible={submitting}
         transparent
@@ -240,14 +220,11 @@ export default function OwnerLoginScreen({
           </View>
         </View>
       </Modal>
-    </ImageBackground>
+    </LoginBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1, backgroundColor: '#FFFFFF' },
-  backgroundImage: { width: '100%', height: '100%', opacity: 0.88 },
-  backgroundOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
   keyboardRoot: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
@@ -259,7 +236,6 @@ const styles = StyleSheet.create({
   shortScrollContent: { justifyContent: 'flex-start', paddingVertical: 14 },
   content: { width: '100%', alignItems: 'center', alignSelf: 'center' },
   logoFrame: { alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
-  logo: { width: '100%', height: '100%', alignSelf: 'center' },
   card: {
     width: '100%',
     borderRadius: 24,
@@ -353,18 +329,6 @@ const styles = StyleSheet.create({
   loginButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   loginButtonDisabled: { opacity: 0.65 },
   loginButtonText: { color: '#FFFFFF', fontFamily: FONT.bold, fontSize: 13 },
-  backButton: {
-    minHeight: 48,
-    width: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
-    borderRadius: 8,
-  },
-  backButtonPressed: { opacity: 0.82 },
-  backButtonText: { color: '#FFFFFF', fontFamily: FONT.medium, fontSize: 14 },
   loadingBackdrop: {
     flex: 1,
     alignItems: 'center',

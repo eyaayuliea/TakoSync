@@ -1,10 +1,14 @@
+import { formatPeso } from './services/money';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
 import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
 import { Poppins_500Medium } from '@expo-google-fonts/poppins/500Medium';
 import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
-import { brandLogoLayout, openingLogoWidth } from './theme/brandLogo';
+import { openingLogoWidth } from './theme/brandLogo';
+import BrandLogo from './theme/TakoSyncLogo';
+import { LoginBackButton, LoginBackground } from './theme/loginScreenParts';
+import { phoneFrameSize } from './theme/phoneFrame';
 import AppIcon from './theme/AppIcon';
 import {
   calendarDaysUntil,
@@ -102,13 +106,7 @@ function dateInputValue(date: Date): string {
   return manilaDateKey(date);
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+const formatCurrency = formatPeso;
 
 export default function App() {
   if (
@@ -122,21 +120,6 @@ export default function App() {
     <ThemeProvider>
       <AppContent />
     </ThemeProvider>
-  );
-}
-
-/** The logo artwork at `width`, with the transparent margins of the file cropped away. */
-function BrandLogo({ source, width }: { source: number; width: number }) {
-  const layout = brandLogoLayout(width);
-  return (
-    <View style={{ width: layout.boxWidth, height: layout.boxHeight, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-      <Image
-        source={source}
-        style={{ width: layout.imageSize, height: layout.imageSize }}
-        resizeMode="contain"
-        accessibilityLabel="TakoSync logo"
-      />
-    </View>
   );
 }
 
@@ -192,14 +175,8 @@ function AppContent() {
     Poppins_700Bold,
   });
   const { width, height } = useWindowDimensions();
-  const isWideScreen = width > 600 && height > 500;
+  const { isWideScreen, width: frameWidth, height: frameHeight } = phoneFrameSize(width, height);
   const isSalesPage = dashboardTab === 'Sales' || dashboardTab === 'Reports';
-  const frameWidth = isWideScreen
-    ? Math.min(430, height * 0.5)
-    : width;
-  const frameHeight = isWideScreen
-    ? Math.min(height, frameWidth * 2)
-    : height;
   const visibleScreen =
     (screen === 'dashboard' || screen === 'staffWorkspace' || screen === 'staffChangePassword') && authenticatedUser === null
       ? 'login'
@@ -349,7 +326,6 @@ function AppContent() {
     };
   }, [authenticatedUser, branchFilter, reportingPeriod, requestedCustomStart, requestedCustomEnd]);
 
-  const logoWidth = Math.min(frameWidth * 0.48, 230);
   const foodSize = Math.min(frameWidth * 0.57, 250, frameHeight * 0.3);
   const branchNames = new Map((ownerData?.branches ?? []).map((branch) => [branch.id, branch.name]));
   const ownerIngredients = new Map((ownerData?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient]));
@@ -873,26 +849,16 @@ function AppContent() {
 
             {visibleScreen === 'login' && (
               <View style={styles.loginScreen}>
-                <ImageBackground
-                  source={require('../assets/takoyaki-plate.png')}
-                  resizeMode="cover"
-                  style={styles.loginBackground}
-                  imageStyle={styles.loginBackgroundImage}
-                >
-                  <View style={styles.loginOverlay}>
-                    <View style={[styles.loginHeader, { height: Math.max(frameHeight * 0.22, 125) }]}>
-                      <Image
-                        source={themedLogo}
-                        style={[styles.headerLogo, { width: logoWidth, height: logoWidth * 0.64 }]}
-                        resizeMode="contain"
-                        accessibilityLabel="TakoSync logo"
-                      />
-                    </View>
+                <LoginBackground>
                     <ScrollView
                       style={styles.loginScroll}
                       contentContainerStyle={styles.loginScrollContent}
                       keyboardShouldPersistTaps="handled"
                     >
+                      {/* Same logo, same size as on the Welcome screen and the Owner login. */}
+                      <View style={styles.loginLogo}>
+                        <BrandLogo source={require('../assets/LIGHT THEME (LOGO).png')} width={openingLogoWidth(frameWidth)} />
+                      </View>
                       <View style={styles.loginCard}>
                         <Text style={styles.loginHeading}>Log In</Text>
                         {loginError !== '' && (
@@ -975,9 +941,8 @@ function AppContent() {
                             <Text style={styles.loginButtonText}>{authenticating ? 'Logging in…' : 'Log In'}</Text>
                           </View>
                         </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Back to the Welcome screen"
+                        <LoginBackButton
+                          radius={28}
                           disabled={authenticating}
                           onPress={() => {
                             setLoginError('');
@@ -986,14 +951,10 @@ function AppContent() {
                             setPassword('');
                             setScreen('welcome');
                           }}
-                          style={({ pressed }) => [{ minHeight: 40, alignItems: 'center', justifyContent: 'center', marginTop: 6 }, pressed && styles.buttonPressed]}
-                        >
-                          <Text style={[styles.loginHelper, { marginTop: 0, textDecorationLine: 'underline' }]}>Back to Welcome · Owner Login</Text>
-                        </Pressable>
+                        />
                       </View>
                     </ScrollView>
-                  </View>
-                </ImageBackground>
+                </LoginBackground>
                 <Modal visible={authenticating} transparent animationType="fade" onRequestClose={() => undefined}>
                   <View style={styles.loginLoadingBackdrop} accessibilityRole="alert">
                     <View style={styles.loginLoadingCard}>
@@ -1701,7 +1662,6 @@ function useAppStyles() {
   welcomeBackgroundImage: { width: '100%', height: '100%' },
   whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '9%', backgroundColor: 'transparent' },
   welcomeLogoBackdrop: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 26, backgroundColor: 'rgba(255, 255, 255, 0.92)' },
-  headerLogo: { alignSelf: 'center', marginTop: 0 },
   pinkPanel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: PINK, borderTopLeftRadius: 36, borderTopRightRadius: 36,
@@ -1733,10 +1693,7 @@ function useAppStyles() {
   buttonPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
   buttonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   loginScreen: { flex: 1, backgroundColor: '#FFFFFF' },
-  loginBackground: { flex: 1 },
-  loginBackgroundImage: { width: '100%', height: '100%', opacity: 0.38 },
-  loginOverlay: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.62)' },
-  loginHeader: { alignItems: 'center', justifyContent: 'center', paddingTop: 12, backgroundColor: 'transparent' },
+  loginLogo: { alignItems: 'center', marginBottom: 18 },
   loginScroll: { flex: 1 },
   loginScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 },
   loginCard: {

@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money.ts';
 import type { OwnerInventoryProcessingStatus, OwnerSaleStatus } from '../services/ownerSalesStatus';
 import { BULK_ORDER_LABEL, recordedSaleIsBulkOrder } from '../services/bulkOrder.ts';
 
@@ -178,7 +179,7 @@ function escapeHtml(value: string): string {
 }
 
 function peso(value: number): string {
-  return `&#8369;${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatPeso(value).replace('₱', '&#8369;');
 }
 
 export function formatReceiptDatePurchased(createdAt: string): string {

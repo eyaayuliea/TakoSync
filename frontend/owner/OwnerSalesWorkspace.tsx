@@ -1,3 +1,4 @@
+import { formatPeso } from '../services/money';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { recordedSaleIsBulkOrder } from '../services/bulkOrder';
 import {
@@ -83,6 +84,7 @@ import {
   getBranchVariantSampleData,
 } from './dailySalesRepository';
 import AppIcon from '../theme/AppIcon';
+import { usePhoneFrameInsets } from '../theme/usePhoneFrame';
 
 type Branch = { id: string; name: string };
 type SalesMode = 'monitoring' | 'reports';
@@ -95,13 +97,7 @@ type InventoryFilter = 'all' | 'confirmed' | 'needs_processing';
 const periods: Period[] = ['Today', 'Daily', 'Weekly', 'Monthly', 'Custom'];
 const PAGE_SIZE = 10;
 
-function currency(value: number) {
-  return new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+const currency = formatPeso;
 
 function compactDate(value: string) {
   return new Date(value).toLocaleString('en-PH', {
@@ -308,6 +304,8 @@ export default function OwnerSalesWorkspace({
   const wide = availableWidth >= 900;
   const medium = availableWidth >= 620;
   const contentWidth = Math.max(0, availableWidth);
+  // Pop-ups are drawn over the whole window; this keeps them the size of the phone screen.
+  const frameInsets = usePhoneFrameInsets();
   const twoColumnWidth = medium ? (contentWidth - 12) / 2 : contentWidth;
   const detailLeftWidth = wide ? contentWidth * 0.62 - 8 : twoColumnWidth;
   const detailRightWidth = wide ? contentWidth * 0.38 - 8 : twoColumnWidth;
@@ -859,7 +857,6 @@ export default function OwnerSalesWorkspace({
     ];
     const dateInputValue = (day: number) =>
       `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const sheetWidth = Math.min(availableWidth + 36, 390);
 
     if (branchDrillDownId) {
       const drillBranch = branches.find((branch) => branch.id === branchDrillDownId);
@@ -1317,7 +1314,7 @@ export default function OwnerSalesWorkspace({
                 <Text style={styles.omSalesAmount}>
                   {activeSalesTab === 'Branch'
                     ? currency(branchCombinedTotal)
-                    : sales.length ? currency(totalSales) : '₱0'}
+                    : sales.length ? currency(totalSales) : currency(0)}
                 </Text>
                 {/* OM-04 c4 / OM-07 c2: the number of completed transactions. */}
                 <Text style={styles.omSalesCount}>
@@ -1482,8 +1479,8 @@ export default function OwnerSalesWorkspace({
           animationType="slide"
           onRequestClose={() => setDatePickerVisible(false)}
         >
-          <Pressable accessibilityRole="button" accessibilityLabel="Close date picker" onPress={() => setDatePickerVisible(false)} style={styles.omModalBackdrop}>
-            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, { width: sheetWidth }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close date picker" onPress={() => setDatePickerVisible(false)} style={[styles.omModalBackdrop, frameInsets]}>
+            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omBottomSheetFull]}>
               <View style={styles.omSheetHandle} />
               <View style={styles.omCalendarHeader}>
                 <Pressable accessibilityRole="button" accessibilityLabel="Previous month" onPress={() => setCalendarCursor(new Date(calendarYear, calendarMonth - 1, 1))} style={styles.omCalendarArrow}>
@@ -1548,9 +1545,9 @@ export default function OwnerSalesWorkspace({
             accessibilityRole="button"
             accessibilityLabel="Close month selector"
             onPress={() => setMonthPickerVisible(false)}
-            style={styles.omModalBackdrop}
+            style={[styles.omModalBackdrop, frameInsets]}
           >
-            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omMonthSheet, { width: sheetWidth }]}>
+            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omMonthSheet, styles.omBottomSheetFull]}>
               <View style={styles.omSheetHandle} />
               <View style={styles.omMonthHeader}>
                 <Pressable
@@ -1622,9 +1619,9 @@ export default function OwnerSalesWorkspace({
             accessibilityRole="button"
             accessibilityLabel="Close week selector"
             onPress={() => setWeekPickerVisible(false)}
-            style={styles.omModalBackdrop}
+            style={[styles.omModalBackdrop, frameInsets]}
           >
-            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omWeekSheet, { width: sheetWidth }]}>
+            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omWeekSheet, styles.omBottomSheetFull]}>
               <View style={styles.omSheetHandle} />
               <Text style={styles.omBranchSheetTitle}>Select week</Text>
               {recentOwnerSalesWeeks(today).map((week) => {
@@ -1665,8 +1662,8 @@ export default function OwnerSalesWorkspace({
           animationType="slide"
           onRequestClose={() => setBranchPickerVisible(false)}
         >
-          <Pressable accessibilityRole="button" accessibilityLabel="Close branch selector" onPress={() => setBranchPickerVisible(false)} style={styles.omModalBackdrop}>
-            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, { width: sheetWidth }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close branch selector" onPress={() => setBranchPickerVisible(false)} style={[styles.omModalBackdrop, frameInsets]}>
+            <Pressable onPress={() => undefined} style={[styles.omBottomSheet, styles.omBottomSheetFull]}>
               <View style={styles.omSheetHandle} />
               <Text style={styles.omBranchSheetTitle}>Select a branch.</Text>
               {[{ id: null, name: 'All branches' }, ...branches].map((branch) => {
@@ -2234,7 +2231,8 @@ function useStyles() {
     omEmptyIcon: { color: '#858591', fontFamily: 'Poppins_600SemiBold', fontSize: 28, marginBottom: 8 },
     omEmptyText: { color: '#858591', fontFamily: 'Poppins_400Regular', fontSize: 9, textAlign: 'center', marginTop: 8 },
     omModalBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', backgroundColor: 'rgba(15,16,37,0.50)' },
-    omBottomSheet: { width: '100%', maxWidth: 390, alignSelf: 'center', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#FFFFFF' },
+    omBottomSheetFull: { width: '100%' },
+    omBottomSheet: { width: '100%', alignSelf: 'center', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#FFFFFF' },
     omSheetHandle: { width: 42, height: 4, alignSelf: 'center', borderRadius: 2, marginBottom: 12, backgroundColor: '#D8D8DE' },
     omCalendarHeader: { height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
     omCalendarArrow: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 19 },

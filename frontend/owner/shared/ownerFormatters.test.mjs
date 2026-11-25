@@ -11,7 +11,7 @@ test('formats Owner dates in Manila design format', () => {
 });
 
 test('formats pesos and signed quantities', () => {
-  assert.equal(formatPeso(4263), '₱4,263');
+  assert.equal(formatPeso(4263), '₱4,263.00');
   assert.equal(formatPeso(14263.75), '₱14,263.75');
   assert.equal(formatQuantity(12, 'kg'), '12 kg');
   assert.equal(formatQuantity(5, 'kg', true), '+5 kg');

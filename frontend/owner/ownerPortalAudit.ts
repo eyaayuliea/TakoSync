@@ -1,6 +1,7 @@
 // OW-29 Inventory Audit History on the Owner Web Portal: every sale, inventory
 // movement, count, count revision, discrepancy and adjustment as one read-only
 // list of records, each with its details and related records.
+import { formatPeso } from '../services/money.ts';
 import { lossCategory } from './ownerPortalMovementReports.ts';
 
 export const AUDIT_RECORD_TYPES = [
@@ -43,7 +44,7 @@ type Review = {
 };
 
 const q = (value: number | string, unit = '') => `${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 3 }).format(Math.abs(Number(value)))}${unit ? ` ${unit}` : ''}`;
-const peso = (value: number | string) => `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = (value: number | string) => formatPeso(Number(value));
 
 function movementType(movement: Movement): AuditRecordType {
   switch (movement.type) {
