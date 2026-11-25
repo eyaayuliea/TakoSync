@@ -8,7 +8,7 @@ import { Poppins_600SemiBold } from '@expo-google-fonts/poppins/600SemiBold';
 import { Poppins_700Bold } from '@expo-google-fonts/poppins/700Bold';
 import { openingLogoWidth } from './theme/brandLogo';
 import BrandLogo from './theme/TakoSyncLogo';
-import { LoginBackButton, LoginBackground } from './theme/loginScreenParts';
+import { LoginBackButton, LoginBackground, LoginOutlineButton } from './theme/loginScreenParts';
 import { phoneFrameSize } from './theme/phoneFrame';
 import AppIcon from './theme/AppIcon';
 import {
@@ -23,7 +23,6 @@ import {
   ActivityIndicator,
   AppState,
   Image,
-  ImageBackground,
   Modal,
   Pressable,
   Platform,
@@ -787,48 +786,41 @@ function AppContent() {
             )}
 
             {visibleScreen === 'welcome' && (
-              <ImageBackground
-                source={require('../assets/WELCOME PAGE.jpg')}
-                resizeMode="cover"
-                style={styles.welcomeScreen}
-                imageStyle={styles.welcomeBackgroundImage}
-              >
-                <View style={styles.whiteHeader}>
-                  {/* A light backdrop keeps the logo readable over the photo. */}
-                  <View style={styles.welcomeLogoBackdrop}>
-                    <BrandLogo source={require('../assets/LIGHT THEME (LOGO).png')} width={openingLogoWidth(frameWidth)} />
-                  </View>
-                </View>
-
-                <View style={[styles.pinkPanel, { height: frameHeight * (frameHeight < 700 ? 0.65 : 0.53) }]}>
-                  <View style={[styles.panelContent, { paddingTop: frameHeight < 700 ? 22 : 34 }]}>
-                    <Text style={styles.heading}>Welcome!</Text>
-                    <Text style={styles.description}>
-                      Keep your ingredients in sync and your takoyaki shop ready for every rush.
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Staff Login"
-                      onPress={() => {
-                        setLoginError('');
-                        setScreen('login');
-                      }}
-                      style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
+              // The same design as the two login screens: photo background, logo, dark card.
+              <View style={styles.loginScreen}>
+                <LoginBackground>
+                    <ScrollView
+                      style={styles.loginScroll}
+                      contentContainerStyle={styles.loginScrollContent}
                     >
-                      <Text style={styles.buttonText}>Staff Login</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Owner Login"
-                      onPress={() => setScreen('ownerLogin')}
-                      style={({ pressed }) => [styles.ownerWelcomeButton, pressed && styles.buttonPressed]}
-                    >
-                      <Text style={styles.buttonText}>Owner Login</Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-              </ImageBackground>
+                      <View style={styles.loginLogo}>
+                        <BrandLogo source={require('../assets/LIGHT THEME (LOGO).png')} width={openingLogoWidth(frameWidth)} />
+                      </View>
+                      <View style={styles.loginCard}>
+                        <Text style={styles.loginHeading}>Welcome!</Text>
+                        <Text style={styles.welcomeCopy}>
+                          Keep your ingredients in sync and your takoyaki shop ready for every rush.
+                        </Text>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Staff Login"
+                          onPress={() => {
+                            setLoginError('');
+                            setScreen('login');
+                          }}
+                          style={({ pressed }) => [styles.loginButton, pressed && styles.buttonPressed]}
+                        >
+                          <Text style={styles.loginButtonText}>Staff Login</Text>
+                        </Pressable>
+                        <LoginOutlineButton
+                          label="Owner Login"
+                          radius={28}
+                          onPress={() => setScreen('ownerLogin')}
+                        />
+                      </View>
+                    </ScrollView>
+                </LoginBackground>
+              </View>
             )}
 
             {visibleScreen === 'ownerLogin' && (
@@ -1659,42 +1651,10 @@ function useAppStyles() {
   appFrame: { flex: 1, overflow: 'hidden', backgroundColor: '#FFFFFF' },
   desktopFrame: { borderRadius: 28 },
   loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  welcomeScreen: { flex: 1, backgroundColor: '#FFFFFF', overflow: 'hidden' },
-  welcomeBackgroundImage: { width: '100%', height: '100%' },
-  whiteHeader: { height: '48%', alignItems: 'center', paddingTop: '9%', backgroundColor: 'transparent' },
-  welcomeLogoBackdrop: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 26, backgroundColor: 'rgba(255, 255, 255, 0.92)' },
-  pinkPanel: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: PINK, borderTopLeftRadius: 36, borderTopRightRadius: 36,
-    paddingHorizontal: 25,
-  },
-  panelContent: { alignItems: 'center', width: '100%' },
-  heading: { color: '#FFFFFF', fontSize: 25, fontWeight: '800', textAlign: 'center', marginBottom: 15 },
-  description: { color: '#FFFFFF', fontSize: 13, lineHeight: 19, textAlign: 'center', maxWidth: 340 },
-  button: {
-    marginTop: 30, minWidth: 150, minHeight: 44, paddingHorizontal: 24,
-    borderRadius: 25, backgroundColor: NAVY, alignItems: 'center', justifyContent: 'center',
-    elevation: 3, shadowColor: '#000000', shadowOpacity: 0.16, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
-  },
-  ownerWelcomeButton: {
-    marginTop: 12,
-    minWidth: 150,
-    minHeight: 44,
-    paddingHorizontal: 24,
-    borderRadius: 25,
-    backgroundColor: NAVY,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 3,
-    shadowColor: '#000000',
-    shadowOpacity: 0.16,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
   buttonPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
-  buttonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   loginScreen: { flex: 1, backgroundColor: '#FFFFFF' },
   loginLogo: { alignItems: 'center', marginBottom: 18 },
+  welcomeCopy: { color: '#FFFFFF', fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: -8 },
   loginScroll: { flex: 1 },
   loginScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24 },
   loginCard: {
