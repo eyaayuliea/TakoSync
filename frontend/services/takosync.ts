@@ -89,6 +89,7 @@ import { isInactiveAccountDenial } from './permissions.ts';
 import { functionErrorMessage } from './functionErrors.ts';
 import { isVariantOutOfStock, parseSaleStockSnapshot, type SaleStockSnapshot } from './saleStock.ts';
 import { recipeBasisOf, type RecipeBasis } from './recipeBasis.ts';
+import { orderUsageByIngredient, type OrderUsage } from './orderUsage.ts';
 import {
   buildStockInRequest,
   parseStockInReceipt,
@@ -3522,6 +3523,27 @@ export async function loadProductManagement(): Promise<ProductManagementItem[]> 
       variants,
     };
   });
+}
+
+/**
+ * What one standard order uses of each inventory item ("Deduction per order" on the
+ * team's catalog), from the same rules the server uses to record a sale. Recipes
+ * are the same in every branch, so any branch the user can open gives the answer.
+ * Empty on a database from before the stock check (migration 202611220014).
+ */
+export async function loadOrderUsage(branchId: string): Promise<Map<string, OrderUsage>> {
+  const client = requireSupabase();
+  const [stockResult, variantsResult] = await Promise.all([
+    client.rpc('sale_stock_requirements', { p_branch_id: branchId }),
+    client.from('product_variants').select('id, piece_count').eq('active', true),
+  ]);
+  if (isMissingRpcFunction(stockResult.error, 'sale_stock_requirements')) return new Map();
+  assertNoError(stockResult.error);
+  assertNoError(variantsResult.error);
+  const snapshot = parseSaleStockSnapshot(stockResult.data);
+  if (!snapshot) return new Map();
+  const pieces = new Map((variantsResult.data ?? []).map((variant) => [variant.id, Number(variant.piece_count)]));
+  return orderUsageByIngredient(snapshot.requirements, pieces);
 }
 
 export async function loadStaffMenuCatalog(branchId: string): Promise<{

@@ -1,5 +1,6 @@
 import { formatPeso } from '../services/money';
 import { greetingFirstName, helloGreeting } from '../services/greetingName';
+import { ORDER_USAGE_NOTE, STANDARD_ORDER_PIECES, orderUsageSummary, orderUsageText, ordersCovered, ordersCoveredText, type OrderUsage } from '../services/orderUsage';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot,
   lowStockWarningMessage,
@@ -88,6 +89,7 @@ import {
   runInventoryRetryOnce,
   shouldOfferInventoryRetry,
   loadInventory,
+  loadOrderUsage,
   loadRecentStaffSales,
   loadSaleVoidRequests,
   loadBranchEntryReversalRequests,
@@ -676,6 +678,23 @@ function LotExpiryBadges({
   );
 }
 
+/**
+ * The stock in the unit the per-order amount is in. The staff app keeps the prepared
+ * batter in ml and shows it in bottles, while its recipe is in bottles; null when
+ * neither the stored nor the shown quantity is in that unit.
+ */
+function stockInUsageUnit(
+  stored: { quantity: number; unit: string },
+  shown: { quantity: number; unit: string },
+  usage: OrderUsage | null | undefined,
+): number | null {
+  if (!usage) return null;
+  const same = (unit: string) => unit === usage.unit || unit.replace(/s$/, '') === usage.unit;
+  if (same(stored.unit)) return stored.quantity;
+  if (same(shown.unit)) return shown.quantity;
+  return null;
+}
+
 function InventoryIngredientCard({
   item: storedItem,
   onPress,
@@ -683,8 +702,11 @@ function InventoryIngredientCard({
   showExpiration = false,
   showInventoryStatuses = false,
   cardWidth,
+  orderUsage,
 }: {
   item: Ingredient;
+  /** What one standard order uses of this item; shown with the orders the stock covers. */
+  orderUsage?: OrderUsage | null;
   onPress: () => void;
   statusOverride?: { label: string; tone: 'low' | 'good' | 'warning' };
   showExpiration?: boolean;
@@ -704,6 +726,8 @@ function InventoryIngredientCard({
   const packInfo = item.packageQuantity !== null && item.packageUnit
     ? `Pack: ${formatInventoryQuantity(item.packageQuantity, 3)} ${item.packageUnit}`
     : null;
+  // The catalog's "Deduction per order" and "Orders covered by stock", for items an order uses.
+  const usageInfo = orderUsageSummary(stockInUsageUnit(storedItem, item, orderUsage), orderUsage);
 
   return (
     <Pressable
@@ -721,6 +745,7 @@ function InventoryIngredientCard({
         <Text style={styles.inventoryIngredientName} numberOfLines={1}>{item.name}</Text>
         <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{categoryLabel} · {item.unit}</Text>
         {packInfo ? <Text style={styles.inventoryIngredientCategory} numberOfLines={1}>{packInfo}</Text> : null}
+        {usageInfo ? <Text style={styles.inventoryIngredientCategory} numberOfLines={2}>{usageInfo}</Text> : null}
         {showInventoryStatuses ? (
           <Text style={styles.dashboardExpiration}>
             {item.expirationStatus ? `${item.expirationStatus}: ` : item.expiration ? 'Expires: ' : 'Expiration: '}
@@ -1165,6 +1190,8 @@ export default function StaffWorkspace({
   const [menuCatalogLoaded, setMenuCatalogLoaded] = useState(false);
   const [menuCatalogBranchId, setMenuCatalogBranchId] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  // What one standard order uses of each item (from the owner's recipes).
+  const [orderUsage, setOrderUsage] = useState<Map<string, OrderUsage>>(new Map());
   const [nearExpirationDays, setNearExpirationDays] = useState<number | null>(null);
   const [lotExpiryWindow, setLotExpiryWindow] = useState(resolveLotExpiryWindow());
   const [backendHistory, setBackendHistory] = useState<HistoryTransaction[]>([]);
@@ -1354,6 +1381,8 @@ export default function StaffWorkspace({
     branchId: string,
   ) => {
     setIngredients(inventory.items);
+    // Refreshed with the stock; the inventory still shows if this cannot be loaded.
+    loadOrderUsage(branchId).then(setOrderUsage).catch(() => undefined);
     setNearExpirationDays(inventory.nearExpirationDays);
     setLotExpiryWindow(inventory.lotExpiryWindow ?? resolveLotExpiryWindow());
     setAlertSnapshotBranchId(branchId);
@@ -4297,11 +4326,13 @@ export default function StaffWorkspace({
             <Text style={styles.inventoryCount}>
               {visibleIngredients.length} {visibleIngredients.length === 1 ? 'item' : 'items'} · Expected quantity
             </Text>
+            {orderUsage.size > 0 ? <Text style={styles.inventoryCount}>{ORDER_USAGE_NOTE}</Text> : null}
           </>
         }
         renderItem={({ item }) => (
           <InventoryIngredientCard
             item={item}
+            orderUsage={orderUsage.get(item.id)}
             showExpiration
             showInventoryStatuses
             onPress={() => {
@@ -4472,6 +4503,7 @@ export default function StaffWorkspace({
 
     // ST-04 c6: prepared batter is shown in bottles on this screen.
     const shownIngredient = inventoryDisplayItem(selectedIngredient);
+    const selectedOrderUsage = orderUsage.get(selectedIngredient.id) ?? null;
     const gap = shownIngredient.minimumStock - shownIngredient.quantity;
     const stockGap = gap > 0
       ? `${formatInventoryQuantity(gap, shownIngredient.quantityPrecision)} ${shownIngredient.unit} below minimum`
@@ -4550,6 +4582,20 @@ export default function StaffWorkspace({
                 {formatInventoryUnitQuantity(shownThreshold, shownIngredient.unit, shownIngredient.quantityPrecision)}
               </Text>
             </View>
+          ) : null}
+          {selectedOrderUsage ? (
+            <>
+              <View style={styles.stockSummaryLine}>
+                <Text style={styles.stockSummaryLabel}>Deduction per order ({STANDARD_ORDER_PIECES} pcs)</Text>
+                <Text style={styles.stockSummaryValue}>{orderUsageText(selectedOrderUsage)}</Text>
+              </View>
+              <View style={styles.stockSummaryLine}>
+                <Text style={styles.stockSummaryLabel}>Orders covered by stock</Text>
+                <Text style={styles.stockSummaryValue}>
+                  {ordersCoveredText(ordersCovered(stockInUsageUnit(selectedIngredient, shownIngredient, selectedOrderUsage), selectedOrderUsage) ?? 0)}
+                </Text>
+              </View>
+            </>
           ) : null}
           <View style={styles.stockSummaryLine}>
             <Text style={styles.stockSummaryLabel}>Stock gap</Text>
