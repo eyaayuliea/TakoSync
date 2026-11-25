@@ -1,5 +1,5 @@
 // What the Staff and Owner login screens share, so the two always look alike
-// around their own forms: the washed-out photo background and the Back button.
+// with the Welcome screen: the washed-out photo background and the outlined button.
 import React from 'react';
 import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -20,22 +20,39 @@ export function LoginBackground({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Back to the Welcome screen, placed under the Log In button of the dark login card.
- * `radius` follows the Log In button above it.
+ * The outlined button of the dark card, under its filled one: Owner Login on the
+ * Welcome screen, Back on the login screens. `radius` follows the filled button above it.
  */
-export function LoginBackButton({ onPress, disabled = false, radius }: { onPress: () => void; disabled?: boolean; radius: number }) {
+export function LoginOutlineButton({
+  label,
+  accessibilityLabel = label,
+  onPress,
+  disabled = false,
+  radius,
+}: {
+  label: string;
+  accessibilityLabel?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  radius: number;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Back to the Welcome screen"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.backButton, { borderRadius: radius }, pressed && styles.pressed, disabled && styles.disabled]}
     >
-      <Text style={styles.backButtonText}>Back</Text>
+      <Text style={styles.backButtonText}>{label}</Text>
     </Pressable>
   );
+}
+
+/** Back to the Welcome screen, placed under the Log In button. */
+export function LoginBackButton({ onPress, disabled = false, radius }: { onPress: () => void; disabled?: boolean; radius: number }) {
+  return <LoginOutlineButton label="Back" accessibilityLabel="Back to the Welcome screen" onPress={onPress} disabled={disabled} radius={radius} />;
 }
 
 const styles = StyleSheet.create({
