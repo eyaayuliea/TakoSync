@@ -307,6 +307,7 @@ export type Database = {
         quantity_required: number;
         unit_of_measure: string;
         automatic_consumption_enabled: boolean;
+        consumption_basis: 'per_order' | 'per_piece';
       }>;
       sales: Table<{
         id: string;

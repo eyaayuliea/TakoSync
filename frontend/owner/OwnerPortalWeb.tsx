@@ -1,4 +1,5 @@
 import { formatPeso } from '../services/money';
+import { RECIPE_BASIS_OPTIONS, recipeBasisFromLabel, recipeBasisOf, type RecipeBasis } from '../services/recipeBasis';
 import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
 import { formatReportDate, formatReportDateTime, formatReportPeriod, reportMetaLines, type ReportDocument, type ReportSection } from './reportDocument';
@@ -2586,7 +2587,7 @@ function IngredientConfigurationEditor({ configuration, onSaved }: {
   );
 }
 
-type RecipeDraftLine = { key: string; ingredientId: string; quantity: string };
+type RecipeDraftLine = { key: string; ingredientId: string; quantity: string; basis: RecipeBasis };
 
 /**
  * OW-22 c4–c10: every product's recipe ("Recipe required" when it has none), and
@@ -2611,6 +2612,8 @@ function RecipesEditor({ products, configuration, onSaved }: {
   const ingredients = (configuration?.ingredients ?? []).filter((item) => item.active);
   const ingredientById = new Map(ingredients.map((item) => [item.id, item]));
   const table = recipeTableRows(products, configuration?.recipeIngredients ?? [], shared, (id) => ingredientById.get(id)?.name ?? id);
+  // Per piece / per order applies to product recipes, once the database has the column.
+  const basisChoice = target?.kind === 'product' && configuration?.recipeBasisSupported === true;
   const targetName = target ? (target.kind === 'product' ? products.find((item) => item.id === target.id)?.product_name : addons.find((item) => item.id === target.id)?.name) ?? '' : '';
   const open = (kind: 'product' | 'addon', id: string) => {
     const current = kind === 'product'
@@ -2619,7 +2622,10 @@ function RecipesEditor({ products, configuration, onSaved }: {
     setTarget({ kind, id });
     setErrors([]);
     setSaveError('');
-    setLines(current.map((line, index) => ({ key: `${line.ingredient_id}-${index}`, ingredientId: line.ingredient_id, quantity: String(line.quantity_required) })));
+    setLines(current.map((line, index) => ({
+      key: `${line.ingredient_id}-${index}`, ingredientId: line.ingredient_id, quantity: String(line.quantity_required),
+      basis: recipeBasisOf((line as { consumption_basis?: unknown }).consumption_basis),
+    })));
   };
   const save = async () => {
     if (!target) return;
@@ -2632,7 +2638,10 @@ function RecipesEditor({ products, configuration, onSaved }: {
       else if (seen.has(line.ingredientId)) found.push(`${ingredient.name} appears twice.`);
       else if (!line.quantity.trim() || !Number.isFinite(quantity) || quantity <= 0) found.push(`Enter a required quantity greater than zero for ${ingredient.name}.`);
       seen.add(line.ingredientId);
-      return { ingredient_id: line.ingredientId, quantity_required: quantity, unit_of_measure: ingredient?.unit ?? '' };
+      return {
+        ingredient_id: line.ingredientId, quantity_required: quantity, unit_of_measure: ingredient?.unit ?? '',
+        ...(basisChoice ? { consumption_basis: line.basis } : {}),
+      };
     });
     setErrors([...new Set(found)]);
     setSaveError('');
@@ -2687,6 +2696,11 @@ function RecipesEditor({ products, configuration, onSaved }: {
                     </View>
                     <TextInput value={line.quantity} onChangeText={(quantity) => setLines((current) => current.map((item) => (item.key === line.key ? { ...item, quantity } : item)))} keyboardType="decimal-pad" accessibilityLabel={`Required quantity of ${ingredient?.name ?? 'ingredient'}`} placeholder="Quantity" style={[styles.input, { width: 100 }]} />
                     <Text style={[styles.body, { width: 50 }]}>{ingredient?.unit ?? ''}</Text>
+                    {basisChoice ? (
+                      <View style={{ width: 130 }}>
+                        <Select value={RECIPE_BASIS_OPTIONS.find((option) => option.value === line.basis)?.label ?? 'Per order'} options={RECIPE_BASIS_OPTIONS.map((option) => option.label)} onChange={(label) => setLines((current) => current.map((item) => (item.key === line.key ? { ...item, basis: recipeBasisFromLabel(label) } : item)))} />
+                      </View>
+                    ) : null}
                     <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${ingredient?.name ?? 'line'}`} onPress={() => setLines((current) => current.filter((item) => item.key !== line.key))} style={[styles.outline, styles.dangerOutline, { marginTop: 0 }]}>
                       <Text style={styles.dangerText}>Remove</Text>
                     </Pressable>
@@ -2695,9 +2709,11 @@ function RecipesEditor({ products, configuration, onSaved }: {
               })}
               <Pressable accessibilityRole="button" onPress={() => {
                 const next = ingredients.find((item) => !lines.some((line) => line.ingredientId === item.id));
-                if (next) setLines((current) => [...current, { key: `${next.id}-${Date.now()}`, ingredientId: next.id, quantity: '' }]);
+                if (next) setLines((current) => [...current, { key: `${next.id}-${Date.now()}`, ingredientId: next.id, quantity: '', basis: 'per_order' }]);
               }} style={styles.outline}><Text style={styles.outlineText}>Add ingredient</Text></Pressable>
-              <Text style={styles.muted}>Quantities are per unit sold, in the ingredient’s unit of measurement.</Text>
+              <Text style={styles.muted}>{basisChoice
+                ? 'Quantities are in the ingredient’s unit of measurement. Per piece: used for every piece in the size sold (a 4 pc order uses 4 times the amount). Per order: used once for each order, whatever its size.'
+                : 'Quantities are per unit sold, in the ingredient’s unit of measurement.'}</Text>
               {errors.length ? (
                 <View style={[styles.errorBanner, { marginTop: 10 }]} accessibilityRole="alert">
                   {errors.map((message) => <Text key={message} style={styles.errorText}>{message}</Text>)}

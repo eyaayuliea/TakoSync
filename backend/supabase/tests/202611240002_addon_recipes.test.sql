@@ -30,7 +30,9 @@ insert into auth.sessions (id, user_id, created_at, updated_at)
 select owner_session_id, owner_id, now(), now() from addon_fixture union all select staff_session_id, staff_id, now(), now() from addon_fixture;
 
 -- Enough stock for one sale.
-update public.branch_inventory set quantity = 50 where branch_id = '00000000-0000-4000-8000-000000000001'::uuid;
+update public.branch_inventory set quantity = 5000 where branch_id = '00000000-0000-4000-8000-000000000001'::uuid;
+-- 202611260001 gives the standard add-ons a starting recipe; this test sets its own.
+delete from public.addon_recipes where addon_id = (select addon_id from addon_fixture);
 update public.products set is_available = true where product_name = 'Octobits Takoyaki';
 update public.menu_addons set active = true where id = (select addon_id from addon_fixture);
 

@@ -29,6 +29,8 @@ where branch_id = '00000000-0000-4000-8000-000000000001' and ingredient_id in ('
 -- An item that is date-tracked but has no shelf life: the date must be typed (ST-09 c3).
 -- Items with a shelf life get date received + shelf life when no date is typed.
 update public.ingredients set expiration_tracking = true, shelf_life_days = null where id = 'dashi';
+-- Salt has a pack size since 202611260001; this test needs an item without one.
+delete from public.ingredient_package_sizes where ingredient_id = 'salt';
 
 create temporary table t on commit drop as
 select (clock_timestamp() at time zone 'Asia/Manila')::date as today,
@@ -62,7 +64,7 @@ select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L
   '22023', 'All-purpose flour: the quantity must be a number greater than 0.', 'ST-09 c2: the quantity must be greater than zero');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"dashi","quantity":1}]'::jsonb),
-  '22023', 'Dashi stock: select the expiration date. It is tracked for expiry.', 'ST-09 c3: a date-tracked item without a shelf life needs an expiration date');
+  '22023', 'Dashi powder: select the expiration date. It is tracked for expiry.', 'ST-09 c3: a date-tracked item without a shelf life needs an expiration date');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)),
   jsonb_build_array(jsonb_build_object('ingredient_id', 'octopus', 'quantity', 1, 'expiration_date', (select today - 1 from t)))),
@@ -75,7 +77,7 @@ select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L
   '22023', 'The date received cannot be in the future.', 'the date received is not in the future');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"salt","quantity":1,"unit":"pack"}]'::jsonb),
-  '22023', 'Salt has no purchase-unit conversion. Enter the quantity in tsp.', 'ST-09 c4: no conversion without an owner-set package size');
+  '22023', 'Salt has no purchase-unit conversion. Enter the quantity in g.', 'ST-09 c4: no conversion without an owner-set package size');
 select throws_ok(format('select public.record_stock_in(%L, gen_random_uuid(), %L, %L)', (select b1 from t),
   pg_temp.header((select today from t), (select today from t)), '[{"ingredient_id":"flour","quantity":1},{"ingredient_id":"flour","quantity":2}]'::jsonb),
   '22023', 'All-purpose flour is listed more than once. Combine it into one line.', 'an ingredient appears once per Stock-In');

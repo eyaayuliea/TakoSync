@@ -31,6 +31,7 @@ import {
 import { createThemedStyles, useTheme } from '../theme/ThemeProvider';
 import { secondaryOutline } from '../theme/buttonRoles';
 import { ownerColors } from './shared/ownerTokens';
+import { RECIPE_BASIS_OPTIONS, recipeBasisLabel, type RecipeBasis } from '../services/recipeBasis';
 import AppIcon from '../theme/AppIcon';
 
 type Props = {
@@ -48,6 +49,8 @@ type RecipeDraftLine = {
   key: string;
   ingredientId: string;
   quantity: string;
+  /** Used once per order, or for every piece in the size sold. */
+  basis: RecipeBasis;
 };
 
 type SharedRecipeDraftLine = {
@@ -87,6 +90,7 @@ function makeDraftLine(): RecipeDraftLine {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     ingredientId: '',
     quantity: '',
+    basis: 'per_order',
   };
 }
 
@@ -105,6 +109,8 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
   const [categories, setCategories] = useState<IngredientCategoryRecord[]>([]);
   const [products, setProducts] = useState<ProductMenuItem[]>([]);
   const [recipeIngredients, setRecipeIngredients] = useState<RecipeIngredientRecord[]>([]);
+  // False until the database has per-piece recipe lines; the choice is hidden until then.
+  const [recipeBasisSupported, setRecipeBasisSupported] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
@@ -151,6 +157,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
       setIngredients(configuration.ingredients);
       setCategories(configuration.categories);
       setRecipeIngredients(configuration.recipeIngredients);
+      setRecipeBasisSupported(configuration.recipeBasisSupported);
       setProducts(nextProducts);
       setSharedRecipes(nextSharedRecipes);
       const currentShared = nextSharedRecipes[0];
@@ -337,6 +344,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
         quantity: line.unit_of_measure === ingredientById.get(line.ingredient_id)?.unit
           ? String(line.quantity_required)
           : '',
+        basis: line.consumption_basis,
       }))
       : [makeDraftLine()]);
     setRecipeError('');
@@ -390,6 +398,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
           ingredient_id: ingredient.id,
           quantity_required: Number(line.quantity),
           unit_of_measure: ingredient.unit,
+          ...(recipeBasisSupported ? { consumption_basis: line.basis } : {}),
         };
       }));
       setRecipeIngredients((current) => [
@@ -745,7 +754,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
             <View key={line.id} style={styles.detailIngredientRow}>
               <View style={styles.cardCopy}>
                 <Text style={styles.cardTitle}>{ingredientById.get(line.ingredient_id)?.name ?? 'Ingredient unavailable'}</Text>
-                <Text style={styles.cardMeta}>{formatQuantity(line.quantity_required)} {formatUnit(line.unit_of_measure)}</Text>
+                <Text style={styles.cardMeta}>{formatQuantity(line.quantity_required)} {formatUnit(line.unit_of_measure)}{recipeBasisSupported ? ` ${recipeBasisLabel(line.consumption_basis)}` : ''}</Text>
                 {ingredientById.get(line.ingredient_id)?.unit !== line.unit_of_measure ? (
                   <Text style={styles.unitWarning}>
                     Unit changed to {formatUnit(ingredientById.get(line.ingredient_id)?.unit ?? '')}; edit this recipe and enter the correct quantity.
@@ -908,7 +917,7 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                     <View key={line.id} style={styles.detailIngredientRow}>
                       <View style={styles.cardCopy}>
                         <Text style={styles.cardTitle}>{productById.get(line.product_id)?.product_name ?? 'Product unavailable'}</Text>
-                        <Text style={styles.cardMeta}>{formatQuantity(line.quantity_required)} {formatUnit(line.unit_of_measure)}</Text>
+                        <Text style={styles.cardMeta}>{formatQuantity(line.quantity_required)} {formatUnit(line.unit_of_measure)}{recipeBasisSupported ? ` ${recipeBasisLabel(line.consumption_basis)}` : ''}</Text>
                       </View>
                     </View>
                   )) : <Text style={styles.helperText}>This ingredient is not currently used in a configured recipe.</Text>}
@@ -1040,6 +1049,31 @@ export default function OwnerIngredientsRecipes({ onManageProducts }: Props) {
                       <Text style={styles.unitValue}>{ingredient ? formatUnit(ingredient.unit) : 'Unit'}</Text>
                     </View>
                     <Text style={styles.helperText}>Unit follows the ingredient's configured unit.</Text>
+                    {recipeBasisSupported ? (
+                      <>
+                        <View style={styles.basisRow} accessibilityRole="radiogroup" accessibilityLabel={`How ingredient entry ${index + 1} is used`}>
+                          {RECIPE_BASIS_OPTIONS.map((option) => {
+                            const selected = line.basis === option.value;
+                            return (
+                              <Pressable
+                                key={option.value}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected }}
+                                onPress={() => updateRecipeDraft(line.key, { basis: option.value })}
+                                style={[styles.basisOption, selected && styles.basisOptionSelected]}
+                              >
+                                <Text style={[styles.basisOptionText, selected && styles.basisOptionTextSelected]}>{option.label}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                        <Text style={styles.helperText}>
+                          {line.basis === 'per_piece'
+                            ? 'Used for every piece: a 4 pc order uses 4 times this amount, an 8 pc order 8 times.'
+                            : 'Used once for each order, whatever its size (for example sauce, packaging, a pick).'}
+                        </Text>
+                      </>
+                    ) : null}
                   </View>
                 );
               })}
@@ -1172,6 +1206,11 @@ function useStyles() {
     ingredientChoices: { maxHeight: 140, marginTop: 4, borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.white },
     ingredientChoice: { minHeight: 42, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
     quantityRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7 },
+    basisRow: { flexDirection: 'row', gap: 7, marginTop: 9 },
+    basisOption: { flex: 1, minHeight: 34, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.white },
+    basisOptionSelected: { borderColor: colors.pink, backgroundColor: colors.pink },
+    basisOptionText: { color: colors.navy, fontFamily: font.medium, fontSize: 9 },
+    basisOptionTextSelected: { color: colors.white, fontFamily: font.semibold },
     quantityInput: { flex: 1, minHeight: 36, paddingHorizontal: 9, borderWidth: 1, borderColor: colors.line, borderRadius: 9, backgroundColor: colors.white, color: colors.ink, fontFamily: font.regular, fontSize: 9 },
     unitValue: { minWidth: 49, color: colors.navy, fontFamily: font.semibold, fontSize: 8, textAlign: 'right' },
     addEntryButton: { minHeight: 33, alignItems: 'center', justifyContent: 'center', marginBottom: 8, borderRadius: 9, ...secondaryOutline(theme.isDark) },

@@ -58,3 +58,13 @@ test('OW-22 c4, c6, c8: recipes per product, batter through the shared recipe, R
   ]);
   assert.deepEqual(table.recipeRequired, ['p2']);
 });
+
+test('a recipe line says whether its amount is per piece or per order', () => {
+  const products = [{ id: 'p1', product_name: 'Crab Takoyaki' }];
+  const recipes = [
+    { product_id: 'p1', ingredient_id: 'crab', quantity_required: 5, unit_of_measure: 'g', consumption_basis: 'per_piece' },
+    { product_id: 'p1', ingredient_id: 'sauce', quantity_required: 15, unit_of_measure: 'ml', consumption_basis: 'per_order' },
+  ];
+  const table = recipeTableRows(products, recipes, [], (id) => ({ crab: 'Crab stick', sauce: 'Takoyaki sauce' })[id] ?? id);
+  assert.deepEqual(table.rows, [['Crab Takoyaki', 'Crab stick: 5 g per piece\nTakoyaki sauce: 15 ml per order', 'Configured']]);
+});

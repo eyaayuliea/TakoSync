@@ -88,6 +88,7 @@ import { normalizeStaffUsername, StaffLoginError } from './staffAuthentication';
 import { isInactiveAccountDenial } from './permissions.ts';
 import { functionErrorMessage } from './functionErrors.ts';
 import { isVariantOutOfStock, parseSaleStockSnapshot, type SaleStockSnapshot } from './saleStock.ts';
+import { recipeBasisOf, type RecipeBasis } from './recipeBasis.ts';
 import {
   buildStockInRequest,
   parseStockInReceipt,
@@ -764,6 +765,8 @@ export type RecipeIngredientRecord = {
   quantity_required: number;
   unit_of_measure: string;
   automatic_consumption_enabled: boolean;
+  /** Used once per serving sold, or for every piece in the size sold. */
+  consumption_basis: RecipeBasis;
 };
 
 export type StockThresholdInventory = {
@@ -4020,6 +4023,8 @@ export async function loadIngredientRecipeConfiguration(): Promise<{
   ingredients: IngredientConfigurationRecord[];
   categories: IngredientCategoryRecord[];
   recipeIngredients: RecipeIngredientRecord[];
+  /** False on a database from before per-piece recipe lines (migration 202611260001). */
+  recipeBasisSupported: boolean;
   /** OW-22 c2: each ingredient's purchase unit (one package = package_quantity × its unit). */
   purchaseUnits: IngredientPurchaseUnit[];
   /** OW-22 c7: add-on recipes (empty before migration 202611240002). */
@@ -4034,28 +4039,53 @@ export async function loadIngredientRecipeConfiguration(): Promise<{
   if (addonRecipesResult.error && !isMissingSchemaColumn(addonRecipesResult.error) && !/addon_recipes/.test(addonRecipesResult.error.message ?? '')) {
     assertNoError(addonRecipesResult.error);
   }
-  const [ingredientsResult, categoriesResult, recipesResult] = await Promise.all([
+  const [ingredientsResult, categoriesResult, recipes] = await Promise.all([
     client.from('ingredients')
       .select('id, category_id, name, unit, quantity_precision, expiration_tracking, active, created_at, updated_at')
       .order('name', { ascending: true }),
     client.from('ingredient_categories')
       .select('id, name, created_at')
       .order('name', { ascending: true }),
-    client.from('recipes')
-      .select('id, product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled')
-      .order('product_id', { ascending: true }),
+    loadRecipeLines(client),
   ]);
   assertNoError(ingredientsResult.error);
   assertNoError(categoriesResult.error);
-  assertNoError(recipesResult.error);
   return {
     purchaseUnits: (packagesResult.data ?? []).map((row) => ({ ...row, package_quantity: Number(row.package_quantity) })),
     addonRecipes: addonRecipesResult.error ? [] : (addonRecipesResult.data ?? []).map((row) => ({ ...row, quantity_required: Number(row.quantity_required) })),
     ingredients: ingredientsResult.data ?? [],
     categories: categoriesResult.data ?? [],
-    recipeIngredients: (recipesResult.data ?? []).map((line) => ({
+    recipeIngredients: recipes.lines,
+    recipeBasisSupported: recipes.basisSupported,
+  };
+}
+
+/**
+ * Product recipe lines, for one product or all. A database from before migration
+ * 202611260001 has no consumption_basis column; its lines are all per order.
+ */
+async function loadRecipeLines(
+  client: SupabaseClient<Database>,
+  productId?: string,
+): Promise<{ lines: RecipeIngredientRecord[]; basisSupported: boolean }> {
+  const base = 'id, product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled';
+  const run = (columns: string) => {
+    const query = client.from('recipes').select(columns);
+    return (productId ? query.eq('product_id', productId) : query)
+      .order('product_id', { ascending: true })
+      .order('ingredient_id', { ascending: true });
+  };
+  let result = await run(`${base}, consumption_basis`);
+  const basisSupported = !isMissingSchemaColumn(result.error);
+  if (!basisSupported) result = await run(base);
+  assertNoError(result.error);
+  const rows = (result.data ?? []) as unknown as Array<Omit<RecipeIngredientRecord, 'consumption_basis'> & { consumption_basis?: unknown }>;
+  return {
+    basisSupported,
+    lines: rows.map((line) => ({
       ...line,
       quantity_required: Number(line.quantity_required),
+      consumption_basis: recipeBasisOf(line.consumption_basis),
     })),
   };
 }
@@ -4191,9 +4221,14 @@ export async function saveAddonRecipe(
   }
 }
 
+/**
+ * Saves a product's recipe. A line without `consumption_basis` keeps the basis it
+ * has (a new line is per order); pass it only on a database that has the column
+ * (`recipeBasisSupported`).
+ */
 export async function saveProductRecipe(
   productId: string,
-  lines: { ingredient_id: string; quantity_required: number; unit_of_measure: string }[],
+  lines: { ingredient_id: string; quantity_required: number; unit_of_measure: string; consumption_basis?: RecipeBasis }[],
 ): Promise<RecipeIngredientRecord[]> {
   if (!productId) throw new Error('Choose a menu product.');
   const ingredientIds = new Set<string>();
@@ -4216,16 +4251,21 @@ export async function saveProductRecipe(
     .eq('product_id', productId);
   assertNoError(loadError);
 
-  if (lines.length) {
+  // One request per kind of line: every row of an upsert must name the same columns.
+  const withBasis = lines.filter((line) => line.consumption_basis !== undefined);
+  const withoutBasis = lines.filter((line) => line.consumption_basis === undefined);
+  for (const group of [withBasis, withoutBasis]) {
+    if (!group.length) continue;
     const { error } = await client
       .from('recipes')
       .upsert(
-        lines.map((line) => ({
+        group.map((line) => ({
           product_id: productId,
           ingredient_id: line.ingredient_id,
           quantity_required: line.quantity_required,
           unit_of_measure: line.unit_of_measure,
           automatic_consumption_enabled: true,
+          ...(line.consumption_basis === undefined ? {} : { consumption_basis: line.consumption_basis }),
         })),
         { onConflict: 'product_id,ingredient_id' },
       );
@@ -4244,16 +4284,7 @@ export async function saveProductRecipe(
     assertNoError(error);
   }
 
-  const { data, error } = await client
-    .from('recipes')
-    .select('id, product_id, ingredient_id, quantity_required, unit_of_measure, automatic_consumption_enabled')
-    .eq('product_id', productId)
-    .order('ingredient_id', { ascending: true });
-  assertNoError(error);
-  return (data ?? []).map((line) => ({
-    ...line,
-    quantity_required: Number(line.quantity_required),
-  }));
+  return (await loadRecipeLines(client, productId)).lines;
 }
 
 export async function createProduct(input: OwnerProductInput & {
