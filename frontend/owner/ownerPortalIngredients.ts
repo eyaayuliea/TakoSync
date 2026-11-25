@@ -81,7 +81,7 @@ export function ingredientTableRows<T extends Ingredient>(
 
 export const RECIPE_HEADERS = ['Product', 'Recipe Ingredients', 'Status'];
 
-type RecipeLine = { ingredient_id: string; quantity_required: number; unit_of_measure: string };
+type RecipeLine = { ingredient_id: string; quantity_required: number; unit_of_measure: string; consumption_basis?: 'per_order' | 'per_piece' };
 type SharedRecipe = { name: string; active: boolean; prepared_quantity: number; prepared_unit: string; estimated_yield_pieces: number; productIds: string[] };
 
 const qty = (value: number) => new Intl.NumberFormat('en-PH', { maximumFractionDigits: 4 }).format(value);
@@ -103,7 +103,8 @@ export function recipeTableRows(
     const shared = sharedRecipes.find((recipe) => recipe.active && recipe.productIds.includes(product.id));
     const parts = [
       ...(shared ? [`Prepared batter: ${qty(shared.prepared_quantity / shared.estimated_yield_pieces)} ${shared.prepared_unit} per piece (${shared.name})`] : []),
-      ...lines.map((line) => `${ingredientName(line.ingredient_id)}: ${qty(line.quantity_required)} ${line.unit_of_measure}`),
+      ...lines.map((line) => `${ingredientName(line.ingredient_id)}: ${qty(line.quantity_required)} ${line.unit_of_measure}`
+        + (line.consumption_basis ? (line.consumption_basis === 'per_piece' ? ' per piece' : ' per order') : '')),
     ];
     if (!parts.length) recipeRequired.push(product.id);
     return [product.product_name, parts.join('\n') || '—', parts.length ? 'Configured' : 'Recipe required'];

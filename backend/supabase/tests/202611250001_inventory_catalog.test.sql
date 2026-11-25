@@ -14,8 +14,8 @@ select results_eq(
   'the six convertible items and Takoyaki picks use the catalog units');
 select results_eq(
   $$select id, unit from public.ingredients where id in ('salt','baking-powder','cheese-cubes','dashi') order by 1$$,
-  $$values ('baking-powder'::text, 'tsp'::text), ('cheese-cubes', 'pcs'), ('dashi', 'L'), ('salt', 'tsp')$$,
-  'salt, baking powder, cheese and dashi wait for the owner''s amounts in grams');
+  $$values ('baking-powder'::text, 'g'::text), ('cheese-cubes', 'g'), ('dashi', 'g'), ('salt', 'g')$$,
+  'salt, baking powder, cheese and dashi follow the catalog too, since 202611260001');
 select is((select active from public.ingredients where id = 'octobits'), false, 'Octobits is hidden as an inventory item');
 select is((select count(*)::int from public.recipes where ingredient_id = 'octobits'), 0, 'no recipe points at the hidden item');
 select results_eq(
@@ -45,6 +45,12 @@ select owner_id, 'authenticated', 'authenticated', 'unit-owner@test.invalid', ''
   '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Unit Owner"}'::jsonb from unit_fixture;
 update public.profiles set role = 'owner', branch_id = null, employee_id = null, active = true, must_change_password = false
 where id = (select owner_id from unit_fixture);
+
+-- 202611260001 has since moved salt to grams. Inside this rolled-back transaction it is put
+-- back to teaspoons, so the unit change itself is still exercised on live data.
+update public.ingredients set unit = 'tsp', quantity_precision = 2 where id = 'salt';
+update public.shared_recipe_ingredients set quantity_required = 2.5, unit_of_measure = 'tsp' where ingredient_id = 'salt';
+delete from public.inventory_movements where ingredient_id = 'salt' and notes = 'unit change';
 
 -- Whatever salt history this database already has is cancelled out by one fixture entry,
 -- so the ledger sums to 10 tsp, the balance used below.
