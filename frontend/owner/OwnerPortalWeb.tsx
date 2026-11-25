@@ -1,4 +1,5 @@
 import { formatPeso } from '../services/money';
+import { OWNER_GREETING_NAME } from '../services/greetingName';
 import { RECIPE_BASIS_OPTIONS, recipeBasisFromLabel, recipeBasisOf, type RecipeBasis } from '../services/recipeBasis';
 import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
@@ -526,7 +527,7 @@ function Login({ username, password, error, fieldErrors = {}, connectionFailed =
           <Text style={styles.logo}>T</Text><Text style={styles.brandName}>TakoSync</Text>
         </View>
         <Text style={styles.kicker}>OWNER WEB MANAGEMENT PORTAL</Text>
-        <Text style={styles.loginTitle}>Welcome back, Gelo.</Text>
+        <Text style={styles.loginTitle}>Welcome back, {OWNER_GREETING_NAME}.</Text>
         <Text style={styles.loginSub}>Sign in with your Owner email and password.</Text>
         <View style={[styles.form, narrow && { width: '100%' }]}>
           <Text style={styles.label}>Email</Text>

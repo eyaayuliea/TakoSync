@@ -1,4 +1,5 @@
 import { formatPeso } from '../services/money';
+import { ownerGreetingName } from '../services/greetingName';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -2236,7 +2237,7 @@ export default function OwnerMobileWorkspace({
             {page === 'Dashboard' ? (
               <>
                 <Text style={styles.ownerGreeting}>Hello,</Text>
-                <Text style={styles.ownerGreetingName}>{user.displayName || 'Isabel San Esteban'}!</Text>
+                <Text style={styles.ownerGreetingName}>{ownerGreetingName(user.displayName)}!</Text>
               </>
             ) : (
               <>

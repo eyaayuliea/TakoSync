@@ -1,4 +1,5 @@
 import { formatPeso } from '../services/money';
+import { greetingFirstName, helloGreeting } from '../services/greetingName';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { orderStockShortage, stockShortageMessage, withLineQuantity, type SaleStockSnapshot,
   lowStockWarningMessage,
@@ -3907,7 +3908,7 @@ export default function StaffWorkspace({
           <View style={styles.profileBody} />
         </View>
         <View style={styles.greetingCopy}>
-          <Text style={styles.greeting} numberOfLines={1}>Hello, {staffName}!</Text>
+          <Text style={styles.greeting} numberOfLines={1}>{helloGreeting(greetingFirstName(staffName))}</Text>
           <Text style={styles.branchName} numberOfLines={1}>{assignedBranch}</Text>
         </View>
         <Pressable
