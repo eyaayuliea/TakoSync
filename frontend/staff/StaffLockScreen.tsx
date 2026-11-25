@@ -1,3 +1,4 @@
+import { greetingFirstName } from '../services/greetingName';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -85,7 +86,7 @@ export default function StaffLockScreen({ visible, staffName, onUnlock, onLogout
       >
         <View style={styles.card}>
           <Text style={styles.eyebrow}>SCREEN LOCKED</Text>
-          <Text style={styles.title}>Welcome back{staffName ? `, ${staffName}` : ''}</Text>
+          <Text style={styles.title}>Welcome back{greetingFirstName(staffName) ? `, ${greetingFirstName(staffName)}` : ''}</Text>
           <Text style={styles.copy}>
             The screen was locked after a period of inactivity. Enter your password to continue where you left off.
           </Text>

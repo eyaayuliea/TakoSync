@@ -1,4 +1,5 @@
 import { formatPeso } from './services/money';
+import { helloGreeting, ownerGreetingName } from './services/greetingName';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
 import { Poppins_400Regular } from '@expo-google-fonts/poppins/400Regular';
@@ -1019,7 +1020,7 @@ function AppContent() {
                         <View style={styles.profileBody} />
                       </View>
                       <View style={styles.greetingGroup}>
-                        <Text style={styles.dashboardGreeting}>Hello, {authenticatedUser.displayName}!</Text>
+                        <Text style={styles.dashboardGreeting}>{helloGreeting(ownerGreetingName(authenticatedUser.displayName))}</Text>
                         <Text style={styles.dashboardSubheading}>
                           Owner dashboard · {now.toLocaleDateString('en-PH', { dateStyle: 'full' })}
                         </Text>
