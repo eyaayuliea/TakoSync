@@ -1,4 +1,5 @@
 import { formatPeso } from '../services/money';
+import { greetingFirstName } from '../services/greetingName';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -935,7 +936,7 @@ export default function MenuWorkspace({
       {confirmDialog}
       <View style={[styles.posHeader, { backgroundColor: colors.white }]}>
         <Text style={[styles.posHeaderTitle, { color: colors.navy }]}>POS · {branchName}</Text>
-        <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{staffName} · {branchCode}</Text>
+        <Text style={[styles.posHeaderStaff, { color: colors.secondary }]} numberOfLines={1}>{greetingFirstName(staffName) || staffName} · {branchCode}</Text>
       </View>
       <View style={styles.productSelectionSection}>
         <ScrollView
