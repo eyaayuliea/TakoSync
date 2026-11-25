@@ -1,5 +1,6 @@
 import { formatPeso } from '../services/money';
 import { OWNER_GREETING_NAME } from '../services/greetingName';
+import { ORDER_USAGE_NOTE, type OrderUsage } from '../services/orderUsage';
 import { RECIPE_BASIS_OPTIONS, recipeBasisFromLabel, recipeBasisOf, type RecipeBasis } from '../services/recipeBasis';
 import React, { useEffect, useMemo, useState } from 'react';
 import { reportSetupMessage } from './ownerReportSetup';
@@ -116,6 +117,7 @@ import {
   resetStaffPasswordToEmployeeId,
   loadStockExpirationSettings,
   saveProductRecipe,
+  loadOrderUsage,
   saveSharedRecipe,
   saveStaffAccount,
   signInOwnerWithEmail,
@@ -982,7 +984,16 @@ function Inventory({ rows, branches }: { rows: InventoryRow[]; branches: OwnerPo
   const filtered = filterInventoryRows(rows, { query, category });
   const comparing = tab === BRANCH_COMPARISON_TAB;
   const branch = orderedBranches.find((item) => item.id === tab) ?? null;
-  const branchRows = branch ? branchInventoryRows(filtered, branch.id) : [];
+  // What one standard order uses of each item (the same in every branch).
+  const [orderUsage, setOrderUsage] = useState<Map<string, OrderUsage>>(new Map());
+  const usageBranchId = orderedBranches[0]?.id;
+  useEffect(() => {
+    if (!usageBranchId) return undefined;
+    let active = true;
+    loadOrderUsage(usageBranchId).then((usage) => { if (active) setOrderUsage(usage); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [usageBranchId, rows]);
+  const branchRows = branch ? branchInventoryRows(filtered, branch.id, orderUsage) : [];
   const comparison = comparing ? inventoryComparison(filtered, orderedBranches) : null;
   const shownCount = comparing ? comparison?.rows.length ?? 0 : branchRows.length;
   return (
@@ -1005,6 +1016,9 @@ function Inventory({ rows, branches }: { rows: InventoryRow[]; branches: OwnerPo
       <Text style={styles.muted}>
         {branch ? `${branch.name} · ` : 'All branches side by side · '}Read-only. Expected quantities come from the inventory ledger; statuses are shown as text.
       </Text>
+      {!comparing && orderUsage.size > 0 ? (
+        <Text style={styles.muted}>Deduction per Order is what one order uses, from the recipes. Orders Covered is the expected quantity divided by it. {ORDER_USAGE_NOTE}</Text>
+      ) : null}
       {comparing && comparison ? (
         <Table headers={comparison.headers} rows={comparison.rows} />
       ) : (

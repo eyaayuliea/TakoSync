@@ -2,6 +2,7 @@
 // branch and a Branch Comparison of the same item across the branches.
 import type { OwnerPortalInventoryRow } from './ownerPortalInventory.ts';
 import { branchKey } from './ownerRecordFilters.ts';
+import { orderUsageText, ordersCovered, type OrderUsage } from '../services/orderUsage.ts';
 
 export const BRANCH_COMPARISON_TAB = 'Branch Comparison';
 export const NO_RECORD_CELL = 'No record · Not tracked';
@@ -34,22 +35,36 @@ export function stockStatusLabel(row: Pick<OwnerPortalInventoryRow, 'stockLevel'
   return 'Normal';
 }
 
-export const BRANCH_INVENTORY_HEADERS = ['Item', 'Category', 'Unit', 'Expected Quantity', 'Minimum Stock', 'Status', 'Lot · Expiration'];
+export const BRANCH_INVENTORY_HEADERS = ['Item', 'Category', 'Unit', 'Expected Quantity', 'Minimum Stock', 'Deduction per Order', 'Orders Covered', 'Status', 'Lot · Expiration'];
 
-/** OW-04 c2–c4: one branch's rows, prepared batter first (bottles available). */
-export function branchInventoryRows(rows: readonly OwnerPortalInventoryRow[], branchId: string): string[][] {
+/**
+ * OW-04 c2–c4: one branch's rows, prepared batter first (bottles available).
+ * `usage` is what one standard order uses of each item; with it a row also shows
+ * that amount and how many orders the stock covers ("—" for items no order uses).
+ */
+export function branchInventoryRows(
+  rows: readonly OwnerPortalInventoryRow[],
+  branchId: string,
+  usage: ReadonlyMap<string, OrderUsage> = new Map(),
+): string[][] {
   return rows
     .filter((row) => row.branchId === branchId)
     .sort((left, right) => Number(right.ingredientId === 'prepared-batter') - Number(left.ingredientId === 'prepared-batter') || left.name.localeCompare(right.name))
-    .map((row) => [
-      row.ingredientId === 'prepared-batter' ? `${row.name} (bottles available)` : row.name,
-      row.category,
-      row.unit,
-      row.quantityLabel,
-      row.minimumStock === null || row.minimumStock === undefined ? '—' : String(row.minimumStock),
-      stockStatusLabel(row),
-      row.expiry === '—' ? '—' : row.batches,
-    ]);
+    .map((row) => {
+      const itemUsage = row.stockLevel === 'Not tracked' ? undefined : usage.get(row.ingredientId);
+      const orders = ordersCovered(row.qty, itemUsage);
+      return [
+        row.ingredientId === 'prepared-batter' ? `${row.name} (bottles available)` : row.name,
+        row.category,
+        row.unit,
+        row.quantityLabel,
+        row.minimumStock === null || row.minimumStock === undefined ? '—' : String(row.minimumStock),
+        itemUsage ? orderUsageText(itemUsage) : '—',
+        orders === null ? '—' : orders.toLocaleString('en-PH'),
+        stockStatusLabel(row),
+        row.expiry === '—' ? '—' : row.batches,
+      ];
+    });
 }
 
 /** OW-04 c6, c7: each item side by side per branch; a missing record reads "No record · Not tracked". */

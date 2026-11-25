@@ -28,11 +28,25 @@ test('OW-04 c1: tabs are labelled by branch number', () => {
 });
 
 test('OW-04 c2–c4: a branch table has unit, expected and minimum quantity, a text status and lots; batter first', () => {
-  assert.equal(BRANCH_INVENTORY_HEADERS.length, 7);
+  assert.equal(BRANCH_INVENTORY_HEADERS.length, 9);
   assert.deepEqual(branchInventoryRows(rows, 'b1'), [
-    ['Prepared Takoyaki Batter (bottles available)', 'Prepared', 'bottle', '4.5', '—', 'Normal', '—'],
-    ['Eggs', 'Fresh', 'pcs', '3', '5', 'Low', 'EGG-1: 3 pcs · 2026-11-26'],
-    ['Flour', 'Dry goods', 'kg', '10', '5', 'Normal', '—'],
+    ['Prepared Takoyaki Batter (bottles available)', 'Prepared', 'bottle', '4.5', '—', '—', '—', 'Normal', '—'],
+    ['Eggs', 'Fresh', 'pcs', '3', '5', '—', '—', 'Low', 'EGG-1: 3 pcs · 2026-11-26'],
+    ['Flour', 'Dry goods', 'kg', '10', '5', '—', '—', 'Normal', '—'],
+  ]);
+});
+
+test('a branch table shows what one order uses and how many orders the stock covers', () => {
+  const usage = new Map([['prepared-batter', { perOrder: 0.16, unit: 'bottle' }], ['eggs', { perOrder: 2, unit: 'pcs' }]]);
+  const stocked = [
+    row('prepared-batter', 'Prepared Takoyaki Batter', 'b1', { unit: 'bottle', qty: 4.5, quantityLabel: '4.5' }),
+    row('eggs', 'Eggs', 'b1', { unit: 'pcs', qty: 3, quantityLabel: '3' }),
+    row('flour', 'Flour', 'b1'),
+  ];
+  assert.deepEqual(branchInventoryRows(stocked, 'b1', usage).map((cells) => [cells[0], cells[5], cells[6]]), [
+    ['Prepared Takoyaki Batter (bottles available)', '0.16 bottle', '28'],
+    ['Eggs', '2 pcs', '1'],
+    ['Flour', '—', '—'],
   ]);
 });
 

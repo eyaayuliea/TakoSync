@@ -1,5 +1,6 @@
 import { formatPeso } from '../services/money';
 import { ownerGreetingName } from '../services/greetingName';
+import { ORDER_USAGE_NOTE, orderUsageSummary, type OrderUsage } from '../services/orderUsage';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -51,6 +52,7 @@ import {
   loadOwnerActivityData,
   loadOwnerDiscrepancyReviews,
   loadOwnerInventory,
+  loadOrderUsage,
   loadProductManagement,
   validateOwnerSubmittedInventoryCount,
   validateOwnerInventoryCountCorrection,
@@ -436,6 +438,15 @@ export default function OwnerMobileWorkspace({
   }, [page]);
 
   const branches = data?.branches ?? EMPTY_BRANCHES;
+  // What one standard order uses of each item (the same in every branch).
+  const [orderUsage, setOrderUsage] = useState<Map<string, OrderUsage>>(new Map());
+  const usageBranchId = branches[0]?.id;
+  useEffect(() => {
+    if (!usageBranchId) return undefined;
+    let active = true;
+    loadOrderUsage(usageBranchId).then((usage) => { if (active) setOrderUsage(usage); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [usageBranchId, data]);
   const branchNames = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
   const ingredients = useMemo(() => new Map((data?.ingredients ?? []).map((ingredient) => [ingredient.id, ingredient])), [data?.ingredients]);
   const categories = useMemo(() => new Map((data?.categories ?? []).map((category) => [category.id, category.name])), [data?.categories]);
@@ -1409,6 +1420,7 @@ export default function OwnerMobileWorkspace({
         </View>
       ) : filteredInventory.length ? (
         <>
+          {orderUsage.size > 0 ? <Text style={styles.omInventoryMinimum}>{ORDER_USAGE_NOTE}</Text> : null}
           {filteredInventory.map((record) => {
             return (
               <View key={record.id} style={styles.omInventoryCard}>
@@ -1421,6 +1433,9 @@ export default function OwnerMobileWorkspace({
                       <Text style={styles.omInventoryExpectedValue}>{formatInventoryQuantity(record.quantity)} {record.unit}</Text>
                     </Text>
                     <Text style={styles.omInventoryMinimum}>Min {record.minimumStock} {record.unit}</Text>
+                    {orderUsageSummary(record.quantity, orderUsage.get(record.ingredientId)) ? (
+                      <Text style={styles.omInventoryMinimum}>{orderUsageSummary(record.quantity, orderUsage.get(record.ingredientId))}</Text>
+                    ) : null}
                   </View>
                   <InventoryStatusBadge status={record.status} />
                 </View>
